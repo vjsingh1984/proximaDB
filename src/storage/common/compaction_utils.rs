@@ -82,7 +82,7 @@ impl StorageEngineType {
 }
 
 /// Result of file discovery with EventLog filtering
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilteredCompactionFiles {
     /// Files ready for compaction (not pending in EventLog)
     pub compactable_files: HashMap<u32, Vec<GenericFileMetadata>>,
@@ -468,7 +468,7 @@ impl CompactionTaskBuilder {
 }
 
 /// Information about a compaction task
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionTaskInfo {
     pub collection_id: String,
     pub source_level: u32,

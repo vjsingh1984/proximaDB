@@ -1416,7 +1416,7 @@ pub enum OperationPriority {
 /// - Zero-copy: Uses Arc for shared ownership without cloning
 /// - Cache-friendly: Collection comes directly from cache as Arc
 /// - Extensible: Additional context can be added as needed
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageQueryContext {
     /// Original search parameters (immutable reference)
     pub search_params: Arc<crate::core::search::SearchParams>,
@@ -1478,7 +1478,7 @@ pub struct QuantizationLevel {
 }
 
 /// Quantization type enumeration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuantizationType {
     Binary,
     Scalar,
@@ -1803,7 +1803,7 @@ impl StorageQueryContext {
 /// This allows distinguishing between:
 /// - Uninitialized: u64::MAX (default)
 /// - Successful operation with zero results: 0
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlushResult {
     /// Operation completed successfully
     pub success: bool,
@@ -1842,7 +1842,7 @@ pub struct FlushResult {
 /// This allows distinguishing between:
 /// - Uninitialized: u64::MAX (default)
 /// - Successful operation with zero results: 0
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionResult {
     /// Operation completed successfully
     pub success: bool,
@@ -1879,7 +1879,7 @@ pub struct CompactionResult {
 }
 
 /// Engine statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineStatistics {
     /// Engine name and version
     pub engine_name: String,
@@ -1909,7 +1909,7 @@ pub struct EngineStatistics {
 }
 
 /// Engine health status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineHealth {
     /// Overall health status
     pub healthy: bool,

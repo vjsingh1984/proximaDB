@@ -158,20 +158,20 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 // Temporary placeholder types until modules are created
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniversalPerformanceConfig {
     pub max_concurrent_operations: usize,
     pub enable_prefetching: bool,
     pub cache_size_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniversalValidationConfig {
     pub validate_on_insert: bool,
     pub strict_mode: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniversalBatchConfig {
     pub batch_size: usize,
     pub max_batch_memory_mb: usize,
@@ -213,7 +213,7 @@ pub struct UniversalEngineConfig {
 }
 
 /// Engine type classification
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EngineType {
     /// Row-based storage (SST, SWIFT)
     RowBased,
@@ -874,7 +874,7 @@ pub mod utils {
         Ok(())
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub enum WorkloadType {
         HighThroughput,
         LowLatency,

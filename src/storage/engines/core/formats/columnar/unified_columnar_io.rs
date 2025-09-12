@@ -39,7 +39,7 @@ use crate::core::VectorRecord;
 use crate::storage::unified_scan_strategy::{ScanIterator, ScanStrategy};
 
 /// Unified columnar I/O configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedColumnarConfig {
     // === Common Configuration ===
     /// Row group size for Parquet

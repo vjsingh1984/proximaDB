@@ -3,7 +3,7 @@
 use anyhow::Result;
 
 /// Strategy for adaptive recall calculation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallStrategy {
     pub base_radius: f32,
     pub adaptive_factor: f32,

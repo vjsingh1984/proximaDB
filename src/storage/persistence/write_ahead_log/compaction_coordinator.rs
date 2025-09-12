@@ -57,7 +57,7 @@ pub struct CompactionCoordinator {
 }
 
 /// Per-collection compaction state
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionCompactionState {
     /// Number of files that need compaction
     pub files_needing_compaction: usize,
@@ -92,7 +92,7 @@ impl Default for CollectionCompactionState {
 }
 
 /// Compaction configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionConfig {
     /// Maximum files before triggering compaction
     pub max_files_before_compaction: usize,
@@ -127,7 +127,7 @@ impl Default for CompactionConfig {
 }
 
 /// Active compaction task
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionTask {
     /// Unique task identifier
     pub task_id: String,
@@ -168,7 +168,7 @@ pub struct CompactionStats {
 }
 
 /// Compaction result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionResult {
     /// Whether compaction succeeded
     pub success: bool,
@@ -875,7 +875,7 @@ impl CompactionCoordinator {
 // compaction methods. Now using the unified CompactionResult directly.
 /*
 /// Engine-specific compaction result (internal)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct EngineCompactionResult {
     pub files_compacted: u64,
     pub bytes_reclaimed: u64,

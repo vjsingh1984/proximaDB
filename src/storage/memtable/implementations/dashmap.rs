@@ -348,7 +348,7 @@ where
 }
 
 /// Performance statistics for DashMap
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashMapConcurrencyStats {
     pub shard_count: usize,
     pub entry_count: usize,

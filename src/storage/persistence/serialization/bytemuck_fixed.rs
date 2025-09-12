@@ -308,7 +308,7 @@ impl FixedLengthSerializer {
 }
 
 /// Vector format analysis for choosing optimal serialization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorFormatAnalysis {
     pub total_vectors: usize,
     pub dimension_histogram: HashMap<usize, usize>,

@@ -35,7 +35,7 @@ use crate::storage::persistence::write_ahead_log::{
 };
 
 /// Metadata-specific write buffer configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataWALConfig {
     /// Base write buffer configuration
     pub base_config: WALConfig,

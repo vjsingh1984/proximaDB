@@ -93,7 +93,7 @@ pub struct ProgressiveRefinementConfig {
 }
 
 /// Result of progressive refinement execution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressiveRefinementResult {
     /// Final similarity results
     pub similarity_results: Vec<SimilarityResult>,
@@ -754,7 +754,7 @@ impl ProgressiveRefinementPipeline {
 }
 
 /// Result of executing a single refinement stage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StageResult {
     /// Refined candidates from this stage
     refined_candidates: Vec<CandidateVector>,

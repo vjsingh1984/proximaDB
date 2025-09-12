@@ -1,7 +1,6 @@
 // Universal Search Modes and Capabilities
 // Shared search abstractions across all storage engines
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
@@ -966,7 +965,7 @@ pub enum ProgressiveRefinementStrategy {
 }
 
 /// Search capabilities description
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchCapabilities {
     /// Supported search modes
     pub supported_modes: Vec<String>,
@@ -997,7 +996,7 @@ pub struct SearchCapabilities {
 }
 
 /// Search optimizations available
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchOptimizations {
     /// Hardware optimizations
     pub hardware_optimizations: Vec<HardwareOptimization>,
@@ -1013,7 +1012,7 @@ pub struct SearchOptimizations {
 }
 
 /// Hardware optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HardwareOptimization {
     SIMD,
     GPU,
@@ -1023,7 +1022,7 @@ pub enum HardwareOptimization {
 }
 
 /// Algorithm optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlgorithmOptimization {
     EarlyTermination,
     PruningStrategies,
@@ -1033,7 +1032,7 @@ pub enum AlgorithmOptimization {
 }
 
 /// Index optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IndexOptimization {
     BloomFilters,
     InvertedIndexes,
@@ -1043,7 +1042,7 @@ pub enum IndexOptimization {
 }
 
 /// Cache optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CacheOptimization {
     ResultCaching,
     IndexCaching,
@@ -1096,7 +1095,7 @@ pub struct SearchStageContext {
 }
 
 /// Search candidate for progressive refinement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchCandidate {
     /// Candidate record
     pub record: CandidateRecord,
@@ -1109,7 +1108,7 @@ pub struct SearchCandidate {
 }
 
 /// Refinement step
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RefinementStep {
     /// Step name
     pub step_name: String,
@@ -1128,7 +1127,7 @@ pub struct RefinementStep {
 }
 
 /// Candidate state
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CandidateState {
     Initial,
     Refined,

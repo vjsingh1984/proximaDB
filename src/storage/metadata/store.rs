@@ -28,7 +28,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 // Strategy configuration is imported through metadata module
 
 /// Configuration for metadata store
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataStoreConfig {
     /// Filesystem URLs for metadata storage (supports file://, s3://, gcs://, etc.)
     pub metadata_storage_urls: Vec<String>,
@@ -59,7 +59,7 @@ impl Default for MetadataStoreConfig {
 }
 
 /// Cache configuration for metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataCacheConfig {
     /// Enable in-memory caching
     pub enabled: bool,
@@ -77,7 +77,7 @@ pub struct MetadataCacheConfig {
     pub eviction_strategy: CacheEvictionStrategy,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CacheEvictionStrategy {
     /// Least Recently Used
     LRU,
@@ -102,7 +102,7 @@ impl Default for MetadataCacheConfig {
 }
 
 /// Backup configuration for metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataBackupConfig {
     /// Enable automatic backups
     pub enabled: bool,
@@ -124,7 +124,7 @@ pub struct MetadataBackupConfig {
 }
 
 /// Replication configuration for high availability
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataReplicationConfig {
     /// Enable replication
     pub enabled: bool,
@@ -142,7 +142,7 @@ pub struct MetadataReplicationConfig {
     pub auto_failover: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConsistencyLevel {
     /// Eventually consistent
     Eventual,

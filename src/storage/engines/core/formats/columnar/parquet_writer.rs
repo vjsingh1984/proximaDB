@@ -28,7 +28,7 @@ use crate::storage::engines::core::formats::columnar::QuantizationConfig;
 use crate::storage::engines::core::formats::columnar::native_metadata::NativeMetadataHandler;
 
 /// Configuration for Parquet writing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParquetWriterConfig {
     /// Row group size (number of records)
     pub row_group_size: usize,
@@ -355,19 +355,19 @@ impl StreamingParquetWriter {
                         .filter_map(|(key, sql_value)| {
                             sql_value.value.as_ref().map(|v| {
                                 let json_value = match v {
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                         serde_json::Value::String(s.clone())
                                     }
-                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
                                         serde_json::Value::Number(
                                             serde_json::Number::from_f64(*f)
                                                 .unwrap_or(serde_json::Number::from(0)),
                                         )
                                     }
-                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                         serde_json::Value::Bool(*b)
                                     }
-                                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                                         serde_json::Value::Number(serde_json::Number::from(*i))
                                     }
                                     // For other types, convert to string or skip
@@ -413,19 +413,19 @@ impl StreamingParquetWriter {
                     .filter_map(|(key, sql_value)| {
                         sql_value.value.as_ref().map(|v| {
                             let json_value = match v {
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                     serde_json::Value::String(s.clone())
                                 }
-                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
                                     serde_json::Value::Number(
                                         serde_json::Number::from_f64(*f)
                                             .unwrap_or(serde_json::Number::from(0)),
                                     )
                                 }
-                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                                     serde_json::Value::Number(serde_json::Number::from(*i))
                                 }
                                 _ => serde_json::Value::String("".to_string()),
@@ -579,20 +579,20 @@ impl StreamingParquetWriter {
                         for (key, sql_value) in &r.metadata {
                             // Convert SqlValue to JSON value
                             let json_value = match &sql_value.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                                     serde_json::Value::String(s.clone())
                                 }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
                                     if let Some(n) = serde_json::Number::from_f64(*f) {
                                         serde_json::Value::Number(n)
                                     } else {
                                         serde_json::Value::Null
                                     }
                                 }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                                     serde_json::Value::Bool(*b)
                                 }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                                     serde_json::Value::Number(serde_json::Number::from(*i))
                                 }
                                 _ => serde_json::Value::Null,
@@ -807,18 +807,18 @@ impl StreamingParquetWriter {
                 let mut metadata_map = serde_json::Map::new();
                 for (key, value) in &record.metadata {
                     let json_value = match &value.value {
-                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
+                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
                             if let Some(n) = serde_json::Number::from_f64(*f) {
                                 serde_json::Value::Number(n)
                             } else {
                                 serde_json::Value::Null
                             }
                         }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                             serde_json::Value::Number(serde_json::Number::from(*i))
                         }
                         _ => serde_json::Value::Null,
@@ -1199,7 +1199,7 @@ impl StreamingParquetWriter {
 }
 
 /// Statistics from Parquet writing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingParquetWriterStats {
     pub file_path: String,
     pub total_records: u64,
@@ -1298,7 +1298,7 @@ impl IdLessLookup {
 }
 
 /// PQ codebook for similarity-based sorting
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PqCodebook {
     segments: usize,
     segment_size: usize,
@@ -1306,7 +1306,7 @@ struct PqCodebook {
 }
 
 /// Record with PQ code for sorting
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PqSortRecord {
     original_index: usize,
     pq_code: Vec<u8>,

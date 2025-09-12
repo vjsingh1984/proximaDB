@@ -26,7 +26,7 @@ pub struct BlockCacheKey {
 }
 
 /// Cached block data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedBlock {
     /// Decompressed block data
     pub data: FastLanesDataBlock,
@@ -552,10 +552,8 @@ pub struct CacheConfig {
     /// Maximum cache size in MB
     pub max_size_mb: usize,
     /// Minimum cache size in MB (0 = no minimum)
-    #[serde(default)]
     pub min_size_mb: usize,
     /// Maximum cache size cap in MB (0 = no cap)
-    #[serde(default = "CacheConfig::default_max_cap")]
     pub max_cap_mb: usize,
     /// Enable prefetching
     pub enable_prefetch: bool,
@@ -692,16 +690,7 @@ mod tests {
     }
 }
 
-/// Stats provider implementation for Cross-Cache Orchestrator integration
-pub struct DecompressionCacheStatsProvider {
-    cache: Arc<DecompressionCache>,
-}
-
-impl DecompressionCacheStatsProvider {
-    pub fn new(cache: Arc<DecompressionCache>) -> Self {
-        Self { cache }
-    }
-}
+// Duplicate removed - using earlier definition
 
 impl CacheStatsProvider for DecompressionCacheStatsProvider {
     fn snapshot(&self) -> UsageStats {

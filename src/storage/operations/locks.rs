@@ -50,7 +50,7 @@ struct LevelRange {
 }
 
 /// Active lock information for monitoring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ActiveLockInfo {
     operation_type: super::OperationType,
     acquired_at: std::time::Instant,
@@ -58,7 +58,7 @@ struct ActiveLockInfo {
 }
 
 /// Lock timeout configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LockTimeoutConfig {
     flush_timeout: std::time::Duration,
     compaction_timeout: std::time::Duration,
@@ -225,7 +225,7 @@ pub struct RequantizationLockGuard {
 }
 
 /// Lock status for monitoring and diagnostics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockStatus {
     pub collections_with_locks: usize,
     pub total_level_locks: usize,

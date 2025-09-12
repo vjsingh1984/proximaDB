@@ -36,7 +36,7 @@ pub struct AtomicWalSync {
 }
 
 /// Strategy-specific serialization format
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SerializationStrategy {
     Avro,
     Bincode,
@@ -44,7 +44,7 @@ pub enum SerializationStrategy {
 }
 
 /// Sync operation progress tracking
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncProgress {
     pub collection_id: String,
     pub batch_id: BatchId,

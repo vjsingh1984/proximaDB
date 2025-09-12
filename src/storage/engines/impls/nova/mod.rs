@@ -172,7 +172,7 @@ pub trait NovaOperations {
 }
 
 /// Row group statistics for optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupStats {
     pub row_group_id: usize,
     pub num_rows: u64,
@@ -196,7 +196,7 @@ pub struct ViperOptimizations {
     pub quantization_level: QuantizationLevel,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuantizationLevel {
     None,
     Binary,

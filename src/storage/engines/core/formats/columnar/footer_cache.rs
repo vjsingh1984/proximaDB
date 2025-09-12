@@ -82,7 +82,7 @@ impl CachedFooter {
 }
 
 /// Footer cache configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FooterCacheConfig {
     /// Maximum cache size (number of entries)
     pub max_entries: u64,

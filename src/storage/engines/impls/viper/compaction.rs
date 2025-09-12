@@ -33,7 +33,7 @@ use crate::storage::transaction_coordinator::{
 use crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema;
 
 /// Result of a compaction operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperCompactionResult {
     /// Input files that were processed
     pub input_files: Vec<String>,
@@ -50,7 +50,7 @@ pub struct ViperCompactionResult {
 }
 
 /// File metadata for compaction planning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMetadata {
     /// File path
     pub path: String,
@@ -69,7 +69,7 @@ pub struct FileMetadata {
 // VIPER filename operations use unified FilenameCodec from compaction_orchestrator
 
 /// Level-based compaction task
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LevelBasedCompactionTask {
     /// Source level being compacted
     pub level: u32,
@@ -80,7 +80,7 @@ pub struct LevelBasedCompactionTask {
 }
 
 /// Compaction plan based on file analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionPlan {
     /// Input file metadata
     pub input_files: Vec<FileMetadata>,
@@ -1272,7 +1272,7 @@ impl Compaction {
                                 (
                                     k.clone(),
                                     crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string())),
+                                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string())),
                                     },
                                 )
                             })

@@ -73,7 +73,7 @@ pub trait EntityStore: Send + Sync {
 }
 
 /// Entity header containing metadata, provenance, and temporal info
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityHeader {
     pub typed_metadata: Option<TypedMetadata>,
     pub flexible_metadata: Option<FlexibleMetadata>,
@@ -231,13 +231,13 @@ impl ProximaEntityStore {
                             for (key, value) in metadata {
                                 let sql_value = match value {
                                     serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
                                     },
                                     serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))),
+                                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))),
                                     },
                                     serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
                                     },
                                     _ => crate::proto::proximadb_v1::SqlValue { value: None },
                                 };
@@ -483,7 +483,7 @@ impl EntityStore for ProximaEntityStore {
                             .metadata
                             .get("entity_id")
                             .and_then(|sv| match &sv.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => Some(s.clone()),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => Some(s.clone()),
                                 _ => None,
                             })
                             .or_else(|| self.vector_to_entity.read().unwrap().get(&record.id).cloned())

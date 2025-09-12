@@ -32,7 +32,7 @@ pub enum ColumnData {
 }
 
 /// Artus-inspired adaptive bloom filter configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtusBloomConfig {
     /// Target false positive rate
     pub false_positive_rate: f64,

@@ -302,7 +302,7 @@ pub struct ColumnStatistics {
 }
 
 /// Search mode for columnar engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ColumnarSearchMode {
     /// AXIS returns IDs, we lookup full vectors
     IndexDriven { ids: Vec<String> },
@@ -323,19 +323,19 @@ pub enum ColumnarSearchMode {
 }
 
 /// Metadata filter for queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub logic: FilterLogic,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FilterLogic {
     And,
     Or,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FilterCondition {
     Equals(String, serde_json::Value),
     Range(String, serde_json::Value, serde_json::Value),
@@ -345,7 +345,7 @@ pub enum FilterCondition {
 }
 
 /// Row group statistics for optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupStats {
     pub row_group_id: usize,
     pub num_rows: u64,
@@ -357,7 +357,7 @@ pub struct RowGroupStats {
 }
 
 /// Search candidate for progressive refinement
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchCandidate {
     pub row_group_id: usize,
     pub row_offset: u32,
@@ -389,7 +389,7 @@ pub trait ColumnarOperations {
 }
 
 /// Columnar optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnarOptimizations {
     /// Columnar projection - only load needed columns
     pub projection: Vec<String>,
@@ -568,7 +568,7 @@ pub struct OptimizationRecommendations {
     pub quantization_strategy: QuantizationStrategy,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuantizationStrategy {
     None,
     BinaryOnly,
@@ -614,14 +614,14 @@ impl OptimizationRecommendations {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueryPattern {
     IdLookupHeavy,
     SimilaritySearchHeavy,
     Mixed,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageBudget {
     Performance, // Prioritize speed
     Balanced,    // Balance speed and storage

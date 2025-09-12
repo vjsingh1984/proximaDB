@@ -80,7 +80,7 @@ impl CloudIOProfile {
 }
 
 /// Smart row group sizing calculator
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartRowGroupSizer {
     /// Cloud I/O profile for this deployment
     pub io_profile: CloudIOProfile,
@@ -100,7 +100,7 @@ pub struct SmartRowGroupSizer {
 use crate::compute::quantization::types::{QuantizationLevel, UnifiedQuantizationLevel};
 
 /// Internal quantization config for sizing calculations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InternalQuantizationConfig {
     pub primary_level: UnifiedQuantizationLevel,
     pub store_fp32: bool,
@@ -325,7 +325,7 @@ impl SmartRowGroupSizer {
 }
 
 /// Result of optimal row group size calculation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimalRowGroupSize {
     /// Number of vectors per row group
     pub vectors_per_rowgroup: usize,

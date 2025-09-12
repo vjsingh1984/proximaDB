@@ -22,7 +22,7 @@ use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::Collection;
 
 /// Unified scan strategy based on RAPTOR's successful pattern
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScanStrategy {
     /// Full scan for compaction, maintenance, export
     /// Based on: SST's full_scan_strategy, VIPER's full file read, RAPTOR's FullScan
@@ -84,7 +84,7 @@ pub enum ScanStrategy {
 }
 
 /// Scan capabilities derived from actual engine implementations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanCapabilities {
     // From VIPER/NOVA (columnar engines)
     pub supports_predicate_pushdown: bool,
@@ -192,7 +192,7 @@ pub trait UnifiedScanEngine: Send + Sync {
 }
 
 /// Scan cost estimate for query planning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanCostEstimate {
     pub estimated_records: usize,
     pub estimated_bytes: usize,
@@ -301,7 +301,7 @@ pub mod scan_helpers {
 }
 
 /// Placeholder for row group statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupStatistics {
     pub row_count: usize,
     pub null_count: usize,

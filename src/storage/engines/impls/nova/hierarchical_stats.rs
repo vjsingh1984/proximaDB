@@ -6,7 +6,8 @@ use parquet::file::metadata::RowGroupMetaData;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
-use crate::compute::distance_computation::DistanceMetric;
+// Note: Using string representation instead of proto enum for consistency
+pub type DistanceMetric = String;
 
 /// SuperBlock: Aggregate of multiple row groups for coarse-grained pruning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,7 +38,7 @@ pub struct SuperBlock {
 }
 
 /// Enhanced row group statistics with vector-specific optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedRowGroupStats {
     /// Row group index
     pub row_group_id: u32,
@@ -468,10 +469,10 @@ impl ZoneMap {
         distance_metric: DistanceMetric,
         max_similarity: f32,
     ) -> bool {
-        match distance_metric {
-            DistanceMetric::Euclidean => self.intersects_euclidean(query, max_similarity),
-            DistanceMetric::Cosine => self.intersects_cosine(query, max_similarity),
-            DistanceMetric::DotProduct => self.intersects_dot_product(query, max_similarity),
+        match distance_metric.as_str() {
+            "euclidean" => self.intersects_euclidean(query, max_similarity),
+            "cosine" => self.intersects_cosine(query, max_similarity),
+            "dot_product" => self.intersects_dot_product(query, max_similarity),
             _ => true, // Conservative: assume intersection for unknown metrics
         }
     }

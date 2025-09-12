@@ -39,7 +39,7 @@ pub struct ColumnarIdIndex {
 }
 
 /// Index for a single row group
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupIdIndex {
     /// Row group ID
     pub row_group_id: usize,
@@ -59,7 +59,7 @@ pub struct RowGroupIdIndex {
 }
 
 /// Index for a single page within a row group
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageIdIndex {
     /// Page number within the row group
     pub page_num: u32,
@@ -78,7 +78,7 @@ pub struct PageIdIndex {
 }
 
 /// Bloom filter for fast existence checks
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BloomFilter {
     bits: Vec<u64>,
     size: usize,
@@ -418,7 +418,7 @@ impl ColumnarIdIndex {
 }
 
 /// Statistics for the index
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexStats {
     pub total_ids: u64,
     pub unique_ids: u64,

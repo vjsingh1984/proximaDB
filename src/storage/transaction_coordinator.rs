@@ -79,7 +79,7 @@ impl TransactionStageType {
 }
 
 /// Staging directory configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StagingConfig {
     /// Base storage URL (e.g., "file:///data", "s3://bucket")
     pub base_url: String,
@@ -118,7 +118,7 @@ impl Default for StagingConfig {
 }
 
 /// Atomic operation metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionalOperationMetadata {
     pub operation_id: OperationId,
     pub operation_type: TransactionStageType,
@@ -174,7 +174,7 @@ pub enum TransactionState {
 }
 
 /// Participant in the atomic transaction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionParticipant {
     /// Unique participant ID
     pub id: String,
@@ -208,7 +208,7 @@ pub enum ParticipantState {
 }
 
 /// Rollback action for a participant
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RollbackAction {
     /// Remove entry from memtable by key
     RemoveFromMemtable { key: String },

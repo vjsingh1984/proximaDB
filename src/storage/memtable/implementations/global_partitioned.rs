@@ -1188,7 +1188,7 @@ impl Default for GlobalPartitionedMemtable {
 }
 
 /// Collection flush information for intelligent flush selection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionFlushInfo {
     pub collection_id: String,
     pub total_size: usize,

@@ -46,7 +46,7 @@ where
 }
 
 /// Configuration for B+Tree behavior
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BPlusTreeConfig {
     /// Fanout factor for internal nodes
     pub fanout: usize,
@@ -298,7 +298,7 @@ where
 }
 
 /// B+Tree-specific performance statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BPlusTreeStats {
     pub entry_count: usize,
     pub size_bytes: usize,

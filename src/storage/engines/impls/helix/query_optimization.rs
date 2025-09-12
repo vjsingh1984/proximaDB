@@ -158,7 +158,7 @@ pub struct SmartResultCache {
 }
 
 /// Cached query result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedResult {
     /// Search results
     results: Vec<OptimizedSearchRecord>,

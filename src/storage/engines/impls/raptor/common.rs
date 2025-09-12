@@ -35,7 +35,6 @@ pub struct RowGroup {
     pub offset: u64,            // File offset for this rowgroup
     pub compressed_size: u64,   // Compressed size in bytes
     pub uncompressed_size: u64, // Original size
-    #[serde(default = "default_vector_count")]
     pub vector_count: usize, // Number of vectors in this rowgroup
     pub max_vectors: usize,     // Maximum capacity (from smart sizing)
 
@@ -61,7 +60,6 @@ pub struct RowGroup {
 
     // Columnar storage (from HybridRowGroup)
     // Columnar data is not serialized - it's loaded at runtime
-    #[serde(skip)]
     pub columnar_data: Option<ColumnarBlock>, // For active/cached rowgroups
 
     // Matrix storage (Matrix Trinity architecture)
@@ -159,7 +157,7 @@ impl RowGroup {
 
 /// Columnar storage block within a rowgroup (dimension-major format)
 /// Migrated from HybridRowGroup for unified architecture
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnarBlock {
     /// Vector IDs (for mapping back to original)
     pub vector_ids: Vec<String>,
@@ -190,7 +188,7 @@ impl Default for ColumnarBlock {
 }
 
 /// Dimension-major vector storage for SIMD operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransposedVectors {
     /// Each Vec<f32> represents one dimension across all vectors
     /// dimensions[d] = [v0[d], v1[d], v2[d], ...] for dimension d
@@ -202,7 +200,7 @@ pub struct TransposedVectors {
 }
 
 /// FastLanes encoded columnar data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FastLanesEncodedData {
     /// Encoded dimensions using FastLanes compression
     pub encoded_dimensions: Vec<Vec<u8>>,
@@ -213,7 +211,7 @@ pub struct FastLanesEncodedData {
 }
 
 /// Quantized columnar data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizedColumnarData {
     /// Binary quantized vectors (1 bit per dimension)
     pub binary: Option<Vec<Vec<u8>>>,
@@ -236,7 +234,7 @@ pub struct QuantizationParams {
 }
 
 /// Metadata stored in columnar format
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataColumns {
     /// String metadata columns
     pub string_columns: HashMap<String, Vec<Option<String>>>,
@@ -261,7 +259,7 @@ pub struct ColumnPageMetadata {
 }
 
 /// Column types in RAPTOR files
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ColumnType {
     VectorsFp32,
     VectorsQuantized,
@@ -436,7 +434,7 @@ pub struct RowPageMetadata {
 
 // ====== Vector Statistics (unified) ======
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct VectorStats {
     pub dimension: usize,
     pub min_norm: f32,
@@ -446,7 +444,7 @@ pub struct VectorStats {
     pub encoding: VectorEncoding,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorEncoding {
     Raw,
     ProductQuantization {
@@ -516,31 +514,10 @@ pub enum MetadataData {
     Map(Box<MetadataData>, Box<MetadataData>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum MetadataValue {
-    Boolean(bool),
-    Integer(i64),
-    Float(f64),
-    String(String),
-    List(Vec<MetadataValue>),
-    Map(HashMap<String, MetadataValue>),
-}
+// Use proto-generated SqlValue instead of duplicate MetadataValue
+pub use crate::proto::proximadb_v1::SqlValue as MetadataValue;
 
-impl PartialOrd for MetadataValue {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (MetadataValue::Boolean(a), MetadataValue::Boolean(b)) => a.partial_cmp(b),
-            (MetadataValue::Integer(a), MetadataValue::Integer(b)) => a.partial_cmp(b),
-            (MetadataValue::Float(a), MetadataValue::Float(b)) => a.partial_cmp(b),
-            (MetadataValue::String(a), MetadataValue::String(b)) => a.partial_cmp(b),
-            // Cross-type numeric comparisons
-            (MetadataValue::Integer(a), MetadataValue::Float(b)) => (*a as f64).partial_cmp(b),
-            (MetadataValue::Float(a), MetadataValue::Integer(b)) => a.partial_cmp(&(*b as f64)),
-            // Lists and Maps can't be compared
-            _ => None,
-        }
-    }
-}
+// PartialOrd for SqlValue is handled by proto-generated implementation
 
 // ====== FastLanes Encoding Schemes (shared) ======
 
@@ -654,14 +631,14 @@ pub struct BloomFilterMetadata {
 
 // ====== I/O Strategy (for unified reader) ======
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IoStrategy {
     pub prefetch_size: usize,
     pub cache_policy: CachePolicy,
     pub read_pattern: ReadPattern,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CachePolicy {
     LRU,
     LFU,
@@ -669,7 +646,7 @@ pub enum CachePolicy {
     None,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReadPattern {
     Sequential,
     Random,
@@ -679,7 +656,7 @@ pub enum ReadPattern {
 
 // ====== Search Results (unified) ======
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub vector_id: String,
     pub distance: f32,
@@ -691,14 +668,14 @@ pub struct SearchResult {
 
 // ====== Predicates for filtering ======
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Predicate {
     pub field: String,
     pub op: PredicateOp,
     pub value: MetadataValue,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PredicateOp {
     Eq,
     Ne,
@@ -1878,7 +1855,7 @@ pub struct SpilloverInfo {
 }
 
 /// Confidence assessment for search results
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfidenceAssessment {
     pub overall: f32,
     pub signals: ConfidenceSignals,
@@ -1886,7 +1863,7 @@ pub struct ConfidenceAssessment {
 }
 
 /// Individual confidence signals
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfidenceSignals {
     pub distance_uniformity: f32,
     pub cluster_diversity: f32,
@@ -1895,7 +1872,7 @@ pub struct ConfidenceSignals {
 }
 
 /// Correction strategy for self-correction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CorrectionStrategy {
     GapFilling,
     Diversification,
@@ -1903,7 +1880,7 @@ pub enum CorrectionStrategy {
 }
 
 /// Boosting strategy configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoostingStrategy {
     pub spillover_strength: f32, // Default: 2.0
     pub ranking_strength: f32,   // Default: 0.1
@@ -2034,7 +2011,7 @@ impl K2Matrix {
 
 /// Runtime result from Phase 1 boundary detection
 /// This is computed during search using K² matrix - NOT stored
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoundaryDetectionResult {
     /// Primary centroids selected by distance ranking
     pub primary_centroids: Vec<u16>,
@@ -2053,7 +2030,7 @@ pub struct BoundaryDetectionResult {
 
 /// Runtime result from Phase 2 spillover detection  
 /// This is computed during search using P×K matrix - NOT stored
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpilloverDetectionResult {
     /// Map of centroid_id -> list of spillover target centroids
     pub spillover_map: HashMap<u16, Vec<u16>>,
@@ -2074,7 +2051,7 @@ pub struct SpilloverDetectionResult {
 }
 
 /// Configuration for boundary detection (runtime)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoundaryDetectionConfig {
     /// Boundary ratio threshold (default 0.8)
     /// If d(Q,C_i)/d(Q,C_j) > threshold, consider C_j as boundary neighbor
@@ -2102,7 +2079,7 @@ impl Default for BoundaryDetectionConfig {
 }
 
 /// Configuration for spillover detection (runtime)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpilloverDetectionConfig {
     /// Spillover percentage threshold (default 0.15 = 15%)
     /// If >threshold% of vectors spill to another centroid, expand search

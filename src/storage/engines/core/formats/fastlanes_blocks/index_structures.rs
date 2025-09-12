@@ -86,7 +86,7 @@ pub struct DenseIndex {
 }
 
 /// Sparse region in dense index
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseRegion {
     pub start_id: u64,
     pub end_id: u64,
@@ -258,7 +258,7 @@ pub struct MultiLevelIndex {
     access_patterns: HashMap<String, AccessPattern>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessPattern {
     pub pattern_type: AccessType,
     pub frequency: u64,
@@ -266,7 +266,7 @@ pub struct AccessPattern {
     pub average_response_time: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AccessType {
     PointLookup,
     RangeScan,

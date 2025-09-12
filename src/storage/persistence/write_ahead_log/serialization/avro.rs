@@ -94,14 +94,14 @@ impl super::VectorBatchSerializer for AvroSerializer {
                         .iter()
                         .map(|(key, value)| {
                             let value_str = match &value.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => "[binary]".to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => "null".to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => "[array]".to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => "[object]".to_string(),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => "[binary]".to_string(),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => "null".to_string(),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => "[array]".to_string(),
+                                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => "[object]".to_string(),
                                 None => String::new(),
                             };
                             (key.clone(), value_str)
@@ -247,25 +247,25 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                                     .map(|(k, v)| {
                                                         let sql_value = match v {
                                                             Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone()))
+                                                                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone()))
                                                             },
                                                             Value::Float(f) => crate::proto::proximadb_v1::SqlValue {
-                                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(*f as f64))
+                                                                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(*f as f64))
                                                             },
                                                             Value::Double(f) => crate::proto::proximadb_v1::SqlValue {
-                                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(*f))
+                                                                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(*f))
                                                             },
                                                             Value::Int(i) => crate::proto::proximadb_v1::SqlValue {
-                                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(*i as i64))
+                                                                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(*i as i64))
                                                             },
                                                             Value::Long(i) => crate::proto::proximadb_v1::SqlValue {
-                                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(*i))
+                                                                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(*i))
                                                             },
                                                             Value::Boolean(b) => crate::proto::proximadb_v1::SqlValue {
-                                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b))
+                                                                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b))
                                                             },
                                                             _ => crate::proto::proximadb_v1::SqlValue {
-                                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("{:?}", v)))
+                                                                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("{:?}", v)))
                                                             },
                                                         };
                                                         (k.clone(), sql_value)
@@ -282,25 +282,25 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                                 .map(|(k, v)| {
                                                     let sql_value = match v {
                                                         Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone()))
+                                                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone()))
                                                         },
                                                         Value::Float(f) => crate::proto::proximadb_v1::SqlValue {
-                                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(*f as f64))
+                                                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(*f as f64))
                                                         },
                                                         Value::Double(f) => crate::proto::proximadb_v1::SqlValue {
-                                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(*f))
+                                                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(*f))
                                                         },
                                                         Value::Int(i) => crate::proto::proximadb_v1::SqlValue {
-                                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(*i as i64))
+                                                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(*i as i64))
                                                         },
                                                         Value::Long(i) => crate::proto::proximadb_v1::SqlValue {
-                                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(*i))
+                                                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(*i))
                                                         },
                                                         Value::Boolean(b) => crate::proto::proximadb_v1::SqlValue {
-                                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b))
+                                                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b))
                                                         },
                                                         _ => crate::proto::proximadb_v1::SqlValue {
-                                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("{:?}", v)))
+                                                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("{:?}", v)))
                                                         },
                                                     };
                                                     (k.clone(), sql_value)

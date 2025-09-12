@@ -863,7 +863,7 @@ impl ViperEngine {
                                                 let key = key_array.value(kv_idx).to_string();
                                                 let value = value_array.value(kv_idx).to_string();
                                                 metadata_map.insert(key, crate::proto::proximadb_v1::SqlValue {
-                                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value)),
+                                                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(value)),
                                                 });
                                             }
                                         }
@@ -929,7 +929,7 @@ impl ViperEngine {
                                             _ => continue, // Skip unsupported types
                                         };
                                         metadata_map.insert(field_name.to_string(), crate::proto::proximadb_v1::SqlValue {
-                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(string_value)),
+                                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(string_value)),
                                         });
                                     }
                                 }
@@ -1176,10 +1176,10 @@ impl ViperEngine {
                         for (k, v) in metadata_json {
                             map.insert(k, crate::proto::proximadb_v1::SqlValue {
                                 value: Some(match v {
-                                    serde_json::Value::String(s) => crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
-                                    serde_json::Value::Number(n) => crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0)),
-                                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
-                                    _ => crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string()),
+                                    serde_json::Value::String(s) => crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                    serde_json::Value::Number(n) => crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0)),
+                                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
+                                    _ => crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string()),
                                 })
                             });
                         }

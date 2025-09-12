@@ -20,7 +20,7 @@ pub struct SSTMetadataSource {
     pub column_metadata_cache: HashMap<String, Vec<serde_json::Value>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SSTFileMetadata {
     pub total_rows: usize,
     pub column_info: HashMap<String, ColumnMetadata>,

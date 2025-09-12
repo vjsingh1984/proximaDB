@@ -21,7 +21,7 @@ use url::Url;
 use super::{FileSystem, FilesystemError, FsResult};
 
 /// Retry configuration for filesystem operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetryConfig {
     pub max_retries: usize,
     pub initial_delay_ms: u64,

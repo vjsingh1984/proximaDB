@@ -33,7 +33,7 @@ pub struct BatchSyncCoordinator {
 }
 
 /// Pending sync request
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PendingSyncRequest {
     /// Collection ID
     collection_id: String,

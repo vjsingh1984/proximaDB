@@ -17,7 +17,7 @@ use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 
 /// Configuration for the universal search pipeline
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
     /// Number of results to return
     pub top_k: usize,
@@ -60,7 +60,7 @@ impl Default for SearchConfig {
 }
 
 /// Configuration for progressive quantization search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressiveConfig {
     /// Enable binary filtering stage
     pub enable_binary: bool,
@@ -428,31 +428,31 @@ impl UniversalSearchPipeline {
                 .filter_map(|(key, value)| {
                     value.value.map(|v| {
                         let json_value = match v {
-                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                 serde_json::Value::String(s)
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
                                 serde_json::Value::Number(
                                     serde_json::Number::from_f64(f)
                                         .unwrap_or(serde_json::Number::from(0)),
                                 )
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                 serde_json::Value::Bool(b)
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                                 serde_json::Value::Number(serde_json::Number::from(i))
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
                                 serde_json::Value::String("[binary data]".to_string())
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => {
                                 serde_json::Value::Null
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
                                 serde_json::Value::String("[array]".to_string())
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
                                 serde_json::Value::String("[object]".to_string())
                             }
                         };
@@ -467,19 +467,19 @@ impl UniversalSearchPipeline {
                 use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
                 let sql_value = match value {
                     serde_json::Value::String(s) => proximadb_v1::SqlValue {
-                        value: Some(sql_value::Value::StringValue(s)),
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
                     },
                     serde_json::Value::Number(n) => {
                         if let Some(f) = n.as_f64() {
                             proximadb_v1::SqlValue {
-                                value: Some(sql_value::Value::NumberValue(f)),
+                                value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
                             }
                         } else {
                             proximadb_v1::SqlValue { value: None }
                         }
                     }
                     serde_json::Value::Bool(b) => proximadb_v1::SqlValue {
-                        value: Some(sql_value::Value::BoolValue(b)),
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
                     },
                     _ => proximadb_v1::SqlValue { value: None },
                 };

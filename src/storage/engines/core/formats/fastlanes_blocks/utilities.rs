@@ -477,7 +477,7 @@ pub struct MemoryUsageReport {
     pub compression_ratio: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkloadCharacteristics {
     pub workload_type: WorkloadType,
     pub expected_record_count: u64,
@@ -487,7 +487,7 @@ pub struct WorkloadCharacteristics {
     pub memory_constraints: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WorkloadType {
     HighThroughput,
     LowLatency,
@@ -495,7 +495,7 @@ pub enum WorkloadType {
     AnalyticsHeavy,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationReport {
     pub total_records: usize,
     pub valid_records: usize,
@@ -516,14 +516,14 @@ impl Default for ValidationReport {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordValidationError {
     pub record_index: usize,
     pub record_id: Option<String>,
     pub issues: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizedVectorLayout {
     pub original_dimension: usize,
     pub aligned_dimension: usize,
@@ -534,7 +534,7 @@ pub struct OptimizedVectorLayout {
     pub expected_speedup: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessLogEntry {
     pub timestamp: i64,
     pub record_id: String,
@@ -542,7 +542,7 @@ pub struct AccessLogEntry {
     pub response_time_ms: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessPatternAnalysis {
     pub total_accesses: usize,
     pub temporal_locality: f64,
@@ -551,7 +551,7 @@ pub struct AccessPatternAnalysis {
     pub recommended_optimizations: Vec<OptimizationRecommendation>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationRecommendation {
     pub optimization_type: String,
     pub description: String,
@@ -559,7 +559,7 @@ pub struct OptimizationRecommendation {
     pub implementation_cost: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEstimate {
     pub vector_memory: usize,
     pub quantized_memory: usize,
@@ -569,14 +569,14 @@ pub struct MemoryEstimate {
     pub memory_savings: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceCheckpoint {
     pub name: String,
     pub timestamp: std::time::Duration,
     pub memory_usage: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceProfile {
     pub total_time_ms: u64,
     pub checkpoints: Vec<PerformanceCheckpoint>,

@@ -554,7 +554,7 @@ pub enum WorkloadType {
 }
 
 /// Engine requirements for recommendation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineRequirements {
     pub needs_columnar: bool,
     pub needs_compression: bool,

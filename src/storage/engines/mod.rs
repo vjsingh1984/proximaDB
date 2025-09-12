@@ -135,7 +135,7 @@ pub use universal::{
 };
 
 // InsertResult structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InsertResult {
     pub entries_written: i64,
     pub duration_micros: i64,

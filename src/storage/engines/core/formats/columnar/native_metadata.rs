@@ -589,7 +589,7 @@ impl NativeMetadataHandler {
 }
 
 /// Statistics about native metadata optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeMetadataStats {
     pub total_fields: usize,
     pub native_fields: usize,

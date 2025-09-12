@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use tracing::instrument;
 
 use super::hierarchical_stats::ZoneMap;
-use crate::compute::distance_computation::DistanceMetric;
+// Note: Using string representation instead of proto enum for JSON serialization
+// Proto enums don't derive Serialize/Deserialize by default
+pub type DistanceMetric = String;
 
 /// Advanced zone map with multiple optimization strategies
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -321,7 +323,7 @@ impl AdvancedZoneMap {
         // Start with basic zone map check
         let basic_intersects =
             self.base_zone_map
-                .intersects_query(query, distance_metric, max_similarity);
+                .intersects_query(query, distance_metric.clone(), max_similarity);
         if !basic_intersects {
             result.intersects = false;
             result.confidence = 1.0;
@@ -332,30 +334,30 @@ impl AdvancedZoneMap {
         match optimization_strategy {
             OptimizationStrategy::Hierarchical => self.check_hierarchical_intersection(
                 query,
-                distance_metric,
+                distance_metric.clone(),
                 max_similarity,
                 &mut result,
             ),
             OptimizationStrategy::Probabilistic => self.check_probabilistic_intersection(
                 query,
-                distance_metric,
+                distance_metric.clone(),
                 max_similarity,
                 &mut result,
             ),
             OptimizationStrategy::Adaptive => self.check_adaptive_intersection(
                 query,
-                distance_metric,
+                distance_metric.clone(),
                 max_similarity,
                 &mut result,
             ),
             OptimizationStrategy::MultiScale => self.check_multi_scale_intersection(
                 query,
-                distance_metric,
+                distance_metric.clone(),
                 max_similarity,
                 &mut result,
             ),
             OptimizationStrategy::Hybrid => {
-                self.check_hybrid_intersection(query, distance_metric, max_similarity, &mut result)
+                self.check_hybrid_intersection(query, distance_metric.clone(), max_similarity, &mut result)
             }
         }
 
@@ -444,13 +446,13 @@ impl AdvancedZoneMap {
         let mut multi_scale = HashMap::new();
 
         // Build zone maps for different distance metrics
-        for &metric in &[
-            DistanceMetric::Euclidean,
-            DistanceMetric::Cosine,
-            DistanceMetric::DotProduct,
+        for metric in &[
+            "euclidean".to_string(),
+            "cosine".to_string(), 
+            "dot_product".to_string(),
         ] {
-            let scaled_zone = Self::build_scaled_zone_map(vectors, metric)?;
-            multi_scale.insert(metric, scaled_zone);
+            let scaled_zone = Self::build_scaled_zone_map(vectors, metric.clone())?;
+            multi_scale.insert(metric.clone(), scaled_zone);
         }
 
         Ok(multi_scale)
@@ -468,7 +470,7 @@ impl AdvancedZoneMap {
 
         // Transform vectors according to distance metric
         for vector in vectors {
-            let transformed = Self::transform_vector_for_metric(vector, metric);
+            let transformed = Self::transform_vector_for_metric(vector, metric.clone());
 
             for (i, &value) in transformed.iter().enumerate() {
                 transformed_min[i] = transformed_min[i].min(value);
@@ -485,7 +487,7 @@ impl AdvancedZoneMap {
         };
 
         Ok(ScaledZoneMap {
-            distance_metric: metric,
+            distance_metric: metric.clone(),
             transformed_bounds,
             distance_bounds: (0.0, f32::INFINITY),
             approximation_quality: 0.95,
@@ -493,8 +495,8 @@ impl AdvancedZoneMap {
     }
 
     fn transform_vector_for_metric(vector: &[f32], metric: DistanceMetric) -> Vec<f32> {
-        match metric {
-            DistanceMetric::Cosine => {
+        match metric.as_str() {
+            "cosine" => {
                 // Normalize vector for cosine distance
                 let norm: f32 = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
                 if norm > 0.0 {
@@ -503,7 +505,7 @@ impl AdvancedZoneMap {
                     vector.to_vec()
                 }
             }
-            DistanceMetric::DotProduct => {
+            "dot_product" => {
                 // For dot product, we might want to use negative values
                 vector.iter().map(|&x| -x).collect()
             }
@@ -684,7 +686,7 @@ impl AdvancedZoneMap {
 }
 
 /// Configuration for zone map construction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoneMapConfig {
     pub enable_hierarchical: bool,
     pub hierarchical_levels: u32,
@@ -735,7 +737,7 @@ pub enum PruningStrategy {
 }
 
 /// Optimization strategies for zone map usage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OptimizationStrategy {
     Hierarchical,
     Probabilistic,
@@ -838,7 +840,7 @@ impl SelectivityModel {
 // These are simplified for the scope of this implementation
 
 /// Workload statistics for optimization
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkloadStats {
     pub avg_query_selectivity: f32,
     pub avg_top_k: u32,
@@ -864,7 +866,7 @@ pub enum StorageType {
 }
 
 /// Performance history for learning
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceHistory {
     pub recent_queries: Vec<QueryPerformance>,
     pub avg_latency_ms: f32,
@@ -898,7 +900,7 @@ mod tests {
     fn test_query_characteristics() {
         let query = vec![1.0, 0.0, 2.0, 0.0, 3.0];
         let characteristics =
-            QueryCharacteristics::from_query(&query, DistanceMetric::Euclidean, 10);
+            QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
 
         assert_eq!(characteristics.top_k, 10);
         assert_eq!(characteristics.sparsity, 0.4); // 2/5 zeros
@@ -919,7 +921,7 @@ mod tests {
             norm: 2.0,
             sparsity: 0.3,
             dominant_dimensions: vec![0, 1, 2],
-            distance_metric: DistanceMetric::Euclidean,
+            distance_metric: "euclidean".to_string(),
             top_k: 10,
         };
 

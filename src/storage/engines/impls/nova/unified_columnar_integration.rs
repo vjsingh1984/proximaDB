@@ -48,7 +48,7 @@ pub struct NovaUnifiedEngine {
 }
 
 /// NOVA-specific configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NovaSpecificConfig {
     /// Enable hierarchical statistics
     pub enable_hierarchical_stats: bool,
@@ -67,7 +67,7 @@ pub struct NovaSpecificConfig {
 }
 
 /// Zone map configuration for NOVA
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoneMapConfig {
     /// Enable zone maps
     pub enable_zone_maps: bool,
@@ -86,7 +86,7 @@ pub struct ZoneMapConfig {
 }
 
 /// Streaming configuration for NOVA
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingConfig {
     /// Enable streaming processing
     pub enable_streaming: bool,
@@ -105,7 +105,7 @@ pub struct StreamingConfig {
 }
 
 /// Advanced caching configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdvancedCachingConfig {
     /// Enable adaptive caching
     pub enable_adaptive_caching: bool,
@@ -124,7 +124,7 @@ pub struct AdvancedCachingConfig {
 }
 
 /// Prefetch strategies
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PrefetchStrategy {
     None,
     Sequential,
@@ -133,7 +133,7 @@ pub enum PrefetchStrategy {
 }
 
 /// Progressive search configuration for NOVA
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressiveSearchConfig {
     /// Enable progressive refinement
     pub enable_progressive: bool,
@@ -149,7 +149,7 @@ pub struct ProgressiveSearchConfig {
 }
 
 /// Quality thresholds for progressive search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualityThresholds {
     pub binary_threshold: f32,
     pub int8_threshold: f32,
@@ -158,7 +158,7 @@ pub struct QualityThresholds {
 }
 
 /// NOVA collection metadata with hierarchical statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct NovaCollectionMetadata {
     collection_id: String,
     dimension: usize,
@@ -171,7 +171,7 @@ struct NovaCollectionMetadata {
 }
 
 /// Hierarchical statistics for NOVA optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HierarchicalStatistics {
     /// Super block statistics
     pub super_blocks: Vec<SuperBlockStats>,
@@ -187,7 +187,7 @@ pub struct HierarchicalStatistics {
 }
 
 /// Super block statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SuperBlockStats {
     pub super_block_id: usize,
     pub num_row_groups: usize,
@@ -199,7 +199,7 @@ pub struct SuperBlockStats {
 }
 
 /// Row group statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupStats {
     pub row_group_id: usize,
     pub super_block_id: usize,
@@ -211,7 +211,7 @@ pub struct RowGroupStats {
 }
 
 /// Column statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStats {
     pub name: String,
     pub null_count: usize,
@@ -222,7 +222,7 @@ pub struct ColumnStats {
 }
 
 /// Global collection statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalStats {
     pub total_vectors: usize,
     pub total_size_bytes: usize,
@@ -232,7 +232,7 @@ pub struct GlobalStats {
 }
 
 /// Zone map for multi-dimensional pruning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoneMap {
     pub zone_id: usize,
     pub parent_zone_id: Option<usize>,
@@ -311,7 +311,7 @@ impl StreamingProcessor {
 }
 
 /// Active streaming session
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct StreamingSession {
     session_id: String,
     collection_id: String,
@@ -322,7 +322,7 @@ struct StreamingSession {
 }
 
 /// Stream types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum StreamType {
     Insert,
     Search,

@@ -44,7 +44,7 @@ pub struct IndexingConfig {
 }
 
 /// Available indexing algorithms with configuration parameters
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World
     HNSW {

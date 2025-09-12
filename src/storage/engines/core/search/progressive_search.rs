@@ -46,7 +46,7 @@ pub struct ProgressiveSearchExecutor {
 }
 
 /// Candidate tracking during progressive search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchCandidate {
     /// Vector ID
     pub id: String,
@@ -68,7 +68,7 @@ pub struct SearchCandidate {
 }
 
 /// Quantized representation at a specific level
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizedRepresentation {
     /// Level identifier
     pub level_id: String,
@@ -599,29 +599,29 @@ impl ProgressiveSearchExecutor {
                 if let Some(value) = value {
                     use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
                     let sql_value = match value {
-                        sql_value::Value::StringValue(s) => proximadb_v1::SqlValue {
-                            value: Some(sql_value::Value::StringValue(s)),
+                        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
                         },
-                        sql_value::Value::NumberValue(f) => proximadb_v1::SqlValue {
-                            value: Some(sql_value::Value::NumberValue(f)),
+                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
                         },
-                        sql_value::Value::BoolValue(b) => proximadb_v1::SqlValue {
-                            value: Some(sql_value::Value::BoolValue(b)),
+                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
                         },
-                        sql_value::Value::Int64Value(i) => proximadb_v1::SqlValue {
-                            value: Some(sql_value::Value::Int64Value(i)),
+                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
                         },
-                        sql_value::Value::BytesValue(b) => proximadb_v1::SqlValue {
-                            value: Some(sql_value::Value::BytesValue(b)),
+                        crate::proto::proximadb_v1::sql_value::Value::BytesValue(b) => proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)),
                         },
-                        sql_value::Value::NullValue(n) => proximadb_v1::SqlValue {
-                            value: Some(sql_value::Value::NullValue(n)),
+                        crate::proto::proximadb_v1::sql_value::Value::NullValue(n) => proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(n)),
                         },
-                        sql_value::Value::ArrayValue(a) => proximadb_v1::SqlValue {
-                            value: Some(sql_value::Value::ArrayValue(a)),
+                        crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a) => proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a)),
                         },
-                        sql_value::Value::ObjectValue(o) => proximadb_v1::SqlValue {
-                            value: Some(sql_value::Value::ObjectValue(o)),
+                        crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o) => proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o)),
                         },
                     };
                     metadata_map.insert(key, sql_value);

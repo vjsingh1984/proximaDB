@@ -73,7 +73,7 @@ impl From<serde_json::Value> for OrderedValue {
 }
 
 /// Bit set for tracking which blocks contain matching records
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BitSet {
     bits: Vec<u64>,
     size: usize,
@@ -146,7 +146,7 @@ pub struct HistogramBucket {
 }
 
 /// Table-level statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableStatistics {
     pub total_records: u64,
     pub total_blocks: u64,
@@ -154,7 +154,7 @@ pub struct TableStatistics {
     pub column_stats: HashMap<String, GlobalColumnStats>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalColumnStats {
     pub null_ratio: f64,
     pub cardinality: u64,
@@ -227,16 +227,16 @@ impl MetadataIndex {
 
                     // Convert SqlValue to serde_json::Value
                     let json_value = match &value.value {
-                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             serde_json::Value::String(s.clone())
                         }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                             serde_json::json!(n)
                         }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                             serde_json::Value::Bool(*b)
                         }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                        Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                             serde_json::json!(i)
                         }
                         _ => serde_json::Value::Null,

@@ -13,7 +13,7 @@ use crate::core::VectorRecord;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
 /// Configuration for batch operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchConfig {
     /// Maximum number of concurrent block loads
     pub max_concurrent_blocks: usize,

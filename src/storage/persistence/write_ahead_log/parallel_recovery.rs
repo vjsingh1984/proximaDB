@@ -52,7 +52,7 @@ pub struct DiskRecoveryStats {
 }
 
 /// Recovered WAL data for a collection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveredWalData {
     pub collection_id: String,
     pub vectors: Vec<VectorRecord>,

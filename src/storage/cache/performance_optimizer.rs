@@ -37,7 +37,7 @@ struct OptimizationHistory {
     impacts: HashMap<String, PerformanceImpact>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct OptimizationDecision {
     timestamp: SystemTime,
     action: OptimizationAction,
@@ -46,7 +46,7 @@ struct OptimizationDecision {
     metrics_after: Option<CacheMetricsSnapshot>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OptimizationAction {
     AdjustMemory {
         cache_type: CacheType,
@@ -66,7 +66,7 @@ pub enum OptimizationAction {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PerformanceImpact {
     hit_rate_change: f64,
     latency_change: f64,
@@ -82,7 +82,7 @@ struct AutoTuner {
     model: Arc<RwLock<PerformanceModel>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TuningParameters {
     /// Enable auto-tuning
     enabled: bool,
@@ -106,7 +106,7 @@ struct PerformanceModel {
     coefficients: ModelCoefficients,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DataPoint {
     memory_allocation: HashMap<CacheType, usize>,
     hit_rate: f64,
@@ -114,7 +114,7 @@ struct DataPoint {
     workload_characteristics: WorkloadCharacteristics,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct WorkloadCharacteristics {
     read_write_ratio: f64,
     hot_key_percentage: f64,
@@ -496,7 +496,7 @@ impl PerformanceModel {
 }
 
 /// Optimization report
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationReport {
     pub current_performance: PerformanceSnapshot,
     pub optimization_hints: Vec<OptimizationHint>,
@@ -504,7 +504,7 @@ pub struct OptimizationReport {
     pub predicted_improvement: PredictedImprovement,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceSnapshot {
     pub hit_rate: f64,
     pub avg_latency_ms: f64,
@@ -524,7 +524,7 @@ impl PerformanceSnapshot {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationHint {
     pub category: String,
     pub severity: HintSeverity,
@@ -532,14 +532,14 @@ pub struct OptimizationHint {
     pub action: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HintSeverity {
     Low,
     Medium,
     High,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecommendedAction {
     pub priority: ActionPriority,
     pub action: OptimizationAction,
@@ -547,21 +547,21 @@ pub struct RecommendedAction {
     pub risk: RiskLevel,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActionPriority {
     Low,
     Medium,
     High,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RiskLevel {
     Low,
     Medium,
     High,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictedImprovement {
     pub hit_rate_improvement: f64,
     pub latency_reduction_percent: f64,

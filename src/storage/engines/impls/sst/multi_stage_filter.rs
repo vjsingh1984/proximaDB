@@ -477,7 +477,7 @@ impl ThreeStageFilterPipeline {
 }
 
 /// Global row index that can reconstruct the original record
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalRowIndex {
     pub block_id: u32,
     pub local_index: usize,

@@ -228,7 +228,7 @@ pub struct CompressionThresholds {
 }
 
 /// Compression parameters for operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionParameters {
     pub config: RowBasedCompressionConfig,
     pub context: CompressionContext,

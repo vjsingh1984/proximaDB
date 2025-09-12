@@ -112,7 +112,7 @@ impl Default for PerformanceConfig {
 }
 
 /// Disk sync mode for durability vs performance trade-off
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyncMode {
     /// Never sync (fastest, least durable)
     Never,
@@ -127,7 +127,7 @@ pub enum SyncMode {
 }
 
 /// Durability level for WAL writes (more granular than SyncMode)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DurabilityLevel {
     /// No sync - fastest, but risk of data loss (development only)
     NoSync,
@@ -151,7 +151,7 @@ pub enum DurabilityLevel {
 }
 
 /// WAL strategy type selection
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WriteBufferStrategyType {
     /// Modern Avro batch strategy with zero-copy optimization
     AvroBatch,
@@ -202,7 +202,7 @@ pub struct MultiDiskConfig {
 }
 
 /// Strategy for distributing collections across disks
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DiskDistributionStrategy {
     /// Round-robin distribution
     RoundRobin,
@@ -239,7 +239,7 @@ pub struct MemTableConfig {
 }
 
 /// Memtable strategy type selection
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MemTableType {
     /// Skip List - High write throughput, ordered data (RocksDB/LevelDB default)
     SkipList,
@@ -507,7 +507,7 @@ impl WALConfig {
 }
 
 /// Effective configuration for a specific collection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionEffectiveConfig {
     pub disk_segment_size: usize,
     pub compression: CompressionConfig,

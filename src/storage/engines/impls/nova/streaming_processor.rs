@@ -10,7 +10,7 @@ use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio::time::{Duration, timeout};
 use tracing::{debug, info, warn};
 /// Configuration for streaming row group processing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamingConfig {
     /// Maximum memory usage per processing pipeline
     pub max_memory_bytes: usize,

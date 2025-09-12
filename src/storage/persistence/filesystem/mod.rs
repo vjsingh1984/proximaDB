@@ -445,7 +445,6 @@ pub struct TierConfig {
     pub max_capacity_bytes: Option<u64>,
 
     /// Current usage in bytes (tracked runtime)
-    #[serde(skip)]
     pub current_usage_bytes: u64,
 
     /// Enable compression for this tier

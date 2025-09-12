@@ -42,7 +42,7 @@ pub struct AtomicWriteConfig {
 }
 
 /// Atomic write strategies
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AtomicWriteStrategy {
     /// Direct write - fastest, suitable for R&D and local testing
     /// Risk: Power failure can corrupt files

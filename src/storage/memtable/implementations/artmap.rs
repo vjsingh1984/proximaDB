@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use super::super::core::{MemtableCore, MemtableMetrics};
 
 /// Adaptive Radix Tree node types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum ArtNode<V> {
     /// Leaf node containing the actual value
     Leaf { value: V },
@@ -330,7 +330,7 @@ where
 }
 
 /// Memory efficiency statistics for ART
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtMemoryStats {
     pub total_size_bytes: usize,
     pub entry_count: usize,

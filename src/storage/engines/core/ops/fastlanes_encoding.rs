@@ -152,7 +152,7 @@ pub enum VectorEncodingLayout {
 }
 
 /// Encoded dimension data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncodedDimension {
     pub dimension_index: usize,
     pub encoded_data: Vec<u8>,
@@ -160,7 +160,7 @@ pub struct EncodedDimension {
 }
 
 /// Group of encoded dimensions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DimensionGroup {
     pub start_dim: usize,
     pub end_dim: usize,
@@ -168,7 +168,7 @@ pub struct DimensionGroup {
 }
 
 /// Columnar encoded vectors output
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnarEncodedVectors {
     pub num_vectors: usize,
     pub dimension: usize,
@@ -176,7 +176,7 @@ pub struct ColumnarEncodedVectors {
 }
 
 /// Row-wise encoded vectors output
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowWiseEncodedVectors {
     pub num_vectors: usize,
     pub dimension: usize,
@@ -185,7 +185,7 @@ pub struct RowWiseEncodedVectors {
 }
 
 /// Unified encoded vectors output
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EncodedVectors {
     Columnar(ColumnarEncodedVectors),
     RowWise(RowWiseEncodedVectors),

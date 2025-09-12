@@ -49,9 +49,7 @@ pub struct SuperBlockStats {
 
     /// Access patterns for caching decisions
     pub access_count: u64,
-    #[serde(skip, default = "Instant::now")]
     pub last_access: Instant,
-    #[serde(skip, default = "Instant::now")]
     pub creation_time: Instant,
 }
 
@@ -150,7 +148,7 @@ pub struct NovaHierarchicalCache {
 }
 
 /// Global statistics maintained as sidecar for cross-collection optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalStatistics {
     /// Collection-level statistics
     pub collection_stats: HashMap<String, CollectionStatistics>,
@@ -162,7 +160,7 @@ pub struct GlobalStatistics {
     pub query_patterns: QueryPatterns,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionStatistics {
     pub total_vectors: u64,
     pub avg_vector_size: usize,
@@ -172,7 +170,7 @@ pub struct CollectionStatistics {
     pub hot_zones: Vec<ZoneMap>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryPatterns {
     pub frequent_filters: HashMap<String, u64>,
     pub common_projections: Vec<Vec<String>>,
@@ -424,7 +422,7 @@ impl NovaHierarchicalCache {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationHints {
     pub hot_zones: Vec<ZoneMap>,
     pub common_projections: Vec<Vec<String>>,

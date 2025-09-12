@@ -24,7 +24,7 @@ pub struct IdIndex {
 }
 
 /// B+ tree node
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BPlusNode {
     Internal {
         keys: Vec<String>,
@@ -248,7 +248,7 @@ impl IdIndex {
 }
 
 /// Statistics for the ID index
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexStats {
     pub total_ids: u64,
     pub unique_ids: u64,
@@ -268,7 +268,7 @@ pub struct TwoLevelIdIndex {
     sparse_factor: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockRange {
     pub start_id: String,
     pub end_id: String,

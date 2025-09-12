@@ -648,30 +648,30 @@ impl SstableWriter {
 
                 // Convert SqlValue to JSON for statistics
                 let value = match &sql_value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
                         serde_json::Value::String("[binary data]".to_string())
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         serde_json::Value::Null
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
                         serde_json::Value::String("[array]".to_string())
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
                         serde_json::Value::String("[object]".to_string())
                     }
                     None => serde_json::Value::Null,
@@ -881,30 +881,30 @@ impl SstableWriter {
 
                 // Convert SqlValue to JSON for statistics (needed for filter expressions)
                 let value = match &sql_value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
                             .map(serde_json::Value::Number)
                             .unwrap_or(serde_json::Value::Null)
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => {
                         serde_json::Value::String("[binary data]".to_string())
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         serde_json::Value::Null
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
                         serde_json::Value::String("[array]".to_string())
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
                         serde_json::Value::String("[object]".to_string())
                     }
                     None => serde_json::Value::Null,

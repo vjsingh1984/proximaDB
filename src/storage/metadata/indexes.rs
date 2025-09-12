@@ -28,7 +28,7 @@ use tokio::sync::RwLock;
 use crate::proto::proximadb_v1::Collection;
 
 /// Fast lookup result for metadata queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionLookupResult {
     pub uuid: String,
     pub name: String,

@@ -71,7 +71,7 @@ pub struct StreamingRowGroupIterator {
     batch_size: usize,
 }
 /// Progressive search configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressiveSearchConfig {
     /// Enable binary quantization filtering
     pub use_binary_filter: bool,

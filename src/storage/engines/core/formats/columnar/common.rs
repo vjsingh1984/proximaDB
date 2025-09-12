@@ -439,7 +439,7 @@ struct MetadataCache {
 }
 
 /// Cached file metadata with expiration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedFileMetadata {
     metadata: ColumnarFileMetadata,
     schema: Arc<Schema>,

@@ -35,7 +35,7 @@ pub struct ClusterStatistics {
     pub last_recluster: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterInfo {
     pub cluster_id: u32,
     pub hilbert_key: HilbertKey,

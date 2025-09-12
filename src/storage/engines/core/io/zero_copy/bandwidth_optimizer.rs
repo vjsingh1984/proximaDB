@@ -128,7 +128,7 @@ pub enum AccessPattern {
 }
 
 /// Decision factors and their weights
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionFactors {
     /// Percentage of file data actually needed
     pub data_percentage: f32,
@@ -147,7 +147,7 @@ pub struct DecisionFactors {
 }
 
 /// Decision rationale with detailed reasoning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionRationale {
     /// Primary decision factor
     pub primary_factor: String,
@@ -686,7 +686,7 @@ pub struct AccessPatternPredictor {
     config: AccessPredictionConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AccessEvent {
     timestamp: Instant,
     query_type: QueryType,

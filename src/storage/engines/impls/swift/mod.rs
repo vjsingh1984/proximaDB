@@ -842,12 +842,12 @@ impl SwiftFile {
 }
 
 /// Metadata filter for queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataFilter {
     pub conditions: Vec<FilterCondition>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FilterCondition {
     Equals(String, serde_json::Value),
     Range(String, serde_json::Value, serde_json::Value),

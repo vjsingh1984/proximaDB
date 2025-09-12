@@ -43,7 +43,7 @@ pub struct ViperFactory {
 }
 
 /// Complete VIPER configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperConfiguration {
     /// Core storage configuration
     pub storage_config: ViperStorageConfig,
@@ -65,7 +65,7 @@ pub struct ViperConfiguration {
 }
 
 /// VIPER storage configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperStorageConfig {
     /// Enable VIPER clustering
     pub enable_clustering: bool,
@@ -99,7 +99,7 @@ pub struct ViperStorageConfig {
 }
 
 /// VIPER schema configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperSchemaConfig {
     /// Enable dynamic schema generation
     pub enable_dynamic_schema: bool,
@@ -121,7 +121,7 @@ pub struct ViperSchemaConfig {
 }
 
 /// VIPER processing configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperProcessingConfig {
     /// Enable preprocessing optimizations
     pub enable_preprocessing: bool,
@@ -140,7 +140,7 @@ pub struct ViperProcessingConfig {
 }
 
 /// TTL (Time-To-Live) configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TTLConfig {
     /// Enable TTL functionality
     pub enabled: bool,
@@ -162,7 +162,7 @@ pub struct TTLConfig {
 }
 
 /// Compaction configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionConfig {
     /// Enable automatic compaction
     pub enabled: bool,
@@ -187,7 +187,7 @@ pub struct CompactionConfig {
 }
 
 /// Performance optimization configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationConfig {
     /// Enable adaptive clustering
     pub enable_adaptive_clustering: bool,
@@ -206,7 +206,7 @@ pub struct OptimizationConfig {
 }
 
 /// Strategy selection mode
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StrategySelectionMode {
     /// Automatic selection based on collection characteristics
     Adaptive,
@@ -222,7 +222,7 @@ pub enum StrategySelectionMode {
 }
 
 /// Batch processing configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchProcessingConfig {
     /// Default batch size
     pub default_batch_size: usize,
@@ -238,7 +238,7 @@ pub struct BatchProcessingConfig {
 }
 
 /// Configuration builder with fluent interface
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperConfigurationBuilder {
     config: ViperConfiguration,
 }
@@ -330,7 +330,7 @@ pub struct TimeSeriesSchemaStrategy {
 }
 
 /// Time precision for time-series data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TimePrecision {
     Millisecond,
     Microsecond,
@@ -530,7 +530,7 @@ pub struct ViperComponents {
 }
 
 /// Collection configuration (simplified)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionConfig {
     pub name: String,
     pub filterable_metadata_fields: Vec<String>,

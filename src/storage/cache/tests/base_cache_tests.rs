@@ -4,7 +4,7 @@ use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
 // CacheKey for String already implemented in vector_data.rs
 impl CacheKey for u64 {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TestValue {
     data: Vec<u8>,
 }

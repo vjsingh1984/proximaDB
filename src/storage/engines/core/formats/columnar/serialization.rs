@@ -1010,7 +1010,7 @@ impl ColumnarSerializer {
 }
 
 /// Format preference for deserialization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FormatPreference {
     /// Prefer highest quality (FP32 > INT8 > PQ > Binary)
     HighestQuality,

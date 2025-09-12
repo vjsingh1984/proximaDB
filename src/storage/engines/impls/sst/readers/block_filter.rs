@@ -18,7 +18,7 @@ use crate::core::bloom::SstableBloomFilter;
 use crate::storage::engines::impls::sst::IndexEntry;
 
 /// Query filter for intelligent block skipping
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockFilter {
     /// ID to search for (point query)
     pub target_id: Option<String>,
@@ -31,7 +31,7 @@ pub struct BlockFilter {
 }
 
 /// Metadata filter types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetadataFilter {
     Equals(JsonValue),
     Range(JsonValue, JsonValue), // min, max

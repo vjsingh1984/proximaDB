@@ -228,7 +228,7 @@ impl HelixFlushCoordinator {
 
 /// Engine-specific flush results
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SstFlushResult {
     sstable_files: Vec<String>,
     bytes_written: u64,
@@ -236,7 +236,7 @@ struct SstFlushResult {
     bloom_filter_size: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ViperFlushResult {
     parquet_files: Vec<String>,
     bytes_written: u64,
@@ -244,7 +244,7 @@ struct ViperFlushResult {
     compression_ratio: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct HelixFlushResult {
     hilbert_sorted_files: Vec<String>, 
     bytes_written: u64,
@@ -286,7 +286,7 @@ impl FlushMetrics {
 }
 
 /// Overall flush status for monitoring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FlushStatus {
     pub sst_active_flushes: usize,
     pub viper_active_flushes: usize,

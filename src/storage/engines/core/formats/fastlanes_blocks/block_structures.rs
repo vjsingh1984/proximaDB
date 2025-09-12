@@ -122,7 +122,7 @@ pub struct BlockMetadataStats {
 /// 3. **Progressive Refinement**: Support multiple quantization levels
 /// 4. **Zero-Copy**: Enable direct memory mapping when possible
 /// 5. **Extensibility**: Encoding marker allows future format evolution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FastLanesDataBlock {
     /// FASTLANES ENCODING MARKER (1 byte) - First byte of serialized block
     ///
@@ -422,7 +422,7 @@ impl FastLanesDataBlock {
             r.metadata.iter().any(|(key, sql_value)| {
             key == "_deleted" && matches!(
                 sql_value.value.as_ref(),
-                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "true"
+                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "true"
             )
         })
         });
@@ -772,16 +772,16 @@ impl FastLanesDataBlock {
                     if let Some(value) = &sql_value.value {
                         // Encode the metadata value based on its type
                         let value_bytes = match value {
-                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                 s.as_bytes().to_vec()
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                                 n.to_le_bytes().to_vec()
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                                 i.to_le_bytes().to_vec()
                             }
-                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                            crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                 vec![if *b { 1 } else { 0 }]
                             }
                             _ => vec![], // Handle other variants

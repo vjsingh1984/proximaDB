@@ -20,19 +20,15 @@ use crate::storage::engines::core::formats::columnar::{
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StorageConfig {
     /// Global storage settings
-    #[serde(default)]
     pub storage: GlobalStorageConfig,
     
     /// Monitoring settings
-    #[serde(default)]
     pub monitoring: MonitoringConfig,
     
     /// Migration settings
-    #[serde(default)]
     pub migration: MigrationConfig,
     
     /// Advanced settings
-    #[serde(default)]
     pub advanced: AdvancedConfig,
 }
 
@@ -40,200 +36,143 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GlobalStorageConfig {
     /// Default storage engine
-    #[serde(default = "default_engine")]
     pub default_engine: String,
     
     /// Enable Parquet optimizations globally
-    #[serde(default = "default_true")]
     pub enable_parquet_optimizations: bool,
     
     /// Parquet writer configuration
-    #[serde(default)]
     pub parquet_writer: TomlParquetWriterConfig,
     
     /// Footer cache configuration
-    #[serde(default)]
     pub footer_cache: TomlFooterCacheConfig,
     
     /// Hybrid writer configuration
-    #[serde(default)]
     pub hybrid_writer: TomlHybridWriterConfig,
     
     /// Per-engine configurations
-    #[serde(default)]
     pub engines: EngineConfigs,
 }
 
 /// TOML representation of Parquet writer config
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TomlParquetWriterConfig {
-    #[serde(default = "default_row_group_size")]
     pub row_group_size: usize,
     
-    #[serde(default = "default_page_size")]
     pub page_size: usize,
     
-    #[serde(default = "default_true")]
     pub enable_bloom_filters: bool,
     
-    #[serde(default = "default_bloom_fpp")]
     pub bloom_filter_fpp: f64,
     
-    #[serde(default)]
     pub bloom_filter_columns: Vec<String>,
     
-    #[serde(default = "default_true")]
     pub enable_column_statistics: bool,
     
-    #[serde(default = "default_true")]
     pub enable_page_index: bool,
     
-    #[serde(default = "default_true")]
     pub enable_column_index: bool,
     
-    #[serde(default = "default_true")]
     pub enable_offset_index: bool,
     
-    #[serde(default = "default_page_index_granularity")]
     pub page_index_granularity: usize,
     
-    #[serde(default = "default_compression")]
     pub compression: String,
     
-    #[serde(default = "default_true")]
     pub enable_dictionary: bool,
     
-    #[serde(default = "default_dictionary_threshold")]
     pub dictionary_threshold: f64,
     
-    #[serde(default = "default_true")]
     pub enable_delta_encoding: bool,
     
-    #[serde(default = "default_true")]
     pub enable_byte_stream_split: bool,
     
-    #[serde(default = "default_true")]
     pub enable_pq_sorting: bool,
     
-    #[serde(default = "default_pq_segments")]
     pub pq_sorting_segments: usize,
     
-    #[serde(default = "default_pq_codebook_size")]
     pub pq_sorting_codebook_size: usize,
     
-    #[serde(default = "default_true")]
     pub enable_native_metadata: bool,
     
-    #[serde(default = "default_metadata_samples")]
     pub metadata_inference_samples: usize,
     
-    #[serde(default = "default_write_batch_size")]
     pub write_batch_size: usize,
     
-    #[serde(default = "default_false")]
     pub id_less_storage: bool,
 }
 
 /// TOML representation of footer cache config
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TomlFooterCacheConfig {
-    #[serde(default = "default_true")]
     pub enable: bool,
     
-    #[serde(default = "default_cache_entries")]
     pub max_entries: u64,
     
-    #[serde(default = "default_ttl_seconds")]
     pub ttl_seconds: u64,
     
-    #[serde(default = "default_idle_seconds")]
     pub time_to_idle_seconds: u64,
     
-    #[serde(default = "default_true")]
     pub enable_persistence: bool,
     
-    #[serde(default = "default_persistence_path")]
     pub persistence_path: String,
     
-    #[serde(default = "default_true")]
     pub enable_prefetch: bool,
     
-    #[serde(default = "default_prefetch_threshold")]
     pub prefetch_threshold: u64,
     
-    #[serde(default = "default_warming_interval")]
     pub warming_interval_seconds: u64,
     
-    #[serde(default = "default_true")]
     pub compression: bool,
     
-    #[serde(default = "default_compression_level")]
     pub compression_level: i32,
 }
 
 /// TOML representation of hybrid writer config
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TomlHybridWriterConfig {
-    #[serde(default = "default_true")]
     pub enable: bool,
     
-    #[serde(default = "default_writer_mode")]
     pub initial_mode: String,
     
-    #[serde(default = "default_true")]
     pub enable_auto_switch: bool,
     
-    #[serde(default = "default_mode_switch_threshold")]
     pub mode_switch_threshold: usize,
     
-    #[serde(default = "default_pattern_window")]
     pub pattern_window_size: usize,
     
-    #[serde(default = "default_streaming_threshold")]
     pub streaming_threshold: f64,
     
-    #[serde(default = "default_batch_threshold")]
     pub batch_threshold: usize,
     
-    #[serde(default = "default_max_buffer_size")]
     pub max_buffer_size: usize,
     
-    #[serde(default = "default_buffer_time_limit")]
     pub buffer_time_limit_seconds: u64,
     
-    #[serde(default = "default_true")]
     pub enable_concurrent_writes: bool,
     
-    #[serde(default = "default_concurrent_writers")]
     pub max_concurrent_writers: usize,
     
-    #[serde(default = "default_true")]
     pub optimize_row_group_size: bool,
     
-    #[serde(default = "default_min_row_group")]
     pub min_row_group_size: usize,
     
-    #[serde(default = "default_max_row_group")]
     pub max_row_group_size: usize,
 }
 
 /// Per-engine configurations
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct EngineConfigs {
-    #[serde(default)]
     pub viper: EngineConfig,
     
-    #[serde(default)]
     pub nova: EngineConfig,
     
-    #[serde(default)]
     pub sst: SstEngineConfig,
 }
 
 /// Individual engine configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct EngineConfig {
-    #[serde(default = "default_true")]
     pub inherit_global_settings: bool,
     
     /// Optional overrides
@@ -256,42 +195,32 @@ impl Default for EngineConfig {
 /// SST-specific configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SstEngineConfig {
-    #[serde(default = "default_true")]
     pub enable_bloom_filters: bool,
     
-    #[serde(default = "default_bloom_fpp")]
     pub bloom_filter_fpp: f64,
     
-    #[serde(default = "default_sst_compression")]
     pub compression: String,
     
-    #[serde(default = "default_compression_level")]
     pub compression_level: i32,
 }
 
 /// Monitoring configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MonitoringConfig {
-    #[serde(default)]
     pub parquet_optimizations: MonitoringSettings,
 }
 
 /// Monitoring settings
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MonitoringSettings {
-    #[serde(default = "default_true")]
     pub enable_metrics: bool,
     
-    #[serde(default = "default_metrics_interval")]
     pub metrics_interval_seconds: u64,
     
-    #[serde(default = "default_cache_threshold")]
     pub cache_hit_rate_threshold: f64,
     
-    #[serde(default = "default_compression_threshold")]
     pub compression_ratio_threshold: f64,
     
-    #[serde(default = "default_switch_frequency")]
     pub mode_switch_frequency: usize,
 }
 
@@ -310,10 +239,8 @@ impl Default for MonitoringSettings {
 /// Migration configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MigrationConfig {
-    #[serde(default = "default_true")]
     pub auto_migrate: bool,
     
-    #[serde(default = "default_true")]
     pub apply_optimizations_to_existing: bool,
 }
 
@@ -329,19 +256,14 @@ impl Default for MigrationConfig {
 /// Advanced configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AdvancedConfig {
-    #[serde(default = "default_writer_memory")]
     pub max_memory_per_writer_mb: usize,
     
-    #[serde(default = "default_cache_memory")]
     pub cache_memory_limit_mb: usize,
     
-    #[serde(default = "default_io_threads")]
     pub io_threads: usize,
     
-    #[serde(default = "default_prefetch_depth")]
     pub prefetch_depth: usize,
     
-    #[serde(default = "default_true")]
     pub enable_hardware_acceleration: bool,
 }
 

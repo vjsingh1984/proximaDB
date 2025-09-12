@@ -24,7 +24,7 @@ pub enum BackgroundTaskStatus {
 }
 
 /// Background maintenance statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundMaintenanceStats {
     pub flush_operations_completed: u64,
     pub flush_operations_skipped: u64,

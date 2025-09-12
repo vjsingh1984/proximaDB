@@ -203,7 +203,7 @@ pub struct PerformanceConfiguration {
 }
 
 /// Search mode for row-based engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RowBasedSearchMode {
     /// AXIS returns IDs, lookup full vectors
     IndexDriven {
@@ -433,7 +433,7 @@ pub mod utils {
         config
     }
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub enum WorkloadType {
         HighThroughputWrite,
         LowLatencyRead,

@@ -80,7 +80,7 @@ pub enum AlertSeverity {
 }
 
 /// Alert thresholds configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertThresholds {
     min_hit_rate: f64,
     max_memory_usage: f64,

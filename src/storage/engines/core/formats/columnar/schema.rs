@@ -140,7 +140,7 @@ pub struct ColumnarSchemaBuilder {
 }
 
 /// Cached schema with expiration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedSchema {
     schema: Arc<Schema>,
     compression_metadata: CompressionMetadata,

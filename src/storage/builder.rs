@@ -19,7 +19,7 @@ use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Storage layout strategy
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageLayoutStrategy {
     /// Traditional LSM-tree based storage
     Regular,

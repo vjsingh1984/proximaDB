@@ -49,7 +49,7 @@ use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, CrossCa
 // ============================================================================
 
 /// Reading strategy selector based on query characteristics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReadingStrategySelector {
     pub seek_efficiency_threshold: f64,
     pub quantization_candidate_multiplier: usize,
@@ -77,7 +77,7 @@ pub struct SchemaMapping {
 }
 
 /// Collection context for query optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionContext {
     pub collection_id: String,
     pub file_paths: Vec<String>,
@@ -91,7 +91,7 @@ pub struct CollectionContext {
 }
 
 /// Reading strategy enumeration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReadingStrategy {
     /// Direct Arrow reading for simple queries
     DirectArrow {
@@ -113,7 +113,7 @@ pub enum ReadingStrategy {
 // Additional VIPER-specific types consolidated from VIPER reader
 
 /// Unified configuration for all reading strategies
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReaderConfig {
     pub seek_efficiency_threshold: f64,
     pub quantization_candidate_multiplier: usize,
@@ -145,7 +145,7 @@ impl Default for ReaderConfig {
 }
 
 /// Filter value types with comprehensive comparison support (VIPER-specific)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FilterValue {
     Equals(serde_json::Value),
     NotEquals(serde_json::Value),
@@ -164,7 +164,7 @@ pub enum FilterValue {
 }
 
 /// Quantization methods supported
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuantizationMethod {
     PQ4,
     PQ8,
@@ -172,7 +172,7 @@ pub enum QuantizationMethod {
 }
 
 /// Seek range for efficient data access
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeekRange {
     pub offset: usize,
     pub length: usize,
@@ -181,7 +181,7 @@ pub struct SeekRange {
 }
 
 /// Vector position for precise access
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorPosition {
     pub row_group_idx: usize,
     pub row_offset: usize,
@@ -189,7 +189,7 @@ pub struct VectorPosition {
 }
 
 /// Stage 2 strategies for quantized search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stage2Strategy {
     FullRowGroups(Vec<usize>),
     SpecificVectors(Vec<VectorPosition>),
@@ -197,7 +197,7 @@ pub enum Stage2Strategy {
 }
 
 /// Search type for different query patterns
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SearchType {
     Similarity,
     IdLookup,
@@ -206,7 +206,7 @@ pub enum SearchType {
 }
 
 /// Row group access patterns
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RowGroupAccessPattern {
     Sequential,
     RandomAccess,
@@ -2154,7 +2154,7 @@ impl UnifiedParquetReader {
 }
 
 /// Page pruning information for optimized queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PagePruningInfo {
     pub row_group_idx: usize,
     pub page_ranges: Vec<PageRange>,
@@ -2162,7 +2162,7 @@ pub struct PagePruningInfo {
 }
 
 /// Page range for reading specific pages
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageRange {
     pub start: usize,
     pub end: usize,

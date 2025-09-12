@@ -403,7 +403,7 @@ impl PerformanceBenchmark {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkResults {
     pub simple_search_ms: u128,
     pub filtered_search_ms: u128,

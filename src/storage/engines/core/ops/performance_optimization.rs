@@ -153,7 +153,7 @@ pub fn configure_memory_pool_from_config(pool_size_mb: Option<usize>) {
 }
 
 /// Universal optimization strategy applicable to all storage engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UniversalOptimizationStrategy {
     /// Optimize for maximum read performance
     PerformanceFirst,
@@ -168,7 +168,7 @@ pub enum UniversalOptimizationStrategy {
 }
 
 /// Universal I/O configuration for all storage engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniversalIOConfig {
     pub enable_memory_mapping: bool,     // Memory-mapped file access
     pub cache_size_mb: usize,            // Total cache size
@@ -198,7 +198,7 @@ impl Default for UniversalIOConfig {
 }
 
 /// Universal performance optimization provider for all storage engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UniversalPerformanceOptimizer {
     /// I/O configuration
     io_config: UniversalIOConfig,
@@ -223,7 +223,7 @@ pub struct UniversalPerformanceOptimizer {
 }
 
 /// Access statistics for optimization decisions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessStats {
     pub access_count: u64,
     pub last_access: chrono::DateTime<chrono::Utc>,

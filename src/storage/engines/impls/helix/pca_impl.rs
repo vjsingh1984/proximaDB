@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use crate::core::VectorRecord;
 
 /// Enhanced PCA model with proper eigendecomposition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedPCAModel {
     /// Principal components (eigenvectors) - each row is a component
     pub components: DMatrix<f32>,

@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use tracing::debug;
 
 /// Cache metrics collector
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheMetrics {
     // Hit/Miss counters per tier
     l1_hits: Arc<AtomicU64>,

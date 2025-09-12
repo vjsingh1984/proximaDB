@@ -167,7 +167,7 @@ pub struct ResourceUtilizationMetrics {
 }
 
 /// Performance alert conditions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertCondition {
     /// Cache hit rate below threshold
     CacheHitRateBelow(f64),
@@ -186,7 +186,7 @@ pub enum AlertCondition {
 }
 
 /// Performance alert event
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertEvent {
     /// Alert condition that triggered
     pub condition: AlertCondition,
@@ -212,7 +212,7 @@ pub enum AlertSeverity {
 }
 
 /// Optimization recommendation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationRecommendation {
     /// Category of recommendation
     pub category: RecommendationCategory,

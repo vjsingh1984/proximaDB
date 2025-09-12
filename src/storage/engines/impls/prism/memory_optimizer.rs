@@ -18,7 +18,7 @@ use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFiles
 
 /// Memory tier configuration for PRISM's hierarchical caching
 /// Aligned with PRISM's progressive quantization levels
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryTierConfig {
     /// Memory-resident tiers (always cached):
     /// Binary sketches: 1 bit/dim - fits entirely in L2 cache
@@ -66,7 +66,7 @@ impl Default for MemoryTierConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EvictionPolicy {
     LRU,
     LFU,
@@ -570,7 +570,7 @@ impl MemoryMonitor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MemoryTier {
     L1Heap,
     L2Binary,
@@ -660,7 +660,7 @@ impl PrismMemoryOptimizer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheStats {
     pub l1_hit_rate: f32,
     pub l2_hit_rate: f32,

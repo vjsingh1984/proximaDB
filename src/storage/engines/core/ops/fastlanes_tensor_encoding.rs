@@ -12,7 +12,7 @@ use std::io::{Read, Write};
 // SPARSE TENSOR ENCODING/DECODING (Common for all engines)
 // ============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SparseFormat {
     COO, // Coordinate format (row, col, value)
     CSR, // Compressed Sparse Row format
@@ -240,7 +240,7 @@ pub fn decode_sparse_tensor(
 // QUANTIZED TENSOR ENCODING/DECODING (Common for all engines)
 // ============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuantizationType {
     INT8,
     ProductQuantization {

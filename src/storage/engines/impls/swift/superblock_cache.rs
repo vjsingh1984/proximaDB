@@ -77,7 +77,6 @@ pub struct CachedSuperBlockMetadata {
 
     /// Access patterns for tree optimization
     pub access_frequency: u64,
-    #[serde(skip)]
     pub last_access: Option<Instant>,
     pub hot_datablocks: Vec<u32>,
 
@@ -206,7 +205,6 @@ pub struct QuantizationSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataBlockAccessStats {
     pub access_count: u64,
-    #[serde(skip)]
     pub last_access: Option<Instant>,
     pub avg_response_time_us: u64,
     pub cache_hit_rate: f32,
@@ -491,7 +489,7 @@ impl SwiftSuperBlockCache {
 }
 
 /// Cache statistics for monitoring SWIFT's performance
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwiftCacheStats {
     pub superblock_hits: u64,
     pub tree_navigation_hits: u64,

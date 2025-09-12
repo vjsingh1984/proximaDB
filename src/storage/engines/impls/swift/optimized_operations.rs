@@ -310,7 +310,7 @@ impl OptimizedSwiftOperations {
 // Removed wrapper - use FastLanesDataBlock::deserialize() directly
 
 /// Performance statistics for monitoring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceStats {
     pub hardware_backend: HardwareBackend,
     pub simd_operations: u64,

@@ -22,7 +22,7 @@ use super::{
 };
 
 /// Configuration for columnar search in NOVA
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnarSearchConfig {
     /// Enable predicate pushdown to Parquet
     pub enable_predicate_pushdown: bool,
@@ -82,7 +82,7 @@ pub enum SearchMode {
 }
 
 /// Search candidate for columnar processing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SearchCandidate {
     row_group_id: usize,
     row_offset: u32,

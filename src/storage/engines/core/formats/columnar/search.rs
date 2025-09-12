@@ -20,7 +20,7 @@ use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistan
 use crate::storage::engines::core::ops::crate::storage::engines::core::search::search_common::{SearchableFile, SearchableBlock, FileSearcher};
 
 /// Columnar search configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnarSearchConfig {
     /// Enable predicate pushdown to Parquet
     pub enable_predicate_pushdown: bool,
@@ -80,7 +80,7 @@ impl ColumnarSearchConfig {
 }
 
 /// ML clustering configuration for optimized search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusteringConfig {
     /// Number of clusters to search
     pub num_clusters: usize,
@@ -106,7 +106,7 @@ impl Default for ClusteringConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClusterSelectionStrategy {
     TopK,
     ThresholdBased(f32),

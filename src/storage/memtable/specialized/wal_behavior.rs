@@ -23,7 +23,7 @@ use crate::storage::memtable::implementations::global_partitioned::GlobalPartiti
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
 
 /// Write Buffer-specific vector batch for tracking deserialized data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WALVectorBatch {
     /// Batch coordination ID
     pub batch_id: BatchId,
@@ -60,16 +60,16 @@ impl WALVectorBatch {
 
                 // Also add key=value pairs for exact matching
                 let value_str = match &value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         s.clone()
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         n.to_string()
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         b.to_string()
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         i.to_string()
                     }
                     _ => continue,
@@ -209,7 +209,7 @@ impl BatchCoordinator {
 /// - Global sequence ordering for flush coordination
 /// - Per-collection data partitions for efficient operations
 /// - Content-based search within collections on unflushed data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WALBehaviorWrapper {
     /// The wrapped global partitioned memtable implementation (generic storage) - Arc for memory efficiency
     inner: Arc<GlobalPartitionedMemtable>,

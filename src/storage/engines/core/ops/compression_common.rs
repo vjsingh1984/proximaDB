@@ -1412,7 +1412,7 @@ pub struct QualityMonitoring {
 }
 
 /// Compression capabilities
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionCapabilities {
     /// Supported algorithms
     pub supported_algorithms: Vec<CompressionAlgorithm>,
@@ -1428,7 +1428,7 @@ pub struct CompressionCapabilities {
 }
 
 /// Performance characteristics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceCharacteristics {
     /// Compression speed (MB/s)
     pub compression_speed: f64,
@@ -1447,7 +1447,7 @@ pub struct PerformanceCharacteristics {
 }
 
 /// Quality characteristics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QualityCharacteristics {
     /// Typical compression ratio
     pub typical_compression_ratio: f32,

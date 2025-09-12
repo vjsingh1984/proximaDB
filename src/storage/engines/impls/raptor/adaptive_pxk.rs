@@ -6,6 +6,7 @@
 use super::common::{
     VectorCentroidCompressionMetadata, VectorCentroidMatrix, VectorCentroidStorageStrategy,
 };
+use serde::{Deserialize, Serialize};
 use super::config::{CompressionStrategy, PxKStrategy};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
@@ -55,7 +56,7 @@ pub trait PxKStorageImpl: Send + Sync {
 }
 
 /// Boundary information for a vector
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoundaryInfo {
     pub vector_idx: u32,
     pub primary_cluster: u32,

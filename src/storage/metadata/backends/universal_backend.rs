@@ -61,27 +61,21 @@ pub struct UniversalMetadataConfig {
     pub storage_url: String,
 
     /// Enable compression for Avro files
-    #[serde(default = "default_true")]
     pub compression: bool,
 
     /// Enable periodic snapshots
-    #[serde(default = "default_true")]
     pub enable_snapshots: bool,
 
     /// Snapshot after N operations
-    #[serde(default = "default_snapshot_threshold")]
     pub snapshot_threshold: u64,
 
     /// Keep N recent snapshots
-    #[serde(default = "default_keep_snapshots")]
     pub keep_snapshots: usize,
 
     /// Enable backup to secondary location
-    #[serde(default)]
     pub backup_url: Option<String>,
 
     /// Temporary directory for atomic operations
-    #[serde(default)]
     pub temp_dir: Option<String>,
 }
 

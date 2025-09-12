@@ -152,16 +152,16 @@ pub async fn search_sstable(
                     .filter_map(|(key, value)| {
                         if let Some(value) = &value.value {
                             let value_str = match value {
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                     s,
                                 ) => s.clone(),
-                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                     n,
                                 ) => n.to_string(),
-                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                     b.to_string()
                                 }
-                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                                     i.to_string()
                                 }
                                 _ => "".to_string()

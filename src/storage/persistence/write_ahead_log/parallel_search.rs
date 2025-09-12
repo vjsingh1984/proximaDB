@@ -403,19 +403,19 @@ impl ParallelWALSearch {
         for (key, sql_value) in &record.metadata {
             if let Some(value) = &sql_value.value {
                 let json_value = match value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                         serde_json::Value::String(s.clone())
                     }
-                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
+                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                         serde_json::Value::Number(
                             serde_json::Number::from_f64(*n)
                                 .unwrap_or_else(|| serde_json::Number::from(0)),
                         )
                     }
-                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
                     }
-                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                         serde_json::Value::Bool(*b)
                     }
                     _ => serde_json::Value::Null, // Handle other variants
@@ -447,12 +447,12 @@ impl SearchCandidate {
                 if let Some(value) = &sql_value.value {
                     use crate::proto::proximadb_v1::sql_value;
                     let typed_value = match value {
-                        sql_value::Value::StringValue(s) => {
+                        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                             MetadataValue::String(Arc::from(s.as_str()))
                         }
-                        sql_value::Value::NumberValue(f) => MetadataValue::Number(*f),
-                        sql_value::Value::Int64Value(i) => MetadataValue::Number(*i as f64),
-                        sql_value::Value::BoolValue(b) => MetadataValue::Bool(*b),
+                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => MetadataValue::Number(*f),
+                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => MetadataValue::Number(*i as f64),
+                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => MetadataValue::Bool(*b),
                         _ => continue, // Skip other variants for now
                     };
                     metadata_map.insert(key.clone(), typed_value);

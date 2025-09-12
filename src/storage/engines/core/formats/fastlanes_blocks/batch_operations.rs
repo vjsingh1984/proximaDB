@@ -94,7 +94,7 @@ pub enum LoadBalancingStrategy {
 }
 
 /// Batch operation result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchResult {
     /// Operation metadata
     pub operation_id: String,
@@ -118,7 +118,7 @@ pub struct BatchResult {
 }
 
 /// Partial result for batch operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartialResult {
     pub index: usize,
     pub success: bool,
@@ -128,7 +128,7 @@ pub struct PartialResult {
 }
 
 /// Cached batch result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedBatchResult {
     pub result: BatchResult,
     pub timestamp: std::time::Instant,

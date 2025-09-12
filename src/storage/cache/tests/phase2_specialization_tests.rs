@@ -177,14 +177,14 @@ async fn test_metadata_cache_specialization() {
 }
 
 // Helper structs for testing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct QueryResult {
     query_vector: Vec<f32>,
     results: Vec<SearchResult>,
     total_time_ms: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SearchResult {
     id: String,
     similarity: f32,

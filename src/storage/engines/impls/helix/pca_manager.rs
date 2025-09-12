@@ -67,7 +67,7 @@ pub struct ModelVersion {
 }
 
 /// Drift detection metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriftMetrics {
     /// Reconstruction error over time
     pub reconstruction_errors: VecDeque<f32>,

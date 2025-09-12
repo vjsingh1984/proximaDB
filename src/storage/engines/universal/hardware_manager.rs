@@ -472,7 +472,7 @@ impl HardwareAccelerationManager {
 }
 
 /// Workload characteristics for optimization strategy selection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkloadCharacteristics {
     /// Vector dimension size
     pub vector_size: usize,

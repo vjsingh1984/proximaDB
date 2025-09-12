@@ -117,7 +117,7 @@ pub trait EngineMetadata: Send + Sync {
 }
 
 /// Query context for filtering and optimization decisions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryContext {
     /// Vector similarity query
     pub query_vector: Option<Vec<f32>>,
@@ -177,7 +177,7 @@ pub enum QueryType {
 }
 
 /// Collection-specific context for optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionContext {
     /// Collection ID
     pub collection_id: String,
@@ -196,7 +196,7 @@ pub struct CollectionContext {
 }
 
 /// Access frequency classification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AccessFrequency {
     VeryHigh, // > 1000 ops/hour
     High,     // 100-1000 ops/hour
@@ -266,7 +266,7 @@ impl DataRange {
 }
 
 /// File access request for batch optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileAccessRequest {
     /// File path (local or cloud)
     pub file_path: String,
@@ -295,7 +295,7 @@ pub enum RequestPriority {
 }
 
 /// Result of metadata analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataAnalysisResult {
     /// Can the entire file be skipped?
     pub can_skip_file: bool,

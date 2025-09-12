@@ -41,7 +41,7 @@ pub struct ZeroCopyCompactionStats {
 }
 
 /// Entry in the k-way merge heap
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct MergeEntry {
     record: VectorRecord, // OPTIMIZED: Direct VectorRecord usage
     file_index: usize,
@@ -715,7 +715,7 @@ impl SstCompactor {
                             .get(key)
                             .and_then(|sql_val| match &sql_val.value {
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
                                 ) => Some(s.as_str()),
                                 _ => None,
                             });
@@ -725,7 +725,7 @@ impl SstCompactor {
                             .get(key)
                             .and_then(|sql_val| match &sql_val.value {
                                 Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
                                 ) => Some(s.as_str()),
                                 _ => None,
                             });

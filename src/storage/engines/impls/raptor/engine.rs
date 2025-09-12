@@ -1370,7 +1370,9 @@ impl RaptorEngine {
             vectors.extend_from_slice(&record.vector);
 
             // Convert metadata to JSON string
-            let metadata_json = serde_json::to_string(&record.metadata)?;
+            let metadata_json = serde_json::to_string(
+                &crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata)
+            )?;
             metadata_strs.push(Some(metadata_json));
 
             // Convert Option<i64> to Option<u32> for Arrow UInt32Array compatibility

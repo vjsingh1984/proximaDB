@@ -71,7 +71,7 @@ pub trait StorageBackend: Send + Sync + Debug {
 }
 
 /// Errors that can occur in storage backends
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageError {
     IoError(String),
     SerializationError(String),

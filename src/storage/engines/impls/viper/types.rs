@@ -54,7 +54,7 @@ pub enum ColumnIndex {
 }
 
 /// Parquet schema design for user-configurable columns
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParquetSchemaDesign {
     pub collection_id: String,
     pub fields: Vec<ParquetField>,
@@ -65,7 +65,7 @@ pub struct ParquetSchemaDesign {
 }
 
 /// Individual field in Parquet schema
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParquetField {
     pub name: String,
     pub field_type: ParquetFieldType,
@@ -74,7 +74,7 @@ pub struct ParquetField {
 }
 
 /// Parquet field types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ParquetFieldType {
     String,
     Integer,
@@ -90,7 +90,7 @@ pub enum ParquetFieldType {
 pub type ParquetCompression = crate::core::compression::CompressionAlgorithm;
 
 /// Processed vector record with separated filterable and extra metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessedVectorRecord {
     pub original_record: crate::core::VectorRecord,
     pub filterable_data: HashMap<String, serde_json::Value>,
@@ -99,7 +99,7 @@ pub struct ProcessedVectorRecord {
 
 /// Internal engine configuration for VIPER runtime state
 /// This is created from the user-facing core::config::ViperConfig
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperEngineConfig {
     /// Enable ML-driven clustering for optimal data organization
     pub enable_ml_clustering: bool,
@@ -151,7 +151,7 @@ pub struct CompressionStats {
 // Use crate::storage::engines::core::ops::UniversalCompressionConfig for configuration
 
 /// Schema configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaConfig {
     pub version: u32,
     pub backward_compatibility: bool,
@@ -161,7 +161,7 @@ pub struct SchemaConfig {
 }
 
 /// Field evolution configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldEvolution {
     pub nullable: bool,
     pub default_value: Option<serde_json::Value>,
@@ -169,7 +169,7 @@ pub struct FieldEvolution {
 }
 
 /// Migration strategy for schema evolution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MigrationStrategy {
     Copy,
     Transform(String),
@@ -178,7 +178,7 @@ pub enum MigrationStrategy {
 }
 
 /// Atomic operations configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionalOperationsConfig {
     pub staging_directory: String,
     pub atomic_writes: bool,
@@ -188,7 +188,7 @@ pub struct TransactionalOperationsConfig {
 }
 
 /// Cluster metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterMetadata {
     pub cluster_id: ClusterId,
     pub centroid: Vec<f32>,
@@ -206,7 +206,7 @@ pub use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// DEPRECATED: Use proto-generated QuantizationType instead
 /// Keeping for backward compatibility only
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuantizationType {
     ProductQuantization,
     ScalarQuantization,
@@ -214,7 +214,7 @@ pub enum QuantizationType {
 }
 
 /// Quantization level
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuantizationLevel {
     None,
     Low,
@@ -223,7 +223,7 @@ pub enum QuantizationLevel {
 }
 
 /// Vector storage format
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VectorStorageFormat {
     Float32,
     Float16,
@@ -251,7 +251,7 @@ pub struct SearchPerformanceStats {
 }
 
 /// Partition strategy
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PartitionStrategy {
     None,
     ByCluster,
@@ -323,7 +323,7 @@ impl EngineStats {
 
 /// Snapshot of engine statistics for external consumption
 /// This is a clone-able struct that represents a point-in-time view
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineStatsSnapshot {
     pub total_vectors: u64,
     pub total_size_bytes: u64,

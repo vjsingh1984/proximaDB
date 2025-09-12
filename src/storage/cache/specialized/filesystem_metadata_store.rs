@@ -22,7 +22,7 @@ use crate::storage::cache::traits::{BaseCache, CacheValue};
 
 // Temporary placeholder for MmappedMetadata
 // TODO: Import from zero_copy_io_system::metadata_cache when circular dependency is resolved
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MmappedMetadata;
 
 impl MmappedMetadata {
@@ -33,7 +33,7 @@ impl MmappedMetadata {
 }
 
 /// Filesystem metadata entry with zero-copy support
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemMetadata {
     /// Memory-mapped metadata for zero-copy access
     pub mmap_metadata: Option<Arc<MmappedMetadata>>,
@@ -244,7 +244,7 @@ impl FilesystemMetadataStore {
 }
 
 /// Statistics for filesystem metadata cache
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemCacheStats {
     pub base_entries: usize,
     pub hot_entries: usize,

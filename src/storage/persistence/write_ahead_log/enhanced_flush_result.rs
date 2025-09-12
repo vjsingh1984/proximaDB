@@ -10,7 +10,7 @@ use crate::storage::traits::FlushResult;
 
 /// Enhanced flush result that includes the actual vector data
 /// This is used to pass vectors from flush to AXIS indexing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedFlushResult {
     /// Base flush result with standard metrics
     pub base: FlushResult,
