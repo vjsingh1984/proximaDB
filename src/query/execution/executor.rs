@@ -930,17 +930,21 @@ impl QueryExecutor {
                     rows.push(QueryRow { fields, similarity_score: None, graph_distance: Some(1), provenance: None });
                     // Track access for caching optimization
                     if let Some(orch) = CrossCacheOrchestrator::global() {
-                        // TODO: Fix method resolution issue with Arc<CrossCacheOrchestrator>
-                        // orch.track_access_async(format!("graph_node:{}", n.id), crate::storage::cache::orchestrator::CacheType::GraphNode);
-                        let _ = orch; // Silence unused variable warning
+                        // Track graph node access for cache optimization
+                        orch.track_access_async(
+                            format!("graph_node:{}", n.id), 
+                            crate::storage::cache::orchestrator::CacheType::GraphNode
+                        );
                     }
                 }
             }
             // Track access for caching optimization
             if let Some(orch) = CrossCacheOrchestrator::global() {
-                // TODO: Fix method resolution issue with Arc<CrossCacheOrchestrator>
-                // orch.track_access_async(format!("graph_adj:{}", start), crate::storage::cache::orchestrator::CacheType::GraphAdjacency);
-                let _ = orch; // Silence unused variable warning
+                // Track graph adjacency access for cache optimization
+                orch.track_access_async(
+                    format!("graph_adj:{}", start), 
+                    crate::storage::cache::orchestrator::CacheType::GraphAdjacency
+                );
             }
         }
         metrics.graph_nodes_visited = rows.len();

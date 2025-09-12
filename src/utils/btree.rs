@@ -302,11 +302,14 @@ impl NodeRef {
     fn read(&self) -> Result<std::sync::RwLockReadGuard<Node>, BTreeError> {
         match self {
             NodeRef::InMemory(node) => node.read().map_err(|_| BTreeError::LockError),
-            NodeRef::OnDisk(_) => {
-                // TODO: Implement disk-based node loading
-                Err(BTreeError::TreeCorrupted(
-                    "Disk nodes not implemented".to_string(),
-                ))
+            NodeRef::OnDisk(disk_info) => {
+                // Implement disk-based node loading using filesystem infrastructure
+                match self.load_disk_node(disk_info) {
+                    Ok(node) => node.read().map_err(|_| BTreeError::LockError),
+                    Err(e) => Err(BTreeError::TreeCorrupted(
+                        format!("Failed to load disk node: {}", e)
+                    ))
+                }
             }
         }
     }
@@ -315,13 +318,36 @@ impl NodeRef {
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<Node>, BTreeError> {
         match self {
             NodeRef::InMemory(node) => node.write().map_err(|_| BTreeError::LockError),
-            NodeRef::OnDisk(_) => {
-                // TODO: Implement disk-based node loading
-                Err(BTreeError::TreeCorrupted(
-                    "Disk nodes not implemented".to_string(),
-                ))
+            NodeRef::OnDisk(disk_info) => {
+                // Implement disk-based node loading using filesystem infrastructure
+                match self.load_disk_node(disk_info) {
+                    Ok(node) => node.read().map_err(|_| BTreeError::LockError),
+                    Err(e) => Err(BTreeError::TreeCorrupted(
+                        format!("Failed to load disk node: {}", e)
+                    ))
+                }
             }
         }
+    }
+    
+    /// Load a node from disk storage
+    fn load_disk_node(&self, disk_info: &DiskNodeInfo) -> Result<Arc<std::sync::RwLock<Node>>, BTreeError> {
+        // Use ProximaDB's filesystem infrastructure for disk I/O
+        use std::fs::File;
+        use std::io::Read;
+        
+        let mut file = File::open(&disk_info.file_path)
+            .map_err(|e| BTreeError::TreeCorrupted(format!("Cannot open node file: {}", e)))?;
+        
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .map_err(|e| BTreeError::TreeCorrupted(format!("Cannot read node data: {}", e)))?;
+        
+        // Deserialize node from disk using bincode
+        let node: Node = bincode::deserialize(&buffer)
+            .map_err(|e| BTreeError::TreeCorrupted(format!("Cannot deserialize node: {}", e)))?;
+        
+        Ok(Arc::new(std::sync::RwLock::new(node)))
     }
 }
 

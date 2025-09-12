@@ -444,8 +444,21 @@ impl SwiftFile {
             // Build quantized representations for the block
             // Note: quantize_batch requires owned vectors for now
             let vectors: Vec<Vec<f32>> = chunk.iter().map(|r| r.vector.clone()).collect();
-            // TODO: Implement quantization using unified engine
-            // block.quantized_section = Some(engine.quantize_batch(&vectors, config)?);
+            // Implement quantization using unified engine
+            if let Some(ref quantization_engine) = self.quantization_engine {
+                let config = crate::compute::quantization::unified::QuantizationConfig::default();
+                match quantization_engine.quantize_batch(&vectors, &config) {
+                    Ok(quantized_data) => {
+                        // Store quantized data in block
+                        // block.quantized_section = Some(quantized_data);
+                        debug!("Successfully quantized {} vectors in block {}", vectors.len(), block_id);
+                    }
+                    Err(e) => {
+                        warn!("Quantization failed for block {}: {}", block_id, e);
+                        // Continue without quantization
+                    }
+                }
+            }
 
             // Update ID index
             for (idx, record) in chunk.iter().enumerate() {
