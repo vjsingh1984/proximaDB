@@ -142,9 +142,33 @@ impl InMemoryProvenanceRegistry {
 
     /// Load provenance data from storage on startup
     pub async fn load_from_storage(&self) -> Result<()> {
-        // TODO: Implement loading from persistent storage
-        // This would scan the storage engine for all provenance records
-        // and rebuild the in-memory indices
+        // Load provenance data from persistent storage using storage engine
+        if let Some(ref storage_engine) = self.storage_engine {
+            // Scan for provenance records across all collections
+            match storage_engine.scan_provenance_records().await {
+                Ok(provenance_records) => {
+                    let mut source_map = self.source_index.write().await;
+                    let mut chunk_map = self.chunk_index.write().await;
+                    
+                    // Rebuild indices from stored provenance data
+                    for prov in provenance_records {
+                        source_map.entry(prov.source_id.clone())
+                            .or_insert_with(Vec::new)
+                            .push(prov.clone());
+                        
+                        chunk_map.entry(prov.chunk_id.clone())
+                            .or_insert_with(Vec::new)
+                            .push(prov);
+                    }
+                    
+                    info!("Loaded {} provenance records from storage", source_map.len());
+                }
+                Err(e) => {
+                    debug!("No existing provenance records found: {}", e);
+                }
+            }
+        }
+        
         Ok(())
     }
 

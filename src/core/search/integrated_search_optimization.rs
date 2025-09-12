@@ -909,9 +909,30 @@ impl AdvancedSearchOptimizer {
         strategy: &ExecutionStrategy,
         duration: std::time::Duration,
     ) {
-        // TODO: Track performance metrics
+        // Track performance metrics using existing metrics infrastructure
+        let latency_ms = duration.as_millis() as f64;
+        
+        // Update strategy-specific performance metrics
+        match strategy {
+            ExecutionStrategy::IndexFirst => {
+                self.metrics.record_index_first_latency(latency_ms);
+            }
+            ExecutionStrategy::MemtableFirst => {
+                self.metrics.record_memtable_first_latency(latency_ms);
+            }
+            ExecutionStrategy::Progressive => {
+                self.metrics.record_progressive_search_latency(latency_ms);
+            }
+            ExecutionStrategy::DirectScan => {
+                self.metrics.record_direct_scan_latency(latency_ms);
+            }
+        }
+        
+        // Update global search performance metrics
+        self.metrics.record_search_completion(latency_ms);
+        
         debug!(
-            "Search completed in {:?} using strategy {:?}",
+            "Search completed in {:?} using strategy {:?}, metrics updated",
             duration, strategy
         );
     }

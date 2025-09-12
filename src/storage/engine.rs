@@ -355,12 +355,12 @@ impl StorageEngine {
             collection_id,
             vector_size
         );
-        // TODO: Stats update functionality needs to be implemented
-        // if let Some(provider) = self.get_metadata_provider().await {
-        //     provider
-        //         .update_stats(collection_id, 1, vector_size as i64)
-        //         .await?;
-        // } else {
+        // Implement stats update functionality using metadata provider
+        if let Some(provider) = self.get_metadata_provider().await {
+            provider
+                .update_stats(collection_id, 1, vector_size as i64)
+                .await?;
+        } else {
         //     tracing::warn!(
         //         "⚠️ No metadata provider available, cannot update stats for collection {}",
         //         collection_id
@@ -393,11 +393,21 @@ impl StorageEngine {
         }
 
         // Check SST storage for vector existence
-        // TODO: Implement SST-based existence check in SstStorage
-        tracing::warn!(
-            "⚠️ SST-based existence check not yet implemented for collection {}",
-            collection_id
-        );
+        if let Some(sst_storage) = &self.sst_storage {
+            // Use SST bloom filters for fast existence check
+            match sst_storage.contains_vector(collection_id, id).await {
+                Ok(exists) => {
+                    debug!("SST existence check for {}/{}: {}", collection_id, id, exists);
+                    return Ok(exists);
+                }
+                Err(e) => {
+                    tracing::warn!("SST existence check failed: {}", e);
+                    // Fall through to return false
+                }
+            }
+        }
+        
+        tracing::debug!("Vector {}/{} not found in any storage", collection_id, id);
         Ok(false)
     }
 
@@ -423,8 +433,8 @@ impl StorageEngine {
 
             // Update metadata statistics
             if let Some(provider) = self.get_metadata_provider().await {
-                // TODO: Stats update functionality needs to be implemented
-                // provider.update_stats(collection_id, -1, 0).await?;
+                // Implement stats update functionality for deletion
+                provider.update_stats(collection_id, -1, 0).await?;
             } else {
                 tracing::warn!(
                     "⚠️ No metadata provider available, cannot update stats for collection {}",
