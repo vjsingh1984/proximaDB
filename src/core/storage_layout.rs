@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// ProximaDB hierarchical storage layout configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageLayoutConfig {
     /// Base storage paths (currently single disk, future multi-disk)
     pub base_paths: Vec<StorageBasePath>,
@@ -47,7 +47,7 @@ pub struct StorageLayoutConfig {
 }
 
 /// Individual storage base path configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageBasePath {
     /// Base directory path (e.g., "/data/proximadb")
     pub base_dir: PathBuf,
@@ -66,7 +66,7 @@ pub struct StorageBasePath {
 }
 
 /// Disk type for performance optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Disk {
     /// NVMe SSD (highest performance)
     NvmeSsd { max_iops: u64 },
@@ -85,7 +85,7 @@ pub enum Disk {
 }
 
 /// Capacity configuration for storage paths
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CapacityConfig {
     /// Maximum WAL size per collection (MB)
     pub max_wal_size_mb: Option<u64>,
@@ -101,7 +101,7 @@ pub struct CapacityConfig {
 }
 
 /// Collection assignment strategy for multi-disk environments
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CollectionAssignmentStrategy {
     /// Round-robin assignment across available base paths
     RoundRobin,
@@ -119,7 +119,7 @@ pub enum CollectionAssignmentStrategy {
 }
 
 /// Temp directory configuration for atomic operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TempDirectoryConfig {
     /// Use same-directory temp strategy (recommended)
     pub use_same_directory: bool,
@@ -433,7 +433,7 @@ pub enum TempOperationType {
 }
 
 /// Collection paths result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionPaths {
     pub collection_uuid: String,
     pub wal_path: PathBuf,

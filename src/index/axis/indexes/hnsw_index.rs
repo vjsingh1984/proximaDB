@@ -45,7 +45,7 @@ use crate::index::axis::zero_overhead_vector::{
 };
 
 /// Memory usage statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryUsage {
     pub total_bytes: usize,
     pub index_size_bytes: usize,
@@ -54,7 +54,7 @@ pub struct MemoryUsage {
 }
 
 /// HNSW index configuration aligned with AXIS standards
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AxisHnswConfig {
     /// Number of bi-directional links for each node
     pub m: usize,

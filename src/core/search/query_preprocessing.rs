@@ -501,7 +501,7 @@ impl QueryPreprocessor {
 }
 
 /// Cache statistics for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheStatistics {
     pub hits: u64,
     pub misses: u64,

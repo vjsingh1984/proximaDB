@@ -19,7 +19,7 @@ use crate::core::VectorRecord;
 pub use super::cluster_manager::ClusterManager;
 
 /// Clustering configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusteringConfig {
     /// Algorithm to use
     pub algorithm: ClusteringAlgorithm,
@@ -52,7 +52,7 @@ impl Default for ClusteringConfig {
 }
 
 /// Clustering algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ClusteringAlgorithm {
     /// K-Means clustering
     KMeans(KMeansConfig),
@@ -63,7 +63,7 @@ pub enum ClusteringAlgorithm {
 }
 
 /// K-Means configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct KMeansConfig {
     /// Number of clusters (k)
     pub k: usize,
@@ -90,7 +90,7 @@ impl Default for KMeansConfig {
 }
 
 /// K-Means initialization methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum KMeansInit {
     /// Random initialization
     Random,
@@ -101,7 +101,7 @@ pub enum KMeansInit {
 }
 
 /// Hierarchical clustering configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HierarchicalConfig {
     /// Linkage criterion
     pub linkage: LinkageCriterion,
@@ -110,7 +110,7 @@ pub struct HierarchicalConfig {
 }
 
 /// Linkage criteria for hierarchical clustering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum LinkageCriterion {
     Single,
     Complete,
@@ -119,7 +119,7 @@ pub enum LinkageCriterion {
 }
 
 /// DBSCAN configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DBSCANConfig {
     /// Epsilon neighborhood distance
     pub eps: f32,
@@ -128,7 +128,7 @@ pub struct DBSCANConfig {
 }
 
 /// Cluster assignment for a vector
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusterAssignment {
     /// Cluster ID
     pub cluster_id: u32,
@@ -139,7 +139,7 @@ pub struct ClusterAssignment {
 }
 
 /// Clustering model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusteringModel {
     /// Algorithm used
     pub algorithm: ClusteringAlgorithm,
@@ -156,7 +156,7 @@ pub struct ClusteringModel {
 }
 
 /// Clustering quality metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusteringMetrics {
     /// Silhouette score (-1 to 1, higher is better)
     pub silhouette_score: f32,

@@ -20,7 +20,7 @@ use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Configuration for metadata queue service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EventLogConfig {
     /// Base URL for queue storage (e.g., s3://bucket/proximadb/)
     pub base_storage_url: String,
@@ -351,7 +351,7 @@ impl EventLogManager {
 }
 
 /// Service statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueueServiceStats {
     pub collections_with_queues: usize,
     pub total_pending_events: usize,

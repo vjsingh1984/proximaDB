@@ -15,7 +15,7 @@ use super::ByteAlignedBloomFilter;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter};
 
 /// Composite bloom filter combining key and metadata filters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompositeBloomFilter {
     /// Primary filter for keys
     key_filter: ByteAlignedBloomFilter,

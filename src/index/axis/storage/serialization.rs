@@ -68,7 +68,7 @@ pub enum Index {
 }
 
 /// Metadata for serialized index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexMetadata {
     /// Index type
     pub index_type: Index,
@@ -99,7 +99,7 @@ pub struct IndexMetadata {
 }
 
 /// Header for serialized index file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexHeader {
     /// Magic bytes (AXIS)
     pub magic: [u8; 4],
@@ -112,7 +112,7 @@ pub struct IndexHeader {
 }
 
 /// Checkpoint for incremental updates
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexCheckpoint {
     /// Unique checkpoint ID
     pub checkpoint_id: String,
@@ -128,7 +128,7 @@ pub struct IndexCheckpoint {
 }
 
 /// Delta update for incremental changes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexDelta {
     /// Base checkpoint this delta applies to
     pub base_checkpoint_id: String,
@@ -144,7 +144,7 @@ pub struct IndexDelta {
 }
 
 /// Operations that can be applied as deltas
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DeltaOperation {
     /// Add new vectors
     AddVectors { vectors: Vec<(String, Vec<f32>)> },

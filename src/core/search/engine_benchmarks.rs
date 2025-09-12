@@ -39,7 +39,7 @@ pub enum StorageType {
 }
 
 /// Storage profile for performance characteristics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageProfile {
     pub storage_type: StorageType,
     pub read_bandwidth_mbps: f64,
@@ -48,7 +48,7 @@ pub struct StorageProfile {
 }
 
 /// Benchmark configuration for different test scenarios
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BenchmarkConfig {
     /// Vector dimensions to test
     pub dimensions: Vec<usize>,
@@ -124,7 +124,7 @@ impl BenchmarkConfig {
 }
 
 /// Engine-specific benchmark results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineBenchmarkResults {
     /// Engine name (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM)
     pub engine_name: String,

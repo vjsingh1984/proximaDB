@@ -227,7 +227,7 @@ pub struct QueryCacheKey {
     pub collection_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CachedQueryResult {
     pub result: Vec<u8>,
     pub timestamp: u64,

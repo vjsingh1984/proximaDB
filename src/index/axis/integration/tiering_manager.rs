@@ -65,7 +65,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 /// AXIS-specific tiering configuration that integrates with existing policies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AxisTieringConfig {
     /// Enable automatic tiering (delegates to GlobalTier)
     pub enable_auto_tiering: bool,
@@ -84,7 +84,7 @@ pub struct AxisTieringConfig {
 }
 
 /// Collection-specific tiering constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionTieringConstraints {
     /// Collections that must stay in memory
     pub memory_pinned_collections: Vec<String>,
@@ -100,7 +100,7 @@ pub struct CollectionTieringConstraints {
 }
 
 /// Format preferences per storage tier
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TierFormatPreferences {
     /// Hot tier (Memory/NVMe): Fast serialization
     pub hot_tier_format: IndexSerializationFormat,
@@ -113,7 +113,7 @@ pub struct TierFormatPreferences {
 }
 
 /// Index type specific settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexSettings {
     /// HNSW-specific tier preferences
     pub hnsw_preferences: IndexTierPreference,
@@ -126,7 +126,7 @@ pub struct IndexSettings {
 }
 
 /// Tier preferences for specific index types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexTierPreference {
     /// Preferred tier for this index type
     pub preferred_tier: InfrastructureTier,
@@ -139,7 +139,7 @@ pub struct IndexTierPreference {
 }
 
 /// Configuration for integration with existing infrastructure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IntegrationConfig {
     /// Use existing AccessPatternTracker for heat scoring
     pub use_existing_pattern_tracker: bool,
@@ -257,7 +257,7 @@ pub struct AxisTieringManager {
 }
 
 /// A tier operation in progress
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct TierOperation {
     collection_id: String,
     from_tier: InfrastructureTier,

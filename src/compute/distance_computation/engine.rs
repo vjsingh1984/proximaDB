@@ -293,7 +293,7 @@ impl Default for DistanceMode {
 }
 
 /// Properties of a distance metric
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetricProperties {
     /// Name of the metric
     pub name: String,
@@ -306,7 +306,7 @@ pub struct MetricProperties {
 }
 
 /// Result of a similarity computation with semantic meaning
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct SimilarityResult {
     /// The computed distance value (always normalized: lower = more similar)
     pub distance: f32,

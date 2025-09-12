@@ -15,7 +15,7 @@ use crate::core::VectorRecord;
 use crate::core::search::FilterExpression;
 
 /// Qualifying row indices with metadata about the filtering process
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilterIndices {
     /// Qualifying row indices within the data source
     pub indices: Vec<usize>,
@@ -25,7 +25,7 @@ pub struct FilterIndices {
     pub metadata: IndexMetadata,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexMetadata {
     /// Source identifier (block ID, file path, etc.)
     pub source_id: String,
@@ -72,7 +72,7 @@ impl FilterIndices {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ReadStrategy {
     /// Skip this block/row group entirely
     SkipBlock,
@@ -103,7 +103,7 @@ pub trait MetadataSource: Send + Sync {
     fn supports_selective_reading(&self) -> bool;
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnMetadata {
     pub has_index: bool,
     pub cardinality: Option<u64>,

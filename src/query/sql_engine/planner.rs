@@ -26,7 +26,7 @@ use super::parser::{
 };
 
 /// Execution plan for a query
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ExecutionPlan {
     /// Collection to query
     pub collection: String,
@@ -45,14 +45,14 @@ pub struct ExecutionPlan {
 }
 
 /// Metadata filter representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataFilter {
     /// Complex filter expression supporting AND/OR/NOT operations
     pub expression: crate::core::search::FilterExpression,
 }
 
 /// Vector search parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorSearchParams {
     /// Query vector
     pub query_vector: Vec<f32>,

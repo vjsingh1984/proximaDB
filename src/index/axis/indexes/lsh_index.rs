@@ -39,7 +39,7 @@ use crate::index::axis::zero_overhead_vector::{CollectionConfig, ZeroOverheadCol
 use async_trait::async_trait;
 
 /// LSH index configuration aligned with AXIS standards
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AxisLshConfig {
     /// Number of hash tables
     pub n_tables: usize,

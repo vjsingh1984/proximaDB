@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Byte-aligned bloom filter optimized for SSTable storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ByteAlignedBloomFilter {
     /// Bit storage using byte array
     bits: Vec<u8>,

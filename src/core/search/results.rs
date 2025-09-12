@@ -63,7 +63,7 @@ fn convert_json_map_to_sql_value_map(
 }
 
 /// Unified search result structure - replaces 13+ duplicates across schema_types and other files
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct InternalSearchResult {
     /// Vector/document identifier
     pub id: String,

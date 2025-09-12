@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Memory-efficient bit-packed bloom filter using u64 array
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BitPackedBloomFilter {
     /// Bit storage using u64 for efficient bit operations
     bits: Vec<u64>,

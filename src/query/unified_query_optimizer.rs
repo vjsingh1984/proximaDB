@@ -50,7 +50,7 @@ pub struct UnifiedQueryOptimizer {
 }
 
 /// Unified configuration combining both systems
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnifiedOptimizerConfig {
     /// Adaptive optimization
     pub adaptive_optimization: bool,
@@ -72,7 +72,7 @@ pub struct UnifiedOptimizerConfig {
 }
 
 /// Unified cost weights - CONSOLIDATED
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnifiedCostWeights {
     // From search optimizer
     pub io_weight: f64,
@@ -117,14 +117,14 @@ pub struct UnifiedQueryContext<'a> {
 }
 
 /// Unified metadata filter (consolidated from Universal Metadata Filtering)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnifiedMetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub logic: FilterLogic,
     pub optimization_hints: FilterOptimizationHints,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterCondition {
     Equals {
         column: String,
@@ -192,14 +192,14 @@ pub enum FilterCondition {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterLogic {
     And,
     Or,
     Not,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilterOptimizationHints {
     pub expected_selectivity: Option<f64>,
     pub preferred_index: Option<String>,
@@ -211,14 +211,14 @@ pub struct FilterOptimizationHints {
 // ================================================================================
 
 /// Index strategy for query execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStrategy {
     pub index_type: Index,
     pub params: HashMap<String, serde_json::Value>,
 }
 
 /// Unified execution plan - the ultimate output of optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnifiedExecutionPlan {
     /// Ordered execution steps (merged from both systems)
     pub execution_steps: Vec<ExecutionStep>,
@@ -237,7 +237,7 @@ pub struct UnifiedExecutionPlan {
 }
 
 /// Execution steps that combine search and filter operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ExecutionStep {
     /// Metadata filtering step
     MetadataFilter {
@@ -684,7 +684,7 @@ struct CombinedOperation {
 }
 
 /// Search execution methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SearchExecutionMethod {
     DirectFP32,
     Progressive { stages: Vec<ProgressiveStage> },
@@ -693,7 +693,7 @@ pub enum SearchExecutionMethod {
 }
 
 /// Filter execution methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterExecutionMethod {
     IndexLookup,
     SequentialScan,
@@ -703,14 +703,14 @@ pub enum FilterExecutionMethod {
 }
 
 /// Progressive search stages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveStage {
     pub algorithm: SearchAlgorithm,
     pub candidates: usize,
 }
 
 /// Search algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SearchAlgorithm {
     BinaryFilter,
     QuantizedSearch,
@@ -737,7 +737,7 @@ pub enum Index {
 }
 
 /// Index lookup parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexLookupParams {
     pub ef_search: Option<usize>,
     pub nprobe: Option<usize>,
@@ -755,7 +755,7 @@ pub enum BloomFilter {
 }
 
 /// Filter pushdown operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterPushdownOperation {
     StorageLevel {
         filter: FilterCondition,
@@ -808,7 +808,7 @@ enum QueryComplexity {
 }
 
 /// Resource allocation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceAllocation {
     pub memory_budget_mb: usize,
     pub cpu_cores: usize,
@@ -816,7 +816,7 @@ pub struct ResourceAllocation {
 }
 
 /// Unified performance estimate
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnifiedPerformanceEstimate {
     pub estimated_latency_ms: u32,
     pub estimated_memory_mb: usize,
@@ -835,14 +835,14 @@ pub struct ParallelismConfig {
 }
 
 /// Fallback strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FallbackStrategy {
     pub trigger_condition: TriggerCondition,
     pub fallback_plan: Box<UnifiedExecutionPlan>,
 }
 
 /// Trigger conditions for fallbacks
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TriggerCondition {
     MemoryPressure { threshold_mb: usize },
     LatencyExceeded { threshold_ms: u32 },
@@ -850,7 +850,7 @@ pub enum TriggerCondition {
 }
 
 /// File metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FileMetadata {
     pub file_path: String,
     pub size_bytes: u64,
@@ -860,7 +860,7 @@ pub struct FileMetadata {
 }
 
 /// Column metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnMetadata {
     pub column_name: String,
     pub statistics: ColumnStatistics,
@@ -868,7 +868,7 @@ pub struct ColumnMetadata {
 }
 
 /// Column data types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ColumnData {
     Integer,
     Float,
@@ -879,7 +879,7 @@ pub enum ColumnData {
 }
 
 /// Column statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStatistics {
     pub distinct_count: usize,
     pub null_count: usize,
@@ -888,7 +888,7 @@ pub struct ColumnStatistics {
 }
 
 /// Index information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexInfo {
     pub index_name: String,
     pub index_type: Index,
@@ -896,7 +896,7 @@ pub struct IndexInfo {
 }
 
 /// Index capabilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexCapabilities {
     pub supports_range_queries: bool,
     pub supports_equality: bool,
@@ -915,7 +915,7 @@ struct UnifiedPerformanceHistory {
 }
 
 /// Strategy performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct StrategyPerformance {
     pub avg_latency_ms: f32,
     pub avg_recall: f32,
@@ -924,7 +924,7 @@ struct StrategyPerformance {
 }
 
 /// Cache configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheConfig {
     pub max_collections: usize,
     pub max_files_per_collection: usize,
@@ -932,7 +932,7 @@ pub struct CacheConfig {
 }
 
 /// Filter optimizer configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilterOptimizerConfig {
     pub enable_predicate_pushdown: bool,
     pub enable_index_selection: bool,
@@ -940,7 +940,7 @@ pub struct FilterOptimizerConfig {
 }
 
 /// Search optimizer configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchOptimizerConfig {
     pub enable_progressive_search: bool,
     pub enable_quantization: bool,
@@ -948,7 +948,7 @@ pub struct SearchOptimizerConfig {
 }
 
 /// Quantization strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationStrategy {
     pub quantization_type: QuantizationType,
     pub use_two_stage: bool,
@@ -956,7 +956,7 @@ pub struct QuantizationStrategy {
 }
 
 /// Performance estimate for query execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceEstimate {
     pub expected_latency_ms: f64,
     pub expected_throughput_ops_per_sec: f64,
@@ -964,7 +964,7 @@ pub struct PerformanceEstimate {
 }
 
 /// Fallback strategies configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FallbackStrategies {
     pub fallback_strategies: Vec<String>,
 }

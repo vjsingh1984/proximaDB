@@ -57,7 +57,7 @@ impl<K: std::fmt::Display> std::fmt::Display for PartitionedKey<K> {
 }
 
 /// Clustering method for IVF training
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IvfClusteringMethod {
     /// Standard K-means (fast, reasonable quality)
     KMeans,
@@ -80,7 +80,7 @@ impl Default for IvfClusteringMethod {
 }
 
 /// Configuration for unified IVF index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnifiedIvfConfig {
     /// Number of clusters (n_lists for compatibility)
     pub n_clusters: usize,
@@ -142,7 +142,7 @@ impl Default for UnifiedIvfConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CentroidConfig {
     /// Centroids are never evicted
     pub evictable: bool, // Always false
@@ -162,7 +162,7 @@ impl Default for CentroidConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PostingListConfig {
     /// Posting lists can be evicted
     pub evictable: bool, // Always true
@@ -403,7 +403,7 @@ impl CentroidStore {
 }
 
 /// Posting list that can be tiered
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PostingList {
     pub cluster_id: usize,
     pub vector_ids: Vec<String>,
@@ -1656,7 +1656,7 @@ pub fn create_ivf_index_with_representation(
     )?))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IvfStats {
     pub collection_id: String,
     pub vector_count: usize,

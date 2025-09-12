@@ -27,7 +27,7 @@ use crate::services::collection::manager::CollectionService;
 ///
 /// # Usage
 /// Created by search coordinators and optimizers before executing the actual search.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchPlan {
     /// Collection metadata for optimization
     pub collection_id: String,
@@ -41,7 +41,7 @@ pub struct SearchPlan {
 }
 
 /// Collection configuration for search optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionConfig {
     /// Default distance metric
     pub default_distance_metric: DistanceMetric,
@@ -56,7 +56,7 @@ pub struct CollectionConfig {
 }
 
 /// Filterable metadata column configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilterableColumn {
     /// Column name
     pub name: String,
@@ -69,7 +69,7 @@ pub struct FilterableColumn {
 }
 
 /// Column data types for type-safe filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ColumnData {
     String,
     Integer,
@@ -80,7 +80,7 @@ pub enum ColumnData {
 }
 
 /// Storage characteristics for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageInfo {
     /// Is this cloud storage?
     pub is_cloud_storage: bool,
@@ -122,7 +122,7 @@ pub trait UnifiedSearchEngine: Send + Sync {
 }
 
 /// Optimization hints for search execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum OptimizationHint {
     /// Use quantized search for large datasets
     UseQuantization {

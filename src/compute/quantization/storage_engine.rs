@@ -20,7 +20,7 @@ use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistan
 use crate::core::hardware_capabilities::{HardwareBackend, get_hardware_capabilities};
 
 /// Common configuration for storage engine quantization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageQuantizationConfig {
     /// Base quantization levels to use
     pub primary_level: Option<UnifiedQuantizationLevel>, // e.g., PQ8
@@ -75,7 +75,7 @@ impl Default for StorageQuantizationConfig {
 }
 
 /// Common quantized data structure for storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageQuantizedData {
     /// Vector ID
     pub id: String,

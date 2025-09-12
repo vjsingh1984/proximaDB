@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 /// Generic configuration wrapper that implements BaseConfig
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GenericConfig<T> {
     pub data: T,
     pub validation_rules: HashMap<String, String>,
@@ -50,7 +50,7 @@ where
 }
 
 /// Generic metadata wrapper that implements BaseMetadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GenericMetadata<T> {
     pub id: String,
     pub data: T,
@@ -111,7 +111,7 @@ where
 }
 
 /// Generic statistics wrapper that implements BaseStats
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GenericStats<T> {
     pub data: T,
     pub timestamp: DateTime<Utc>,
@@ -159,7 +159,7 @@ where
 }
 
 /// Generic result wrapper that implements BaseResult
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GenericResult<T> {
     pub success: bool,
     pub data: Option<T>,

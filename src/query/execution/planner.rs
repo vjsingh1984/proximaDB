@@ -907,14 +907,14 @@ struct QueryAnalysis {
 }
 
 /// Extracted args for SKS functions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct SksSimilarArgs {
     pub query: Expr,
     pub metric: Option<String>,
     pub threshold: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct SksFollowArgs {
     pub start: Expr,
     pub edge: String,

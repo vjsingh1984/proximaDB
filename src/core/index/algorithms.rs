@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Index algorithm configuration placeholder
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexAlgorithmConfig {
     pub name: String,
     pub parameters: std::collections::HashMap<String, serde_json::Value>,

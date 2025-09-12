@@ -16,7 +16,7 @@ use std::sync::Arc;
 use super::{ExtractionMode, FileIndexingStatus, IndexEvent, StorageEngineType};
 
 /// Event log service mode
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ServiceMode {
     /// Embedded mode - runs within the main process
     Embedded,
@@ -100,7 +100,7 @@ pub trait EventLogService: EventLogQuery + EventLogCommand {
 }
 
 /// Event filter for queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EventFilter {
     /// Collection ID filter
     pub collection_id: Option<String>,
@@ -123,7 +123,7 @@ pub struct EventFilter {
 }
 
 /// Event processing status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum EventStatus {
     Pending,
     Processing,
@@ -132,7 +132,7 @@ pub enum EventStatus {
 }
 
 /// Batch update for processed events
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProcessedUpdate {
     pub event_id: String,
     pub index_name: String,
@@ -140,7 +140,7 @@ pub struct ProcessedUpdate {
 }
 
 /// Service health information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ServiceHealth {
     pub status: HealthStatus,
     pub mode: String,
@@ -151,7 +151,7 @@ pub struct ServiceHealth {
     pub last_sync: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum HealthStatus {
     Healthy,
     Degraded,
@@ -159,7 +159,7 @@ pub enum HealthStatus {
 }
 
 /// Synchronization result for distributed mode
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SyncResult {
     pub events_synced: usize,
     pub conflicts_resolved: usize,

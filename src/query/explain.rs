@@ -108,7 +108,7 @@ pub struct GraphHints {
 }
 
 /// Information about index usage in graph operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GraphIndexUsage {
     /// Index name
     pub index_name: String,
@@ -123,7 +123,7 @@ pub struct GraphIndexUsage {
 }
 
 /// Graph planner statistics used for cost estimation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GraphPlannerStats {
     /// Total node count in graph
     pub total_nodes: usize,
@@ -208,7 +208,7 @@ pub struct IOStatistics {
 }
 
 /// Individual operator timing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OperatorTiming {
     /// Operator name
     pub operator: String,

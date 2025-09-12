@@ -152,7 +152,7 @@ pub trait CodebookStore: Send + Sync {
 /// - Time: O(iterations × samples × centroids × dims)
 /// - Memory: O(samples × dims + centroids × dims)
 /// - Typical: 2-5 seconds for 10K samples
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Codebook {
     /// Unique identifier
     /// Format: "{collection_id}_{quantization_type}_{version}"
@@ -176,7 +176,7 @@ pub struct Codebook {
 }
 
 /// Training configuration for codebook generation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TrainingConfig {
     /// Number of training vectors used
     pub num_training_vectors: usize,
@@ -216,7 +216,7 @@ pub struct TrainingConfig {
 /// ```text
 /// bit[i] = vector[i] > threshold[i] ? 1 : 0
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CodebookData {
     /// Product Quantization codebook
     ProductQuantization {
@@ -1778,7 +1778,7 @@ impl UnifiedQuantizationEngine {
 }
 
 /// Quantized vector representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizedVector {
     /// The quantized data
     pub data: Vec<u8>,

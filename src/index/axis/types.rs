@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Cluster assignment for a vector
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusterAssignment {
     pub vector_id: u32,
     pub cluster_id: u32,
@@ -244,7 +244,7 @@ pub enum ResultCombination {
 }
 
 /// AXIS configuration for the entire system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AxisConfig {
     /// Maximum memory usage in bytes
     pub max_memory_bytes: u64,
@@ -272,7 +272,7 @@ pub struct AxisConfig {
 }
 
 /// Performance thresholds for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceThresholds {
     pub max_latency_ms: u64,
     pub min_recall: f32,
@@ -280,7 +280,7 @@ pub struct PerformanceThresholds {
 }
 
 /// Strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StrategyConfig {
     pub use_ml_models: bool,
     pub min_training_size: usize,
@@ -296,7 +296,7 @@ impl Default for StrategyConfig {
 }
 
 /// Migration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationConfig {
     pub improvement_threshold: f32,
     pub max_concurrent_migrations: usize,
@@ -336,7 +336,7 @@ impl Default for AxisConfig {
 }
 
 /// Migration decision for index transitions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationDecision {
     pub from_algorithm: IndexAlgorithm,
     pub to_algorithm: IndexAlgorithm,
@@ -346,7 +346,7 @@ pub struct MigrationDecision {
 }
 
 /// Reasons for migration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MigrationReason {
     Performance,
     Memory,
@@ -355,7 +355,7 @@ pub enum MigrationReason {
 }
 
 /// Migration priority levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MigrationPriority {
     Low,
     Medium,
@@ -364,7 +364,7 @@ pub enum MigrationPriority {
 }
 
 /// Alert threshold configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AlertThresholds {
     pub latency_ms: u64,
     pub memory_usage: f64,
@@ -375,7 +375,7 @@ pub struct AlertThresholds {
 }
 
 /// Monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MonitoringConfig {
     pub enabled: bool,
     pub interval_seconds: u64,

@@ -14,7 +14,7 @@ use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistan
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
 
 /// Configuration for distance calculations on quantized data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizedDistanceConfig {
     /// Target distance metric
     pub distance_metric: DistanceMetric,
@@ -33,7 +33,7 @@ pub struct QuantizedDistanceConfig {
 }
 
 /// SIMD optimization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SIMDOptimization {
     /// Enable SIMD instructions
     pub enable_simd: bool,
@@ -52,7 +52,7 @@ pub struct SIMDOptimization {
 }
 
 /// Supported instruction sets
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum InstructionSet {
     /// Auto-detect best available
     Auto,
@@ -69,7 +69,7 @@ pub enum InstructionSet {
 }
 
 /// Vectorization strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorizationStrategy {
     /// Process vectors individually
     Individual,
@@ -82,7 +82,7 @@ pub enum VectorizationStrategy {
 }
 
 /// Distance table cache configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DistanceCacheConfig {
     /// Enable distance table caching for PQ
     pub enable_pq_cache: bool,
@@ -98,7 +98,7 @@ pub struct DistanceCacheConfig {
 }
 
 /// Cache eviction policies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CacheEvictionPolicy {
     LRU,
     LFU,
@@ -107,7 +107,7 @@ pub enum CacheEvictionPolicy {
 }
 
 /// Approximation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ApproximationConfig {
     /// Quality vs speed trade-off (0.0 = fastest, 1.0 = highest quality)
     pub quality_factor: f32,
@@ -123,7 +123,7 @@ pub struct ApproximationConfig {
 }
 
 /// Hardware acceleration preferences
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwarePreferences {
     /// Prefer GPU acceleration when available
     pub prefer_gpu: bool,

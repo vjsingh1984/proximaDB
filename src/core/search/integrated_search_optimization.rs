@@ -92,7 +92,7 @@ pub struct AdvancedSearchOptimizer {
 }
 
 /// Configuration for integrated optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationConfig {
     /// Enable result caching
     pub enable_result_cache: bool,
@@ -182,7 +182,7 @@ pub struct SearchCostEstimator {
 }
 
 /// Performance statistics for cost estimation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceStats {
     pub avg_time_ms: f32,
     pub std_dev_ms: f32,
@@ -197,7 +197,7 @@ pub struct RoutingEngine {
 }
 
 /// Hardware profile for optimization decisions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareProfile {
     pub has_avx2: bool,
     pub has_avx512: bool,

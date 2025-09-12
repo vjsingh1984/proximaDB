@@ -38,7 +38,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 /// Parsed SQL query representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ParsedQuery {
     /// SELECT clause fields
     pub select_fields: Vec<SelectField>,
@@ -55,7 +55,7 @@ pub struct ParsedQuery {
 }
 
 /// Field in SELECT clause
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SelectField {
     /// Select all fields (*)
     All,
@@ -66,13 +66,13 @@ pub enum SelectField {
 }
 
 /// WHERE clause representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WhereClause {
     pub condition: Condition,
 }
 
 /// Condition types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Condition {
     /// Simple comparison (field op value)
     Comparison {
@@ -110,7 +110,7 @@ pub enum ComparisonOp {
 }
 
 /// Value types in conditions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Value {
     String(String),
     Number(f64),
@@ -121,14 +121,14 @@ pub enum Value {
 }
 
 /// ORDER BY clause
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OrderByClause {
     pub order_type: OrderType,
     pub direction: SortDirection,
 }
 
 /// Order types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum OrderType {
     /// Order by field value
     Field(String),

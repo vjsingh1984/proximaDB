@@ -21,7 +21,7 @@ use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 /// Index event for async processing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexEvent {
     /// Unique event ID
     pub event_id: String,
@@ -72,7 +72,7 @@ pub enum OperationType {
 pub type EventType = OperationType;
 
 /// File indexing status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FileIndexingStatus {
     /// File path
     pub file_path: String,
@@ -91,7 +91,7 @@ pub struct FileIndexingStatus {
 }
 
 /// Queue state for persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct QueueState {
     /// All events in order
     events: Vec<IndexEvent>,
@@ -409,7 +409,7 @@ impl EventLogQueue {
 }
 
 /// Vector extraction mode for AXIS
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ExtractionMode {
     Fp32Only,
     QuantizedOnly,

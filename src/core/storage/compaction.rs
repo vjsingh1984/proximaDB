@@ -4,7 +4,7 @@ use crate::core::foundation::BaseConfig;
 use serde::{Deserialize, Serialize};
 
 /// Compaction strategy for storage optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompactionStrategy {
     /// Level-based compaction (LSM)
     Level,
@@ -25,7 +25,7 @@ impl Default for CompactionStrategy {
 }
 
 /// Compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompactionConfig {
     /// Compaction strategy to use
     /// Maximum number of files before compaction
@@ -69,7 +69,7 @@ impl BaseConfig for CompactionConfig {
 }
 
 /// WAL strategy type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum WriteBufferStrategyType {
     /// Apache Avro format
     Avro,
@@ -86,7 +86,7 @@ impl Default for WriteBufferStrategyType {
 }
 
 /// Memory table type for WAL
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MemTableType {
     /// Hash map implementation
     HashMap,
@@ -105,7 +105,7 @@ impl Default for MemTableType {
 }
 
 /// Synchronization mode for WAL
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SyncMode {
     /// Synchronous writes
     Sync,

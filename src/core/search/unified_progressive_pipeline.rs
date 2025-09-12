@@ -35,7 +35,7 @@ pub struct UnifiedProgressiveSearchPipeline {
 }
 
 /// Pipeline configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PipelineConfig {
     /// Enable dynamic stage selection
     pub dynamic_stages: bool,
@@ -57,7 +57,7 @@ pub struct PipelineConfig {
 }
 
 /// Thresholds for each progressive stage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StageThresholds {
     pub binary_selectivity: f32, // e.g., 0.1 = keep top 10%
     pub int8_selectivity: f32,   // e.g., 0.2 = keep top 20%
@@ -133,7 +133,7 @@ pub enum SearchStage {
 }
 
 /// Stage candidate for progressive refinement
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct StageCandidate {
     record: Arc<VectorRecord>,
     score: f32,

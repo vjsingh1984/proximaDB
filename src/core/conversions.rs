@@ -152,44 +152,44 @@ pub fn convert_serde_json_to_sql_value_map(
         .map(|(k, v)| {
             let sql_value = match v {
                 serde_json::Value::String(s) => SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
                 },
                 serde_json::Value::Number(n) => {
                     if let Some(i) = n.as_i64() {
                         SqlValue {
-                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
                                 i,
                             )),
                         }
                     } else if let Some(f) = n.as_f64() {
                         SqlValue {
-                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                 f,
                             )),
                         }
                     } else {
                         SqlValue {
-                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                 n.to_string(),
                             )),
                         }
                     }
                 }
                 serde_json::Value::Bool(b) => SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
                 },
                 serde_json::Value::Array(arr) => SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                         serde_json::to_string(&arr).unwrap_or_else(|_| "[]".to_string()),
                     )),
                 },
                 serde_json::Value::Object(obj) => SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                         serde_json::to_string(&obj).unwrap_or_else(|_| "{}".to_string()),
                     )),
                 },
                 serde_json::Value::Null => SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                         "null".to_string(),
                     )),
                 },
@@ -440,31 +440,31 @@ pub fn sql_values_to_json_map(
     let mut out = HashMap::new();
     for (k, v) in items {
         let json = match v.value {
-            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                 serde_json::Value::String(s)
             }
-            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                 serde_json::Number::from_f64(n)
                     .map(serde_json::Value::Number)
                     .unwrap_or(serde_json::Value::Null)
             }
-            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                 serde_json::Value::Bool(b)
             }
-            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                 serde_json::Value::Number(serde_json::Number::from(i))
             }
-            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_bytes)) => {
+            Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_bytes)) => {
                 serde_json::Value::String("[Binary Data]".to_string())
             }
-            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+            Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                 serde_json::Value::Null
             }
-            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_arr)) => {
+            Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_arr)) => {
                 // TODO: Implement proper array conversion
                 serde_json::Value::String("[Array]".to_string())
             }
-            Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_obj)) => {
+            Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_obj)) => {
                 // TODO: Implement proper object conversion
                 serde_json::Value::String("[Object]".to_string())
             }
@@ -483,19 +483,19 @@ pub fn json_map_to_sql_values(
     for (k, v) in items {
         let sql = match v {
             serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
             },
             serde_json::Value::Number(n) => {
                 let f = n.as_f64().unwrap_or(0.0);
                 crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
                 }
             }
             serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
             },
             other => crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                     other.to_string(),
                 )),
             },
@@ -643,17 +643,17 @@ pub fn metadata_items_to_sql_values(
         let val = match item.value {
             Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                 crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
                 }
             }
             Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
                 crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)),
                 }
             }
             Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
                 crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
                 }
             }
             None => crate::proto::proximadb_v1::SqlValue { value: None },
@@ -670,30 +670,30 @@ pub fn sql_values_to_metadata_items(
     meta.into_iter()
         .map(|(k, v)| {
             let val = match v.value {
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                     Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s))
                 }
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                     Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n))
                 }
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => Some(
+                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => Some(
                     crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b),
                 ),
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                     Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(i as f64))
                 }
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => Some(
+                Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(_)) => Some(
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "[Binary Data]".to_string(),
                     ),
                 ),
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => None,
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => Some(
+                Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => None,
+                Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => Some(
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "[Array]".to_string(),
                     ),
                 ),
-                Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => Some(
+                Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => Some(
                     crate::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "[Object]".to_string(),
                     ),

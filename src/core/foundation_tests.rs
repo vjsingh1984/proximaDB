@@ -7,7 +7,7 @@ mod base_traits_tests {
     use std::collections::HashMap;
 
     // Test implementation of BaseConfig
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct TestConfig {
         pub name: String,
         pub value: i32,
@@ -42,7 +42,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseMetadata
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct TestMetadata {
         pub id: String,
         pub version: u64,
@@ -69,7 +69,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseStats
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct TestStats {
         pub count: u64,
         pub sum: f64,
@@ -95,7 +95,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseResult
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct TestResult {
         pub success: bool,
         pub data: Option<String>,

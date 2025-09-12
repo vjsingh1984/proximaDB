@@ -41,7 +41,7 @@ mod tests {
     use tracing::{debug, error, info};
 
     /// Test vector data structure for SQL testing
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct SqlTestVector {
         id: String,
         vector: Vec<f32>,
@@ -51,7 +51,7 @@ mod tests {
     }
 
     /// SQL test case structure
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct SqlTestCase {
         name: String,
         sql_query: String,

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// General index type categories
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Index {
     /// Vector similarity index
     Vector(VectorIndex),
@@ -16,7 +16,7 @@ pub enum Index {
 }
 
 /// Vector index algorithm types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorIndex {
     /// Hierarchical Navigable Small World
     HNSW {
@@ -39,7 +39,7 @@ pub enum VectorIndex {
 }
 
 /// Metadata index types for efficient filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetadataIndex {
     /// Hash index for equality queries
     Hash,

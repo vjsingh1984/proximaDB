@@ -30,7 +30,7 @@ pub struct QueryLowering {
 }
 
 /// Collection metadata cached for query validation and optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CollectionMetadata {
     id: String,
     name: String,
@@ -40,7 +40,7 @@ struct CollectionMetadata {
 }
 
 /// Collection schema for field validation and optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CollectionSchema {
     embedding_fields: Vec<String>,
     metadata_fields: Vec<String>,

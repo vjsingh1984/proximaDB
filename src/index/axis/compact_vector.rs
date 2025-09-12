@@ -76,7 +76,7 @@ use bytemuck;
 ///   - For PQ4: value = 2
 ///   - For Binary: value = 3
 ///   - Future: values 4-255 reserved
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactVector {
     data: Vec<u8>,
     is_quantized: bool, // Cached for fast access

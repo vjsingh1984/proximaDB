@@ -30,7 +30,7 @@ pub struct MetadataFilterPushdown {
 }
 
 /// Statistics for a metadata column
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStatistics {
     pub column_name: String,
     pub distinct_values: usize,

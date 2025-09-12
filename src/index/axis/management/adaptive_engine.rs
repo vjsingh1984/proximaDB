@@ -47,7 +47,7 @@ impl std::fmt::Debug for AdaptiveIndexEngine {
 }
 
 /// Collection characteristics for strategy selection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionCharacteristics {
     pub collection_id: String,
     pub vector_count: u64,
@@ -62,7 +62,7 @@ pub struct CollectionCharacteristics {
 }
 
 /// Query pattern analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryPatternAnalysis {
     pub total_queries: u64,
     pub point_query_percentage: f32,
@@ -87,7 +87,7 @@ impl QueryPatternAnalysis {
 }
 
 /// Query distribution patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryDistribution {
     pub uniform: bool,
     pub hotspot_percentage: f32,
@@ -95,7 +95,7 @@ pub struct QueryDistribution {
 }
 
 /// Temporal access patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TemporalPattern {
     Uniform,
     Recent,                        // Most queries for recent data
@@ -104,7 +104,7 @@ pub enum TemporalPattern {
 }
 
 /// Current performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceMetrics {
     pub average_query_latency_ms: f64,
     pub p99_query_latency_ms: f64,
@@ -115,7 +115,7 @@ pub struct PerformanceMetrics {
 }
 
 /// Access frequency metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessFrequencyMetrics {
     pub reads_per_second: f64,
     pub writes_per_second: f64,
@@ -124,7 +124,7 @@ pub struct AccessFrequencyMetrics {
 }
 
 /// Metadata complexity analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataComplexity {
     pub field_count: usize,
     pub average_field_cardinality: f64,
@@ -152,7 +152,7 @@ pub enum StrategyType {
 }
 
 /// Strategy configuration template
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StrategyConfigTemplate {
     pub strategy_type: StrategyType,
     pub optimization_config: OptimizationConfig,
@@ -160,7 +160,7 @@ pub struct StrategyConfigTemplate {
 }
 
 /// Conditions for strategy applicability
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ApplicabilityConditions {
     pub min_vector_count: Option<u64>,
     pub max_vector_count: Option<u64>,
@@ -207,7 +207,7 @@ pub trait ResourcePredictor {
 }
 
 /// Features for ML prediction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PredictionFeatures {
     pub vector_count: f64,
     pub sparsity: f64,
@@ -217,7 +217,7 @@ pub struct PredictionFeatures {
 }
 
 /// Latency prediction result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LatencyPrediction {
     pub p50_ms: f64,
     pub p90_ms: f64,
@@ -225,14 +225,14 @@ pub struct LatencyPrediction {
 }
 
 /// Throughput prediction result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ThroughputPrediction {
     pub max_qps: f64,
     pub sustainable_qps: f64,
 }
 
 /// Resource usage prediction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourcePrediction {
     pub memory_mb: f64,
     pub cpu_cores: f64,
@@ -240,7 +240,7 @@ pub struct ResourcePrediction {
 }
 
 /// Strategy decision record
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StrategyDecision {
     pub collection_id: String,
     pub timestamp: DateTime<Utc>,

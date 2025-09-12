@@ -5,7 +5,7 @@ use crate::core::foundation::BaseConfig;
 use serde::{Deserialize, Serialize};
 
 /// Unified storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UnifiedStorageConfig {
     /// Primary storage engine
     pub engine: StorageEngine,

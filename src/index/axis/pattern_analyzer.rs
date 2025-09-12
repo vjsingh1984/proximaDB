@@ -52,14 +52,14 @@ pub struct AxisTieringIntegration {
 }
 
 /// AXIS-specific index type preferences for tier optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AxisIndexPreferences {
     /// Index type to tier preferences mapping
     preferences: std::collections::HashMap<AxisIndex, IndexTierPreference>,
 }
 
 /// Index-specific tier preference configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexTierPreference {
     /// Preferred tier level (1=Memory, 2=NVMe, 3=HDD, etc.)
     preferred_tier_level: u8,
@@ -75,7 +75,7 @@ pub struct IndexTierPreference {
 }
 
 /// AXIS tier recommendation result  
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AxisTierRecommendation {
     /// Collection identifier
     pub collection_id: String,

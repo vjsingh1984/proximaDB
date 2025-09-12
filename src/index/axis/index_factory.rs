@@ -59,7 +59,7 @@ pub trait AxisVectorIndex: Send + Sync {
 }
 
 /// Index statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStats {
     pub vector_count: usize,
     pub memory_usage_bytes: usize,

@@ -1684,7 +1684,7 @@ pub trait DistanceComputeProvider {
 }
 
 /// Configuration for unified distance computation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UnifiedDistanceConfig {
     /// System default distance metric
     pub system_default: DistanceMetric,

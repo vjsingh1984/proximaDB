@@ -23,7 +23,7 @@ use xz2::write::XzEncoder;
 use zstd::{decode_all, encode_all};
 
 /// Vector serialization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorSerializationConfig {
     /// Use bytemuck for zero-copy serialization
     pub use_bytemuck: bool,
@@ -479,7 +479,7 @@ impl VectorSerializationConfig {
 }
 
 /// Analysis results for a vector
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorAnalysis {
     pub dimension: usize,
     pub sparsity: f32, // Ratio of zero/near-zero elements

@@ -338,7 +338,7 @@ impl Default for HashAlgorithm {
 }
 
 /// Enhanced bloom filter configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilterConfig {
     /// Strategy to use
     pub strategy: BloomStrategy,
@@ -581,7 +581,7 @@ mod tests {
 // ============================================================================
 
 /// Stats for bloom filter usage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilterStats {
     pub key_count: u64,
     pub metadata_columns: u64,
@@ -592,7 +592,7 @@ pub struct BloomFilterStats {
 
 /// Combined bloom filter for SSTable (keys + metadata)
 /// Memory target: ~8MB per collection (down from ~40MB)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstableBloomFilter {
     /// Key filter configuration
     pub key_filter_config: BloomFilterConfig,
@@ -826,7 +826,7 @@ impl SstableBloomFilter {
 }
 
 /// Hierarchical bloom filter configuration for SST files
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HierarchicalBloomConfig {
     pub global_key_filter: BloomFilterConfig,
     pub global_metadata_filter: BloomFilterConfig,

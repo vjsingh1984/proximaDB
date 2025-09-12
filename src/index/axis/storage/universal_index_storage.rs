@@ -594,7 +594,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
 }
 
 /// Example implementation for HNSW graph nodes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HnswNode {
     pub id: usize,
     pub layer: usize,
@@ -612,7 +612,7 @@ impl IndexData for HnswNode {
 }
 
 /// Example implementation for LSH hash buckets
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LshBucket {
     pub table_id: usize,
     pub hash: u64,

@@ -235,7 +235,7 @@ pub struct AxisManager {
 /// - User visibility into long-running migrations
 /// - Cancellation/rollback capabilities
 /// - Resource planning (CPU/memory allocation)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationStatus {
     /// Unique identifier for tracking
     pub migration_id: crate::utils::uuid::Uuid,
@@ -1230,7 +1230,7 @@ pub struct CollectionStats {
 }
 
 /// Hybrid query combining multiple search criteria
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridQuery {
     pub collection_id: String,
     pub vector_query: Option<VectorQuery>,
@@ -1241,7 +1241,7 @@ pub struct HybridQuery {
 }
 
 /// Vector query types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorQuery {
     Dense {
         vector: Vec<f32>,
@@ -1254,7 +1254,7 @@ pub enum VectorQuery {
 }
 
 /// Metadata filter
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataFilter {
     pub field: String,
     pub operator: FilterOperator,
@@ -1262,7 +1262,7 @@ pub struct MetadataFilter {
 }
 
 /// Filter operators
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterOperator {
     Equals,
     NotEquals,
@@ -1273,7 +1273,7 @@ pub enum FilterOperator {
 }
 
 /// Query result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryResult {
     pub results: Vec<ScoredResult>,
     pub strategy_used: IndexSelectionStrategy,
@@ -1281,7 +1281,7 @@ pub struct QueryResult {
 }
 
 /// Scored result with MVCC support
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ScoredResult {
     pub vector_id: VectorId,
     pub similarity: f32,

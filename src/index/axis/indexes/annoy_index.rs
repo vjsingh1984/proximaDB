@@ -46,7 +46,7 @@ use crate::index::axis::utils::{AtomicStats, memory, validation};
 use crate::index::axis::zero_overhead_vector::{CollectionConfig, ZeroOverheadCollection};
 
 /// Configuration for AXIS Annoy index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AxisAnnoyConfig {
     /// Number of trees to build
     pub n_trees: usize,
@@ -73,7 +73,7 @@ impl Default for AxisAnnoyConfig {
 }
 
 /// Node in an Annoy tree
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum AnnoyNode {
     /// Leaf node containing vector IDs
     Leaf { vector_ids: Vec<String> },
@@ -700,7 +700,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
 }
 
 /// Annoy-specific statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AnnoyStats {
     pub vector_count: usize,
     pub tree_count: usize,

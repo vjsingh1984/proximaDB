@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub server: ServerConfig,
     pub storage: StorageConfig,
@@ -22,7 +22,7 @@ pub struct Config {
     pub hybrid: Option<HybridRuntimeConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TlsConfig {
     pub cert_file: Option<String>,
     pub key_file: Option<String>,
@@ -30,7 +30,7 @@ pub struct TlsConfig {
     pub bind_interface: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareConfig {
     /// Enable automatic hardware detection (default: true)
     pub enable_detection: bool,
@@ -85,7 +85,7 @@ impl Default for HardwareConfig {
 }
 
 /// Semantic Knowledge Store (SKS) configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SksConfig {
     /// Enable SKS features (default: false)
     pub enabled: bool,
@@ -191,7 +191,7 @@ impl Default for Config {
 }
 
 /// Runtime cache configuration for the unified Cross-Cache Orchestrator
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheRuntimeConfig {
     /// Total memory budget for orchestrator-managed caches (in MB)
     pub total_memory_mb: u64,
@@ -206,7 +206,7 @@ impl Default for CacheRuntimeConfig {
 }
 
 /// Graph runtime configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GraphRuntimeConfig {
     /// Enable bounded prefetch hints during traversals
     pub enable_prefetch: bool,
@@ -225,7 +225,7 @@ impl Default for GraphRuntimeConfig {
 fn default_graph_engine() -> String { "ORION".to_string() }
 
 /// Hybrid query runtime configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridRuntimeConfig {
     /// Default seeding strategy ("AVERAGE"|"PER_SEED"|"NONE")
     pub seeding_strategy: String,
@@ -269,7 +269,7 @@ impl Default for StorageConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub node_id: String,
     pub bind_address: String,
@@ -279,7 +279,7 @@ pub struct ServerConfig {
     pub data_dir: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageConfig {
     /// Storage locations - each can host WriteBuffer, data, and indexes
     pub storage_locations: Vec<StorageLocation>,
@@ -309,7 +309,7 @@ pub struct StorageConfig {
 }
 
 /// Storage location configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageLocation {
     /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb")
     pub url: String,
@@ -336,7 +336,7 @@ impl Default for StorageLocation {
 }
 
 /// Assignment configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AssignmentConfig {
     /// Assignment strategy: "hash", "round-robin", "weighted"
     pub strategy: String,
@@ -362,7 +362,7 @@ impl Default for AssignmentConfig {
 }
 
 /// Metadata backend configuration for cloud and local storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataBackendConfig {
     /// Backend type (filestore, memory)
     pub backend_type: String,
@@ -391,7 +391,7 @@ impl Default for MetadataBackendConfig {
 }
 
 /// Cloud storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CloudStorageConfig {
     /// AWS S3 configuration
     pub s3_config: Option<S3Config>,
@@ -404,7 +404,7 @@ pub struct CloudStorageConfig {
 }
 
 /// AWS S3 configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct S3Config {
     pub region: String,
     pub bucket: String,
@@ -415,7 +415,7 @@ pub struct S3Config {
 }
 
 /// Azure Blob Storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AzureConfig {
     pub account_name: String,
     pub container: String,
@@ -425,7 +425,7 @@ pub struct AzureConfig {
 }
 
 /// Google Cloud Storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GcsConfig {
     pub project_id: String,
     pub bucket: String,
@@ -434,7 +434,7 @@ pub struct GcsConfig {
 }
 
 /// Filesystem configuration for performance optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilesystemOptimizationConfig {
     /// Enable write strategy caching
     pub enable_write_strategy_cache: bool,
@@ -447,7 +447,7 @@ pub struct FilesystemOptimizationConfig {
 }
 
 /// Temp strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TempStrategy {
     /// Same directory temp (recommended for local filesystem)
     SameDirectory,
@@ -460,7 +460,7 @@ pub enum TempStrategy {
 }
 
 /// Atomic operations configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TransactionalOperationsConfig {
     /// Enable atomic writes for local filesystem
     pub enable_local_atomic: bool,
@@ -531,7 +531,7 @@ impl StorageConfig {
 /// User-facing write buffer configuration (from TOML files)
 /// This is the simple configuration that users specify in their config files.
 /// It gets converted to the internal WALConfig for the engine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WriteBufferUserConfig {
     /// Total write buffer size across all collections in MB
     pub write_buffer_size_mb: u64,
@@ -591,7 +591,7 @@ impl WriteBufferUserConfig {
 }
 
 /// Common compaction configuration shared across engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionConfig {
     /// L0 file count threshold for compaction (default: 5)
     pub l0_file_threshold: usize,
@@ -645,7 +645,7 @@ impl Default for CompactionConfig {
 }
 
 /// SST (Sorted String Table) engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstConfig {
     /// Number of levels in the SST tree
     pub level_count: u8,
@@ -704,7 +704,7 @@ pub struct SstConfig {
 }
 
 /// VIPER (columnar storage) engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ViperConfig {
     /// Parquet file configuration
     pub row_group_size: usize,
@@ -871,7 +871,7 @@ impl SstConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ConsensusConfig {
     pub node_id: Option<u64>,
     pub cluster_peers: Vec<String>,
@@ -892,7 +892,7 @@ impl Default for ConsensusConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ApiConfig {
     pub grpc_port: u16,
     pub rest_port: u16,
@@ -949,7 +949,7 @@ fn default_ttl_sweep_interval() -> u64 {
 }
 
 /// WAL storage configuration supporting multiple directories and cloud storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WalStorageConfig {
     /// WAL storage URLs - supports file://, s3://, adls://, gcs://
     /// Multiple URLs enable multi-disk performance scaling
@@ -990,7 +990,7 @@ pub struct WalStorageConfig {
     pub global_shrink_factor: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum WalDistributionStrategy {
     /// Round-robin across WAL directories
     RoundRobin,
@@ -1057,7 +1057,7 @@ fn default_global_shrink_factor() -> Option<f64> {
     Some(0.4) // 40% shrink factor - recommended for global threshold management
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MonitoringConfig {
     pub metrics_enabled: bool,
     pub log_level: String,

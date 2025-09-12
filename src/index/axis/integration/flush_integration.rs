@@ -22,13 +22,13 @@
 pub struct FlushIntegration;
 
 /// Placeholder for compatibility
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushConfig {
     pub enabled: bool,
 }
 
 /// Placeholder for compatibility
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushStats {
     pub total_flushes: u64,
 }

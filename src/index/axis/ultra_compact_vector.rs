@@ -72,7 +72,7 @@ use bytemuck;
 /// Layout: [vector_data][id_string]
 /// 
 /// Everything else (dimension, quantization method) comes from collection config
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UltraCompactVector {
     data: Vec<u8>,
 }

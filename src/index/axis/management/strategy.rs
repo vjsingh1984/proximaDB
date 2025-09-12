@@ -33,7 +33,7 @@ pub enum OptimizationGoal {
 }
 
 /// Configuration for index optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationConfig {
     pub goal: OptimizationGoal,
     pub max_memory_gb: Option<f64>,
@@ -65,7 +65,7 @@ pub struct IndexStrategyBuilder {
     optimization_config: OptimizationConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionStatistics {
     pub total_vectors: usize,
     pub vector_dimension: usize,
@@ -76,7 +76,7 @@ pub struct CollectionStatistics {
     pub update_frequency: f32, // updates per second
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryPatterns {
     pub avg_queries_per_second: f32,
     pub filter_usage_ratio: f32, // % queries with filters
@@ -251,14 +251,14 @@ impl IndexStrategyBuilder {
 }
 
 /// Runtime index strategy that can adapt based on performance
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdaptiveIndexStrategy {
     pub base_strategy: IndexSelectionStrategy,
     pub performance_history: Vec<QueryPerformance>,
     pub adaptation_enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryPerformance {
     pub query_type: String,
     pub latency_ms: f64,

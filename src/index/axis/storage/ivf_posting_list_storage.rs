@@ -36,14 +36,14 @@ use crate::storage::engines::impls::sst::writer::SstableWriter;
 pub type PostingEntry = PostingListEntry;
 
 /// Posting list entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PostingListEntry {
     pub vector_id: String,
     pub distance_to_centroid: f32,
 }
 
 /// Complete posting list for a cluster
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PostingList {
     pub cluster_id: usize,
     pub entries: Vec<PostingListEntry>,

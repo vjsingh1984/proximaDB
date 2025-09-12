@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
 /// Collection-level tier state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CollectionTierState {
     /// Fully loaded in memory, ready for queries
     Memory {
@@ -95,7 +95,7 @@ pub struct CollectionStateManager {
 }
 
 /// Access history for a collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessHistory {
     pub recent_accesses: Vec<Instant>,
     pub access_count_1h: u64,
@@ -106,7 +106,7 @@ pub struct AccessHistory {
 }
 
 /// Tier transition record
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TierTransition {
     pub timestamp: DateTime<Utc>,
     pub from_tier: TierLevel,
@@ -495,7 +495,7 @@ impl CollectionStateManager {
 }
 
 /// Memory usage statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryUsageStats {
     pub total_memory_bytes: usize,
     pub collections_in_memory: usize,

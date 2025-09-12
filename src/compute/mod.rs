@@ -181,7 +181,7 @@ mod tests;
 use serde::{Deserialize, Serialize};
 
 /// Vector computation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ComputeConfig {
     /// Hardware acceleration preferences
     pub acceleration: AccelerationConfig,
@@ -193,7 +193,7 @@ pub struct ComputeConfig {
     pub performance: PerformanceConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccelerationConfig {
     /// Preferred compute backend order
     pub backend_priority: Vec<ComputeBackend>,
@@ -208,7 +208,7 @@ pub struct AccelerationConfig {
 // Using central HardwareBackend from hardware_capabilities module
 pub use crate::core::hardware_capabilities::HardwareBackend as ComputeBackend;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CpuVectorization {
     /// Enable AVX-512 instructions
     pub avx512: bool,
@@ -222,7 +222,7 @@ pub struct CpuVectorization {
     pub auto_detect: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GpuConfig {
     /// Memory allocation strategy
     pub memory_pool: GpuMemoryPool,
@@ -234,7 +234,7 @@ pub struct GpuConfig {
     pub memory_limit_gb: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum GpuMemoryPool {
     /// Simple allocation/deallocation
     Simple,
@@ -244,7 +244,7 @@ pub enum GpuMemoryPool {
     Unified,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MathLibrary {
     /// Intel Math Kernel Library
     IntelMKL,
@@ -258,7 +258,7 @@ pub enum MathLibrary {
     Auto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AlgorithmConfig {
     /// Default similarity metric
     pub default_metric: DistanceMetric,
@@ -270,7 +270,7 @@ pub struct AlgorithmConfig {
     pub quantization: UnifiedQuantizationLevel,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IndexAlgorithm {
     /// Hierarchical Navigable Small World
     HNSW {
@@ -299,7 +299,7 @@ pub enum IndexAlgorithm {
     Auto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchParams {
     /// Search accuracy vs speed trade-off
     pub accuracy_target: f32, // 0.0 = fastest, 1.0 = most accurate
@@ -311,7 +311,7 @@ pub struct SearchParams {
     pub parallel_threads: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryConfig {
     /// Prefetch strategy for vector data
     pub prefetch_strategy: PrefetchStrategy,
@@ -321,7 +321,7 @@ pub struct MemoryConfig {
     pub cache_config: CacheConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PrefetchStrategy {
     /// No prefetching
     None,
@@ -333,7 +333,7 @@ pub enum PrefetchStrategy {
     Adaptive,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MmapConfig {
     /// Memory mapping advice
     pub madvise: MadviseHint,
@@ -345,7 +345,7 @@ pub struct MmapConfig {
     pub numa_node: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MadviseHint {
     Normal,
     Random,
@@ -354,7 +354,7 @@ pub enum MadviseHint {
     DontNeed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheConfig {
     /// L1 cache size (vectors in memory)
     pub l1_cache_size: usize,
@@ -364,7 +364,7 @@ pub struct CacheConfig {
     pub replacement_policy: CachePolicy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CachePolicy {
     LRU,  // Least Recently Used
     LFU,  // Least Frequently Used
@@ -372,7 +372,7 @@ pub enum CachePolicy {
     TwoQ, // Two Queue
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceConfig {
     /// Enable SIMD optimizations
     pub simd_enabled: bool,
@@ -386,7 +386,7 @@ pub struct PerformanceConfig {
     pub thread_affinity: ThreadAffinity,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ThreadAffinity {
     /// No specific affinity
     None,

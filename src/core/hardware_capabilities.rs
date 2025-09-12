@@ -275,7 +275,7 @@ impl std::fmt::Display for GpuBackend {
 }
 
 #[cfg(not(feature = "gpu"))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GpuDevice {
     pub id: usize,
     pub name: String,
@@ -289,7 +289,7 @@ pub struct GpuDevice {
 static HARDWARE_CAPABILITIES: OnceLock<Arc<HardwareCapabilities>> = OnceLock::new();
 
 /// Complete hardware capabilities detected at startup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareCapabilities {
     /// CPU features and SIMD support
     pub cpu: CpuCapabilities,
@@ -304,7 +304,7 @@ pub struct HardwareCapabilities {
 }
 
 /// Centralized CPU features (replaces duplicate from compute module)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CpuFeatures {
     pub avx512_support: bool,
     pub avx2_support: bool,
@@ -316,7 +316,7 @@ pub struct CpuFeatures {
 }
 
 /// Cache size information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheSizes {
     pub l1_data: usize,
     pub l1_instruction: usize,
@@ -350,7 +350,7 @@ impl Default for CacheSizes {
 }
 
 /// CPU capabilities including SIMD support
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CpuCapabilities {
     /// Number of physical CPU cores
     pub physical_cores: usize,
@@ -367,7 +367,7 @@ pub struct CpuCapabilities {
 }
 
 /// GPU capabilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GpuCapabilities {
     /// Available GPU backend
     pub backend: GpuBackend,
@@ -382,7 +382,7 @@ pub struct GpuCapabilities {
 }
 
 /// System memory information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryInfo {
     /// Total system memory in bytes
     pub total_memory: u64,

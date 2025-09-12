@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 /// Serializable wrapper for VectorRecord for bincode/other serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SerializableVectorRecord {
     pub id: String,
     pub collection_id: String,
@@ -135,7 +135,7 @@ fn json_to_sql_value(value: serde_json::Value) -> proximadb_v1::SqlValue {
 }
 
 /// Serializable wrapper for Collection for Avro/other serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SerializableCollection {
     pub id: String,
     pub name: String,
@@ -150,7 +150,7 @@ pub struct SerializableCollection {
     pub quantization_config: Option<SerializableQuantizationConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SerializableQuantizationConfig {
     pub quantization_type: i32,
     pub bits: u32,

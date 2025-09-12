@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use tracing::{debug, info, trace};
 
 /// Configuration for progressive quantization-aware search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveSearchConfig {
     /// Recall rate for binary quantization (e.g., 0.85 for 85%)
     pub binary_recall: f32,
@@ -56,7 +56,7 @@ impl Default for ProgressiveSearchConfig {
 }
 
 /// Computed sizes for each stage of progressive search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StageSizes {
     /// Number of candidates to evaluate at binary stage
     pub binary_candidates: usize,
