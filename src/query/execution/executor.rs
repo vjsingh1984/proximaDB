@@ -161,6 +161,15 @@ impl QueryExecutor {
                     let joined = self.join_rows(&left, &right, left_keys, right_keys, kind)?;
                     buffers.push(joined);
                 }
+                ExecutionOperation::Union { all } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("UNION requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    let unioned = self.union_rows(&left, &right, *all)?;
+                    buffers.push(unioned);
+                }
                 _ => {
                     return Err(anyhow!(
                         "Unsupported operation in vector plan: {:?}",

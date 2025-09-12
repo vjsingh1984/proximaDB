@@ -228,13 +228,17 @@ pub enum ExecutionOperation {
         aggs: Vec<AggregateSpec>,
         having: Option<FilterExpression>,
     },
-    /// Join scaffolding (not yet implemented)
+    /// Join scaffolding (implemented)
     Join {
         kind: JoinKind,
         left_keys: Vec<String>,
         right_keys: Vec<String>,
         left_alias: String,
         right_alias: String,
+    },
+    /// UNION operation for combining results
+    Union {
+        all: bool, // UNION ALL vs UNION (distinct)
     },
 }
 

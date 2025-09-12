@@ -124,7 +124,7 @@ impl QueryLowering {
         Ok(Select {
             projection,
             from,
-            joins: vec![], // TODO: Implement JOIN support in future phase
+            joins: self.lower_joins(&joins).await?,
             selection,
             group_by: vec![], // TODO: Implement GROUP BY support
             having: None,     // TODO: Implement HAVING support
@@ -161,9 +161,9 @@ impl QueryLowering {
             let table = self.lower_table_factor(&table_with_joins.relation).await?;
             tables.push(table);
 
-            // TODO: Handle JOINs in future implementation
-            if !table_with_joins.joins.is_empty() {
-                return Err(anyhow!("JOIN operations not yet implemented"));
+            // Process JOINs for this table
+            for join in &table_with_joins.joins {
+                joins.push(self.lower_join(join).await?);
             }
         }
 
@@ -400,6 +400,60 @@ impl QueryLowering {
             Ok(None) => Err(anyhow!("Collection not found: {}", collection_name)),
             Err(e) => Err(anyhow!("Collection resolution failed: {}", e)),
         }
+    }
+
+    /// Lower JOIN clauses from SQL AST to query AST
+    async fn lower_joins(&self, joins: &[sqlparser::ast::Join]) -> Result<Vec<crate::query::ast::Join>> {
+        let mut result = Vec::new();
+        for join in joins {
+            result.push(self.lower_join(join).await?);
+        }
+        Ok(result)
+    }
+
+    /// Lower individual JOIN clause
+    async fn lower_join(&self, join: &sqlparser::ast::Join) -> Result<crate::query::ast::Join> {
+        use sqlparser::ast::JoinOperator;
+        use crate::query::ast::{Join, JoinType};
+
+        let join_type = match join.join_operator {
+            JoinOperator::Inner(_) => JoinType::Inner,
+            JoinOperator::LeftOuter(_) => JoinType::LeftOuter,
+            JoinOperator::RightOuter(_) => JoinType::RightOuter,
+            JoinOperator::FullOuter(_) => JoinType::FullOuter,
+            JoinOperator::CrossJoin => JoinType::Cross,
+            _ => return Err(anyhow!("Unsupported JOIN type")),
+        };
+
+        let right_table = self.lower_table_factor(&join.relation).await?;
+
+        let on_condition = match &join.join_operator {
+            JoinOperator::Inner(constraint) |
+            JoinOperator::LeftOuter(constraint) |
+            JoinOperator::RightOuter(constraint) |
+            JoinOperator::FullOuter(constraint) => {
+                match constraint {
+                    sqlparser::ast::JoinConstraint::On(expr) => {
+                        Some(self.lower_expression(expr).await?)
+                    },
+                    sqlparser::ast::JoinConstraint::Using(_) => {
+                        return Err(anyhow!("USING constraint not yet implemented"));
+                    },
+                    sqlparser::ast::JoinConstraint::Natural => {
+                        return Err(anyhow!("NATURAL JOIN not yet implemented"));
+                    },
+                    sqlparser::ast::JoinConstraint::None => None,
+                }
+            },
+            JoinOperator::CrossJoin => None,
+            _ => return Err(anyhow!("Unsupported JOIN constraint")),
+        };
+
+        Ok(Join {
+            join_type,
+            right_table,
+            on_condition,
+        })
     }
 }
 

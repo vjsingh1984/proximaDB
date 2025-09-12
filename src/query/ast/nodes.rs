@@ -58,16 +58,18 @@ pub struct TableRef {
 
 #[derive(Debug, Clone)]
 pub struct Join {
-    pub kind: JoinKind,
-    pub left: TableRef,
-    pub right: TableRef,
-    pub on: Option<Expr>,
+    pub join_type: JoinType,
+    pub right_table: TableRef,
+    pub on_condition: Option<Expr>,
 }
 
 #[derive(Debug, Clone)]
-pub enum JoinKind {
+pub enum JoinType {
     Inner,
-    Left,
+    LeftOuter,
+    RightOuter,
+    FullOuter,
+    Cross,
 }
 
 #[derive(Debug, Clone)]
