@@ -14,29 +14,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .out_dir("src/proto")
         .file_descriptor_set_path("src/proto/proximadb_v1_descriptor.bin")
         .protoc_arg("--experimental_allow_proto3_optional") // Allow proto3 optional fields
-        // Skip serde for types containing prost_types since they don't implement serde
-        // Apply serde selectively to safe types only
-        .type_attribute("TypedField", "#[serde(skip)]")
-        .type_attribute("Entity", "#[serde(skip)]") 
-        .type_attribute("EmbeddingVersion", "#[serde(skip)]")
-        .type_attribute("Provenance", "#[serde(skip)]")
-        .type_attribute("TemporalInfo", "#[serde(skip)]")
-        .field_attribute("SearchParams.filters", "#[serde(skip)]")
-        .field_attribute("SearchParams.custom_hints", "#[serde(skip)]")
-        .field_attribute("StructuredContent.data", "#[serde(skip)]")
-        .field_attribute("Entity.flexible_metadata", "#[serde(skip)]")
-        // Skip all Timestamp fields
-        .field_attribute("EmbeddingVersion.created_at", "#[serde(skip)]")
-        .field_attribute("Provenance.extracted_at", "#[serde(skip)]")
-        .field_attribute("TemporalInfo.created_at", "#[serde(skip)]")
-        .field_attribute("TemporalInfo.valid_from", "#[serde(skip)]")
-        .field_attribute("TemporalInfo.valid_to", "#[serde(skip)]")
-        .field_attribute("TemporalVersion.timestamp", "#[serde(skip)]")
-        .field_attribute("Relation.created_at", "#[serde(skip)]")
-        .field_attribute("TimeRange.start", "#[serde(skip)]")
-        .field_attribute("TimeRange.end", "#[serde(skip)]")
-        .field_attribute("typed_field::Value.TimestampValue", "#[serde(skip)]")
-        .field_attribute("temporal_clause::Clause.AtTime", "#[serde(skip)]")
+        // ULTRA-MINIMAL: Only add serde to simple enum types that need REST API serialization
+        // Custom serde implementations handle oneof types and their nested components
+        .type_attribute("DistanceMetric", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("StorageEngine", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("IndexingAlgorithm", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CompressionAlgorithm", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionOperation", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("PropertyFilterOperator", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // oneof types (SqlValue, PropertyValue) get custom serde from serde_impls.rs but PartialEq works fine
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(
             &[

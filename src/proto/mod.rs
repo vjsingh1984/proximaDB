@@ -220,3 +220,6 @@
 // V1 proto definitions for SKS (Semantic Knowledge Store)
 #[path = "proximadb.v1.rs"]
 pub mod proximadb_v1;
+
+// Custom serde implementations for oneof types
+pub mod serde_impls;

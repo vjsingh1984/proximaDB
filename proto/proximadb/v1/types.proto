@@ -17,6 +17,7 @@ message SqlObject {
 }
 
 // Simple typed value for SQL parameters and row fields
+// Keep oneof for memory efficiency, add custom serde implementation
 message SqlValue {
   oneof value {
     string string_value = 1;
