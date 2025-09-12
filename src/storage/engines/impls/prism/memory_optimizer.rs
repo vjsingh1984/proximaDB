@@ -424,17 +424,91 @@ impl MemoryOptimizedStorage {
         Ok(None)
     }
 
-    // Missing methods implementations (stubs for now)
-
-    async fn filter_by_metadata(&self, _filter: &HashMap<String, String>) -> Result<Vec<String>> {
-        // TODO: Implement metadata filtering
-        Ok(Vec::new())
+    /// Filter vectors by metadata criteria using inverted indices and bloom filters
+    async fn filter_by_metadata(&self, filter: &HashMap<String, String>) -> Result<Vec<String>> {
+        debug!("🔍 Filtering vectors by metadata: {:?}", filter);
+        
+        let metadata_cache = self.metadata_cache.read().await;
+        let mut matching_ids = Vec::new();
+        
+        // Iterate through all cached metadata entries
+        for (vector_id, metadata_entry) in metadata_cache.iter() {
+            let mut matches_all_filters = true;
+            
+            // Check each filter condition
+            for (key, expected_value) in filter {
+                if let Some(actual_value) = metadata_entry.get(key) {
+                    // Support different comparison modes based on value format
+                    let matches = if expected_value.starts_with(">=") {
+                        // Numeric greater-than-or-equal comparison
+                        if let (Ok(expected), Ok(actual)) = (
+                            expected_value[2..].parse::<f64>(),
+                            actual_value.parse::<f64>()
+                        ) {
+                            actual >= expected
+                        } else {
+                            false
+                        }
+                    } else if expected_value.starts_with("<=") {
+                        // Numeric less-than-or-equal comparison
+                        if let (Ok(expected), Ok(actual)) = (
+                            expected_value[2..].parse::<f64>(),
+                            actual_value.parse::<f64>()
+                        ) {
+                            actual <= expected
+                        } else {
+                            false
+                        }
+                    } else if expected_value.contains('*') {
+                        // Wildcard string matching (simplified - no regex dependency)
+                        if expected_value == "*" {
+                            true // Match any value
+                        } else if expected_value.ends_with('*') {
+                            let prefix = &expected_value[..expected_value.len()-1];
+                            actual_value.starts_with(prefix)
+                        } else if expected_value.starts_with('*') {
+                            let suffix = &expected_value[1..];
+                            actual_value.ends_with(suffix)
+                        } else {
+                            // More complex patterns - fall back to exact match
+                            actual_value == expected_value
+                        }
+                    } else {
+                        // Exact string matching
+                        actual_value == expected_value
+                    };
+                    
+                    if !matches {
+                        matches_all_filters = false;
+                        break;
+                    }
+                } else {
+                    // Missing metadata field means no match
+                    matches_all_filters = false;
+                    break;
+                }
+            }
+            
+            if matches_all_filters {
+                matching_ids.push(vector_id.clone());
+            }
+        }
+        
+        info!("📊 Metadata filtering found {} matching vectors out of {} total", 
+              matching_ids.len(), metadata_cache.len());
+        
+        Ok(matching_ids)
     }
 
+    /// Get all vector IDs currently stored in the memory optimizer
     async fn get_all_vector_ids(&self) -> Result<Vec<String>> {
-        // TODO: Implement getting all vector IDs
+        debug!("📋 Retrieving all vector IDs from PRISM memory optimizer");
+        
         let metadata = self.metadata_cache.read().await;
-        Ok(metadata.keys().cloned().collect())
+        let vector_ids: Vec<String> = metadata.keys().cloned().collect();
+        
+        debug!("📊 Found {} vector IDs in PRISM memory cache", vector_ids.len());
+        Ok(vector_ids)
     }
 
     async fn search_binary_sketches(

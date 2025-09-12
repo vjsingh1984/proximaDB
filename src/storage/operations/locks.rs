@@ -135,13 +135,62 @@ impl GlobalLockManager {
         debug!("🔒 Acquiring compaction lock for collection: {} levels {}-{}", 
                collection_id, start_level, end_level);
 
-        // TODO: Implement compaction lock acquisition
-        // 1. Check for overlapping level ranges
-        // 2. Acquire exclusive lock on level range
-        // 3. Prevent concurrent flushes on affected levels
-        // 4. Record lock for monitoring
+        let level_range = LevelRange { start_level, end_level };
+
+        // 1. Get or create level locks for this collection
+        let mut level_locks = self.level_locks.write().await;
+        let collection_level_locks = level_locks
+            .entry(collection_id.to_string())
+            .or_insert_with(HashMap::new);
+
+        // 2. Check for overlapping level ranges and acquire exclusive locks
+        let overlapping_ranges: Vec<_> = collection_level_locks
+            .keys()
+            .filter(|range| ranges_overlap(range, &level_range))
+            .cloned()
+            .collect();
+
+        for overlapping_range in overlapping_ranges {
+            if let Some(semaphore) = collection_level_locks.get(&overlapping_range) {
+                // Wait for exclusive access to this level range
+                let _permit = tokio::time::timeout(
+                    self.timeout_config.compaction_timeout,
+                    semaphore.acquire()
+                ).await
+                .map_err(|_| anyhow::anyhow!("Timeout acquiring compaction lock for levels {}-{}", start_level, end_level))?
+                .map_err(|_| anyhow::anyhow!("Failed to acquire compaction lock (semaphore closed)"))?;
+            }
+        }
+
+        // 3. Create semaphore for this level range (exclusive access)
+        let level_semaphore = Arc::new(Semaphore::new(1)); // Only one compaction per level range
+        let permit = level_semaphore.acquire().await
+            .map_err(|_| anyhow::anyhow!("Failed to acquire initial compaction permit"))?;
+
+        collection_level_locks.insert(level_range.clone(), level_semaphore);
+        drop(level_locks);
+
+        // 4. Get collection lock for tracking
+        let collection_lock = self.get_or_create_collection_lock(collection_id).await;
         
-        unimplemented!("Implement compaction lock acquisition")
+        // 5. Record lock acquisition
+        {
+            let mut active_ops = collection_lock.active_operations.write().await;
+            active_ops.push(ActiveLockInfo {
+                operation_type: super::OperationType::MinorCompaction,
+                acquired_at: std::time::Instant::now(),
+                holder_id: format!("compaction_{}_{}-{}", collection_id, start_level, end_level),
+            });
+        }
+
+        info!("✅ Compaction lock acquired for collection: {} levels {}-{}", collection_id, start_level, end_level);
+
+        Ok(CompactionLockGuard {
+            _permit: permit,
+            collection_id: collection_id.to_string(),
+            level_range,
+            collection_lock,
+        })
     }
 
     /// Acquire global re-quantization lock (exclusive)
@@ -190,6 +239,25 @@ impl GlobalLockManager {
             requantization_locked: self.requantization_lock.try_lock().is_err(),
         }
     }
+
+    /// Determine if two operation types conflict (for testing)
+    pub fn operations_conflict(&self, op1: super::OperationType, op2: super::OperationType) -> bool {
+        use super::OperationType::*;
+        
+        match (op1, op2) {
+            // Flushes conflict with major compactions
+            (Flush, MajorCompaction) | (MajorCompaction, Flush) => true,
+            // Re-quantization conflicts with all other operations
+            (Requantization, _) | (_, Requantization) => true,
+            // Minor compactions can run with flushes on different levels
+            (Flush, MinorCompaction) | (MinorCompaction, Flush) => false,
+            // Same operation types conflict (except multiple flushes)
+            (Flush, Flush) => false, // Multiple flushes allowed
+            (a, b) if a == b => true,
+            // Otherwise, operations can run concurrently
+            _ => false,
+        }
+    }
 }
 
 /// Lock guard for flush operations
@@ -214,9 +282,29 @@ impl Drop for FlushLockGuard {
 
 /// Lock guard for compaction operations  
 pub struct CompactionLockGuard {
-    _guard: tokio::sync::RwLockReadGuard<'static, ()>,
+    _permit: tokio::sync::SemaphorePermit<'static>,
     collection_id: String,
     level_range: LevelRange,
+    collection_lock: Arc<CollectionLock>,
+}
+
+impl Drop for CompactionLockGuard {
+    fn drop(&mut self) {
+        debug!("🔓 Releasing compaction lock for collection: {} levels {}-{}", 
+               self.collection_id, self.level_range.start_level, self.level_range.end_level);
+        
+        // Remove from active operations tracking
+        let collection_lock = self.collection_lock.clone();
+        tokio::spawn(async move {
+            let mut active_ops = collection_lock.active_operations.write().await;
+            active_ops.retain(|op| !matches!(op.operation_type, super::OperationType::MinorCompaction | super::OperationType::MajorCompaction));
+        });
+    }
+}
+
+/// Check if two level ranges overlap
+fn ranges_overlap(range1: &LevelRange, range2: &LevelRange) -> bool {
+    !(range1.end_level < range2.start_level || range2.end_level < range1.start_level)
 }
 
 /// Lock guard for re-quantization operations

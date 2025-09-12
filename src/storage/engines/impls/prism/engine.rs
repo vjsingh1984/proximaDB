@@ -890,12 +890,75 @@ impl PrismEngine {
 
     /// Filter candidates by metadata using bloom filters and inverted indices
     async fn filter_by_metadata(&self, filter: &HashMap<String, String>) -> Result<Vec<String>> {
-        // TODO: Implement metadata filtering
-        // 1. Check bloom filters for existence
-        // 2. Use inverted indices for exact matches
-        // 3. Return candidate vector IDs
+        debug!("🔍 PRISM engine filtering by metadata: {:?}", filter);
+        
+        let mut matching_ids = Vec::new();
+        
+        // Phase 1: Bloom filter pre-screening (if available)
+        // Check if all required metadata fields might exist before expensive lookups
+        for key in filter.keys() {
+            if let Some(ref bloom_filter) = self.metadata_bloom_filter {
+                if !bloom_filter.might_contain(key.as_bytes()) {
+                    debug!("📊 Bloom filter indicates metadata key '{}' doesn't exist", key);
+                    return Ok(Vec::new()); // No vectors can match
+                }
+            }
+        }
+        
+        // Phase 2: Inverted index lookup for efficient filtering
+        // For each filter condition, get candidate vector IDs from inverted indices
+        let mut candidate_sets: Vec<std::collections::HashSet<String>> = Vec::new();
+        
+        for (key, value) in filter {
+            if let Some(ref inverted_indices) = self.inverted_indices {
+                if let Some(index) = inverted_indices.get(key) {
+                    // Get vector IDs that have this metadata key-value pair
+                    if let Some(vector_ids) = index.get(value) {
+                        let candidate_set: std::collections::HashSet<String> = 
+                            vector_ids.iter().cloned().collect();
+                        candidate_sets.push(candidate_set);
+                    } else {
+                        // Value not found in index - no matches possible
+                        debug!("📊 Inverted index shows no vectors with {}={}", key, value);
+                        return Ok(Vec::new());
+                    }
+                } else {
+                    warn!("📊 No inverted index found for metadata key: {}", key);
+                    // Fall back to linear scan through memory optimizer
+                    return self.memory_optimizer.filter_by_metadata(filter).await;
+                }
+            } else {
+                // No inverted indices available - delegate to memory optimizer
+                debug!("📊 No inverted indices in PRISM engine, using memory optimizer");
+                return self.memory_optimizer.filter_by_metadata(filter).await;
+            }
+        }
+        
+        // Phase 3: Intersection of all candidate sets (AND operation)
+        if let Some(first_set) = candidate_sets.first() {
+            let mut intersection = first_set.clone();
+            for candidate_set in candidate_sets.iter().skip(1) {
+                intersection = intersection
+                    .intersection(candidate_set)
+                    .cloned()
+                    .collect();
+            }
+            matching_ids = intersection.into_iter().collect();
+        }
+        
+        info!("📊 PRISM metadata filtering found {} matching vectors", matching_ids.len());
+        Ok(matching_ids)
+    }
 
-        Ok(Vec::new()) // Placeholder
+    /// Get all vector IDs currently stored in the PRISM engine
+    async fn get_all_vector_ids(&self) -> Result<Vec<String>> {
+        debug!("📋 Retrieving all vector IDs from PRISM engine");
+        
+        // Delegate to memory optimizer which has the most complete view
+        let vector_ids = self.memory_optimizer.get_all_vector_ids().await?;
+        
+        debug!("📊 Found {} vector IDs in PRISM engine", vector_ids.len());
+        Ok(vector_ids)
     }
 
     /// Filter candidates using binary sketches for quick similarity filtering

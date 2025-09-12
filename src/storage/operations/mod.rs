@@ -9,7 +9,6 @@
 //! - Coordinate flush → compaction → re-quantization workflows
 //! - Provide observability and metrics for operation monitoring
 
-pub mod coordinator;
 pub mod flush;
 pub mod compaction;
 pub mod requantization;
@@ -28,6 +27,7 @@ use tracing::{info, warn, error};
 /// - Preventing conflicts through intelligent locking
 /// - Optimizing operation scheduling based on cost models
 /// - Providing comprehensive metrics and observability
+#[derive(Clone)]
 pub struct UnifiedOperationCoordinator {
     /// Global lock manager preventing concurrent conflicts
     lock_manager: Arc<locks::GlobalLockManager>,
@@ -82,7 +82,7 @@ struct PendingOperation {
 }
 
 /// Types of background operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OperationType {
     /// Flush memtable to storage
     Flush,
@@ -95,7 +95,7 @@ pub enum OperationType {
 }
 
 /// Operation priority levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum OperationPriority {
     /// Critical operations (data consistency)
     Critical = 0,
@@ -108,7 +108,7 @@ pub enum OperationPriority {
 }
 
 /// Operation execution statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
 struct OperationStatistics {
     total_operations: u64,
     successful_operations: u64,
@@ -199,39 +199,138 @@ impl UnifiedOperationCoordinator {
     pub async fn schedule_minor_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
         info!("🔧 Scheduling minor compaction for collection: {}", collection_id);
 
-        // TODO: Implement minor compaction coordination
-        // 1. Check for conflicts (no concurrent flushes on same level)
-        // 2. Acquire exclusive lock on level range
-        // 3. Execute compaction with appropriate engine
-        // 4. Update metrics and trigger re-quantization if needed
+        // 1. Check for conflicts with existing operations
+        if self.has_conflicting_operations(collection_id, OperationType::MinorCompaction).await {
+            warn!("⏳ Minor compaction delayed due to conflicting operations on collection: {}", collection_id);
+            return self.queue_compaction_operation(collection_id, OperationType::MinorCompaction, OperationPriority::Normal).await;
+        }
+
+        // 2. Acquire compaction lock for levels 0-2 (typical minor compaction range)
+        let _compaction_lock = self.lock_manager
+            .acquire_compaction_lock(collection_id, 0, 2)
+            .await?;
+
+        // 3. Execute minor compaction
+        let start_time = std::time::Instant::now();
+        let result = self.compaction_manager
+            .execute_minor_compaction(collection_id, 0, 2, crate::storage::engines::StorageEngineType::Sst)
+            .await?;
+
+        // 4. Update metrics
+        let duration = start_time.elapsed();
+        self.metrics.record_operation(OperationType::MinorCompaction, duration, true).await;
         
-        unimplemented!("Implement minor compaction scheduling")
+        info!("✅ Minor compaction completed for collection: {} in {:?}", collection_id, duration);
+
+        // 5. Check if major compaction or re-quantization is needed
+        if result.should_trigger_requantization {
+            tokio::spawn({
+                let coordinator = self.clone();
+                let collection_id = collection_id.to_string();
+                async move {
+                    if let Err(e) = coordinator.schedule_requantization(&collection_id).await {
+                        error!("Failed to trigger automatic re-quantization: {}", e);
+                    }
+                }
+            });
+        }
+
+        Ok(result)
     }
 
     /// Schedule major compaction across levels
     pub async fn schedule_major_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
         info!("🔧 Scheduling major compaction for collection: {}", collection_id);
 
-        // TODO: Implement major compaction coordination
-        // 1. Acquire exclusive locks across multiple levels
-        // 2. Plan compaction strategy based on data distribution  
-        // 3. Execute with resource budget management
-        // 4. Update statistics and trigger re-quantization
+        // 1. Check for conflicts with existing operations (major compaction conflicts with flushes)
+        if self.has_conflicting_operations(collection_id, OperationType::MajorCompaction).await {
+            warn!("⏳ Major compaction delayed due to conflicting operations on collection: {}", collection_id);
+            return self.queue_compaction_operation(collection_id, OperationType::MajorCompaction, OperationPriority::High).await;
+        }
+
+        // 2. Acquire exclusive locks across all levels (major compaction)
+        let _compaction_lock = self.lock_manager
+            .acquire_compaction_lock(collection_id, 0, 10) // Full range
+            .await?;
+
+        // 3. Execute major compaction
+        let start_time = std::time::Instant::now();
+        let result = self.compaction_manager
+            .execute_major_compaction(collection_id, crate::storage::engines::StorageEngineType::Sst)
+            .await?;
+
+        // 4. Update metrics
+        let duration = start_time.elapsed();
+        self.metrics.record_operation(OperationType::MajorCompaction, duration, true).await;
         
-        unimplemented!("Implement major compaction scheduling")
+        info!("✅ Major compaction completed for collection: {} in {:?} (freed: {} bytes)", 
+              collection_id, duration, result.bytes_freed);
+
+        // 5. Schedule re-quantization if data distribution changed significantly
+        if result.should_trigger_requantization {
+            tokio::spawn({
+                let coordinator = self.clone();
+                let collection_id = collection_id.to_string();
+                async move {
+                    if let Err(e) = coordinator.schedule_requantization(&collection_id).await {
+                        error!("Failed to trigger automatic re-quantization after major compaction: {}", e);
+                    }
+                }
+            });
+        }
+
+        Ok(result)
     }
 
     /// Schedule re-quantization when data distribution changes
     pub async fn schedule_requantization(&self, collection_id: &str) -> Result<RequantizationResult> {
         info!("🔄 Scheduling re-quantization for collection: {}", collection_id);
 
-        // TODO: Implement re-quantization coordination
-        // 1. Analyze data distribution change
-        // 2. Determine if re-quantization is beneficial
-        // 3. Schedule during low-activity periods
-        // 4. Execute with minimal query impact
+        // 1. Analyze if re-quantization is actually needed
+        let engine_type = crate::storage::engines::StorageEngineType::Sst; // TODO: Get actual engine type
+        let needs_requantization = self.requantization_manager
+            .analyze_collection(collection_id, engine_type)
+            .await?;
+
+        if !needs_requantization {
+            info!("📊 Re-quantization not needed for collection: {} based on analysis", collection_id);
+            return Ok(RequantizationResult {
+                collection_id: collection_id.to_string(),
+                codebooks_updated: vec![],
+                quality_improvement: 0.0,
+                duration: std::time::Duration::from_millis(0),
+            });
+        }
+
+        // 2. Check for conflicts (re-quantization conflicts with all other operations)
+        if self.has_conflicting_operations(collection_id, OperationType::Requantization).await {
+            warn!("⏳ Re-quantization delayed due to conflicting operations on collection: {}", collection_id);
+            return self.queue_requantization_operation(collection_id, OperationType::Requantization, OperationPriority::High).await;
+        }
+
+        // 3. Acquire global re-quantization lock (exclusive)
+        let _requantization_lock = self.lock_manager
+            .acquire_requantization_lock()
+            .await?;
+
+        // 4. Execute re-quantization with automatic type detection
+        let start_time = std::time::Instant::now();
+        let result = self.requantization_manager
+            .execute_requantization(
+                collection_id, 
+                requantization::QuantizationType::FullRequantization,
+                engine_type
+            )
+            .await?;
+
+        // 5. Update metrics
+        let duration = start_time.elapsed();
+        self.metrics.record_operation(OperationType::Requantization, duration, true).await;
         
-        unimplemented!("Implement re-quantization scheduling")
+        info!("✅ Re-quantization completed for collection: {} in {:?} (quality improvement: {:.2}%)", 
+              collection_id, duration, result.quality_improvement * 100.0);
+
+        Ok(result)
     }
 
     /// Check for conflicting operations
@@ -290,6 +389,58 @@ impl UnifiedOperationCoordinator {
 
         // TODO: Return queued result or wait for execution
         Err(anyhow::anyhow!("Operation queued - not yet implemented"))
+    }
+
+    /// Queue compaction operation when conflicts prevent immediate execution
+    async fn queue_compaction_operation(
+        &self,
+        collection_id: &str,
+        operation: OperationType,
+        priority: OperationPriority,
+    ) -> Result<CompactionResult> {
+        let mut state = self.state.write().await;
+        
+        let pending_op = PendingOperation {
+            operation_type: operation,
+            collection_id: collection_id.to_string(),
+            priority,
+            requested_at: std::time::Instant::now(),
+            estimated_cost: self.estimate_operation_cost(collection_id, operation).await,
+        };
+
+        state.pending_operations.push_back(pending_op);
+        state.pending_operations.make_contiguous().sort_by_key(|op| op.priority);
+
+        info!("📋 Queued {} compaction for collection: {} (priority: {:?})", 
+              operation_type_name(operation), collection_id, priority);
+
+        Err(anyhow::anyhow!("Compaction operation queued - not yet implemented"))
+    }
+
+    /// Queue re-quantization operation when conflicts prevent immediate execution
+    async fn queue_requantization_operation(
+        &self,
+        collection_id: &str,
+        operation: OperationType,
+        priority: OperationPriority,
+    ) -> Result<RequantizationResult> {
+        let mut state = self.state.write().await;
+        
+        let pending_op = PendingOperation {
+            operation_type: operation,
+            collection_id: collection_id.to_string(),
+            priority,
+            requested_at: std::time::Instant::now(),
+            estimated_cost: self.estimate_operation_cost(collection_id, operation).await,
+        };
+
+        state.pending_operations.push_back(pending_op);
+        state.pending_operations.make_contiguous().sort_by_key(|op| op.priority);
+
+        info!("📋 Queued {} re-quantization for collection: {} (priority: {:?})", 
+              operation_type_name(operation), collection_id, priority);
+
+        Err(anyhow::anyhow!("Re-quantization operation queued - not yet implemented"))
     }
 
     /// Estimate operation cost for scheduling optimization
