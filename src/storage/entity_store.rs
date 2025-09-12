@@ -506,7 +506,10 @@ impl EntityStore for ProximaEntityStore {
         results.truncate(top_k);
         Ok(results)
     }
-    
+}
+
+// Additional implementation methods for ProximaEntityStore
+impl ProximaEntityStore {
     /// Efficient metadata filtering using entity headers and storage engine integration
     async fn filter_entities_by_metadata(
         &self,

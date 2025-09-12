@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct ExplainPlan {
     pub orchestration_steps: Vec<String>,
     pub vector_hints: Option<VectorHints>,
@@ -65,7 +65,7 @@ impl ExplainPlan {
 }
 
 /// Lightweight vector-side hints surfaced from VectorOperationsService when available.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct VectorHints {
     pub cache_hit: bool,
     pub pruned_files: Option<usize>,
@@ -81,7 +81,7 @@ pub struct VectorHints {
 }
 
 /// Graph-side hints from graph query planning and execution
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct GraphHints {
     /// Graph traversal algorithm used
     pub traversal_algorithm: Option<String>,
@@ -138,7 +138,7 @@ pub struct GraphPlannerStats {
 }
 
 /// Join cost estimation for hybrid queries
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct JoinCostEstimate {
     /// Join algorithm used
     pub join_algorithm: String,
@@ -159,7 +159,7 @@ pub struct JoinCostEstimate {
 }
 
 /// ANALYZE metrics from actual query execution
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct AnalyzeMetrics {
     /// Actual execution time in milliseconds
     pub actual_execution_time_ms: u64,
@@ -178,7 +178,7 @@ pub struct AnalyzeMetrics {
 }
 
 /// Cache statistics for ANALYZE
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct CacheStatistics {
     /// Vector cache hit rate
     pub vector_cache_hit_rate: f64,
@@ -193,7 +193,7 @@ pub struct CacheStatistics {
 }
 
 /// I/O statistics for ANALYZE
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct IOStatistics {
     /// Total bytes read
     pub bytes_read: u64,
@@ -221,7 +221,7 @@ pub struct OperatorTiming {
 }
 
 /// Resource utilization metrics
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct ResourceUsage {
     /// Peak memory usage in MB
     pub peak_memory_mb: f64,
