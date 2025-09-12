@@ -340,7 +340,7 @@ impl ColumnarOptimizer {
         distance_metric: &DistanceMetric,
         filter: Option<&MetadataFilter>,
         config: &ProgressiveSearchConfig,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         info!(
             "Progressive search across {} files, top_k={}",
             file_paths.len(),
@@ -386,13 +386,14 @@ impl ColumnarOptimizer {
         let mut results = Vec::new();
         for candidate in all_candidates {
             if let Some(vector) = self.load_vector_at_location(&candidate).await? {
-                results.push(crate::core::search::InternalSearchResult {
+                results.push(crate::core::search::results::OptimizedSearchRecord {
                     id: candidate.vector_id.unwrap_or_else(|| {
                         format!("rg{}_row{}", candidate.row_group_id, candidate.row_offset)
                     }),
+                    score: candidate.similarity,
                     similarity: Some(1.0 - candidate.similarity),
-                    vector: Some(vector.vector),
-                    metadata: HashMap::new(), // Simplified for now
+                    vector: Some(Arc::new(vector.vector)),
+                    metadata: HashMap::new(), // Use SqlValue metadata
                     ..Default::default()
                 });
             }

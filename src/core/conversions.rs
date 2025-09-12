@@ -327,8 +327,8 @@ impl From<&InternalSearchResult> for SearchVectorRecord {
     }
 }
 
-impl From<Vec<InternalSearchResult>> for ProtoSearchResult {
-    fn from(results: Vec<InternalSearchResult>) -> Self {
+impl From<Vec<crate::core::search::results::OptimizedSearchRecord>> for ProtoSearchResult {
+    fn from(results: Vec<crate::core::search::results::OptimizedSearchRecord>) -> Self {
         let total_found = results.len() as i64;
         ProtoSearchResult {
             results: results.into_iter().map(SearchVectorRecord::from).collect(),

@@ -431,7 +431,8 @@ impl SstEntry {
         search_record
     }
 
-    /// Legacy method for compatibility - converts to InternalSearchResult (deprecated)
+    /// DEPRECATED: Legacy method for compatibility - Use OptimizedSearchRecord instead
+    #[deprecated(since = "1.0.0", note = "Use OptimizedSearchRecord directly")]
     pub fn to_search_result(&self, score: f32) -> crate::core::search::InternalSearchResult {
         crate::core::search::InternalSearchResult {
             id: self.record.id.clone().clone(),
@@ -4753,21 +4754,16 @@ impl SstStorage {
         filter_expression: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         warn!("🔄 SST: Falling back to direct search implementation");
 
-        // Use the unified search implementation with context and convert back to InternalSearchResult
+        // Use the unified search implementation and return OptimizedSearchRecord directly
         let optimized_results = self
             .search_vectors_unified(ctx)
             .await
             .map_err(|e| SstError::Search(format!("Search failed: {}", e)))?;
 
-        let results: Vec<crate::core::search::InternalSearchResult> = optimized_results
-            .into_iter()
-            .map(|r| r.to_internal())
-            .collect();
-
-        Ok(results)
+        Ok(optimized_results)
     }
 }
 

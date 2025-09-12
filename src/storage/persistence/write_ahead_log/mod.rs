@@ -1732,7 +1732,7 @@ impl WriteAheadLogManager {
         metadata_filters: Option<&crate::core::search::FilterExpression>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
         tracing::debug!(
@@ -1802,38 +1802,37 @@ impl WriteAheadLogManager {
                     &distance_metric,
                 );
 
-                // Create search result using standardized similarity scoring
-                let search_result =
-                    crate::core::search::InternalSearchResult::from_distance_standard(
-                        vector_record.id.clone().clone(),
-                        similarity_result.raw_value, // Raw distance value
-                        &distance_metric,            // Distance metric for conversion
-                        if include_vectors {
-                            Some(vector_record.vector.clone())
-                        } else {
-                            None
+                // Create optimized search result with SqlValue metadata
+                let search_result = crate::core::search::results::OptimizedSearchRecord {
+                    id: vector_record.id.clone(),
+                    vector_id: Some(vector_record.id.clone()),
+                    score: similarity_result.final_score,
+                    similarity: Some(similarity_result.raw_value),
+                    vector: if include_vectors {
+                        Some(Arc::new(vector_record.vector.clone()))
+                    } else {
+                        None
                         },
-                        if include_metadata {
-                            vector_record.metadata.iter().map(|(k, v)| {
-                                let json_val = match v.value.as_ref() {
-                                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => serde_json::json!(*n),
-                                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-                                    _ => serde_json::Value::Null,
-                                };
-                                (k.clone(), json_val)
-                            }).collect()
-                        } else {
-                            std::collections::HashMap::new()
-                        },
-                    );
+                    // Use SqlValue metadata directly for OptimizedSearchRecord (no conversion needed)
+                    metadata: if include_metadata {
+                        vector_record.metadata.clone()
+                    } else {
+                        std::collections::HashMap::new()
+                    },
+                    debug_info: None,
+                    version: vector_record.version,
+                    timestamp: Some(vector_record.timestamp),
+                    updated_at: vector_record.updated_at,
+                    expires_at: vector_record.expires_at,
+                    source: vector_record.source.clone(),
+                    expanded_context: Vec::new(),
+                    semantic_similarity: Some(similarity_result.clone()),
+                    quantization_info: None, // TODO: Add quantization info if available
+                    engine_stats: None,      // TODO: Add engine stats
+                    index_path: None,        // TODO: Add index path info
+                };
 
-                // Set additional fields that aren't in the standard constructor
-                let mut search_result = search_result;
-                search_result.vector_id = Some(vector_record.id.clone());
-                search_result.timestamp = Some(vector_record.timestamp as u32);
-                search_result.version = vector_record.version.map(|v| v as u32);
-
+                // OptimizedSearchRecord is complete with all necessary fields
                 all_results.push(search_result);
             }
         }
