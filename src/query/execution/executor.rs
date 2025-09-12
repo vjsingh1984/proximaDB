@@ -666,6 +666,63 @@ impl QueryExecutor {
         Ok(out)
     }
 
+    /// Combine rows from two query buffers with UNION semantics
+    fn union_rows(
+        &self,
+        left: &Vec<QueryRow>,
+        right: &Vec<QueryRow>,
+        all: bool,
+    ) -> Result<Vec<QueryRow>> {
+        let mut result = Vec::new();
+        
+        // Add all left rows
+        result.extend(left.iter().cloned());
+        
+        if all {
+            // UNION ALL: Simply concatenate all rows
+            result.extend(right.iter().cloned());
+        } else {
+            // UNION: Remove duplicates based on field values
+            use std::collections::HashSet;
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            
+            // Create a set of hashes from existing (left) rows
+            let mut seen_hashes = HashSet::new();
+            for row in left {
+                let mut hasher = DefaultHasher::new();
+                // Create deterministic hash based on all field key-value pairs
+                let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+                sorted_fields.sort_by_key(|(k, _)| *k);
+                for (key, value) in sorted_fields {
+                    key.hash(&mut hasher);
+                    // Hash the JSON representation for consistent value hashing
+                    value.to_string().hash(&mut hasher);
+                }
+                seen_hashes.insert(hasher.finish());
+            }
+            
+            // Add right rows only if they're not duplicates
+            for row in right {
+                let mut hasher = DefaultHasher::new();
+                let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+                sorted_fields.sort_by_key(|(k, _)| *k);
+                for (key, value) in sorted_fields {
+                    key.hash(&mut hasher);
+                    value.to_string().hash(&mut hasher);
+                }
+                let row_hash = hasher.finish();
+                
+                if !seen_hashes.contains(&row_hash) {
+                    seen_hashes.insert(row_hash);
+                    result.push(row.clone());
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+
     fn normalize_field_name(key: &str) -> &str {
         match key.rsplit_once('.') {
             Some((_, suffix)) => suffix,
