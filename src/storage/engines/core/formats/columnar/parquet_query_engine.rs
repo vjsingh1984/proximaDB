@@ -1045,7 +1045,7 @@ impl UnifiedParquetReader {
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
-    ) -> Result<Vec<crate::core::search::InternalSearchResult>> {
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         info!("Progressive search across {} files", file_paths.len());
         let search_config = super::optimization::ProgressiveSearchConfig::default();
         self.optimizer
