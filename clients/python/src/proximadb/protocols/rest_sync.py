@@ -339,7 +339,7 @@ class ProximaDBClient:
                 version=health_data.get('version', '0.0.0'),
                 uptime_seconds=health_data.get('uptime_seconds', 0),
                 services=health_data.get('services', {}),
-                timestamp=int(time.time() * 1000000)  # Current timestamp in microseconds
+                timestamp=int(time.time() * 1000)  # Current timestamp in milliseconds (proto int64)
             )
         else:
             return HealthStatus(**data)
@@ -671,7 +671,7 @@ class ProximaDBClient:
             "collection_id": collection_id,
             "vector": vector,
             "metadata": metadata_items,
-            "timestamp": int(time.time()),  # Seconds (proto expects seconds)
+            "timestamp": int(time.time() * 1000),  # Milliseconds (proto int64)
             "version": 1
         }
         
@@ -759,7 +759,7 @@ class ProximaDBClient:
                 "id": vector_id,
                 "vector": vector,
                 "metadata": metadata_items,
-                "timestamp": int(time.time())  # Current time in seconds
+                "timestamp": int(time.time() * 1000)  # Current time in milliseconds (proto int64)
             }
             vector_data.append(item)
         
@@ -1791,7 +1791,7 @@ class ProximaDBClient:
                 "id": vector_id,
                 "vector": vector,
                 "metadata": metadata_items,
-                "timestamp": int(time.time())
+                "timestamp": int(time.time() * 1000)
             }
             vector_data.append(item)
         
@@ -1846,7 +1846,7 @@ class ProximaDBClient:
                 "id": vector_id,
                 "vector": vector,
                 "metadata": metadata_items,
-                "timestamp": int(time.time())
+                "timestamp": int(time.time() * 1000)
             }
             vector_data.append(item)
         
