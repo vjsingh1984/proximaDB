@@ -266,7 +266,7 @@ pie title Target Market by Revenue Potential
 
 == 🎪 Implementation Strategy
 
-=== 90-Day Adoption Path
+=== Day Adoption Path
 
 [source,mermaid]
 ----
@@ -395,9 +395,9 @@ graph TD
 4. **Business Case**: Calculate specific ROI for your use case
 
 **Contact Information:**
-* **Technical Questions**: link:consolidated/getting_started_and_user_guide.adoc[Getting Started Guide]
-* **Architecture Discussion**: link:consolidated/architecture_and_design.adoc[Architecture Documentation]
-* **Implementation Planning**: link:consolidated/operations_and_administration.adoc[Operations Guide]
+* **Technical Questions**: link:operations-guide.adoc[Operations Guide]
+* **Architecture Discussion**: link:technical-architecture.adoc[Technical Architecture]
+* **Implementation Planning**: link:09-roadmap/master-implementation-roadmap-2025.adoc[Master Roadmap]
 
 [IMPORTANT]
 ====

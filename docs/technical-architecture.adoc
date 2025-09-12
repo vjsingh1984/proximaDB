@@ -807,10 +807,10 @@ graph TD
 
 == 🔗 Related Technical Documentation
 
-* **Implementation Details**: link:consolidated/storage_engines.adoc[Storage Engines Documentation]
-* **API Specifications**: link:consolidated/api_reference.adoc[API Reference]  
+* **Implementation Details**: link:09-roadmap/planned/comprehensive-analysis.adoc[Implementation Status Analysis]
+* **API Specifications**: link:security.adoc[Security & API Reference]  
 * **Performance Analysis**: Performance benchmarks and optimization guides
-* **Development Guide**: link:consolidated/development_and_contribution.adoc[Development Documentation]
+* **Development Guide**: link:operations-guide.adoc[Operations & Development Guide]
 
 == 📈 Technical Roadmap
 
