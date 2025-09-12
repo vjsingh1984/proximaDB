@@ -1,12 +1,36 @@
 #!/usr/bin/env python3
-"""Simple test to debug gRPC insert issues"""
+"""
+Simple test to debug gRPC insert issues
 
-# To run this script, set PYTHONPATH to include the src directory:
-# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python test_grpc_simple.py
+Usage:
+    PYTHONPATH=src python test_grpc_simple.py
 
-from proximadb import ProximaDBClient as ProximaDB
-from proximadb.models import VectorRecord
+Note: Set PYTHONPATH environment variable to include the 'src' directory
+instead of modifying sys.path. This is the recommended approach.
+"""
+
+import sys
+import os
+import logging
 import numpy as np
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Recommended: Use PYTHONPATH=src instead of this sys.path modification
+# Example: PYTHONPATH=src python test_grpc_simple.py
+if 'PYTHONPATH' not in os.environ:
+    logger.warning("Recommendation: Set PYTHONPATH=src environment variable")
+    logger.warning("Example: PYTHONPATH=src python test_grpc_simple.py")
+    logger.warning("Falling back to sys.path modification...")
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+from proximadb.client_v1 import ProximaDBClientV1 as ProximaDB
+from proximadb.models import VectorRecord
 
 def main():
     # Initialize clients
@@ -17,22 +41,22 @@ def main():
         # Delete collection if it exists
         try:
             grpc_client.delete_collection("test_grpc")
-            print("Deleted existing collection")
+            logger.info("Deleted existing collection")
         except:
             pass
         
         # Create collection via gRPC
-        print("\n1. Creating collection via gRPC...")
+        logger.info("1. Creating collection via gRPC...")
         collection = grpc_client.create_collection(
             name="test_grpc",
             dimension=128,
             distance_metric="cosine",
-            storage_engine="lsm"
+            storage_engine="sst"
         )
-        print(f"✅ Collection created: {collection.name} (ID: {collection.id})")
+        logger.info(f"✅ Collection created: {collection.name} (ID: {collection.id})")
         
         # Insert ONE vector via gRPC
-        print("\n2. Inserting ONE vector via gRPC...")
+        logger.info("2. Inserting ONE vector via gRPC...")
         
         # Create vector using VectorRecord model
         vector = VectorRecord(
@@ -45,49 +69,49 @@ def main():
             collection_id="test_grpc",
             vectors=[vector]
         )
-        print(f"✅ Insert result: {result}")
-        print(f"   Success: {result.success}")
-        print(f"   Vector IDs: {result.vector_ids}")
+        logger.info(f"✅ Insert result: {result}")
+        logger.info(f"   Success: {result.success}")
+        logger.info(f"   Vector IDs: {result.vector_ids}")
         
         # Try to get the vector via gRPC
-        print("\n3. Getting vector via gRPC...")
+        logger.info("3. Getting vector via gRPC...")
         try:
             vec_result = grpc_client.get_vector(
                 collection_id="test_grpc",
                 vector_id="test_vec_1"
             )
-            print(f"✅ gRPC get: Found vector")
-            print(f"   Response: {vec_result}")
+            logger.info(f"✅ gRPC get: Found vector")
+            logger.info(f"   Response: {vec_result}")
         except Exception as e:
-            print(f"❌ gRPC get failed: {e}")
+            logger.error(f"❌ gRPC get failed: {e}")
         
         # Try to get the vector via REST
-        print("\n4. Getting vector via REST...")
+        logger.info("4. Getting vector via REST...")
         try:
             vec_result = rest_client.get_vector(
                 collection_id="test_grpc",
                 vector_id="test_vec_1"
             )
-            print(f"✅ REST get: Found vector")
-            print(f"   Response: {vec_result}")
+            logger.info(f"✅ REST get: Found vector")
+            logger.info(f"   Response: {vec_result}")
         except Exception as e:
-            print(f"❌ REST get failed: {e}")
+            logger.error(f"❌ REST get failed: {e}")
         
         # Check debug endpoint
-        print("\n5. Checking debug endpoint...")
+        logger.info("5. Checking debug endpoint...")
         import httpx
         with httpx.Client() as client:
             response = client.get("http://localhost:5678/debug/vectors/test_grpc")
             if response.status_code == 200:
                 debug_data = response.json()
-                print(f"✅ Debug info:")
-                print(f"   Unflushed vectors: {debug_data.get('unflushed_vector_count', 0)}")
-                print(f"   Vectors: {debug_data.get('vectors', [])[:1]}...")  # Show first vector
+                logger.info(f"✅ Debug info:")
+                logger.info(f"   Unflushed vectors: {debug_data.get('unflushed_vector_count', 0)}")
+                logger.info(f"   Vectors: {debug_data.get('vectors', [])[:1]}...")  # Show first vector
             else:
-                print(f"❌ Debug endpoint failed: {response.status_code}")
+                logger.error(f"❌ Debug endpoint failed: {response.status_code}")
                 
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        logger.info(f"\n❌ Error: {e}")
         import traceback
         traceback.print_exc()
 

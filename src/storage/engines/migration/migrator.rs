@@ -399,7 +399,7 @@ impl EngineMigrator {
     ) -> Result<u64> {
         let _permit = self
             .semaphore
-            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .acquire()
             .await?;
 
         // In production, would:

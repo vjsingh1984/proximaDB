@@ -187,7 +187,7 @@ impl RowBasedBatchOperations {
         // Acquire semaphore for concurrency control
         let _permit = self
             .semaphore
-            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .acquire()
             .await?;
 
         // Split into batches
@@ -284,7 +284,7 @@ impl RowBasedBatchOperations {
         // Acquire semaphore for concurrency control
         let _permit = self
             .semaphore
-            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .acquire()
             .await?;
 
         // Split records into batches
@@ -345,7 +345,7 @@ impl RowBasedBatchOperations {
 
         let _permit = self
             .semaphore
-            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .acquire()
             .await?;
 
         let mut all_results = Vec::new();
@@ -428,7 +428,7 @@ impl RowBasedBatchOperations {
 
         let _permit = self
             .semaphore
-            .acquire() /* TODO: Fix VectorMemoryPool::acquire() method */
+            .acquire()
             .await?;
 
         let mut successful_operations = 0;

@@ -1,11 +1,32 @@
 #!/usr/bin/env python3
 """
 Test Graph Search, Hybrid Search, and Advanced Vector Search in v1 ProximaDB client
+
+Usage:
+    PYTHONPATH=src python test_graph_hybrid_search.py
+
+Note: Set PYTHONPATH environment variable to include the 'src' directory
+instead of modifying sys.path. This is the recommended approach.
 """
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+import logging
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Recommended: Use PYTHONPATH=src instead of this sys.path modification
+# Example: PYTHONPATH=src python test_graph_hybrid_search.py
+if 'PYTHONPATH' not in os.environ:
+    logger.warning("Recommendation: Set PYTHONPATH=src environment variable")
+    logger.warning("Example: PYTHONPATH=src python test_graph_hybrid_search.py")
+    logger.warning("Falling back to sys.path modification...")
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 def test_graph_operations():
     """Test graph node and edge operations"""

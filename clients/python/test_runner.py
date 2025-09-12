@@ -1,31 +1,52 @@
 #!/usr/bin/env python3
 """
 Simple test runner to verify SDK functionality
+
+Usage:
+    PYTHONPATH=src python test_runner.py
+
+Note: Set PYTHONPATH environment variable to include the 'src' directory
+instead of modifying sys.path. This is the recommended approach.
 """
+
 import sys
+import os
+import logging
 import time
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
-from proximadb import ProximaDBClient
-from proximadb.models import VectorRecord, CollectionConfig, DistanceMetric, StorageEngine
 import numpy as np
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Recommended: Use PYTHONPATH=src instead of this sys.path modification
+# Example: PYTHONPATH=src python test_runner.py
+if 'PYTHONPATH' not in os.environ:
+    logger.warning("Recommendation: Set PYTHONPATH=src environment variable")
+    logger.warning("Example: PYTHONPATH=src python test_runner.py")
+    logger.warning("Falling back to sys.path modification...")
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+from proximadb.client_v1 import ProximaDBClientV1
+from proximadb.models import VectorRecord, CollectionConfig, DistanceMetric, StorageEngine
 
 
 def test_basic_operations():
     """Test basic CRUD operations"""
-    print("Testing basic operations...")
+    logger.info("Testing basic operations...")
     
     # Create clients
-    rest_client = ProximaDBClient(url="http://localhost:5678")
-    grpc_client = ProximaDBClient(url="grpc://localhost:5679")
+    rest_client = ProximaDBClientV1(url="http://localhost:5678")
+    grpc_client = ProximaDBClientV1(url="grpc://localhost:5679")
     
     test_collection = f"test_basic_{int(time.time())}"
     
     try:
         # Test 1: Create collection
-        print("1. Creating collection...")
+        logger.info("1. Creating collection...")
         config = CollectionConfig(
             name=test_collection,
             dimension=128,
@@ -35,17 +56,17 @@ def test_basic_operations():
         
         # REST
         rest_result = rest_client.create_collection(test_collection, config)
-        print(f"   REST: {rest_result}")
+        logger.info(f"   REST: {rest_result}")
         
         # Clean up and recreate for gRPC
         rest_client.delete_collection(test_collection)
         time.sleep(0.5)
         
         grpc_result = grpc_client.create_collection(test_collection, config)
-        print(f"   gRPC: {grpc_result}")
+        logger.info(f"   gRPC: {grpc_result}")
         
         # Test 2: Insert vectors
-        print("\n2. Inserting vectors...")
+        logger.info("\n2. Inserting vectors...")
         vectors = []
         for i in range(10):
             vec = VectorRecord(
@@ -56,37 +77,37 @@ def test_basic_operations():
             vectors.append(vec)
         
         insert_result = grpc_client.insert_vectors(test_collection, records=vectors)
-        print(f"   Insert result: {insert_result}")
+        logger.info(f"   Insert result: {insert_result}")
         
         # Wait for indexing
         time.sleep(1)
         
         # Test 3: Search
-        print("\n3. Searching vectors...")
+        logger.info("\n3. Searching vectors...")
         query = np.random.randn(128).tolist()
         search_results = grpc_client.search(
             collection_id=test_collection,
             query_vector=query,
             top_k=5
         )
-        print(f"   Found {len(search_results.results)} results")
+        logger.info(f"   Found {len(search_results.results)} results")
         for i, result in enumerate(search_results.results[:3]):
-            print(f"   #{i+1}: {result.id} (score: {result.score:.4f})")
+            logger.info(f"   #{i+1}: {result.id} (score: {result.score:.4f})")
         
         # Test 4: Get vector
-        print("\n4. Getting specific vector...")
+        logger.info("\n4. Getting specific vector...")
         vector = grpc_client.get_vector(test_collection, "vec_0")
-        print(f"   Retrieved: {vector.id}, metadata: {vector.metadata}")
+        logger.info(f"   Retrieved: {vector.id}, metadata: {vector.metadata}")
         
         # Test 5: List collections
-        print("\n5. Listing collections...")
+        logger.info("\n5. Listing collections...")
         collections = grpc_client.list_collections()
-        print(f"   Found {len(collections)} collections")
+        logger.info(f"   Found {len(collections)} collections")
         
-        print("\n✅ All basic operations completed successfully!")
+        logger.info("\n✅ All basic operations completed successfully!")
         
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        logger.info(f"\n❌ Error: {e}")
         import traceback
         traceback.print_exc()
     finally:
@@ -103,12 +124,12 @@ def test_basic_operations():
 
 def test_unified_features():
     """Test unified architecture features"""
-    print("\n\nTesting unified features...")
+    logger.info("\n\nTesting unified features...")
     
     # Test with batching and caching enabled
     from proximadb.batching_unified import BatchConfig, BatchStrategy
     
-    client = ProximaDBClient(
+    client = ProximaDBClientV1(
         url="http://localhost:5678",
         grpc_url="localhost:5679",
         enable_batching=True,
@@ -144,7 +165,7 @@ def test_unified_features():
             vectors.append(vec)
         
         result = client.insert_vectors(test_collection, records=vectors)
-        print(f"   Batch insert: {result}")
+        logger.info(f"   Batch insert: {result}")
         
         time.sleep(1)
         
@@ -159,20 +180,20 @@ def test_unified_features():
         results2 = client.search(test_collection, query, top_k=10)  # Should be cached
         time2 = time.time() - start
         
-        print(f"   First search: {time1*1000:.2f}ms")
-        print(f"   Cached search: {time2*1000:.2f}ms (speedup: {time1/time2:.1f}x)")
+        logger.info(f"   First search: {time1*1000:.2f}ms")
+        logger.info(f"   Cached search: {time2*1000:.2f}ms (speedup: {time1/time2:.1f}x)")
         
         # Get stats if available
         try:
             routing_stats = client.get_routing_stats()
-            print(f"   Routing stats: {routing_stats}")
+            logger.info(f"   Routing stats: {routing_stats}")
         except:
             pass
         
-        print("\n✅ Unified features working correctly!")
+        logger.info("\n✅ Unified features working correctly!")
         
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        logger.info(f"\n❌ Error: {e}")
         import traceback
         traceback.print_exc()
     finally:
@@ -184,27 +205,27 @@ def test_unified_features():
 
 def main():
     """Run all tests"""
-    print("ProximaDB Python SDK Test Runner")
-    print("=" * 50)
+    logger.info("ProximaDB Python SDK Test Runner")
+    logger.info("=" * 50)
     
     # Check server
     try:
-        client = ProximaDBClient(url="http://localhost:5678")
+        client = ProximaDBClientV1(url="http://localhost:5678")
         # Try to list collections as a health check
         collections = client.list_collections()
-        print(f"Server is running (found {len(collections)} collections)")
+        logger.info(f"Server is running (found {len(collections)} collections)")
     except Exception as e:
-        print(f"❌ Server not available: {e}")
-        print("Please start the server with:")
-        print("  ./target/release/proximadb-server --config demo/local-demo-config.toml")
+        logger.error(f"❌ Server not available: {e}")
+        logger.info("Please start the server with:")
+        logger.info("  ./target/release/proximadb-server --config demo/local-demo-config.toml")
         return 1
     
     # Run tests
     test_basic_operations()
     test_unified_features()
     
-    print("\n" + "=" * 50)
-    print("Test run completed!")
+    logger.info("\n" + "=" * 50)
+    logger.info("Test run completed!")
     return 0
 
 

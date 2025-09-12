@@ -344,10 +344,8 @@ mod tests {
         let pool = VectorMemoryPool::new(10, 128);
 
         // Acquire buffers
-        let buf1 = pool /* TODO: Fix VectorMemoryPool::acquire() method */
-            .await;
-        let buf2 = pool /* TODO: Fix VectorMemoryPool::acquire() method */
-            .await;
+        let buf1 = pool.acquire();
+        let buf2 = pool.acquire();
 
         assert_eq!(buf1.len(), 128);
         assert_eq!(buf2.len(), 128);
@@ -357,8 +355,7 @@ mod tests {
         pool.release(buf2).await;
 
         // Verify reuse
-        let buf3 = pool /* TODO: Fix VectorMemoryPool::acquire() method */
-            .await;
+        let buf3 = pool.acquire();
         assert_eq!(buf3.len(), 128);
     }
 

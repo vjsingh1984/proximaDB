@@ -1719,7 +1719,7 @@ impl SstStorage {
         {
             use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType};
             let provider: Arc<dyn CacheStatsProvider + Send + Sync> =
-                Arc::new(decompression_cache::DecompressionCacheStatsProvider::new(
+                Arc::new(crate::storage::engines::impls::sst::decompression_cache::DecompressionCacheStatsProvider::new(
                     decompression_cache.clone(),
                 ));
             orch.register_cache_provider(CacheType::VectorData, provider);
