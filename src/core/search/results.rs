@@ -62,8 +62,14 @@ fn convert_json_map_to_sql_value_map(
         .collect()
 }
 
-/// Unified search result structure - replaces 13+ duplicates across schema_types and other files
+/// DEPRECATED: Legacy search result structure - Use OptimizedSearchRecord instead
+/// 
+/// **MIGRATION NOTICE**: This type is deprecated in favor of OptimizedSearchRecord
+/// which uses SqlValue for metadata (better performance, proto v1 compatibility).
+/// 
+/// Legacy unified search result structure - replaces 13+ duplicates across schema_types and other files
 #[derive(Debug, Clone, PartialEq, Default)]
+#[deprecated(since = "1.0.0", note = "Use OptimizedSearchRecord with SqlValue metadata")]
 pub struct InternalSearchResult {
     /// Vector/document identifier
     pub id: String,

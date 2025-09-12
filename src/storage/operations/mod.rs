@@ -20,6 +20,26 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error};
 
+/// Result of a queued operation
+#[derive(Debug, Clone)]
+pub struct QueuedOperationResult {
+    pub operation_id: String,
+    pub collection_id: String,
+    pub operation_type: OperationType,
+    pub status: OperationStatus,
+    pub queued_at: std::time::SystemTime,
+    pub estimated_start_time: Option<std::time::SystemTime>,
+}
+
+/// Status of an operation
+#[derive(Debug, Clone)]
+pub enum OperationStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed(String),
+}
+
 /// Central coordination system for all background operations
 /// 
 /// This coordinator ensures data consistency and maximizes performance by:
@@ -419,8 +439,24 @@ impl UnifiedOperationCoordinator {
         info!("📋 Queued {} operation for collection: {} (priority: {:?})", 
               operation_type_name(operation), collection_id, priority);
 
-        // TODO: Return queued result or wait for execution
-        Err(anyhow::anyhow!("Operation queued - not yet implemented"))
+        // Return queued operation result with execution tracking
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let queued_result = QueuedOperationResult {
+            operation_id: operation_id.clone(),
+            collection_id: collection_id.to_string(),
+            operation_type: operation,
+            status: OperationStatus::Queued,
+            queued_at: std::time::SystemTime::now(),
+            estimated_start_time: None, // Will be updated by scheduler
+        };
+        
+        // Add to tracking for future status queries
+        state.queued_operations.insert(operation_id.clone(), queued_result.clone());
+        
+        info!("📋 Operation {} queued for collection: {} with ID: {}", 
+              operation_type_name(operation), collection_id, operation_id);
+        
+        Ok(queued_result)
     }
 
     /// Queue compaction operation when conflicts prevent immediate execution
@@ -477,17 +513,26 @@ impl UnifiedOperationCoordinator {
 
     /// Estimate operation cost for scheduling optimization
     async fn estimate_operation_cost(&self, collection_id: &str, operation: OperationType) -> f64 {
-        // TODO: Implement cost estimation based on:
-        // - Collection size and data distribution
-        // - Current system load and resource availability
-        // - Historical operation performance
-        // - Engine-specific characteristics
-        
-        match operation {
+        // Implement cost estimation based on multiple factors
+        let base_cost = match operation {
             OperationType::Flush => 1.0,           // Relatively fast
             OperationType::MinorCompaction => 5.0, // Medium cost
             OperationType::MajorCompaction => 20.0, // High cost
             OperationType::Requantization => 15.0, // High cost, infrequent
+        };
+        
+        // Adjust cost based on collection characteristics
+        let collection_size_factor = self.get_collection_size_factor(collection_id).await;
+        let system_load_factor = self.get_system_load_factor().await;
+        let engine_factor = self.get_engine_cost_factor(collection_id).await;
+        
+        let estimated_cost = base_cost * collection_size_factor * system_load_factor * engine_factor;
+        
+        debug!("💰 Cost estimation for {} on {}: base={}, size={:.2}, load={:.2}, engine={:.2}, total={:.2}",
+               operation_type_name(operation), collection_id, base_cost, 
+               collection_size_factor, system_load_factor, engine_factor, estimated_cost);
+        
+        estimated_cost
         }
     }
 
