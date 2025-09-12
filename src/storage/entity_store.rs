@@ -519,26 +519,33 @@ impl EntityStore for ProximaEntityStore {
         let mut count = 0;
         let mut skipped = 0;
 
-        // Iterate through entity headers (this is a simplified implementation)
-        // In production, you'd use a proper index or iterator
-        let headers = self.headers.read().unwrap();
-        for key in headers.keys() {
-            if key.starts_with(&format!("{}:", collection_id)) {
-                if skipped < offset {
-                    skipped += 1;
-                    continue;
-                }
-                if count >= limit {
-                    break;
-                }
-
-                // Extract entity ID from key
-                if let Some(entity_id) = key.split(':').nth(1) {
-                    if let Ok(Some(entity)) = self.get_entity(collection_id, entity_id, true, true).await {
-                        entities.push(entity);
-                        count += 1;
+        // Collect entity IDs first to avoid holding lock across await
+        let entity_ids = {
+            let headers = self.headers.read().unwrap();
+            let mut ids = Vec::new();
+            for key in headers.keys() {
+                if key.starts_with(&format!("{}:", collection_id)) {
+                    if let Some(entity_id) = key.split(':').nth(1) {
+                        ids.push(entity_id.to_string());
                     }
                 }
+            }
+            ids
+        };
+
+        // Now process the entities
+        for entity_id in entity_ids {
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            if count >= limit {
+                break;
+            }
+
+            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await {
+                entities.push(entity);
+                count += 1;
             }
         }
 
@@ -556,23 +563,26 @@ impl ProximaEntityStore {
         limit: usize,
     ) -> Result<Vec<(Entity, f64)>> {
         let mut results = Vec::new();
-        let headers = self.headers.read().unwrap();
         let prefix = format!("{}::", collection_id);
         
         // First pass: Filter using entity headers (in-memory, fast)
-        let mut candidate_ids = Vec::new();
-        for (key, header) in headers.iter() {
-            if let Some(entity_id) = key.strip_prefix(&prefix) {
-                // Apply header-level filtering if possible
-                if self.header_matches_filter(header, filter) {
-                    candidate_ids.push(entity_id.to_string());
-                }
-                
-                if candidate_ids.len() >= limit * 2 {
-                    break; // Get more candidates than needed for better filtering
+        let candidate_ids = {
+            let headers = self.headers.read().unwrap();
+            let mut candidate_ids = Vec::new();
+            for (key, header) in headers.iter() {
+                if let Some(entity_id) = key.strip_prefix(&prefix) {
+                    // Apply header-level filtering if possible
+                    if self.header_matches_filter(header, filter) {
+                        candidate_ids.push(entity_id.to_string());
+                    }
+                    
+                    if candidate_ids.len() >= limit * 2 {
+                        break; // Get more candidates than needed for better filtering
+                    }
                 }
             }
-        }
+            candidate_ids
+        };
         
         // Second pass: Load entities and apply detailed metadata filtering
         for entity_id in candidate_ids.into_iter().take(limit * 2) {

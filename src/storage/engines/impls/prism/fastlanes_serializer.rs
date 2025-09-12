@@ -49,7 +49,7 @@ impl Clone for PrismFastLanesSerializer {
 }
 
 /// Metadata for PRISM's multi-resolution storage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PrismResolutionMetadata {
     pub resolution_level: ResolutionLevel,
     pub num_vectors: usize,

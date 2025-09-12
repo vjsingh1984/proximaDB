@@ -1187,8 +1187,8 @@ impl GraphService {
 
         // Use the comprehensive BFS traversal algorithm from ORION traversal module
         let config = crate::graph::engines::orion::traversal::TraversalConfig {
-            max_depth: request.max_depth.map(|d| d as u32),
-            max_nodes: request.max_nodes.map(|n| n as usize),
+            max_depth: if request.max_depth > 0 { Some(request.max_depth) } else { None },
+            max_nodes: None, // TraversalRequest doesn't have max_nodes field
             edge_types: if request.edge_types.is_empty() { 
                 None 
             } else { 
@@ -1196,7 +1196,7 @@ impl GraphService {
             },
             node_filter: None, // TODO: Implement node filtering from request
             early_stop: None,
-            track_paths: request.return_paths,
+            track_paths: true, // Default to tracking paths
             parallel_processing: true,
             timeout_ms: request.timeout_ms.map(|t| t as u64),
             max_frontier: None, // Use default
@@ -1219,14 +1219,8 @@ impl GraphService {
                 labels: node.labels.clone(),
                 properties: self.convert_properties_to_proto(&node.properties),
                 embedding: node.embedding.clone(),
-                created_at: node.created_at.map(|ts| prost_types::Timestamp {
-                    seconds: ts.timestamp(),
-                    nanos: ts.timestamp_subsec_nanos() as i32,
-                }),
-                updated_at: node.updated_at.map(|ts| prost_types::Timestamp {
-                    seconds: ts.timestamp(),
-                    nanos: ts.timestamp_subsec_nanos() as i32,
-                }),
+                created_at_ms: node.created_at_ms,
+                updated_at_ms: node.updated_at_ms,
             })
             .collect();
 
@@ -1239,14 +1233,8 @@ impl GraphService {
                 edge_type: edge.edge_type.clone(),
                 properties: self.convert_properties_to_proto(&edge.properties),
                 weight: edge.weight,
-                created_at: edge.created_at.map(|ts| prost_types::Timestamp {
-                    seconds: ts.timestamp(),
-                    nanos: ts.timestamp_subsec_nanos() as i32,
-                }),
-                updated_at: edge.updated_at.map(|ts| prost_types::Timestamp {
-                    seconds: ts.timestamp(),
-                    nanos: ts.timestamp_subsec_nanos() as i32,
-                }),
+                created_at_ms: edge.created_at_ms,
+                updated_at_ms: edge.updated_at_ms,
             })
             .collect();
 
@@ -1260,8 +1248,8 @@ impl GraphService {
 
         // Convert traversal stats to proto
         let proto_stats = Some(crate::proto::proximadb_v1::TraversalStats {
-            nodes_visited: traversal_result.stats.nodes_visited as u64,
-            edges_traversed: traversal_result.stats.edges_traversed as u64,
+            nodes_visited: traversal_result.stats.nodes_visited as u32,
+            edges_traversed: traversal_result.stats.edges_traversed as u32,
             max_depth_reached: traversal_result.stats.max_depth_reached,
             execution_time_microseconds: traversal_result.stats.execution_time_microseconds,
         });
@@ -1285,7 +1273,7 @@ impl GraphService {
         let traversal_config = TraversalConfig {
             enable_prefetch: _override_enable_prefetch.unwrap_or(true),
             prefetch_budget: _override_prefetch_budget.unwrap_or(1000),
-            max_depth: request.max_depth.map(|d| d as u32),
+            max_depth: if request.max_depth > 0 { Some(request.max_depth) } else { None },
             max_nodes: None,
             edge_types: None,
             node_filter: None,
@@ -1317,8 +1305,8 @@ impl GraphService {
         
         // Apply max depth limit
         if let Some(stats) = &mut response.stats {
-            if stats.depth_reached > config.max_depth {
-                debug!("Traversal limited by max_depth: {}", config.max_depth);
+            if stats.max_depth_reached > config.max_depth.unwrap_or(u32::MAX) {
+                debug!("Traversal limited by max_depth: {:?}", config.max_depth);
                 // Results would be filtered by depth in actual implementation
             }
         }

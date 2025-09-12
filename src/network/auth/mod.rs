@@ -60,7 +60,7 @@ pub enum AuthMethod {
 }
 
 /// Permissions for different operations
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Permission {
     // Collection permissions
     CreateCollection,

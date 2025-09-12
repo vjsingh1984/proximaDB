@@ -112,7 +112,7 @@ pub struct IndexHeader {
 }
 
 /// Checkpoint for incremental updates
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexCheckpoint {
     /// Unique checkpoint ID
     pub checkpoint_id: String,
@@ -128,7 +128,7 @@ pub struct IndexCheckpoint {
 }
 
 /// Delta update for incremental changes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexDelta {
     /// Base checkpoint this delta applies to
     pub base_checkpoint_id: String,

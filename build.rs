@@ -31,6 +31,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add serde to config types needed for JSON serialization
         .type_attribute("IndexConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("QuantizationConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to graph types needed for JSON serialization
+        .type_attribute("Node", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Edge", "#[derive(serde::Serialize, serde::Deserialize)]")
         // oneof types (SqlValue, PropertyValue) get custom serde from serde_impls.rs but PartialEq works fine
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(
