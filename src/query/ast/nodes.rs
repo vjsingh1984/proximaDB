@@ -115,6 +115,11 @@ pub enum Expr {
         edge: String,
         max_depth: u32,
     },
+    SksAssemble {
+        context_items: Vec<Expr>,
+        strategy: Option<String>,
+        max_size: Option<u32>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

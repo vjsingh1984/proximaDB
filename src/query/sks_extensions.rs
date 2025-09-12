@@ -566,47 +566,37 @@ pub enum TemporalClause {
 pub struct SksSqlParser;
 
 impl SksSqlParser {
-    /// Parse a SIMILAR clause
-    /// Example: SIMILAR(embedding, "quantum computing", model="openai/ada-002", top_k=10)
+    /// Parse a SIMILAR clause - DEPRECATED: Use sql_frontend/lowering.rs instead
+    /// 
+    /// This method is kept for backward compatibility but should not be used.
+    /// SKS function parsing is now handled properly in the SQL lowering phase.
     pub fn parse_similar(input: &str) -> Result<SimilarOperator> {
-        // TODO: Implement actual SQL parsing
-        // This is a placeholder implementation
-
-        debug!("Parsing SIMILAR clause: {}", input);
-
-        Ok(SimilarOperator {
-            embedding_field: "embedding".to_string(),
-            query: SimilarQuery::Text("quantum computing".to_string()),
-            model_id: Some("openai/ada-002".to_string()),
-            top_k: 10,
-            progressive: false,
-        })
+        Err(anyhow!(
+            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}", 
+            input
+        ))
     }
 
-    /// Parse a FOLLOW clause
-    /// Example: FOLLOW relations.cites TO depth=2
+    /// Parse a FOLLOW clause - DEPRECATED: Use sql_frontend/lowering.rs instead
+    /// 
+    /// This method is kept for backward compatibility but should not be used.
+    /// SKS function parsing is now handled properly in the SQL lowering phase.
     pub fn parse_follow(input: &str) -> Result<FollowOperator> {
-        debug!("Parsing FOLLOW clause: {}", input);
-
-        Ok(FollowOperator {
-            relation_type: "cites".to_string(),
-            max_depth: 2,
-            direction: TraversalDirection::Outgoing,
-            return_paths: false,
-        })
+        Err(anyhow!(
+            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}", 
+            input
+        ))
     }
 
-    /// Parse an ASSEMBLE clause
-    /// Example: ASSEMBLE CONTEXT WITH radius=3
+    /// Parse an ASSEMBLE clause - DEPRECATED: Use sql_frontend/lowering.rs instead
+    /// 
+    /// This method is kept for backward compatibility but should not be used.
+    /// SKS function parsing is now handled properly in the SQL lowering phase.
     pub fn parse_assemble(input: &str) -> Result<AssembleOperator> {
-        debug!("Parsing ASSEMBLE clause: {}", input);
-
-        Ok(AssembleOperator {
-            source_id: None,
-            entity_ids: vec![],
-            radius: 3,
-            max_size: 10000,
-        })
+        Err(anyhow!(
+            "DEPRECATED: Use sql_frontend/lowering.rs for SKS function parsing. Input: {}", 
+            input
+        ))
     }
 }
 

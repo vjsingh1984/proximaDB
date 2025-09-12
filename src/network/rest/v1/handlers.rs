@@ -7,6 +7,7 @@
 
 use axum::{
     extract::{Json, Path, Query, State},
+    http::StatusCode,
     response::Json as JsonResponse,
 };
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use tracing::{error, info};
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::proto_json::ProtoApiResponse;
+use crate::network::rest::{health, proto_json::ProtoApiResponse};
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest, CollectionResponse};
 use crate::proto::proximadb_v1::{
@@ -559,8 +560,10 @@ pub fn create_router(state: AppState) -> axum::Router {
             "/api/v1/collections/:collection_id",
             delete(delete_collection),
         )
-        // Health check
-        .route("/health", get(health_check))
+        // Health check endpoints
+        .route("/health", get(comprehensive_health_check))
+        .route("/health/live", get(liveness_check))
+        .route("/health/ready", get(readiness_check))
         // With metadata endpoints
         .route(
             "/api/v1/search/with_metadata",
@@ -574,6 +577,41 @@ pub fn create_router(state: AppState) -> axum::Router {
         // SKS entity endpoints (storage-coupled path)
         .nest("/api", entities_router)
         .with_state(state)
+}
+
+/// Comprehensive health check handler
+/// 
+/// Wraps the health module's health_check function with our AppState
+pub async fn comprehensive_health_check(
+    State(state): State<AppState>,
+    query: Query<health::HealthParams>,
+) -> ApiResult<Json<health::HealthResponse>> {
+    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    health::health_check(axum::extract::State(health_state), query)
+        .await
+        .map_err(ApiError::from)
+}
+
+/// Liveness check handler
+/// 
+/// Simple liveness check for load balancers
+pub async fn liveness_check(
+    State(state): State<AppState>,
+) -> ApiResult<Json<health::LivenessResponse>> {
+    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    health::liveness_check(axum::extract::State(health_state))
+        .await
+        .map_err(ApiError::from)
+}
+
+/// Readiness check handler
+/// 
+/// Returns 200 when ready, 503 when not ready
+pub async fn readiness_check(
+    State(state): State<AppState>,
+) -> Result<Json<health::ReadinessResponse>, (StatusCode, Json<health::ReadinessResponse>)> {
+    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    health::readiness_check(axum::extract::State(health_state)).await
 }
 
 #[cfg(test)]

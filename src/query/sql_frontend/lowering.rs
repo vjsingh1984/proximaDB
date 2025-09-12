@@ -260,8 +260,8 @@ impl QueryLowering {
             name.to_uppercase().as_str(),
             "SIMILAR" | "FOLLOW" | "ASSEMBLE"
         ) {
-            // TODO: Parse SKS function arguments with validation
-            Ok(Expr::FuncCall { name, args })
+            // Parse SKS function arguments with validation and convert to structured AST
+            self.lower_sks_function(&name, &args).await
         }
         // Regular functions
         else {
@@ -455,6 +455,104 @@ impl QueryLowering {
             right_table,
             on_condition,
         })
+    }
+
+    /// Lower SKS functions (SIMILAR, FOLLOW, ASSEMBLE) to structured AST nodes
+    ///
+    /// This method converts SQL function calls to proper AST expressions that
+    /// can be optimized by the query planner and executed efficiently.
+    async fn lower_sks_function(&self, name: &str, args: &[FunctionArg]) -> Result<Expr> {
+        let lowered_args = self.lower_function_args(args).await?;
+        
+        match name.to_uppercase().as_str() {
+            "SIMILAR" => {
+                // SIMILAR(field, query, [options])
+                if lowered_args.len() < 2 {
+                    return Err(anyhow!("SIMILAR function requires at least 2 arguments: field, query"));
+                }
+
+                // Extract field name (first argument)
+                let field = match &lowered_args[0] {
+                    Expr::Identifier(field_name) => field_name.clone(),
+                    _ => return Err(anyhow!("First argument to SIMILAR must be a field name")),
+                };
+
+                // Extract query (second argument)  
+                let query = Box::new(lowered_args[1].clone());
+
+                // Parse optional parameters from remaining arguments
+                // For now, use defaults - can be extended to parse named parameters
+                let metric = None; // TODO: Parse from optional 3rd arg
+                let threshold = None; // TODO: Parse from optional parameters
+
+                Ok(Expr::SksSimilar {
+                    field,
+                    query,
+                    metric,
+                    threshold,
+                })
+            }
+            
+            "FOLLOW" => {
+                // FOLLOW(start_node, edge_type, [options])
+                if lowered_args.len() < 2 {
+                    return Err(anyhow!("FOLLOW function requires at least 2 arguments: start_node, edge_type"));
+                }
+
+                let start = Box::new(lowered_args[0].clone());
+
+                // Extract edge type
+                let edge = match &lowered_args[1] {
+                    Expr::Literal(Literal::String(edge_name)) => edge_name.clone(),
+                    Expr::Identifier(edge_name) => edge_name.clone(),
+                    _ => return Err(anyhow!("Second argument to FOLLOW must be an edge type string")),
+                };
+
+                // Parse optional max_depth (default to 3)
+                let max_depth = if lowered_args.len() > 2 {
+                    match &lowered_args[2] {
+                        Expr::Literal(Literal::Number(n)) => *n as u32,
+                        _ => 3, // default
+                    }
+                } else {
+                    3
+                };
+
+                Ok(Expr::SksFollow {
+                    start,
+                    edge,
+                    max_depth,
+                })
+            }
+
+            "ASSEMBLE" => {
+                // ASSEMBLE(context_items..., [options])
+                if lowered_args.is_empty() {
+                    return Err(anyhow!("ASSEMBLE function requires at least 1 argument"));
+                }
+
+                // All arguments are context items for now
+                let context_items = lowered_args;
+                
+                // TODO: Parse optional strategy and max_size from named parameters
+                let strategy = None; // Could be "temporal", "semantic", "relevance"
+                let max_size = None; // Maximum context size
+
+                Ok(Expr::SksAssemble {
+                    context_items,
+                    strategy,
+                    max_size,
+                })
+            }
+
+            _ => {
+                // Fallback for unrecognized SKS functions
+                Ok(Expr::FuncCall {
+                    name: name.to_string(),
+                    args: lowered_args,
+                })
+            }
+        }
     }
 }
 

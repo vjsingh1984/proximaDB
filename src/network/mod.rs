@@ -173,6 +173,7 @@
 //! - **Request Tracing**: OpenTelemetry support
 //! - **Access Logs**: Structured JSON logging
 
+pub mod auth;
 pub mod grpc;
 pub mod metrics_service;
 pub mod middleware;

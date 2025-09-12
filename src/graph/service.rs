@@ -1067,9 +1067,44 @@ impl GraphService {
             memory_usage_bytes: 0, // TODO: Calculate memory usage
             average_degree: 0.0,   // TODO: Calculate average degree
             max_degree: 0,
-            connected_components: 1, // TODO: Calculate connected components
+            connected_components: {
+                // Calculate connected components using the implemented algorithm
+                match crate::graph::engines::orion::traversal::connected_components(&self.engine).await {
+                    Ok(components) => components.len() as u32,
+                    Err(_) => 1, // Default to 1 if calculation fails
+                }
+            },
         };
         Ok(stats)
+    }
+
+    /// Helper method to convert properties to proto format
+    fn convert_properties_to_proto(&self, properties: &std::collections::HashMap<String, crate::graph::PropertyValue>) -> std::collections::HashMap<String, crate::proto::proximadb_v1::PropertyValue> {
+        properties.iter().map(|(key, value)| {
+            let proto_value = match value {
+                crate::graph::PropertyValue::String(s) => crate::proto::proximadb_v1::PropertyValue {
+                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s.clone())),
+                },
+                crate::graph::PropertyValue::Integer(i) => crate::proto::proximadb_v1::PropertyValue {
+                    value: Some(crate::proto::proximadb_v1::property_value::Value::IntValue(*i)),
+                },
+                crate::graph::PropertyValue::Float(f) => crate::proto::proximadb_v1::PropertyValue {
+                    value: Some(crate::proto::proximadb_v1::property_value::Value::FloatValue(*f)),
+                },
+                crate::graph::PropertyValue::Boolean(b) => crate::proto::proximadb_v1::PropertyValue {
+                    value: Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(*b)),
+                },
+                crate::graph::PropertyValue::List(list) => {
+                    // For simplicity, convert list to string representation
+                    crate::proto::proximadb_v1::PropertyValue {
+                        value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue(
+                            format!("{:?}", list)
+                        )),
+                    }
+                },
+            };
+            (key.clone(), proto_value)
+        }).collect()
     }
 
     /// Batch create nodes for high-performance ingestion
@@ -1155,13 +1190,91 @@ impl GraphService {
             ));
         }
 
-        // Basic implementation - return empty response for now
-        // TODO: Implement full traversal logic
+        // Use the comprehensive BFS traversal algorithm from ORION traversal module
+        let config = crate::graph::engines::orion::traversal::TraversalConfig {
+            max_depth: request.max_depth.map(|d| d as u32),
+            max_nodes: request.max_nodes.map(|n| n as usize),
+            edge_types: if request.edge_types.is_empty() { 
+                None 
+            } else { 
+                Some(request.edge_types.clone()) 
+            },
+            node_filter: None, // TODO: Implement node filtering from request
+            early_stop: None,
+            track_paths: request.return_paths,
+            parallel_processing: true,
+            timeout_ms: request.timeout_ms.map(|t| t as u64),
+            max_frontier: None, // Use default
+            enable_prefetch: true,
+            prefetch_budget: 8,
+        };
+
+        // Execute BFS traversal
+        let traversal_result = crate::graph::engines::orion::traversal::breadth_first_search(
+            &self.engine, 
+            &request.start_node_id,
+            config
+        ).await?;
+
+        // Convert TraversalResult to proto TraversalResponse
+        let proto_nodes = traversal_result.nodes
+            .iter()
+            .map(|node| crate::proto::proximadb_v1::Node {
+                id: node.id.clone(),
+                labels: node.labels.clone(),
+                properties: self.convert_properties_to_proto(&node.properties),
+                embedding: node.embedding.clone(),
+                created_at: node.created_at.map(|ts| prost_types::Timestamp {
+                    seconds: ts.timestamp(),
+                    nanos: ts.timestamp_subsec_nanos() as i32,
+                }),
+                updated_at: node.updated_at.map(|ts| prost_types::Timestamp {
+                    seconds: ts.timestamp(),
+                    nanos: ts.timestamp_subsec_nanos() as i32,
+                }),
+            })
+            .collect();
+
+        let proto_edges = traversal_result.edges
+            .iter()
+            .map(|edge| crate::proto::proximadb_v1::Edge {
+                id: edge.id.clone(),
+                from_node_id: edge.from_node_id.clone(),
+                to_node_id: edge.to_node_id.clone(),
+                edge_type: edge.edge_type.clone(),
+                properties: self.convert_properties_to_proto(&edge.properties),
+                weight: edge.weight,
+                created_at: edge.created_at.map(|ts| prost_types::Timestamp {
+                    seconds: ts.timestamp(),
+                    nanos: ts.timestamp_subsec_nanos() as i32,
+                }),
+                updated_at: edge.updated_at.map(|ts| prost_types::Timestamp {
+                    seconds: ts.timestamp(),
+                    nanos: ts.timestamp_subsec_nanos() as i32,
+                }),
+            })
+            .collect();
+
+        let proto_paths = traversal_result.paths
+            .iter()
+            .map(|path| crate::proto::proximadb_v1::Path {
+                node_ids: path.clone(),
+            })
+            .collect();
+
+        // Convert traversal stats to proto
+        let proto_stats = Some(crate::proto::proximadb_v1::TraversalStats {
+            nodes_visited: traversal_result.stats.nodes_visited as u64,
+            edges_traversed: traversal_result.stats.edges_traversed as u64,
+            max_depth_reached: traversal_result.stats.max_depth_reached,
+            execution_time_microseconds: traversal_result.stats.execution_time_microseconds,
+        });
+
         Ok(crate::proto::proximadb_v1::TraversalResponse {
-            nodes: vec![],
-            edges: vec![],
-            paths: vec![],
-            stats: None,
+            nodes: proto_nodes,
+            edges: proto_edges,
+            paths: proto_paths,
+            stats: proto_stats,
         })
     }
 
@@ -1185,9 +1298,8 @@ impl GraphService {
             ));
         }
 
-        // Basic implementation - return empty response for now
-        // TODO: Implement full connected components logic
-        Ok(vec![])
+        // Use the comprehensive connected components algorithm from ORION traversal module
+        crate::graph::engines::orion::traversal::connected_components(&self.engine).await
     }
 
     /// Check for cycles (basic implementation) 
@@ -1198,9 +1310,8 @@ impl GraphService {
             ));
         }
 
-        // Basic implementation - return false for now
-        // TODO: Implement full cycle detection logic
-        Ok(false)
+        // Use the comprehensive cycle detection algorithm from ORION traversal module
+        crate::graph::engines::orion::traversal::has_cycle(&self.engine).await
     }
 }
 
