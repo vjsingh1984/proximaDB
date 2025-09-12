@@ -178,6 +178,8 @@ Build what wasn't possible before
 **🛡️ Enterprise Confidence**
 
 • Production-ready performance benchmarks
+• Enterprise-grade security and authentication framework
+• Multi-tenant isolation with role-based access control
 • Open-source transparency and community support
 • Deploy anywhere: on-premise, cloud, edge, hybrid
 • Full control over data sovereignty and compliance
@@ -287,6 +289,9 @@ curl -X POST :5678/api/v1/hybrid \
 • Explainable AI decisions with full reasoning chains
 
 **🛡️ Intelligent Security & Risk**
+• Enterprise authentication with JWT, OAuth2, mTLS, and API keys
+• Role-based access control with granular permissions (23+ roles)
+• Multi-tenant isolation for secure shared deployments
 • Multimodal threat detection (documents, communications, behavior)
 • Entity relationship analysis for fraud prevention
 • Risk pattern recognition across multiple data types
