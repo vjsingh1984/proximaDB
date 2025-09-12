@@ -6,6 +6,7 @@
 use anyhow::Result;
 use serde_json::json;
 use std::collections::HashMap;
+use tracing::{debug, error, info, warn};
 
 #[tokio::test]
 async fn test_vector_record_creation() -> Result<()> {
@@ -14,7 +15,7 @@ async fn test_vector_record_creation() -> Result<()> {
     let mut metadata = HashMap::new();
     metadata.insert("category".to_string(), json!("test"));
     metadata.insert("priority".to_string(), json!("high"));
-    
+
     // Simulate vector record structure
     let vector_record = json!({
         "id": "test_vector_1",
@@ -23,13 +24,13 @@ async fn test_vector_record_creation() -> Result<()> {
         "timestamp": chrono::Utc::now().timestamp_micros(),
         "version": 1
     });
-    
+
     assert_eq!(vector_record["id"], "test_vector_1");
     assert_eq!(vector_record["vector"].as_array().unwrap().len(), 5);
     assert_eq!(vector_record["metadata"]["category"], "test");
     assert_eq!(vector_record["version"], 1);
-    
-    println!("✅ Vector record creation test passed");
+
+    debug!("✅ Vector record creation test passed");
     Ok(())
 }
 
@@ -37,7 +38,7 @@ async fn test_vector_record_creation() -> Result<()> {
 async fn test_vector_search_request_structure() -> Result<()> {
     // Test vector search request structure
     let query_vector = vec![0.1, 0.2, 0.3, 0.4, 0.5];
-    
+
     let search_request = json!({
         "vector": query_vector,
         "k": 10,
@@ -52,13 +53,16 @@ async fn test_vector_search_request_structure() -> Result<()> {
             "quantization_hint": "PQ8"
         }
     });
-    
-    assert_eq!(search_request["k"], 10);
-    assert_eq!(search_request["filters"]["category"], "test");
-    assert_eq!(search_request["include_vectors"], true);
-    assert_eq!(search_request["optimization_hints"]["enable_two_stage_search"], true);
-    
-    println!("✅ Vector search request structure test passed");
+
+    assert_eq!(search_request.get("k"), 10);
+    assert_eq!(search_request.get("filters")["category"], "test");
+    assert_eq!(search_request.get("include_vectors"), true);
+    assert_eq!(
+        search_request.get("optimization_hints")["enable_two_stage_search"],
+        true
+    );
+
+    debug!("✅ Vector search request structure test passed");
     Ok(())
 }
 
@@ -71,24 +75,24 @@ async fn test_collection_config_with_quantization() -> Result<()> {
         "distance_metric": "COSINE",
         "storage_engine": "VIPER",
         "indexing_algorithm": "HNSW",
-        "quantization_config": {
+        "quantization": {
             "quantization_type": "PQ",
             "bits_per_code": 8,
             "num_subspaces": 16,
             "enable_compression": true
         }
     });
-    
+
     assert_eq!(collection_config["name"], "test_collection");
     assert_eq!(collection_config["dimension"], 128);
     assert_eq!(collection_config["distance_metric"], "COSINE");
-    
-    let quant_config = &collection_config["quantization_config"];
+
+    let quant_config = &collection_config["quantization"];
     assert_eq!(quant_config["quantization_type"], "PQ");
     assert_eq!(quant_config["bits_per_code"], 8);
     assert_eq!(quant_config["num_subspaces"], 16);
-    
-    println!("✅ Collection config with quantization test passed");
+
+    debug!("✅ Collection config with quantization test passed");
     Ok(())
 }
 
@@ -96,18 +100,18 @@ async fn test_collection_config_with_quantization() -> Result<()> {
 async fn test_distance_metric_types() -> Result<()> {
     // Test different distance metric configurations
     let metrics = vec!["COSINE", "EUCLIDEAN", "DOT_PRODUCT", "MANHATTAN"];
-    
+
     for metric in metrics {
         let config = json!({
             "distance_metric": metric,
             "dimension": 128
         });
-        
+
         assert_eq!(config["distance_metric"], metric);
         assert_eq!(config["dimension"], 128);
     }
-    
-    println!("✅ Distance metric types test passed");
+
+    debug!("✅ Distance metric types test passed");
     Ok(())
 }
 
@@ -115,19 +119,24 @@ async fn test_distance_metric_types() -> Result<()> {
 async fn test_storage_engine_types() -> Result<()> {
     // Test different storage engine configurations
     let engines = vec!["VIPER", "LSM"];
-    
+
     for engine in engines {
         let config = json!({
             "storage_engine": engine,
             "dimension": 128,
             "name": format!("test_collection_{}", engine.to_lowercase())
         });
-        
+
         assert_eq!(config["storage_engine"], engine);
-        assert!(config["name"].as_str().unwrap().contains(&engine.to_lowercase()));
+        assert!(
+            config["name"]
+                .as_str()
+                .unwrap()
+                .contains(&engine.to_lowercase())
+        );
     }
-    
-    println!("✅ Storage engine types test passed");
+
+    debug!("✅ Storage engine types test passed");
     Ok(())
 }
 
@@ -143,20 +152,20 @@ async fn test_vector_mutation_operations() -> Result<()> {
             "last_updated": chrono::Utc::now().timestamp()
         }
     });
-    
+
     let delete_request = json!({
         "operation": "DELETE",
         "vector_id": "test_vector_1",
         "soft_delete": true
     });
-    
-    assert_eq!(update_request["operation"], "UPDATE");
-    assert_eq!(update_request["vector_id"], "test_vector_1");
-    assert_eq!(update_request["metadata_updates"]["priority"], "medium");
-    
-    assert_eq!(delete_request["operation"], "DELETE");
-    assert_eq!(delete_request["soft_delete"], true);
-    
-    println!("✅ Vector mutation operations test passed");
+
+    assert_eq!(update_request.get("operation"), "UPDATE");
+    assert_eq!(update_request.get("vector_id"), "test_vector_1");
+    assert_eq!(update_request.get("metadata_updates")["priority"], "medium");
+
+    assert_eq!(delete_request.get("operation"), "DELETE");
+    assert_eq!(delete_request.get("soft_delete"), true);
+
+    debug!("✅ Vector mutation operations test passed");
     Ok(())
 }

@@ -1,0 +1,57 @@
+= Feature Gaps and Future Items
+:toc:
+:toclevels: 3
+:icons: font
+
+== Overview
+
+This document outlines the known feature gaps and future development items for ProximaDB. For a high-level overview of the architectural changes required to address these gaps, see the link:ARCHITECTURE_SCALING_AND_HARDENING_PLAN.adoc[Architecture, Scaling & Hardening Plan].
+
+== Architecture and Performance
+
+This section lists suboptimal design patterns and performance opportunities that have been identified in the current implementation:
+
+*   **Monolithic Components**: Several core components, such as the `VectorOperationsService` and the storage engines, are monolithic. A more modular design would be more maintainable and extensible.
+*   **Lack of a Common Storage API**: The `UnifiedStorageEngine` trait is a good start, but a more stable and well-defined storage API would make it easier to add new engines and to reason about the behavior of the system as a whole.
+*   **In-memory SKS**: The Semantic Knowledge Store (SKS) is currently an in-memory implementation, which is not suitable for production use. It needs a durable and scalable storage solution.
+*   **Inefficient Query Execution**: The query executor has several performance bottlenecks, such as in-memory filtering, lack of true parallelism in hybrid execution, and no support for streaming results.
+*   **Lack of Dynamic Reconfiguration**: The server configuration is fixed at startup. A production-ready database needs to be able to reconfigure itself at runtime without restarting.
+
+== Missing Features
+
+This section lists "table-stakes" features that are currently missing from ProximaDB:
+
+*   **Distributed Features**: The current implementation is single-node only. The following distributed features are missing:
+    *   **Clustering**: Support for horizontal scaling and sharding of data across multiple nodes.
+    *   **Replication**: Ensuring data durability and high availability through data replication.
+    *   **High Availability (HA)**: Mechanisms for automatic failover and recovery in case of node failures.
+*   **Security**: The current implementation has minimal security features. The following security features are missing:
+    *   **TLS Hardening**: Comprehensive TLS configuration and enforcement for all network communication.
+    *   **Authentication (authN)**: User authentication mechanisms (e.g., API keys, OAuth).
+    *   **Authorization (authZ)**: Fine-grained access control for users and roles.
+    *   **Role-Based Access Control (RBAC)**: Defining roles and permissions for different user types.
+*   **Backup/Restore Tooling**: Comprehensive tools for backing up and restoring data and metadata, including incremental backups and point-in-time recovery.
+*   **Full SQL Compliance**: The query engine is not fully SQL compliant. It's missing support for many standard SQL features like subqueries, window functions, common table expressions (CTEs), and a rich set of built-in functions.
+*   **Transactional Support**: There is no concept of transactions in the query engine. A production-ready database needs to support ACID transactions to ensure data consistency.
+*   **Advanced Indexing**: The indexing subsystem is mostly a placeholder. It's missing support for many important features, such as:
+    *   **Full-text search**
+    *   **Geospatial indexing**
+    *   **Bitmap indexes**
+    *   **Covering indexes**
+    *   **Index advisor**
+*   **Graph Database**:
+    *   **Graph-Native Storage**: The graph database needs a graph-native storage engine that is optimized for storing and querying graph data.
+    *   **Cypher Query Language**: The graph database should support the Cypher query language.
+
+== Future Items
+
+This section outlines planned features and development items for future releases:
+
+*   **Advanced Indexing Algorithms**: Research and implementation of cutting-edge indexing algorithms (e.g., DiskANN, ScaNN) for even higher performance and recall.
+*   **Support for More Data Types**: Extending support for additional vector data types (e.g., sparse vectors, binary vectors) and complex metadata structures.
+*   **Query Optimization for Complex Queries**: Enhancing the query optimizer to handle multi-vector queries, complex filter conditions, and data joins efficiently.
+*   **Cloud Backend Hardening**: Extensive validation and CI tests for all supported cloud storage backends (S3, Azure Blob Storage, Google Cloud Storage) to ensure reliability and performance in cloud environments.
+*   **Client Tooling**:
+    *   **SDK Packaging**: Providing official SDKs for popular programming languages (e.g., Python, Java, Go).
+    *   **Comprehensive Examples**: Detailed examples and tutorials for using the client SDKs and interacting with ProximaDB.
+    *   **Language Bindings**: Auto-generated language bindings for gRPC and REST APIs.

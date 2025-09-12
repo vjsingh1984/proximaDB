@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python test_vector_insert_and_persist.py
 
 from proximadb import ProximaDBClient, DistanceMetric, VectorRecord
 import time

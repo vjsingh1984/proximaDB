@@ -15,85 +15,115 @@
  */
 
 //! VectorRecord Migration Utilities
-//! 
+//!
 //! This module provides utilities for migrating from Avro VectorRecord to Proto VectorRecord.
 //! It serves as a compatibility layer during the transition period.
 
+use crate::proto::proximadb_v1::VectorRecord;
 use std::collections::HashMap;
-use crate::proto::proximadb::VectorRecord;
 
-/// Legacy Avro VectorRecord type alias for compatibility
-pub type AvroVectorRecord = crate::core::avro_unified::VectorRecord;
+/// Avro VectorRecord type alias for compatibility
+pub type ServiceVectorRecord = crate::core::service_types::VectorRecord;
 
 /// Proto VectorRecord type alias for convenience
 pub type ProtoVectorRecord = VectorRecord;
 
-/// Convert Avro VectorRecord to Proto VectorRecord
-pub fn avro_to_proto(avro_record: &AvroVectorRecord, _collection_id: &str) -> ProtoVectorRecord {
-    // Convert metadata from HashMap<String, serde_json::Value> to Vec<MetadataItem>
-    let metadata: Vec<crate::proto::proximadb::MetadataItem> = avro_record.metadata.iter()
+/// Convert Service VectorRecord to Proto VectorRecord
+pub fn service_to_proto(
+    service_record: &ServiceVectorRecord,
+    _collection_id: &str,
+) -> ProtoVectorRecord {
+    // Convert metadata from HashMap<String, serde_json::Value> to HashMap<String, SqlValue>
+    let metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = service_record
+        .metadata
+        .iter()
         .map(|(key, value)| {
-            let string_value = match value {
-                serde_json::Value::String(s) => s.clone(),
-                serde_json::Value::Number(n) => n.to_string(),
-                serde_json::Value::Bool(b) => b.to_string(),
-                _ => value.to_string()
+            let sql_value = match value {
+                serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
+                },
+                serde_json::Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
+                        }
+                    } else {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(n.to_string())),
+                        }
+                    }
+                }
+                serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b)),
+                },
+                _ => crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value.to_string())),
+                },
             };
-            crate::proto::proximadb::MetadataItem {
-                key: key.clone(),
-                value: string_value,
-            }
+            (key.clone(), sql_value)
         })
         .collect();
 
     ProtoVectorRecord {
-        id: if avro_record.id.is_empty() { None } else { Some(avro_record.id.clone()) },
-        vector: avro_record.vector.clone(),
+        id: service_record.id.clone(),
+        vector: service_record.vector.clone(),
         metadata,
-        timestamp: avro_record.timestamp,
-        created_at: avro_record.timestamp,
-        updated_at: avro_record.timestamp,
-        expires_at: avro_record.expires_at,
-        version: avro_record.version,
-        rank: None,
-        score: None,
-        distance: None,
+        timestamp: (service_record.timestamp / 1_000_000) as i64, // Convert microseconds to seconds
+        updated_at: service_record.updated_at.map(|v| (v / 1_000_000) as i64),
+        expires_at: service_record.expires_at.map(|v| (v / 1_000_000) as i64),
+        version: service_record.version.map(|v| v as i64),
+        quantized_vector: Vec::new(),
+        source: None,
     }
 }
 
-/// Convert Proto VectorRecord to Avro VectorRecord
-pub fn proto_to_avro(proto_record: &ProtoVectorRecord, collection_id: &str) -> AvroVectorRecord {
+/// Convert Proto VectorRecord to Service VectorRecord
+pub fn proto_to_service(
+    proto_record: &ProtoVectorRecord,
+    collection_id: &str,
+) -> ServiceVectorRecord {
     // Convert metadata from Vec<MetadataItem> to HashMap<String, serde_json::Value>
-    let metadata: HashMap<String, serde_json::Value> = proto_record.metadata.iter()
-        .map(|item| {
-            (item.key.clone(), serde_json::Value::String(item.value.clone()))
-        })
-        .collect();
+    let metadata =
+        crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&proto_record.metadata);
 
-    AvroVectorRecord {
-        id: proto_record.id.clone().unwrap_or_default(),
+    ServiceVectorRecord {
+        id: proto_record.id.clone(),
         collection_id: collection_id.to_string(),
         vector: proto_record.vector.clone(),
         metadata,
-        timestamp: proto_record.timestamp,
-        created_at: chrono::Utc::now().timestamp_millis(),
-        updated_at: chrono::Utc::now().timestamp_millis(),
-        expires_at: proto_record.expires_at,
-        version: proto_record.version,
-        rank: None,
-        score: None,
-        distance: None,
+        timestamp: (proto_record.timestamp as i64) * 1_000_000, // Convert seconds to microseconds
+        updated_at: Some(
+            proto_record
+                .updated_at
+                .map(|v| (v as i64) * 1_000_000)
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_micros()),
+        ),
+        expires_at: proto_record.expires_at.map(|v| (v as i64) * 1_000_000),
+        version: proto_record.version.map(|v| v as i64),
+        // Note: similarity field removed - only exists on SearchVectorRecord
     }
 }
 
-/// Convert a batch of Avro VectorRecords to Proto VectorRecords
-pub fn avro_batch_to_proto(avro_records: &[AvroVectorRecord], collection_id: &str) -> Vec<ProtoVectorRecord> {
-    avro_records.iter().map(|r| avro_to_proto(r, collection_id)).collect()
+/// Convert a batch of Service VectorRecords to Proto VectorRecords
+pub fn service_batch_to_proto(
+    service_records: &[ServiceVectorRecord],
+    collection_id: &str,
+) -> Vec<ProtoVectorRecord> {
+    service_records
+        .iter()
+        .map(|r| service_to_proto(r, collection_id))
+        .collect()
 }
 
-/// Convert a batch of Proto VectorRecords to Avro VectorRecords
-pub fn proto_batch_to_avro(proto_records: &[ProtoVectorRecord], collection_id: &str) -> Vec<AvroVectorRecord> {
-    proto_records.iter().map(|r| proto_to_avro(r, collection_id)).collect()
+/// Convert a batch of Proto VectorRecords to Service VectorRecords
+pub fn proto_batch_to_service(
+    proto_records: &[ProtoVectorRecord],
+    collection_id: &str,
+) -> Vec<ServiceVectorRecord> {
+    proto_records
+        .iter()
+        .map(|r| proto_to_service(r, collection_id))
+        .collect()
 }
 
 #[cfg(test)]
@@ -104,52 +134,65 @@ mod tests {
     #[test]
     fn test_avro_to_proto_conversion() {
         let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), serde_json::Value::String("test".to_string()));
-        metadata.insert("score".to_string(), serde_json::Value::Number(serde_json::Number::from(42)));
+        metadata.insert(
+            "category".to_string(),
+            serde_json::Value::String("test".to_string()),
+        );
+        metadata.insert(
+            "score".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(42)),
+        );
         metadata.insert("active".to_string(), serde_json::Value::Bool(true));
 
-        let avro_record = AvroVectorRecord {
+        let service_record = ServiceVectorRecord {
             id: "test-vector-1".to_string(),
             collection_id: "test-collection".to_string(),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata,
             timestamp: 1640995200000000, // 2022-01-01 00:00:00 UTC in microseconds
-            created_at: 1640995200000,   // 2022-01-01 00:00:00 UTC in milliseconds
-            updated_at: 1640995200000,
+            updated_at: Some(1640995200000000),
             expires_at: None,
-            version: 1,
-            rank: None,
-            score: None,
-            distance: None,
+            version: Some(1),
+            // rank removed -  None,
+            similarity: None,
         };
 
-        let proto_record = avro_to_proto(&avro_record, "test-collection");
+        let proto_record = avro_to_proto(&service_record, "test-collection");
 
         assert_eq!(proto_record.id, Some("test-vector-1".to_string()));
         assert_eq!(proto_record.vector, vec![1.0, 2.0, 3.0, 4.0]);
-        assert_eq!(proto_record.timestamp, 1640995200000000);
-        assert_eq!(proto_record.version, 1);
+        assert_eq!(proto_record.timestamp, 1640995200); // Converted from microseconds to seconds
+        assert_eq!(proto_record.version, Some(1));
         assert_eq!(proto_record.metadata.len(), 3);
-        
+
         // Check metadata items
         let metadata_items = &proto_record.metadata;
-        assert!(metadata_items.iter().any(|item| item.key == "category" && item.value == "test"));
-        assert!(metadata_items.iter().any(|item| item.key == "score" && item.value == "42"));
-        assert!(metadata_items.iter().any(|item| item.key == "active" && item.value == "true"));
+        assert!(metadata_items.iter().any(|item| key == "category" && 
+            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "test")));
+        assert!(metadata_items.iter().any(|item| key == "score" && 
+            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) if *n == 42.0)));
+        assert!(metadata_items.iter().any(|item| key == "active" && 
+            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) if *b)));
     }
 
     #[test]
     fn test_proto_to_avro_conversion() {
-        use crate::proto::proximadb::MetadataItem;
+        use crate::proto::proximadb_v1::MetadataItem;
 
         let metadata = vec![
             MetadataItem {
                 key: "category".to_string(),
-                value: "test".to_string(),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        "test".to_string(),
+                    ),
+                ),
             },
             MetadataItem {
                 key: "score".to_string(),
-                value: "42".to_string(),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("42".to_string()),
+                ),
             },
         ];
 
@@ -157,25 +200,23 @@ mod tests {
             id: Some("test-vector-1".to_string()),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata,
-            timestamp: 1640995200000000,
-            created_at: 1640995200000,
-            updated_at: 1640995200000,
+            timestamp: 1640995200, // Converted from microseconds to seconds
+            updated_at: Some(1640995200),
             expires_at: None,
-            version: 1,
-            rank: None,
-            score: None,
-            distance: None,
+            version: Some(1),
+            // rank removed -  None,
+            similarity: None,
         };
 
-        let avro_record = proto_to_avro(&proto_record, "test-collection");
+        let service_record = proto_to_service(&proto_record, "test-collection");
 
-        assert_eq!(avro_record.id, "test-vector-1");
-        assert_eq!(avro_record.collection_id, "test-collection");
-        assert_eq!(avro_record.vector, vec![1.0, 2.0, 3.0, 4.0]);
-        assert_eq!(avro_record.timestamp, 1640995200000000);
-        assert_eq!(avro_record.version, 1);
-        assert_eq!(avro_record.metadata.len(), 2);
-        assert!(avro_record.metadata.contains_key("category"));
-        assert!(avro_record.metadata.contains_key("score"));
+        assert_eq!(service_record.id, "test-vector-1");
+        assert_eq!(service_record.collection_id, "test-collection");
+        assert_eq!(service_record.vector, vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(service_record.timestamp, 1640995200000000);
+        assert_eq!(service_record.version, Some(1));
+        assert_eq!(service_record.metadata.len(), 2);
+        assert!(service_record.metadata.contains_key("category"));
+        assert!(service_record.metadata.contains_key("score"));
     }
 }

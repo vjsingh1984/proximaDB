@@ -1,0 +1,97 @@
+# ProximaDB Configuration
+
+[server]
+node_id = "proximadb-local"
+bind_address = "127.0.0.1"
+port = 5678
+data_dir = "/tmp/proximadb/data"
+
+[storage]
+# Local metadata URL
+metadata_url = "file:///tmp/proximadb/metadata"
+
+# Storage locations
+[[storage.storage_locations]]
+url = "file:///tmp/proximadb/data"
+weight = 1
+tags = ["local", "test"]
+
+# Assignment configuration
+[storage.assignment_config]
+strategy = "hash"
+affinity = true
+
+# Memory and performance settings for local testing
+mmap_enabled = true
+cache_size_mb = 256
+
+[storage.write_buffer_config]
+write_buffer_size_mb = 8192  # 8GB total across all collections
+memory_flush_size_bytes = 16777216  # 16MB per batch
+memtable_type = "BTree"
+sync_mode = "PerBatch"
+write_buffer_directory = "/tmp/proximadb/write_buffer"
+enable_wal = true
+
+[storage.sst_config]
+level_count = 7
+compaction_threshold = 5  # Minimum 5 files before compaction
+block_size_kb = 2048  # 2MB blocks (2048 KB) - optimal balance for disk IOPS and cloud storage
+compaction_strategy = "leveled"
+compression = "zstd"  # ZSTD for better compression ratio
+compression_enabled = true  # Enable compression by default
+compression_level = 3  # Balanced speed/compression (1-22)
+cache_size_mb = 128
+max_files_per_level = 10
+level_size_multiplier = 10.0
+max_levels = 7
+background_thread_count = 4
+data_directory = "/tmp/proximadb/sst_data"
+mmap_enabled = true
+prefetch_enabled = true
+prefetch_size_kb = 64
+
+[storage.bloom_filter_config]
+bits_per_key = 10
+enabled = true
+
+[storage.viper_config]
+row_group_size = 100000
+compression = "zstd"  # ZSTD for columnar data
+compression_enabled = true  # Enable compression by default
+compression_level = 3  # Balanced speed/compression (1-22)
+enable_statistics = true
+data_directory = "/tmp/proximadb/viper_data"
+cache_size_mb = 512
+
+[storage.filesystem_config]
+enable_write_strategy_cache = true
+temp_strategy = "SameDirectory"
+
+[storage.filesystem_config.atomic_config]
+enable_local_atomic = true
+enable_object_store_atomic = false
+cleanup_temp_on_startup = true
+
+[api]
+grpc_port = 5679
+rest_port = 5678
+max_request_size_mb = 64
+timeout_seconds = 30
+enable_tls = false
+# Background TTL sweeper interval in seconds (default 900 = 15 minutes)
+ttl_sweep_interval_seconds = 900
+
+[monitoring]
+metrics_enabled = true
+log_level = "info"
+
+[consensus]
+node_id = 1
+cluster_peers = []
+election_timeout_ms = 5000
+heartbeat_interval_ms = 1000
+snapshot_threshold = 10
+
+[performance]
+sync_mode = "PerBatch"

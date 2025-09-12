@@ -36,31 +36,54 @@ FilterDict = Dict[str, Any]
 # ============================================================================
 
 class DistanceMetric(str, Enum):
-    """Distance metrics for REST API"""
+    """Distance metrics for REST API
+    
+    Note: Server supports 13+ distance metrics. Unsupported metrics
+    will fallback to COSINE (server behavior, not client validation).
+    """
     COSINE = "cosine"
     EUCLIDEAN = "euclidean"
     DOT_PRODUCT = "dot_product"
-    HAMMING = "hamming"
-    MANHATTAN = "manhattan"
-    JACCARD = "jaccard"
+    MANHATTAN = "manhattan"  # Fallback: COSINE (server decides)
+    HAMMING = "hamming"      # Fallback: COSINE (server decides)
+    JACCARD = "jaccard"      # Fallback: COSINE (server decides)
+    
+    # Extended metrics supported by server (ProximaDB v1.0+)
+    CHEBYSHEV = "chebyshev"
+    CANBERRA = "canberra"
+    MINKOWSKI = "minkowski"
+    ANGULAR = "angular"
+    BRAY_CURTIS = "bray_curtis"
+    HELLINGER = "hellinger"
     CUSTOM = "custom"
 
 
 class StorageEngine(str, Enum):
-    """Storage engines for REST API"""
-    VIPER = "viper"
-    LSM = "lsm"
-    MMAP = "mmap"
-    HYBRID = "hybrid"
+    """Storage engines for REST API
+    
+    Note: Server supports VIPER and SST. Unsupported engines
+    will fallback to VIPER (server behavior, not client validation).
+    
+    Default: VIPER (server default, columnar analytics engine)
+    """
+    VIPER = "viper"  # Columnar storage with Parquet format (DEFAULT)
+    SST = "sst"      # Row-based storage with SSTable format
+    MMAP = "mmap"    # Fallback: VIPER (server decides)
+    HYBRID = "hybrid" # Fallback: VIPER (server decides)
 
 
 class IndexingAlgorithm(str, Enum):
-    """Indexing algorithms for REST API"""
-    HNSW = "hnsw"
-    IVF = "ivf"
-    PQ = "pq"
-    FLAT = "flat"
-    ANNOY = "annoy"
+    """Indexing algorithms for REST API
+    
+    Note: All 6 indexing algorithms are fully supported by the server as of 2025-08.
+    No fallbacks required - server handles all algorithms natively.
+    """
+    HNSW = "hnsw"   # Hierarchical Navigable Small World
+    IVF = "ivf"     # Inverted File Index
+    PQ = "pq"       # Product Quantization
+    FLAT = "flat"   # Brute force / exhaustive search
+    ANNOY = "annoy" # Approximate Nearest Neighbors Oh Yeah
+    LSH = "lsh"     # Locality Sensitive Hashing (fully supported)
 
 
 
@@ -82,6 +105,96 @@ class FilterableDataType(str, Enum):
     ARRAY_STRING = "array_string"
     ARRAY_INTEGER = "array_integer"
     ARRAY_FLOAT = "array_float"
+
+
+class CompressionAlgorithm(str, Enum):
+    """Compression algorithms for SDK-driven compression"""
+    NONE = "none"
+    ZSTD = "zstd"
+    LZ4 = "lz4"
+    SNAPPY = "snappy"
+
+
+class CompressionLevel(int, Enum):
+    """Compression levels (1-9 for ZSTD, ignored for others)"""
+    FASTEST = 1
+    FAST = 3
+    BALANCED = 6
+    HIGH = 9
+
+
+class ServerCapabilities(BaseModel):
+    """Server capabilities and fallback behavior for configuration validation"""
+    
+    # Fully supported distance metrics (no fallback) - All 13 metrics supported as of 2025-08
+    supported_distance_metrics: List[str] = [
+        "cosine", "euclidean", "dot_product", "manhattan", "hamming", "jaccard", 
+        "chebyshev", "canberra", "minkowski", "angular", "bray_curtis", "hellinger", "custom"
+    ]
+    
+    # Distance metrics that fallback to cosine (none - all are now supported natively)
+    fallback_distance_metrics: List[str] = []
+    
+    # Fully supported storage engines (no fallback)
+    supported_storage_engines: List[str] = ["viper", "sst"]
+    
+    # Storage engines that fallback to viper
+    fallback_storage_engines: List[str] = ["mmap", "hybrid"]
+    
+    # Fully supported indexing algorithms (no fallback) - All 6 algorithms supported as of 2025-08
+    supported_indexing_algorithms: List[str] = [
+        "hnsw", "ivf", "pq", "flat", "annoy", "lsh"
+    ]
+    
+    # Indexing algorithms that fallback to hnsw (none - all are now supported natively)
+    fallback_indexing_algorithms: List[str] = []
+    
+    # Quantization types (all supported in VIPER engine)
+    supported_quantization_types: List[str] = [
+        "none", "uniform", "pq", "scalar", "binary", "custom"
+    ]
+    
+    # Server behavior notes
+    notes: Dict[str, str] = {
+        "fallback_policy": "Server uses intelligent fallbacks instead of errors",
+        "dimension_limit": "Server supports up to 100,000 dimensions",
+        "name_validation": "Collection names must be 8+ characters to avoid collision with 7-char base62 IDs",
+        "quantization_engine": "Quantization fully supported in VIPER engine only",
+        "filterable_columns": "All FilterableDataType values supported"
+    }
+    
+    @classmethod
+    def get_fallback_for(cls, config_type: str, value: str) -> Optional[str]:
+        """Get the fallback value for an unsupported configuration"""
+        capabilities = cls()
+        
+        if config_type == "distance_metric":
+            if value in capabilities.fallback_distance_metrics:
+                return "cosine"
+        elif config_type == "storage_engine":
+            if value in capabilities.fallback_storage_engines:
+                return "viper"
+        elif config_type == "indexing_algorithm":
+            if value in capabilities.fallback_indexing_algorithms:
+                return "hnsw"
+                
+        return None
+    
+    @classmethod
+    def is_supported(cls, config_type: str, value: str) -> bool:
+        """Check if a configuration value is fully supported (no fallback)"""
+        capabilities = cls()
+        
+        if config_type == "distance_metric":
+            return value in capabilities.supported_distance_metrics
+        elif config_type == "storage_engine":
+            return value in capabilities.supported_storage_engines
+        elif config_type == "indexing_algorithm":
+            return value in capabilities.supported_indexing_algorithms
+        elif config_type == "quantization_type":
+            return value in capabilities.supported_quantization_types
+            
+        return True  # Default to supported for unknown types
 
 
 class CollectionOperationType(str, Enum):
@@ -200,6 +313,100 @@ class QuantizationValidation(BaseModel):
     retraining_threshold: float = 0.90
 
 
+class CompressionConfig(BaseModel):
+    """Unified compression configuration matching proto definition
+    
+    This configuration aligns with the proto CompressionConfig message,
+    providing a unified interface where engine-specific features are
+    automatically applied based on the collection's storage_engine.
+    
+    Defaults are optimized for VIPER engine (server default).
+    """
+    # Unified compression settings (proto fields 1-2)
+    algorithm: CompressionAlgorithm = Field(
+        default=CompressionAlgorithm.NONE,
+        description="Compression algorithm (ZSTD/LZ4/Snappy)"
+    )
+    level: Optional[int] = Field(
+        default=None,
+        description="Compression level (1-22 for ZSTD, 1-9 for others)"
+    )
+    
+    # Global settings (proto field 3-4)
+    adaptive: bool = Field(
+        default=False,
+        description="Enable adaptive compression based on data characteristics"
+    )
+    min_ratio: Optional[float] = Field(
+        default=None,
+        description="Minimum compression ratio (e.g., 1.5 = 50% reduction)"
+    )
+    
+    # VIPER-specific quantization (proto fields 5-7)
+    enable_quantization: bool = Field(
+        default=False,
+        description="Enable VIPER dual columns (FP32 + quantized). Ignored by SST engine."
+    )
+    quantization_type: Optional[str] = Field(
+        default=None,
+        description="VIPER quantization method: 'int8', 'pq8', 'pq4'. Ignored by SST engine."
+    )
+    normalization_method: Optional[str] = Field(
+        default=None,
+        description="VIPER normalization: 'mean', 'trimmed_mean', 'median'. Ignored by SST engine."
+    )
+    
+    # SST-specific block sizing (proto fields 8-9)
+    block_size_kb: Optional[int] = Field(
+        default=None,
+        description="SST block size in KB (256-16384). Ignored by VIPER engine."
+    )
+    dynamic_block_sizing: bool = Field(
+        default=False,
+        description="Auto-adjust SST block size based on vector dimensions. Ignored by VIPER engine."
+    )
+    
+    @field_validator('level')
+    def validate_compression_level(cls, v):
+        """Validate compression level matches server-side validation"""
+        if v is not None and (v < 1 or v > 22):
+            raise ValueError("Compression level must be between 1-22 (1-9 for most algorithms, 1-22 for ZSTD)")
+        return v
+    
+    @field_validator('min_ratio')
+    def validate_compression_ratio(cls, v):
+        """Validate compression ratio matches server-side validation"""
+        if v is not None and (v < 0.0 or v > 1.0):
+            raise ValueError("Minimum compression ratio must be between 0.0 and 1.0")
+        return v
+    
+    @field_validator('quantization_type')
+    def validate_quantization_type(cls, v):
+        """Validate quantization type is supported"""
+        if v is not None:
+            valid_types = {'int8', 'pq8', 'pq4', 'uniform', 'pq', 'scalar', 'binary', 'none'}
+            if v not in valid_types:
+                raise ValueError(f"Quantization type must be one of: {', '.join(valid_types)}")
+        return v
+    
+    @field_validator('normalization_method')
+    def validate_normalization_method(cls, v):
+        """Validate normalization method is supported"""
+        if v is not None:
+            valid_methods = {'mean', 'trimmed_mean', 'median', 'none'}
+            if v not in valid_methods:
+                raise ValueError(f"Normalization method must be one of: {', '.join(valid_methods)}")
+        return v
+    
+    @field_validator('block_size_kb')
+    def validate_block_size(cls, v):
+        """Validate SST block size is within acceptable range"""
+        if v is not None and (v < 256 or v > 16384):
+            raise ValueError("SST block size must be between 256-16384 KB")
+        return v
+    
+
+
 class QuantizationConfig(BaseModel):
     """Quantization configuration"""
     enabled: bool = False
@@ -233,6 +440,117 @@ class ComprehensiveQuantizationConfig(BaseModel):
     search_quantization: Optional[SearchQuantizationConfig] = None
     compression_ratio_target: Optional[float] = None
     validation: Optional[QuantizationValidation] = None
+
+
+# ============================================================================
+# STORAGE ENGINE CONFIGURATION MODELS
+# ============================================================================
+
+class AccessPattern(str, Enum):
+    """Access patterns for storage optimization"""
+    UNKNOWN = "unknown"
+    WRITE_HEAVY = "write_heavy"
+    READ_HEAVY = "read_heavy"
+    BALANCED = "balanced"
+    ARCHIVE = "archive"
+
+
+class DataDensity(str, Enum):
+    """Data density characteristics"""
+    UNKNOWN = "unknown"
+    DENSE = "dense"        # >80% non-zero values
+    SPARSE = "sparse"      # <20% non-zero values
+    MIXED = "mixed"
+
+
+class ParquetWriterSettings(BaseModel):
+    """Parquet writer settings for columnar engines"""
+    row_group_size: Optional[int] = None
+    page_size: Optional[int] = None
+    enable_bloom_filters: Optional[bool] = None
+    bloom_filter_fpp: Optional[float] = None
+    bloom_filter_columns: Optional[List[str]] = None
+    enable_column_statistics: Optional[bool] = None
+    enable_page_index: Optional[bool] = None
+    enable_column_index: Optional[bool] = None
+    enable_offset_index: Optional[bool] = None
+    page_index_granularity: Optional[int] = None
+    enable_dictionary: Optional[bool] = None
+    dictionary_threshold: Optional[float] = None
+    enable_delta_encoding: Optional[bool] = None
+    enable_byte_stream_split: Optional[bool] = None
+    enable_pq_sorting: Optional[bool] = None
+    pq_sorting_segments: Optional[int] = None
+    pq_sorting_codebook_size: Optional[int] = None
+    enable_native_metadata: Optional[bool] = None
+    metadata_inference_samples: Optional[int] = None
+    write_batch_size: Optional[int] = None
+    id_less_storage: Optional[bool] = None
+
+
+class FooterCacheSettings(BaseModel):
+    """Footer cache settings for cloud storage optimization"""
+    enable: Optional[bool] = None
+    max_entries: Optional[int] = None
+    ttl_seconds: Optional[int] = None
+    time_to_idle_seconds: Optional[int] = None
+    enable_persistence: Optional[bool] = None
+    persistence_path: Optional[str] = None
+    enable_prefetch: Optional[bool] = None
+    prefetch_threshold: Optional[int] = None
+    warming_interval_seconds: Optional[int] = None
+    enable_compression: Optional[bool] = None
+    compression_level: Optional[int] = None
+
+
+class HybridWriterSettings(BaseModel):
+    """Hybrid writer settings for adaptive performance"""
+    enable: Optional[bool] = None
+    initial_mode: Optional[str] = None  # "streaming", "batch", "adaptive"
+    enable_auto_switch: Optional[bool] = None
+    mode_switch_threshold: Optional[int] = None
+    pattern_window_size: Optional[int] = None
+    streaming_threshold: Optional[float] = None
+    batch_threshold: Optional[int] = None
+    max_buffer_size: Optional[int] = None
+    buffer_time_limit_seconds: Optional[int] = None
+    enable_concurrent_writes: Optional[bool] = None
+    max_concurrent_writers: Optional[int] = None
+    optimize_row_group_size: Optional[bool] = None
+    min_row_group_size: Optional[int] = None
+    max_row_group_size: Optional[int] = None
+
+
+class SstEngineSettings(BaseModel):
+    """SST-specific engine settings"""
+    enable_bloom_filters: Optional[bool] = None
+    bloom_filter_fpp: Optional[float] = None
+    compression: Optional[CompressionAlgorithm] = None
+    compression_level: Optional[int] = None
+    write_buffer_size: Optional[int] = None
+    max_write_buffers: Optional[int] = None
+    block_size_kb: Optional[int] = None
+    dynamic_block_sizing: Optional[bool] = None
+
+
+class ViperEngineSettings(BaseModel):
+    """VIPER-specific engine settings"""
+    inherit_global_settings: Optional[bool] = None
+    enable_columnar_compression: Optional[bool] = None
+    enable_vector_quantization: Optional[bool] = None
+    vector_chunk_size: Optional[int] = None
+    enable_lazy_loading: Optional[bool] = None
+
+
+class NovaEngineSettings(BaseModel):
+    """NOVA-specific engine settings"""
+    inherit_global_settings: Optional[bool] = None
+    enable_real_time_mode: Optional[bool] = None
+    streaming_buffer_size: Optional[int] = None
+    prefer_low_latency: Optional[bool] = None
+
+
+# Note: StorageEngineConfig is deprecated, use StorageConfig instead
 
 
 # ============================================================================
@@ -287,6 +605,23 @@ class AnnoyConfig(BaseModel):
     enable_mmap: bool = True
 
 
+class RandomProjectionType(str, Enum):
+    """Random projection types for LSH"""
+    GAUSSIAN = "gaussian"
+    BINARY = "binary"
+    SPARSE = "sparse"
+
+
+class LshConfig(BaseModel):
+    """LSH index configuration"""
+    n_hash_tables: int = 10
+    n_hash_functions: int = 8
+    bucket_width: float = 4.0
+    binary_vectors: bool = False
+    max_candidates: int = 100
+    projection: RandomProjectionType = RandomProjectionType.GAUSSIAN
+
+
 class IndexConfiguration(BaseModel):
     """Index configuration"""
     index_name: str
@@ -300,6 +635,7 @@ class IndexConfiguration(BaseModel):
     flat_config: Optional[FlatConfig] = None
     pq_config: Optional[PqConfig] = None
     annoy_config: Optional[AnnoyConfig] = None
+    lsh_config: Optional[LshConfig] = None
     build_concurrency: Optional[int] = None
     memory_limit_mb: Optional[int] = None
     checkpoint_interval_ms: Optional[int] = None
@@ -322,29 +658,101 @@ class FilterableColumn(BaseModel):
 
 
 class CollectionConfig(BaseModel):
-    """Collection configuration for REST API"""
-    name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with IDs
-    dimension: int = Field(ge=1, le=10000)
-    distance_metric: Optional[DistanceMetric] = None
-    storage_engine: Optional[StorageEngine] = None
-    primary_indexing_algorithm: Optional[IndexingAlgorithm] = None
-    filterable_columns: Optional[List[FilterableColumn]] = None
+    """Collection configuration aligned with proto CollectionConfig"""
+    # CORE CONFIGURATION (Required)
+    name: str = Field(min_length=8)  # Minimum 8 characters to prevent collision with 7-char base62 IDs
+    dimension: int = Field(ge=1, le=100000)  # Server supports up to 100k dimensions
+    distance_metric: Optional[DistanceMetric] = DistanceMetric.COSINE  # Default to most common metric
+    
+    # STORAGE CONFIGURATION
+    storage_engine: Optional[StorageEngine] = StorageEngine.VIPER  # Align with server default
+    storage_config: Optional['StorageConfig'] = None  # Complete storage configuration
+    compression: Optional['CompressionConfig'] = None  # Optional compression configuration (SDK convenience)
+    
+    # INDEX CONFIGURATION
     index_configs: Optional[List[IndexConfiguration]] = None
-    quantization_config: Optional[QuantizationConfig] = None
-    primary_index_name: Optional[str] = None
-    enable_automatic_index_selection: Optional[bool] = None
+    primary_index: Optional[str] = None  # Primary index name
+    auto_index_selection: Optional[bool] = None  # Auto-select best index
+    
+    # SCHEMA CONFIGURATION
+    filterable_columns: Optional[List[FilterableColumn]] = None
+    quantization: Optional[QuantizationConfig] = None  # Vector quantization
+    
+    # METADATA
     description: Optional[str] = None
     tags: Optional[List[str]] = None
     owner: Optional[str] = None
+    
+    # Additional Python SDK fields
     metadata_schema: Optional[Dict[str, Any]] = None
     filterable_metadata_fields: Optional[List[str]] = None
     
     @field_validator('name')
     def validate_name_length(cls, v):
-        """Validate collection name is at least 8 characters"""
+        """Validate collection name is at least 8 characters to prevent collision with 7-char base62 IDs"""
+        if not v or not v.strip():
+            raise ValueError("Collection name cannot be empty")
+        v = v.strip()
         if len(v) < 8:
-            raise ValueError("Collection name must be at least 8 characters long to prevent collision with collection IDs")
+            raise ValueError("Collection name must be at least 8 characters long to prevent collision with 7-character base62 collection IDs")
         return v
+    
+    def model_post_init(self, __context):
+        """Post-initialization validation to align compression config with storage engine"""
+        super().model_post_init(__context) if hasattr(super(), 'model_post_init') else None
+        
+        # Apply engine-specific compression defaults and validation
+        if self.compression:
+            self._validate_compression_for_engine()
+    
+    def _validate_compression_for_engine(self):
+        """Validate compression configuration aligns with storage engine capabilities"""
+        if not self.compression:
+            return
+        
+        engine = self.storage_engine or StorageEngine.VIPER  # Use server default
+        
+        if engine == StorageEngine.VIPER:
+            # VIPER engine: quantization features are valid
+            if self.compression.block_size_kb is not None:
+                import warnings
+                warnings.warn(
+                    "block_size_kb is ignored by VIPER engine (only applies to SST engine)",
+                    UserWarning, stacklevel=2
+                )
+            
+            # Apply VIPER-optimized defaults
+            if self.compression.quantization_type and not self.compression.enable_quantization:
+                # Auto-enable quantization if type is specified
+                self.compression.enable_quantization = True
+                
+        elif engine == StorageEngine.SST:
+            # SST engine: quantization features are ignored
+            if self.compression.enable_quantization:
+                import warnings
+                warnings.warn(
+                    "enable_quantization is ignored by SST engine (only applies to VIPER engine)",
+                    UserWarning, stacklevel=2
+                )
+            
+            if self.compression.quantization_type:
+                import warnings
+                warnings.warn(
+                    "quantization_type is ignored by SST engine (only applies to VIPER engine)",
+                    UserWarning, stacklevel=2
+                )
+            
+            # Apply SST-optimized defaults
+            if self.compression.block_size_kb is None:
+                self.compression.block_size_kb = 8192  # Reasonable default for SST
+        
+        # Validate algorithm-level compatibility
+        if self.compression.level is not None:
+            algo = self.compression.algorithm
+            if algo == CompressionAlgorithm.ZSTD and self.compression.level > 22:
+                raise ValueError("ZSTD compression level must be between 1-22")
+            elif algo != CompressionAlgorithm.ZSTD and self.compression.level > 9:
+                raise ValueError(f"{algo.value} compression level must be between 1-9")
     
     @property
     def index_config(self):
@@ -353,13 +761,6 @@ class CollectionConfig(BaseModel):
             return self.index_configs[0]
         return None
     
-    @property 
-    def storage_config(self):
-        """Backward compatibility property for storage_config access"""
-        # This is used in tests but not defined in the model
-        # Return a mock object for now
-        from types import SimpleNamespace
-        return SimpleNamespace(compression=CompressionType.LZ4)
 
 
 class CollectionStats(BaseModel):
@@ -369,18 +770,76 @@ class CollectionStats(BaseModel):
     data_size_bytes: int = 0
 
 
+class CollectionInfo(BaseModel):
+    """Collection info for list response"""
+    id: str
+    name: str
+    dimension: int
+    metric: str
+    created_at_ms: int  # Milliseconds since epoch (signed int64)
+    updated_at_ms: int  # Milliseconds since epoch (signed int64)
+    vector_count: Optional[int] = None
+    indexed: bool = False
+    
+    # Backward compatibility properties
+    @property
+    def created_at(self) -> int:
+        """Backward compatibility: created_at in seconds"""
+        return self.created_at_ms // 1000
+    
+    @created_at.setter
+    def created_at(self, value: int):
+        """Backward compatibility: created_at in seconds"""
+        self.created_at_ms = value * 1000
+    
+    @property
+    def updated_at(self) -> int:
+        """Backward compatibility: updated_at in seconds"""
+        return self.updated_at_ms // 1000
+    
+    @updated_at.setter
+    def updated_at(self, value: int):
+        """Backward compatibility: updated_at in seconds"""
+        self.updated_at_ms = value * 1000
+
+
 class Collection(BaseModel):
     """Collection information"""
     id: str
     config: CollectionConfig
-    stats: Optional[CollectionStats] = None
-    created_at: Optional[int] = None  # Microseconds since epoch
-    updated_at: Optional[int] = None  # Microseconds since epoch
+    stats: CollectionStats = Field(default_factory=CollectionStats)  # Made required to match REST API
+    created_at_ms: int = Field(default_factory=lambda: int(__import__('time').time() * 1000))  # Milliseconds since epoch (signed int64)
+    updated_at_ms: int = Field(default_factory=lambda: int(__import__('time').time() * 1000))  # Milliseconds since epoch (signed int64)
     
     @property
     def name(self) -> str:
         """Backward compatibility property for collection name"""
         return self.config.name
+    
+    @property
+    def timestamp(self) -> int:
+        """Backward compatibility property for timestamp (seconds)"""
+        return self.created_at_ms // 1000
+    
+    @property
+    def created_at(self) -> int:
+        """Backward compatibility: created_at in seconds"""
+        return self.created_at_ms // 1000
+    
+    @created_at.setter
+    def created_at(self, value: int):
+        """Backward compatibility: created_at in seconds"""
+        self.created_at_ms = value * 1000
+    
+    @property
+    def updated_at(self) -> int:
+        """Backward compatibility: updated_at in seconds"""
+        return self.updated_at_ms // 1000
+    
+    @updated_at.setter
+    def updated_at(self, value: int):
+        """Backward compatibility: updated_at in seconds"""
+        self.updated_at_ms = value * 1000
 
 
 # ============================================================================
@@ -392,9 +851,10 @@ class VectorRecord(BaseModel):
     id: Optional[str] = None
     vector: List[float]
     metadata: Dict[str, Union[str, int, float, bool, List[Union[str, int, float]]]] = Field(default_factory=dict)
-    timestamp: Optional[int] = None  # Microseconds since epoch
-    version: int = 0
-    expires_at: Optional[int] = None  # TTL support
+    timestamp_ms: int = Field(default_factory=lambda: int(__import__('time').time() * 1000))  # Required - milliseconds since epoch (signed int64)
+    updated_at_ms: Optional[int] = None  # Only set if different from timestamp_ms (saves bytes)
+    expires_at_ms: Optional[int] = None  # TTL support (milliseconds since epoch, signed int64)
+    version: Optional[int] = 0  # Optional to save bytes, use small positive values
 
     @field_validator('vector')
     def validate_vector(cls, v):
@@ -403,6 +863,37 @@ class VectorRecord(BaseModel):
         if not all(isinstance(x, (int, float)) for x in v):
             raise ValueError("Vector must contain only numeric values")
         return v
+    
+    # Backward compatibility properties
+    @property
+    def timestamp(self) -> int:
+        """Backward compatibility: timestamp in seconds"""
+        return self.timestamp_ms // 1000
+    
+    @timestamp.setter
+    def timestamp(self, value: int):
+        """Backward compatibility: timestamp in seconds"""
+        self.timestamp_ms = value * 1000
+    
+    @property
+    def updated_at(self) -> Optional[int]:
+        """Backward compatibility: updated_at in seconds"""
+        return self.updated_at_ms // 1000 if self.updated_at_ms else None
+    
+    @updated_at.setter
+    def updated_at(self, value: Optional[int]):
+        """Backward compatibility: updated_at in seconds"""
+        self.updated_at_ms = value * 1000 if value is not None else None
+    
+    @property
+    def expires_at(self) -> Optional[int]:
+        """Backward compatibility: expires_at in seconds"""
+        return self.expires_at_ms // 1000 if self.expires_at_ms else None
+    
+    @expires_at.setter
+    def expires_at(self, value: Optional[int]):
+        """Backward compatibility: expires_at in seconds"""
+        self.expires_at_ms = value * 1000 if value is not None else None
 
 
 # ============================================================================
@@ -457,7 +948,7 @@ class QuantizationHint(BaseModel):
 
 
 class SearchOptimization(BaseModel):
-    """Search optimization hints"""
+    """Search optimization hints including compression-aware options"""
     top_k: Optional[int] = None
     filters: Optional[Dict[str, Any]] = None
     accuracy_threshold: Optional[float] = None
@@ -467,6 +958,25 @@ class SearchOptimization(BaseModel):
     quantization_hint: Optional[QuantizationHint] = None
     enable_clustering_hint: Optional[bool] = None
     enable_metadata_filtering_hint: Optional[bool] = None
+    
+    # Compression-aware search hints
+    prefer_compressed_search: Optional[bool] = Field(
+        default=None,
+        description="Prefer searching compressed data when available"
+    )
+    decompression_budget_ms: Optional[int] = Field(
+        default=None,
+        description="Maximum time budget for decompression operations"
+    )
+    use_decompression_cache: Optional[bool] = Field(
+        default=True,
+        description="Use decompression cache for repeated searches"
+    )
+    compression_aware_routing: Optional[bool] = Field(
+        default=None,
+        description="Enable compression-aware query routing"
+    )
+    
     custom_hints: Optional[Dict[str, Any]] = None
 
 
@@ -477,6 +987,38 @@ class SearchResult(BaseModel):
     vector: Optional[List[float]] = None
     metadata: Optional[Dict[str, Any]] = None
     rank: Optional[int] = None
+
+
+class SearchProgress(BaseModel):
+    """Progress state for progressive search"""
+    stage: int
+    stages: int
+    complete: bool
+
+
+class SearchEnvelope(BaseModel):
+    """Envelope for paginated/progressive SKS search results"""
+    items: List[SearchResult]
+    total: Optional[int] = None
+    cursor: Optional[str] = None
+    has_more: bool = False
+    progress: Optional[SearchProgress] = None
+
+
+class VectorGetResponse(BaseModel):
+    """Vector get response"""
+    id: str
+    collection_id: str
+    vector: Optional[List[float]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    score: Optional[float] = None
+    rank: Optional[int] = None
+
+
+class ListCollectionsResponse(BaseModel):
+    """List collections response"""
+    collections: List[CollectionInfo]
+    total_count: int
 
 
 # ============================================================================
@@ -508,18 +1050,20 @@ class CollectionResponse(BaseModel):
 
 
 class VectorBatchRequest(BaseModel):
-    """Vector batch operation request"""
+    """Vector batch operation request - aligned with REST API"""
     collection_id: str
-    operation: VectorOperationType
-    records: List[VectorRecord]
-    options: Optional[Dict[str, bool]] = None
+    vectors: List[VectorRecord]  # Changed from 'records' to match REST API
+    batch_timeout_ms: Optional[int] = None
+    request_id: Optional[str] = None
 
 
 class VectorSearchRequest(BaseModel):
     """Vector search request"""
     collection_id: str
     queries: List[SearchQuery]
-    search_params: Optional[SearchParameters] = None
+    top_k: int = 10
+    distance_metric_override: Optional[str] = None
+    search_parameters: Optional[SearchParameters] = None  # Fixed field name
     include_fields: Optional[IncludeFields] = None
     search_optimization: Optional[SearchOptimization] = None
 
@@ -595,10 +1139,36 @@ class CompressionType(str, Enum):
 
 
 class StorageConfig(BaseModel):
-    """Storage configuration"""
-    compression: CompressionType = CompressionType.NONE
-    replication_factor: int = 1
-    enable_tiering: bool = False
+    """Complete storage configuration matching proto StorageConfig"""
+    # Storage location and persistence
+    storage_location: Optional[str] = None  # Override default storage path
+    persistent: Optional[bool] = True  # Whether data persists after restart
+    
+    # Compression configuration
+    compression: Optional[CompressionConfig] = None
+    
+    # Optimization hints
+    access_pattern: Optional[AccessPattern] = None
+    data_density: Optional[DataDensity] = None
+    frequent_updates: Optional[bool] = None
+    expected_size_gb: Optional[int] = None
+    read_write_ratio: Optional[float] = None
+    
+    # Quick presets
+    preset: Optional[str] = None  # "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time", "archive"
+    
+    # Master optimization control
+    enable_all_optimizations: Optional[bool] = True  # Default enabled
+    
+    # Specific configuration overrides
+    parquet_writer: Optional[ParquetWriterSettings] = None
+    footer_cache: Optional[FooterCacheSettings] = None
+    hybrid_writer: Optional[HybridWriterSettings] = None
+    
+    # Engine-specific settings
+    sst_settings: Optional[SstEngineSettings] = None
+    viper_settings: Optional[ViperEngineSettings] = None
+    nova_settings: Optional[NovaEngineSettings] = None
 
 
 class FlushConfig(BaseModel):
@@ -616,7 +1186,18 @@ class HealthStatus(BaseModel):
     version: str
     uptime_seconds: int
     services: Dict[str, str]
-    timestamp: int
+    timestamp_ms: int  # Milliseconds since epoch (signed int64)
+    
+    # Backward compatibility property
+    @property
+    def timestamp(self) -> int:
+        """Backward compatibility: timestamp in seconds"""
+        return self.timestamp_ms // 1000
+    
+    @timestamp.setter
+    def timestamp(self, value: int):
+        """Backward compatibility: timestamp in seconds"""
+        self.timestamp_ms = value * 1000
 
 
 # Simple alias

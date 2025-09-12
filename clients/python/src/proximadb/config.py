@@ -27,8 +27,7 @@ from pydantic import BaseModel, Field, field_validator, ConfigDict
 class Protocol(str, Enum):
     """Supported communication protocols"""
     AUTO = "auto"      # Auto-select best available
-    AVRO = "avro"      # AvroRPC (highest performance)
-    GRPC = "grpc"      # gRPC (proven performance)
+    GRPC = "grpc"      # gRPC (high performance, binary protocol)
     REST = "rest"      # REST (web compatibility)
 
 
@@ -41,15 +40,8 @@ class LogLevel(str, Enum):
     CRITICAL = "CRITICAL"
 
 
-class RetryConfig(BaseModel):
-    """Retry configuration"""
-    max_retries: int = Field(default=3, ge=0, le=10)
-    backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
-    max_backoff: float = Field(default=60.0, ge=1.0)
-    retry_on_timeout: bool = True
-    retry_on_connection_error: bool = True
-    retry_on_server_error: bool = True
-    retry_status_codes: list = Field(default_factory=lambda: [429, 500, 502, 503, 504])
+# Import retry configuration from resilience module
+from .resilience import NetworkRetryPolicy as RetryConfig
 
 
 class ConnectionConfig(BaseModel):
@@ -63,11 +55,14 @@ class ConnectionConfig(BaseModel):
 
 
 class CompressionConfig(BaseModel):
-    """Compression configuration"""
-    enabled: bool = True
-    algorithm: str = "gzip"  # gzip, deflate, br
-    threshold_bytes: int = Field(default=1024, ge=0)
-    level: Optional[int] = Field(default=None, ge=1, le=9)
+    """Compression configuration for Release 1.0
+    
+    Clean configuration without legacy compatibility.
+    """
+    enabled: bool = Field(default=False, description="Enable compression")
+    algorithm: str = Field(default="gzip", description="Compression algorithm")
+    threshold_bytes: int = Field(default=1024, ge=0, description="Minimum size to compress")
+    level: Optional[int] = Field(default=None, ge=1, le=9, description="Compression level")
 
 
 class TLSConfig(BaseModel):
@@ -130,14 +125,18 @@ class ClientConfig(BaseModel):
         
         parsed = urlparse(v)
         if not parsed.scheme:
-            # Add https as default scheme
+            # For gRPC format like "localhost:5679", keep as-is
+            if ':' in v and not v.startswith(('http://', 'https://', 'grpc://')):
+                # This looks like host:port format for gRPC
+                return v
+            # Otherwise add https as default scheme
             v = f"https://{v}"
             parsed = urlparse(v)
         
-        if parsed.scheme not in ('http', 'https'):
-            raise ValueError("URL must use http or https scheme")
+        if parsed.scheme and parsed.scheme not in ('http', 'https', 'grpc'):
+            raise ValueError("URL must use http, https, or grpc scheme")
         
-        if not parsed.netloc:
+        if parsed.scheme and not parsed.netloc:
             raise ValueError("URL must include hostname")
         
         return v
@@ -160,7 +159,7 @@ class ClientConfig(BaseModel):
         if api_key := os.getenv("PROXIMADB_API_KEY"):
             config_dict["api_key"] = api_key
         if protocol := os.getenv("PROXIMADB_PROTOCOL"):
-            config_dict["protocol"] = protocol
+            config_dict["protocol"] = Protocol(protocol.lower())
         if timeout := os.getenv("PROXIMADB_TIMEOUT"):
             config_dict["timeout"] = float(timeout)
         
@@ -214,6 +213,10 @@ class ClientConfig(BaseModel):
         if "url" not in config_dict:
             raise ValueError("URL must be provided via PROXIMADB_URL environment variable or constructor")
         
+        # Convert protocol string to enum if needed
+        if "protocol" in config_dict and isinstance(config_dict["protocol"], str):
+            config_dict["protocol"] = Protocol(config_dict["protocol"].lower())
+        
         return cls(**config_dict)
     
     def get_base_headers(self) -> Dict[str, str]:
@@ -223,6 +226,10 @@ class ClientConfig(BaseModel):
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        
+        # Add compression headers if enabled
+        if self.compression.enabled:
+            headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
         
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -290,9 +297,9 @@ class ClientConfig(BaseModel):
         
         # ProximaDB standard port allocation
         if target_protocol == Protocol.REST:
-            port = 5679 if scheme == "https" else 5678
+            port = 5678  # REST API port (same for HTTP/HTTPS) 
         elif target_protocol == Protocol.GRPC:
-            port = 5681 if scheme == "https" else 5680  
+            port = 5679  # gRPC API port (same for HTTP/HTTPS)  
         elif target_protocol == Protocol.AVRO:
             port = 5683 if scheme == "https" else 5682
         else:

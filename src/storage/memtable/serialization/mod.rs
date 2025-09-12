@@ -10,7 +10,7 @@ pub mod bincode;
 pub mod json;
 
 use anyhow::Result;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 /// Generic serialization trait
 pub trait MemtableSerializer: Send + Sync {

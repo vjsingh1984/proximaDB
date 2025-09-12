@@ -1,25 +1,26 @@
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use proximadb::core::{LsmConfig, VectorRecord};
-use proximadb::storage::engines::lsm::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::lsm::LsmRecord;
+use proximadb::core::{SstConfig, VectorRecord};
+use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::sst::SstRecord;
 use proximadb::storage::engines::viper::engine::ViperEngine;
 use proximadb::storage::memtable::core::MemtableConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 
-/// Test LSM engine expired record deletion through the full pipeline:
+/// Test SST engine expired record deletion through the full pipeline:
 /// WAL → Flush → Compaction → Physical deletion
 #[tokio::test]
-async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
+async fn test_sst_expired_record_full_pipeline() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let data_dir = temp_dir.path().to_path_buf();
     
     // Create LSM config with aggressive compaction settings
-    let mut config = LsmConfig::default();
+    let mut config = SstConfig::default();
     config.compaction_threshold = 1; // Trigger compaction with just 1 file
     config.memtable_size_mb = 1; // Small memtable to trigger frequent flushes
     config.data_directory = data_dir.join("lsm").to_string_lossy().to_string();
@@ -32,7 +33,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
     // Create test records with different expiry states
     let records = vec![
         // Record 1: Active (no expiry)
-        LsmRecord {
+        SstRecord {
             id: "active_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![1.0, 2.0, 3.0],
@@ -41,13 +42,13 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
             created_at: current_time,
             updated_at: current_time,
             expires_at: None, // No expiry
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 1,
             level: 0,
         },
         // Record 2: Expired (should be deleted)
-        LsmRecord {
+        SstRecord {
             id: "expired_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![4.0, 5.0, 6.0],
@@ -56,13 +57,13 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
             created_at: expired_time,
             updated_at: expired_time,
             expires_at: Some(expired_time), // Expired 3 hours ago
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 2,
             level: 0,
         },
         // Record 3: Active with future expiry
-        LsmRecord {
+        SstRecord {
             id: "future_expiry_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![7.0, 8.0, 9.0],
@@ -71,7 +72,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
             created_at: current_time,
             updated_at: current_time,
             expires_at: Some(future_time), // Expires in 3 hours
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 3,
             level: 0,
@@ -84,7 +85,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
     
     // Create multiple SST files to trigger compaction
     for (i, record) in records.iter().enumerate() {
-        let sst_file = collection_dir.join(format!("sst_{}_{}.sst", i, record.sequence_number));
+        let sst_file = collection_dir.join(format!("sst_{}_{}.sstable", i, record.sequence_number));
         let serialized = bincode::serialize(record)?;
         let mut sst_data = Vec::new();
         sst_data.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
@@ -93,16 +94,16 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
     }
     
     // Step 2: Trigger compaction
-    let compaction_manager = CompactionManager::new(config.clone());
-    let output_file = collection_dir.join("compacted_output.sst");
+    let compaction_manager = CompactionManager::new(config.clone()).await.unwrap();
+    let output_file = collection_dir.join("compacted_output.sstable");
     
     let task = CompactionTask {
         collection_id: collection_id.to_string(),
         level: 0,
         input_files: vec![
-            collection_dir.join("sst_0_1.sst"),
-            collection_dir.join("sst_1_2.sst"),
-            collection_dir.join("sst_2_3.sst"),
+            collection_dir.join("sst_0_1.sstable"),
+            collection_dir.join("sst_1_2.sstable"),
+            collection_dir.join("sst_2_3.sstable"),
         ],
         output_file: output_file.clone(),
         priority: CompactionPriority::High,
@@ -112,13 +113,13 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
     let stats = CompactionManager::perform_compaction(&task, &config).await?;
     
     // Step 3: Verify results
-    println!("🧹 Compaction Stats:");
-    println!("  - Total compactions: {}", stats.total_compactions);
-    println!("  - Bytes read: {}", stats.bytes_read);
-    println!("  - Bytes written: {}", stats.bytes_written);
-    println!("  - Files merged: {}", stats.files_merged);
-    println!("  - Expired records deleted: {}", stats.expired_records_deleted);
-    println!("  - Tombstones removed: {}", stats.tombstones_removed);
+    debug!("🧹 Compaction Stats:");
+    debug!("  - Total compactions: {}", stats.total_compactions);
+    debug!("  - Bytes read: {}", stats.bytes_read);
+    debug!("  - Bytes written: {}", stats.bytes_written);
+    debug!("  - Files merged: {}", stats.files_merged);
+    debug!("  - Expired records deleted: {}", stats.expired_records_deleted);
+    debug!("  - Tombstones removed: {}", stats.tombstones_removed);
     
     // Should have deleted 1 expired record
     assert_eq!(stats.expired_records_deleted, 1, "Expected 1 expired record to be deleted");
@@ -150,7 +151,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = bincode::deserialize::<LsmRecord>(entry_data) {
+        if let Ok(record) = SstRecord::deserialize(entry_data) {
             remaining_records.push(record);
         }
         
@@ -166,7 +167,7 @@ async fn test_lsm_expired_record_full_pipeline() -> Result<()> {
     assert!(ids.contains(&&"future_expiry_record".to_string()), "Future expiry record should remain");
     assert!(!ids.contains(&&"expired_record".to_string()), "Expired record should be deleted");
     
-    println!("✅ LSM expired record deletion test passed!");
+    debug!("✅ LSM expired record deletion test passed!");
     Ok(())
 }
 
@@ -327,14 +328,14 @@ async fn test_viper_expired_record_compaction() -> Result<()> {
     assert!(found_ids.contains(&"future_viper_record".to_string()), "Future expiry record should remain");
     assert!(!found_ids.contains(&"expired_viper_record".to_string()), "Expired record should be deleted");
     
-    println!("✅ VIPER expired record deletion test passed!");
+    debug!("✅ VIPER expired record deletion test passed!");
     Ok(())
 }
 
 /// Test that demonstrates the time propagation from WAL to compaction
 #[tokio::test]
 async fn test_expired_record_time_propagation() -> Result<()> {
-    println!("🕐 Testing time propagation: WAL → Flush → Compaction → Physical deletion");
+    debug!("🕐 Testing time propagation: WAL → Flush → Compaction → Physical deletion");
     
     // This test demonstrates the typical flow:
     // 1. Records are written to WAL with TTL
@@ -346,11 +347,11 @@ async fn test_expired_record_time_propagation() -> Result<()> {
     let short_ttl = 100; // 100ms TTL for testing
     let expired_time = current_time - (short_ttl * 2); // Already expired
     
-    println!("📊 Timing:");
-    println!("  - Current time: {}", current_time);
-    println!("  - Short TTL: {}ms", short_ttl);
-    println!("  - Expired time: {}", expired_time);
-    println!("  - Time since expiry: {}ms", current_time - expired_time);
+    debug!("📊 Timing:");
+    debug!("  - Current time: {}", current_time);
+    debug!("  - Short TTL: {}ms", short_ttl);
+    debug!("  - Expired time: {}", expired_time);
+    debug!("  - Time since expiry: {}ms", current_time - expired_time);
     
     // In a real scenario, you would:
     // 1. Write records with TTL to WAL
@@ -359,18 +360,18 @@ async fn test_expired_record_time_propagation() -> Result<()> {
     // 4. Verify expired records are physically deleted
     
     // Simulate waiting for background processes
-    println!("⏰ Simulating background process timing...");
+    debug!("⏰ Simulating background process timing...");
     sleep(Duration::from_millis(50)).await; // Simulate flush delay
-    println!("📤 Flush completed");
+    debug!("📤 Flush completed");
     
     sleep(Duration::from_millis(100)).await; // Simulate compaction delay
-    println!("🗜️ Compaction completed");
+    debug!("🗜️ Compaction completed");
     
     // In production, expired records would be:
     // - Skipped during search (logical deletion)
     // - Physically deleted during compaction
     // - No longer consuming storage space
     
-    println!("✅ Time propagation test demonstrates the flow!");
+    debug!("✅ Time propagation test demonstrates the flow!");
     Ok(())
 }

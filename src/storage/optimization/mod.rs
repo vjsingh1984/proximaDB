@@ -6,10 +6,10 @@
  */
 
 //! Storage optimization utilities
-//! 
+//!
 //! Provides optimizations for flush and compaction operations to improve
 //! compression ratios and query performance.
 
 pub mod metadata_sorter;
 
-pub use metadata_sorter::{MetadataSorter, MetadataSortConfig, SortConfigBuilder, SortingStats};
+pub use metadata_sorter::{MetadataSortConfig, MetadataSorter, SortConfigBuilder, SortingStats};

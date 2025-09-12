@@ -3,13 +3,13 @@ mod metadata_backend_tests {
     use super::super::*;
     use crate::core::StorageConfig;
     use crate::network::multi_server::{MultiServerConfig, SharedServices};
-    use crate::services::collection_service::CollectionService;
-    use crate::storage::metadata::backends::filestore_backend::{
-        FilestoreMetadataBackend, FilestoreMetadataConfig,
+    use crate::services::collection::manager::CollectionService;
+    use crate::storage::metadata::backends::universal_backend::{
+        UniversalMetadataBackend, UniversalMetadataConfig,
     };
-    use crate::proto::proximadb::Collection;
+    use crate::proto::proximadb_v1::Collection;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use crate::storage::traits::CollectionMetadataProvider;
+    use crate::storage::traits::InternalCollectionProvider;
     use crate::storage::StorageEngine;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -19,7 +19,7 @@ mod metadata_backend_tests {
     #[tokio::test]
     async fn test_single_metadata_backend_instance() {
         let temp_dir = TempDir::new().unwrap();
-        let metadata_path = temp_dir.path().join("metadata");
+        let metadata_path = temp_dir.path().join("metadata_info");
         let storage_path = temp_dir.path().join("storage");
         
         // Create metadata backend config
@@ -27,9 +27,8 @@ mod metadata_backend_tests {
             backend_type: "filestore".to_string(),
             storage_url: format!("file://{}", metadata_path.to_string_lossy()),
             cache_size_mb: Some(64),
-            sync_interval_ms: Some(1000),
-            compression_enabled: Some(true),
-            ..Default::default()
+            flush_interval_secs: Some(1),
+            cloud_config: None,
         };
         
         // Create storage config
@@ -39,7 +38,7 @@ mod metadata_backend_tests {
             mmap_enabled: true,
             lsm_config: Default::default(),
             cache_size_mb: 10,
-            bloom_filter_config: Some(crate::core::bloom::BloomFilterConfig {
+            bloom_filter_config: Some(crate::storage::engines::core::formats::row_based::bloom_filter::BloomFilterConfig {
                 bits_per_key: 10,
                 enabled: true,
                 ..Default::default()
@@ -67,14 +66,14 @@ mod metadata_backend_tests {
             let storage = storage_engine.read().await;
             // The storage engine should now have access to collection metadata
             let collection_exists = storage
-                .get_collection_metadata(&String::from("test_collection"))
+                .collection_metadata(&String::from("test_collection"))
                 .await
                 .unwrap();
             assert!(collection_exists.is_none()); // No collections yet
         }
         
         // Create a collection through the shared collection service
-        let collection_config = crate::proto::proximadb::CollectionConfig {
+        let collection_config = crate::proto::proximadb_v1::CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 128,
             distance_metric: Some("cosine".to_string()),
@@ -87,7 +86,9 @@ mod metadata_backend_tests {
             description: Some("Test collection".to_string()),
             capacity: Some(10000),
             storage_profile: Some("default".to_string()),
-        };
+                compression: None,
+                optimization_hints: None,
+            };
         
         let result = shared_services
             .collection_service
@@ -102,7 +103,7 @@ mod metadata_backend_tests {
         {
             let storage = storage_engine.read().await;
             let collection_metadata = storage
-                .get_collection_metadata(&String::from("test_collection"))
+                .collection_metadata(&String::from("test_collection"))
                 .await
                 .unwrap();
             assert!(collection_metadata.is_some());
@@ -125,16 +126,16 @@ mod metadata_backend_tests {
     #[tokio::test]
     async fn test_collection_service_dependency_injection() {
         let temp_dir = TempDir::new().unwrap();
-        let metadata_path = temp_dir.path().join("metadata");
+        let metadata_path = temp_dir.path().join("metadata_info");
         
         // Create filesystem factory
         let fs_config = FilesystemConfig::default();
         let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
         
         // Create metadata backend
-        let filestore_config = FilestoreMetadataConfig {
+        let filestore_config = UniversalMetadataConfig {
             filestore_url: format!("file://{}", metadata_path.to_string_lossy()),
-            enable_compression: true,
+            compression: true,
             enable_backup: true,
             enable_snapshot_archival: true,
             max_archived_snapshots: 5,
@@ -142,7 +143,7 @@ mod metadata_backend_tests {
         };
         
         let metadata_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory.clone())
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory.clone())
                 .await
                 .unwrap()
         );
@@ -158,24 +159,24 @@ mod metadata_backend_tests {
         
         // Initially, storage engine should not have access to collections
         let initial_result = storage_engine
-            .get_collection_metadata(&String::from("test"))
+            .collection_metadata(&String::from("test"))
             .await;
         assert!(initial_result.is_err()); // Should error without metadata provider
         
         // Inject collection service as metadata provider
         storage_engine
-            .set_metadata_provider(collection_service.clone() as Arc<dyn CollectionMetadataProvider>)
+            .set_metadata_provider(collection_service.clone() as Arc<dyn InternalCollectionProvider>)
             .await;
         
         // Now storage engine should be able to access collections
         let result = storage_engine
-            .get_collection_metadata(&String::from("test"))
+            .collection_metadata(&String::from("test"))
             .await
             .unwrap();
         assert!(result.is_none()); // No collections exist yet
         
         // Create a collection through collection service
-        let collection_config = crate::proto::proximadb::CollectionConfig {
+        let collection_config = crate::proto::proximadb_v1::CollectionConfig {
             name: "test".to_string(),
             dimension: 256,
             distance_metric: Some("euclidean".to_string()),
@@ -188,7 +189,9 @@ mod metadata_backend_tests {
             description: None,
             capacity: Some(5000),
             storage_profile: Some("default".to_string()),
-        };
+                compression: None,
+                optimization_hints: None,
+            };
         
         collection_service
             .create_collection_from_grpc(&collection_config)
@@ -197,7 +200,7 @@ mod metadata_backend_tests {
         
         // Verify storage engine can now see the collection
         let metadata = storage_engine
-            .get_collection_metadata(&String::from("test"))
+            .collection_metadata(&String::from("test"))
             .await
             .unwrap();
         assert!(metadata.is_some());

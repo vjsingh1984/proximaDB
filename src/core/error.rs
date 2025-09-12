@@ -25,12 +25,31 @@ pub enum VectorDBError {
 
     #[error("Quantization error: {0}")]
     Quantization(String),
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("Filesystem error: {0}")]
+    Filesystem(String),
+}
+
+// Type alias for backward compatibility
+pub type ProximaDBError = VectorDBError;
+
+// Add conversion from FilesystemError to VectorDBError
+impl From<crate::storage::persistence::filesystem::FilesystemError> for VectorDBError {
+    fn from(err: crate::storage::persistence::filesystem::FilesystemError) -> Self {
+        VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            err.to_string(),
+        )))
+    }
 }
 
 #[derive(Error, Debug)]
 pub enum StorageError {
-    #[error("LSM tree error: {0}")]
-    LsmTree(String),
+    #[error("SST storage error: {0}")]
+    SstStorage(String),
 
     #[error("MMAP error: {0}")]
     Mmap(String),
@@ -49,6 +68,9 @@ pub enum StorageError {
 
     #[error("Resource not found: {0}")]
     NotFound(String),
+
+    #[error("Key not found: {0}")]
+    KeyNotFound(String),
 
     #[error("Index error: {0}")]
     IndexError(String),
@@ -106,6 +128,9 @@ pub enum QueryError {
 
     #[error("Collection not found: {0}")]
     CollectionNotFound(String),
+
+    #[error("Invalid filter: {0}")]
+    InvalidFilter(String),
 }
 
 #[derive(Error, Debug)]
@@ -119,3 +144,7 @@ pub enum SchemaError {
     #[error("Schema validation error: {0}")]
     Validation(String),
 }
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod tests;

@@ -34,7 +34,7 @@ bloom_filter_bits = 10
 memtable_size_mb = 128
 level_count = 7
 compaction_threshold = 4
-block_size_kb = 64
+block_size_kb = 3072  # 3MB for AWS cloud optimization
 memory_flush_size_bytes = 2097152  # 2MB
 compression = "zstd"  # Better compression for S3 storage
 

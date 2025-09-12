@@ -3,27 +3,28 @@
 //! These tests verify that atomic disk-to-cloud operations work correctly
 //! with comprehensive transaction management and rollback capabilities.
 //!
-//! NOTE: These tests are disabled as they use obsolete WalBatchStrategy APIs.
-//! They need to be rewritten to use DirectVectorService when cloud atomicity
+//! NOTE: These tests are disabled as they use obsolete WriteBufferBatchStrategy APIs.
+//! They need to be rewritten to use VectorOperationsService when cloud atomicity
 //! is integrated with the new architecture.
 
 #![cfg(disabled_due_to_obsolete_apis)]
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use proximadb::core::VectorRecord;
-use proximadb::storage::atomicity::AtomicityManager;
-use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
+use proximadb::storage::transaction_coordinatority::AtomicityManager;
+use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::wal::batch_strategy::WalBatchStrategy;
-use proximadb::storage::persistence::wal::bincode_batch::BincodeWalBatchStrategy;
-use proximadb::storage::persistence::wal::cloud_atomicity::{
+use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferBatchStrategy;
+use proximadb::storage::persistence::write_ahead_log::bincode_batch::BincodeWalBatchStrategy;
+use proximadb::storage::persistence::write_ahead_log::cloud_atomicity::{
     CloudAtomicityManager, CloudAtomicityConfig, CloudTransactionMetadata,
 };
-use proximadb::storage::persistence::wal::config::WalConfig;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -32,14 +33,21 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
     
     (0..count)
         .map(|i| VectorRecord {
-            id: format!("test_vector_{}", i),
+            id: format!("test_vector_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i),
             vector: vec![1.0f32; 128], // 128-dimensional vector
             metadata: HashMap::new(),
-            timestamp: now,
+            timestamp: now as u32,
             created_at: now,
-            updated_at: now,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -48,16 +56,17 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
 }
 
 /// Helper function to create test WAL batch
-fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
+fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
     let total_size_bytes = vectors.iter().map(|v| v.actual_size_bytes()).sum();
     let batch_id = BatchId::new(collection_id.to_string(), 1, vectors.len() as u64);
     
-    WalVectorBatch {
+    WriteBufferVectorBatch {
         batch_id,
         vector_records: vectors,
         created_at: SystemTime::now(),
         total_size_bytes,
         is_flushed: false,
+            metadata_bloom_filter: None,
     }
 }
 
@@ -75,7 +84,7 @@ async fn create_test_cloud_atomicity_manager() -> Result<Arc<CloudAtomicityManag
         verification_timeout: std::time::Duration::from_secs(30),
         max_concurrent_transactions: 5,
         enable_integrity_verification: true,
-        retry_config: proximadb::storage::persistence::wal::cloud_atomicity::CloudRetryPolicy {
+        retry_config: proximadb::storage::persistence::write_ahead_log::cloud_atomicity::CloudRetryPolicy {
             max_retries: 3,
             initial_delay: std::time::Duration::from_millis(100),
             max_delay: std::time::Duration::from_secs(5),
@@ -101,7 +110,7 @@ async fn create_test_wal_strategy_with_cloud_atomicity() -> Result<BincodeWalBat
     let filesystem = Arc::new(factory);
     
     let mut strategy = BincodeWalBatchStrategy::new();
-    let wal_config = WalConfig::default();
+    let wal_config = WriteBufferConfig::default();
     
     // Initialize the strategy
     strategy.initialize(&wal_config, filesystem.clone()).await?;
@@ -115,6 +124,7 @@ async fn create_test_wal_strategy_with_cloud_atomicity() -> Result<BincodeWalBat
 
 #[tokio::test]
 async fn test_cloud_atomicity_manager_creation() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     
     // Test basic stats
@@ -122,12 +132,13 @@ async fn test_cloud_atomicity_manager_creation() -> Result<()> {
     assert_eq!(stats.total_transactions, 0);
     assert_eq!(stats.active_transactions, 0);
     
-    println!("✅ Cloud atomicity manager created successfully");
+    debug!("✅ Cloud atomicity manager created successfully");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_cloud_transaction_lifecycle() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     let collection_id = "test_collection".to_string();
     
@@ -159,12 +170,13 @@ async fn test_cloud_transaction_lifecycle() -> Result<()> {
     assert_eq!(stats.successful_transactions, 1);
     assert_eq!(stats.active_transactions, 0);
     
-    println!("✅ Cloud transaction lifecycle test passed");
+    debug!("✅ Cloud transaction lifecycle test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_cloud_transaction_rollback() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     let collection_id = "test_collection".to_string();
     
@@ -191,24 +203,26 @@ async fn test_cloud_transaction_rollback() -> Result<()> {
     assert_eq!(stats.rolled_back_transactions, 1);
     assert_eq!(stats.active_transactions, 0);
     
-    println!("✅ Cloud transaction rollback test passed");
+    debug!("✅ Cloud transaction rollback test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_bincode_strategy_with_cloud_atomicity() -> Result<()> {
+    setup_hardware_capabilities();
     let strategy = create_test_wal_strategy_with_cloud_atomicity().await?;
     
     // Test cloud atomicity stats
     let stats = strategy.get_cloud_atomicity_stats().await?;
     assert_eq!(stats.total_transactions, 0);
     
-    println!("✅ BincodeWalBatchStrategy with cloud atomicity test passed");
+    debug!("✅ BincodeWalBatchStrategy with cloud atomicity test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_atomic_cloud_write_integration() -> Result<()> {
+    setup_hardware_capabilities();
     let strategy = create_test_wal_strategy_with_cloud_atomicity().await?;
     let collection_id = "test_collection".to_string();
     
@@ -230,7 +244,7 @@ async fn test_atomic_cloud_write_integration() -> Result<()> {
     
     match result {
         Ok(cloud_batch_url) => {
-            println!("✅ Atomic cloud write successful: {}", cloud_batch_url);
+            debug!("✅ Atomic cloud write successful: {}", cloud_batch_url);
             
             // Verify the file exists
             assert!(cloud_batch_url.contains(&collection_id));
@@ -242,7 +256,7 @@ async fn test_atomic_cloud_write_integration() -> Result<()> {
             assert_eq!(stats.successful_transactions, 1);
         }
         Err(e) => {
-            println!("⚠️ Atomic cloud write failed (expected for test environment): {}", e);
+            debug!("⚠️ Atomic cloud write failed (expected for test environment): {}", e);
             // This is expected in test environment without full cloud setup
         }
     }
@@ -250,12 +264,13 @@ async fn test_atomic_cloud_write_integration() -> Result<()> {
     // Cleanup
     let _ = std::fs::remove_dir_all(&temp_dir);
     
-    println!("✅ Atomic cloud write integration test completed");
+    debug!("✅ Atomic cloud write integration test completed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_cloud_transaction_cleanup() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     let collection_id = "test_collection".to_string();
     
@@ -285,12 +300,13 @@ async fn test_cloud_transaction_cleanup() -> Result<()> {
     let cleaned_count = cloud_manager.cleanup_completed_transactions().await?;
     assert_eq!(cleaned_count, 3);
     
-    println!("✅ Cloud transaction cleanup test passed - cleaned {} transactions", cleaned_count);
+    debug!("✅ Cloud transaction cleanup test passed - cleaned {} transactions", cleaned_count);
     Ok(())
 }
 
 #[tokio::test]
 async fn test_cloud_atomicity_error_handling() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     let collection_id = "test_collection".to_string();
     
@@ -304,12 +320,13 @@ async fn test_cloud_atomicity_error_handling() -> Result<()> {
     let result = cloud_manager.rollback_cloud_transaction(invalid_transaction_id, &strategy).await;
     assert!(result.is_err());
     
-    println!("✅ Cloud atomicity error handling test passed");
+    debug!("✅ Cloud atomicity error handling test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_concurrent_cloud_transactions() -> Result<()> {
+    setup_hardware_capabilities();
     let cloud_manager = create_test_cloud_atomicity_manager().await?;
     
     // Create multiple concurrent transactions
@@ -336,7 +353,7 @@ async fn test_concurrent_cloud_transactions() -> Result<()> {
             
             // Create a dummy strategy for testing
             let mut strategy = BincodeWalBatchStrategy::new();
-            let wal_config = WalConfig::default();
+            let wal_config = WriteBufferConfig::default();
             
             let config = FilesystemConfig::default();
             let mut factory = FilesystemFactory::new(config);
@@ -365,24 +382,25 @@ async fn test_concurrent_cloud_transactions() -> Result<()> {
     assert_eq!(stats.successful_transactions, 5);
     assert_eq!(stats.active_transactions, 0);
     
-    println!("✅ Concurrent cloud transactions test passed");
+    debug!("✅ Concurrent cloud transactions test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_cloud_atomicity_with_strategy_integration() -> Result<()> {
+    setup_hardware_capabilities();
     let strategy = create_test_wal_strategy_with_cloud_atomicity().await?;
     
     // Test multiple cleanup operations
     for i in 0..3 {
         let cleaned = strategy.cleanup_cloud_transactions().await?;
-        println!("Cleanup round {}: {} transactions cleaned", i + 1, cleaned);
+        debug!("Cleanup round {}: {} transactions cleaned", i + 1, cleaned);
     }
     
     // Test stats retrieval
     let stats = strategy.get_cloud_atomicity_stats().await?;
     assert_eq!(stats.total_transactions, 0);
     
-    println!("✅ Cloud atomicity with strategy integration test passed");
+    debug!("✅ Cloud atomicity with strategy integration test passed");
     Ok(())
 }

@@ -3,20 +3,172 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Web dashboard for monitoring ProximaDB
+//! # Dashboard Module - Real-Time Web Monitoring Interface
+//!
+//! This module provides ProximaDB's web-based monitoring dashboard for real-time
+//! system observability. It offers a rich HTML interface for metrics visualization,
+//! health monitoring, and alert management without requiring external tools.
+//!
+//! ## Dashboard Architecture
+//!
+//! ```text
+//! Web Browser
+//!      ↓
+//! Dashboard Router (HTTP)
+//!      ↓
+//! ┌─────────────────────────────────────┐
+//! │         Dashboard Pages              │
+//! ├─────────────────────────────────────┤
+//! │ Home │ Metrics │ Health │ Alerts    │
+//! └─────────────────────────────────────┘
+//!      ↓
+//! Metrics Collector → System Components
+//! ```
+//!
+//! ## Key Features
+//!
+//! ### 1. **Real-Time Metrics Dashboard**
+//! Interactive web interface with auto-refresh:
+//! - System health indicators
+//! - Storage statistics
+//! - Query performance metrics
+//! - Index utilization
+//! - Active alerts
+//!
+//! ### 2. **Multiple Export Formats**
+//! Flexible metric export options:
+//! - **HTML**: Rich visual dashboard
+//! - **JSON**: Structured data for APIs
+//! - **Prometheus**: Metrics scraping endpoint
+//!
+//! ### 3. **Health Monitoring**
+//! Comprehensive health checks:
+//! - System status (CPU, memory, disk)
+//! - Service availability
+//! - Component health scores
+//! - Uptime tracking
+//!
+//! ### 4. **Alert Management**
+//! Real-time alert system:
+//! - Critical, warning, and info levels
+//! - Threshold-based triggers
+//! - Historical alert tracking
+//! - Visual alert indicators
+//!
+//! ## Dashboard Pages
+//!
+//! ### Home Page (`/`)
+//! Main dashboard with key metrics:
+//! - System health score
+//! - Resource utilization
+//! - Performance indicators
+//! - Recent activity
+//!
+//! ### Metrics Page (`/metrics`)
+//! Raw metrics in Prometheus format:
+//! ```prometheus
+//! # HELP proximadb_queries_total Total number of queries
+//! # TYPE proximadb_queries_total counter
+//! proximadb_queries_total 12345
+//!
+//! # HELP proximadb_latency_seconds Query latency
+//! # TYPE proximadb_latency_seconds histogram
+//! proximadb_latency_seconds_bucket{le="0.01"} 1000
+//! ```
+//!
+//! ### Health Check (`/health`)
+//! JSON health status:
+//! ```json
+//! {
+//!   "status": "healthy",
+//!   "timestamp": "2024-01-01T00:00:00Z",
+//!   "version": "1.0.0",
+//!   "uptime_seconds": 3600.0
+//! }
+//! ```
+//!
+//! ### Alerts Page (`/alerts`)
+//! Active system alerts with details
+//!
+//! ## Visual Design
+//!
+//! The dashboard uses a modern, responsive design:
+//! - **Color Scheme**: Purple gradient header (#667eea → #764ba2)
+//! - **Card Layout**: Grid-based metric cards
+//! - **Health Indicators**: Green/yellow/red status dots
+//! - **Auto-Refresh**: 30-second automatic updates
+//! - **Mobile Responsive**: Adapts to screen size
+//!
+//! ## Performance Metrics
+//!
+//! Key metrics displayed:
+//! - **Server Status**: CPU, memory, uptime
+//! - **Storage**: Vector count, collections, cache hit rate
+//! - **Query Performance**: QPS, P99 latency, error rate
+//! - **Indexing**: Index count, memory usage, searches/sec
+//! - **Alerts**: Active count by severity
+//!
+//! ## Integration
+//!
+//! The dashboard integrates with:
+//! - **Metrics Collector**: Real-time metric aggregation
+//! - **Alert System**: Active alert monitoring
+//! - **REST API**: JSON data endpoints
+//! - **Prometheus**: Metrics scraping
+//!
+//! ## Configuration
+//!
+//! Dashboard settings in config:
+//! ```toml
+//! [monitoring.dashboard]
+//! enabled = true
+//! refresh_interval = 30  # seconds
+//! port = 8080  # Dashboard port
+//! bind = "0.0.0.0"
+//! ```
+//!
+//! ## Security
+//!
+//! Dashboard security features:
+//! - Read-only interface (no write operations)
+//! - Optional authentication via middleware
+//! - CORS headers for API access
+//! - Rate limiting on endpoints
+//!
+//! ## Usage
+//!
+//! Access the dashboard:
+//! ```bash
+//! # Open in browser
+//! http://localhost:5678/
+//!
+//! # Get JSON metrics
+//! curl http://localhost:5678/api/metrics
+//!
+//! # Prometheus scrape
+//! curl http://localhost:5678/metrics
+//! ```
+//!
+//! ## Monitoring Best Practices
+//!
+//! 1. **Regular Checks**: Monitor health score trends
+//! 2. **Alert Response**: Act on critical alerts quickly
+//! 3. **Capacity Planning**: Track resource utilization
+//! 4. **Performance Tuning**: Use metrics for optimization
+//! 5. **Historical Analysis**: Export metrics for trends
 
 use anyhow::Result;
 use axum::{
+    Router,
     extract::{Query, State},
     http::StatusCode,
     response::{Html, Json},
     routing::get,
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::monitoring::metrics::{MetricsCollector, SystemMetrics};
+use crate::monitoring::MetricsCollector;
 
 /// Dashboard server state
 #[derive(Clone)]
@@ -42,9 +194,10 @@ pub struct HealthResponse {
 
 /// Dashboard home page
 async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<String>, StatusCode> {
-    let metrics = state.metrics_collector.get_current_metrics().await;
-    let summary = state.metrics_collector.get_metrics_summary().await;
+    let metrics = state.metrics_collector.current_metrics().await;
+    let summary = state.metrics_collector.metrics_summary().await;
 
+    let gs = crate::core::context::global_graph_settings().unwrap_or_default();
     let html = format!(
         r#"
 <!DOCTYPE html>
@@ -96,6 +249,13 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
             <div class="metric-value">{:.1} <span class="metric-unit">% CPU</span></div>
             <div>Memory: {:.1} MB used</div>
             <div>Uptime: {:.1} hours</div>
+        </div>
+        
+        <div class="metric-card">
+            <div class="metric-title">Graph Prefetch Settings</div>
+            <div>Enabled: <strong>{}</strong></div>
+            <div>Prefetch Budget: <strong>{}</strong></div>
+            <div>Tip: Override per-call via REST JSON or gRPC metadata.</div>
         </div>
         
         <div class="metric-card">
@@ -160,7 +320,9 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
         summary.active_alerts_count,
         summary.critical_alerts_count,
         metrics.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
-        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"),
+        if gs.enable_prefetch { "true" } else { "false" },
+        gs.prefetch_budget
     );
 
     Ok(Html(html))
@@ -168,12 +330,12 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
 
 /// Health check endpoint
 async fn health_check(State(state): State<DashboardState>) -> Json<HealthResponse> {
-    let metrics = state.metrics_collector.get_current_metrics().await;
+    let metrics = state.metrics_collector.current_metrics().await;
 
     Json(HealthResponse {
         status: "healthy".to_string(),
         timestamp: chrono::Utc::now(),
-        version: "0.1.0".to_string(),
+        version: crate::version::PROXIMADB_VERSION.to_string(),
         uptime_seconds: metrics.server.uptime_seconds,
     })
 }
@@ -187,12 +349,12 @@ async fn metrics_endpoint(
 
     match format.as_str() {
         "json" => {
-            let metrics = state.metrics_collector.get_current_metrics().await;
+            let metrics = state.metrics_collector.current_metrics().await;
             serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
         "prometheus" | _ => {
-            let metrics = state.metrics_collector.get_current_metrics().await;
-            use crate::monitoring::metrics::exporters::{MetricsExporter, PrometheusExporter};
+            let metrics = state.metrics_collector.current_metrics().await;
+            use crate::metrics::exporters::PrometheusExporter;
             let exporter = PrometheusExporter::new();
             exporter
                 .export_system_metrics(&metrics)
@@ -205,23 +367,21 @@ async fn metrics_endpoint(
 async fn api_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
     State(state): State<DashboardState>,
-) -> Json<SystemMetrics> {
+) -> Json<crate::metrics::SystemMetrics> {
     let _since = params.since; // TODO: Use this for historical data
-    let metrics = state.metrics_collector.get_current_metrics().await;
+    let metrics = state.metrics_collector.current_metrics().await;
     Json(metrics)
 }
 
 /// Alerts endpoint
-async fn alerts_endpoint(
-    State(state): State<DashboardState>,
-) -> Json<Vec<crate::monitoring::metrics::Alert>> {
-    let alerts = state.metrics_collector.get_active_alerts().await;
+async fn alerts_endpoint(State(state): State<DashboardState>) -> Json<Vec<crate::metrics::Alert>> {
+    let alerts = state.metrics_collector.active_alerts().await;
     Json(alerts)
 }
 
 /// Alerts page
 async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>, StatusCode> {
-    let alerts = state.metrics_collector.get_active_alerts().await;
+    let alerts = state.metrics_collector.active_alerts().await;
 
     let alerts_html = if alerts.is_empty() {
         "<p>🎉 No active alerts</p>".to_string()
@@ -238,15 +398,27 @@ async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>
                 </div>
             "#,
                     match alert.level {
-                        crate::monitoring::metrics::AlertLevel::Critical => "critical",
-                        crate::monitoring::metrics::AlertLevel::Warning => "warning",
-                        crate::monitoring::metrics::AlertLevel::Info => "info",
+                        crate::metrics::schema::AlertLevel::Critical => "critical",
+                        crate::metrics::schema::AlertLevel::Warning => "warning",
+                        crate::metrics::schema::AlertLevel::Info => "info",
                     },
                     alert.metric_name,
                     alert.message,
                     alert.current_value,
                     alert.threshold_value,
-                    alert.timestamp.format("%Y-%m-%d %H:%M:%S UTC")
+                    {
+                        use std::time::UNIX_EPOCH;
+                        let duration = alert
+                            .timestamp
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default();
+                        let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                            duration.as_secs() as i64,
+                            0,
+                        )
+                        .unwrap_or_else(chrono::Utc::now);
+                        datetime.format("%Y-%m-%d %H:%M:%S UTC")
+                    }
                 )
             })
             .collect::<Vec<_>>()

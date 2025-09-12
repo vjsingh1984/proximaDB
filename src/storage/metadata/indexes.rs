@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::proto::proximadb::Collection as Collection;
+use crate::proto::proximadb_v1::Collection;
 
 /// Fast lookup result for metadata queries
 #[derive(Debug, Clone)]
@@ -38,7 +38,7 @@ pub struct CollectionLookupResult {
     pub storage_engine: String,
     pub vector_count: i64,
     pub total_size_bytes: i64,
-    pub created_at: i64,
+    pub timestamp: i64,
     pub updated_at: i64,
 }
 
@@ -46,21 +46,37 @@ impl From<&Collection> for CollectionLookupResult {
     fn from(record: &Collection) -> Self {
         Self {
             uuid: record.id.clone(),
-            name: record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default(),
-            dimension: record.config.as_ref().map(|c| c.dimension).unwrap_or(0),
-            distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric).unwrap_or(0)),
-            indexing_algorithm: format!("{:?}", record.config.as_ref().map(|c| c.primary_indexing_algorithm).unwrap_or(0)),
-            storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine).unwrap_or(0)),
+            name: record
+                .config
+                .as_ref()
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "unknown".to_string()),
+            dimension: record
+                .config
+                .as_ref()
+                .map(|c| c.dimension as i32)
+                .unwrap_or(0),
+            distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
+            indexing_algorithm: record
+                .config
+                .as_ref()
+                .map(|c| c.primary_index.clone())
+                .unwrap_or_else(|| "None".to_string()),
+            storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),
             vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
-            total_size_bytes: record.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0),
-            created_at: record.created_at,
+            total_size_bytes: record
+                .stats
+                .as_ref()
+                .map(|s| s.data_size_bytes)
+                .unwrap_or(0),
+            timestamp: record.created_at,
             updated_at: record.updated_at,
         }
     }
 }
 
 /// Statistics for memory index performance monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStatistics {
     pub total_collections: usize,
     pub memory_usage_bytes: usize,
@@ -133,7 +149,7 @@ impl MetadataMemoryIndexes {
     pub async fn upsert_collection(&self, record: Collection) {
         let start_time = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        let name = record.config.as_ref().map(|c| c.name.clone()).clone();
         let record_arc = Arc::new(record.clone());
 
         // Remove old record if exists (for updates)
@@ -144,7 +160,9 @@ impl MetadataMemoryIndexes {
 
         // Primary indexes - O(1) operations
         self.uuid_to_record.insert(uuid.clone(), record_arc);
-        self.name_to_uuid.insert(name.clone(), uuid.clone());
+        if let Some(name) = name {
+            self.name_to_uuid.insert(name, uuid.clone());
+        }
 
         // Secondary indexes
         self.insert_into_secondary_indexes(&record).await;
@@ -162,8 +180,9 @@ impl MetadataMemoryIndexes {
     pub async fn remove_collection(&self, uuid: &str) {
         if let Some((_, record)) = self.uuid_to_record.remove(uuid) {
             // Remove from name index
-            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
-            self.name_to_uuid.remove(&name);
+            if let Some(config) = record.config.as_ref() {
+                self.name_to_uuid.remove(&config.name);
+            }
 
             // Remove from secondary indexes
             self.remove_from_secondary_indexes(&record).await;
@@ -377,11 +396,12 @@ impl MetadataMemoryIndexes {
         // Name prefix index - Store full names only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
-            prefix_index
-                .entry(name)
-                .or_insert_with(Vec::new)
-                .push(record.id.clone());
+            if let Some(config) = record.config.as_ref() {
+                prefix_index
+                    .entry(config.name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(record.id.clone());
+            }
         }
 
         // Tag index
@@ -423,11 +443,12 @@ impl MetadataMemoryIndexes {
         // Name prefix index - Remove full name only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
-            if let Some(uuids) = prefix_index.get_mut(&name) {
-                uuids.retain(|uuid| uuid != &record.id);
-                if uuids.is_empty() {
-                    prefix_index.remove(&name);
+            if let Some(config) = record.config.as_ref() {
+                if let Some(uuids) = prefix_index.get_mut(&config.name) {
+                    uuids.retain(|uuid| uuid != &record.id);
+                    if uuids.is_empty() {
+                        prefix_index.remove(&config.name);
+                    }
                 }
             }
         }
@@ -475,8 +496,7 @@ impl MetadataMemoryIndexes {
     /// Estimate memory usage for monitoring
     fn estimate_memory_usage(&self) -> usize {
         // Rough estimation - would need more precise calculation in production
-        let uuid_index_size =
-            self.uuid_to_record.len() * (32 + std::mem::size_of::<Collection>());
+        let uuid_index_size = self.uuid_to_record.len() * (32 + std::mem::size_of::<Collection>());
         let name_index_size = self.name_to_uuid.len() * 64; // Approximate
 
         uuid_index_size + name_index_size + 1024 // Add overhead for secondary indexes

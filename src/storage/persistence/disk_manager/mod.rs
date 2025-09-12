@@ -24,12 +24,15 @@ impl DiskManager {
 
     pub fn get_write_path(&mut self) -> &PathBuf {
         let path = &self.data_dirs[self.current_write_dir];
-        // TODO: Implement round-robin or space-based selection
         self.current_write_dir = (self.current_write_dir + 1) % self.data_dirs.len();
         path
     }
 
     pub fn get_read_paths(&self) -> &[PathBuf] {
         &self.data_dirs
+    }
+
+    pub fn get_base_wal_dir(&self) -> &PathBuf {
+        &self.data_dirs[0]
     }
 }

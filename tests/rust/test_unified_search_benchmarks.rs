@@ -13,12 +13,12 @@ use std::time::{Duration, Instant};
 use proximadb::proto::proximadb::{
     VectorRecord, MetadataItem, StorageEngine,
 };
-use proximadb::compute::distance::DistanceMetric;
-use proximadb::core::SearchResult;
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::compute::distance_computation::DistanceMetric;
+use proximadb::core::search::results::InternalSearchResult;
+use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::engines::viper::ViperEngine;
-use proximadb::storage::engines::lsm::LsmTree;
+use proximadb::storage::engines::sst::LsmTree;
 use proximadb::storage::memtable::implementations::GlobalPartitionedMemtable;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ impl Default for BenchmarkConfig {
 
 /// Unified search benchmark suite
 pub struct UnifiedSearchBenchmark {
-    direct_service: Arc<DirectVectorService>,
+    direct_service: Arc<VectorOperationsService>,
     collection_service: Arc<CollectionService>,
     config: BenchmarkConfig,
 }
@@ -78,14 +78,12 @@ impl UnifiedSearchBenchmark {
             filesystem_factory.clone(),
         ));
         
-        // Create DirectVectorService
-        let direct_service = Arc::new(DirectVectorService::new(
-            global_memtable,
-            collection_service.clone(),
-            None, // viper_engine
-            None, // lsm_engine
-            filesystem_factory,
-        ));
+        // Create VectorOperationsService using test utilities
+        let direct_service = Arc::new(
+            proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+                .await
+                .expect("Failed to create VectorOperationsService")
+        );
         
         Ok(Self {
             direct_service,
@@ -157,7 +155,7 @@ impl UnifiedSearchBenchmark {
             let end = ((batch_idx + 1) * batch_size).min(size);
             let batch_vectors = self.generate_test_vectors(collection_id, start, end, dimension);
             
-            // Insert through DirectVectorService
+            // Insert through VectorOperationsService
             self.direct_service.insert_vectors_batch(
                 collection_id,
                 batch_vectors,
@@ -187,24 +185,29 @@ impl UnifiedSearchBenchmark {
     ) -> Vec<VectorRecord> {
         (start..end).map(|i| {
             VectorRecord {
-                id: Some(format!("vec_{}", i)),
-                collection_id: collection_id.to_string(),
+                id: Some(format!("vec_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
                 vector: vec![i as f32 / 1000.0; dimension], // Simple pattern for reproducibility
                 metadata: vec![
                     MetadataItem {
                         key: "category".to_string(),
-                        value: format!("cat_{}", i % 10),
+                        value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(format!("cat_{}", i % 10))),
                     },
                     MetadataItem {
                         key: "score".to_string(),
-                        value: (i % 100).to_string(),
+                        value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 100).to_string())),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp_millis(),
-                created_at: chrono::Utc::now().timestamp_millis(),
-                updated_at: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
-                version: 1,
+                version: Some(1),
                 rank: None,
                 score: None,
                 distance: None,
@@ -281,7 +284,7 @@ impl UnifiedSearchBenchmark {
                     false, // include_vectors
                     false, // include_metadata
                 ),
-                self.direct_service.search_lsm_engine_enhanced(
+                self.direct_service.search_sst_engine_enhanced(
                     collection_id,
                     &query_vector,
                     k,
@@ -432,14 +435,14 @@ impl UnifiedSearchBenchmark {
     
     /// Print benchmark summary
     fn print_summary(&self, results: &[BenchmarkResult]) {
-        println!("\n📊 Unified Search Benchmark Results");
-        println!("═══════════════════════════════════════════════════════════════════════");
-        println!("{:<30} {:>10} {:>10} {:>10} {:>10} {:>10}", 
+        debug!("\n📊 Unified Search Benchmark Results");
+        debug!("═══════════════════════════════════════════════════════════════════════");
+        debug!("{:<30} {:>10} {:>10} {:>10} {:>10} {:>10}", 
                  "Operation", "Throughput", "P50 (ms)", "P95 (ms)", "P99 (ms)", "Total (ms)");
-        println!("───────────────────────────────────────────────────────────────────────");
+        debug!("───────────────────────────────────────────────────────────────────────");
         
         for result in results {
-            println!("{:<30} {:>10.1} {:>10.2} {:>10.2} {:>10.2} {:>10.1}",
+            debug!("{:<30} {:>10.1} {:>10.2} {:>10.2} {:>10.2} {:>10.1}",
                      result.operation,
                      result.throughput_ops_per_sec,
                      result.latency_p50_ms,
@@ -448,7 +451,7 @@ impl UnifiedSearchBenchmark {
                      result.duration_ms);
         }
         
-        println!("═══════════════════════════════════════════════════════════════════════");
+        debug!("═══════════════════════════════════════════════════════════════════════");
     }
 }
 

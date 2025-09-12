@@ -10,10 +10,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::core::bloom::{BloomFilterStrategy, BloomFilterConfig, hash};
+use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Memory-efficient bit-packed bloom filter using u64 array
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BitPackedBloomFilter {
     /// Bit storage using u64 for efficient bit operations
     bits: Vec<u64>,
@@ -35,7 +35,7 @@ impl BitPackedBloomFilter {
         let num_bits = (expected_elements * bits_per_key as usize).max(64); // Minimum 64 bits
         let num_u64s = (num_bits + 63) / 64;
         let num_hashes = ((bits_per_key as f64 * 0.69).round() as u32).max(1);
-        
+
         Self {
             bits: vec![0u64; num_u64s],
             num_bits,
@@ -44,13 +44,13 @@ impl BitPackedBloomFilter {
             hash_seed: rand::random(),
         }
     }
-    
+
     /// Create from serialized data
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         bincode::deserialize(data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize BitPackedBloomFilter: {}", e))
     }
-    
+
     /// Set a bit at the given index
     #[inline]
     fn set_bit(&mut self, index: usize) {
@@ -63,7 +63,7 @@ impl BitPackedBloomFilter {
             self.bits[word_index] |= 1u64 << bit_index;
         }
     }
-    
+
     /// Check if a bit is set at the given index
     #[inline]
     fn is_bit_set(&self, index: usize) -> bool {
@@ -74,10 +74,13 @@ impl BitPackedBloomFilter {
         let bit_index = index % 64;
         word_index < self.bits.len() && (self.bits[word_index] & (1u64 << bit_index)) != 0
     }
-    
+
     /// Count the number of set bits (population count)
     fn popcount(&self) -> usize {
-        self.bits.iter().map(|&word| word.count_ones() as usize).sum()
+        self.bits
+            .iter()
+            .map(|&word| word.count_ones() as usize)
+            .sum()
     }
 }
 
@@ -90,14 +93,14 @@ impl BloomFilterStrategy for BitPackedBloomFilter {
         let mut key_with_seed = Vec::with_capacity(key.len() + 8);
         key_with_seed.extend_from_slice(key);
         key_with_seed.extend_from_slice(&self.hash_seed.to_le_bytes());
-        
+
         let positions = hash::double_hash(&key_with_seed, self.num_hashes, self.num_bits);
         for pos in positions {
             self.set_bit(pos);
         }
         self.num_elements += 1;
     }
-    
+
     fn might_contain(&self, key: &[u8]) -> bool {
         if self.num_bits == 0 {
             return true; // Always return true for empty filter to avoid false negatives
@@ -105,46 +108,46 @@ impl BloomFilterStrategy for BitPackedBloomFilter {
         let mut key_with_seed = Vec::with_capacity(key.len() + 8);
         key_with_seed.extend_from_slice(key);
         key_with_seed.extend_from_slice(&self.hash_seed.to_le_bytes());
-        
+
         let positions = hash::double_hash(&key_with_seed, self.num_hashes, self.num_bits);
         positions.iter().all(|&pos| self.is_bit_set(pos))
     }
-    
+
     fn bit_count(&self) -> usize {
         self.num_bits
     }
-    
-    fn hash_count(&self) -> u32 {
-        self.num_hashes
+
+    fn hash_count(&self) -> usize {
+        self.num_hashes as usize
     }
-    
+
     fn serialize(&self) -> Result<Vec<u8>> {
         bincode::serialize(self)
             .map_err(|e| anyhow::anyhow!("Failed to serialize bloom filter: {}", e))
     }
-    
+
     fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>() + self.bits.capacity() * std::mem::size_of::<u64>()
     }
-    
+
     fn clear(&mut self) {
         self.bits.fill(0);
         self.num_elements = 0;
     }
-    
+
     fn false_positive_rate(&self) -> f64 {
         if self.num_elements == 0 {
             return 0.0;
         }
-        
+
         // Use exact formula based on actual bit usage
         let bits_set = self.popcount();
         let fill_ratio = bits_set as f64 / self.num_bits as f64;
-        
+
         // Approximate false positive rate
         fill_ratio.powf(self.num_hashes as f64)
     }
-    
+
     fn num_elements(&self) -> usize {
         self.num_elements
     }
@@ -153,25 +156,25 @@ impl BloomFilterStrategy for BitPackedBloomFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_bit_packed_basic() {
         let config = BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::BitPacked,
+            // strategy removed -  crate::storage::engines::core::formats::row_based::bloom_filter::BloomStrategy::BitPacked,
             bits_per_key: 10,
             expected_items: 100,
             ..Default::default()
         };
-        
+
         let mut filter = BitPackedBloomFilter::new(100, &config);
-        
+
         // Test basic operations
         assert_eq!(filter.num_elements(), 0);
-        
+
         filter.insert(b"test");
         assert!(filter.might_contain(b"test"));
         assert_eq!(filter.num_elements(), 1);
-        
+
         // Test false negatives don't occur
         for i in 0..50 {
             let key = format!("key_{}", i);
@@ -179,18 +182,18 @@ mod tests {
             assert!(filter.might_contain(key.as_bytes()));
         }
     }
-    
+
     #[test]
     fn test_memory_efficiency() {
         let config = BloomFilterConfig::default();
         let filter = BitPackedBloomFilter::new(1000, &config);
-        
+
         // Verify memory usage is reasonable
         let memory = filter.memory_usage();
         let expected_bits = 1000 * config.bits_per_key as usize;
         let expected_u64s = (expected_bits + 63) / 64;
         let expected_memory = expected_u64s * 8 + std::mem::size_of::<BitPackedBloomFilter>();
-        
+
         assert!(memory <= expected_memory + 100); // Allow some overhead
     }
 }

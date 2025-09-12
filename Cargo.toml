@@ -1,7 +1,7 @@
 [package]
 name = "proximadb"
-version = "0.1.0"
-edition = "2021"
+version = "0.1.4"
+edition = "2024"
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
 license = "Apache-2.0"
@@ -9,6 +9,7 @@ repository = "https://github.com/vjsingh1984/proximadb"
 homepage = "https://github.com/vjsingh1984/proximadb"
 keywords = ["vector", "database", "ai", "ml", "proximity", "similarity-search"]
 categories = ["database-implementations", "science"]
+rust-version = "1.88"
 
 [workspace]
 members = [
@@ -19,21 +20,33 @@ members = [
 name = "proximadb-server"
 path = "src/bin/server.rs"
 
+[[bin]]
+name = "proximadb-bench"
+path = "src/bin/proximadb-bench-consolidated.rs"
+
 
 
 [dependencies]
 # Core async runtime
-tokio = { version = "1.0", features = ["full"] }
-tokio-util = "0.7"
+tokio = { version = "1.37", features = ["full"] }
 tokio-stream = "0.1"
+# tokio-util = "0.7"  # Unused - no imports found in codebase
+# tokio-stream = "0.1"  # Unused - no imports found in codebase
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bincode = "1.3"
+bytemuck = { version = "1.14", features = ["derive"] }
+
+# SQL Parsing
+sqlparser = "0.44"
+
+# Async recursion support
+async-recursion = "1.0"
 
 # Checksums
-crc32fast = "1.4"
+# crc32fast = "1.4"  # Replaced with internal implementation
 
 # System information
 libc = "0.2"
@@ -46,14 +59,14 @@ lazy_static = "1.5"
 # dashmap = "6.1.0"     # High-performance concurrent hashmap for ART alternative (already defined below)
 
 # Networking & gRPC
-tonic = "0.10"
+tonic = { version = "0.10", features = ["gzip"] }
 tonic-build = "0.10"
 tonic-reflection = "0.10"
 prost = "0.12"
-prost-types = "0.12"
-hyper = "0.14"
+prost-types = { version = "0.12" }
+hyper = "0.14"  # Used internally by axum and tonic
 tower = "0.4"
-tower-http = { version = "0.4", features = ["cors", "trace"] }
+tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full"] }
 url = "2.4"
 reqwest = { version = "0.11", features = ["json"] }
 
@@ -61,25 +74,31 @@ reqwest = { version = "0.11", features = ["json"] }
 memmap2 = "0.9"
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tempfile = "3.0"
-parquet = { version = "51.0", default-features = false, features = ["arrow"] }
-# arrow = { version = "51.0" }  # Removed - arrow-arith has compilation issues
-arrow-array = "51.0"
-arrow-schema = "51.0" 
-arrow-data = "51.0"
-# pqrs = "0.3.2"       # Removed - no lib target, but helped us find compatible versions
+rayon = "1.10"  # Parallel processing for search optimization
+# # glob = "0.3"  # Replaced with internal glob implementation - replaced with internal implementation
+# Parquet and Arrow dependencies - using v53+ for bloom filter support
+parquet = { version = "53.0", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2"] }
+# Arrow dependencies matching parquet v53
+arrow-array = { version = "53.0", default-features = false }
+arrow-schema = { version = "53.0", default-features = false }
+arrow-data = { version = "53.0", default-features = false }
+arrow-ipc = { version = "53.0", default-features = false }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
 snap = "1.1"             # Snappy compression
 zstd = "0.13"            # Zstandard compression
-flate2 = "1.0"
+flate2 = "1.0"           # Gzip/Deflate/Zlib compression
+brotli = "3.5"           # Brotli compression
+bzip2 = "0.4"            # Bzip2 compression
+xz2 = "0.1"              # XZ/LZMA2 compression
 
 # System monitoring
 sysinfo = "0.30"
 
 # Avro serialization with schema evolution
 apache-avro = "0.16"
-serde_bytes = "0.11"
+# serde_bytes = "0.11"  # Unused - no imports found in codebase
 bytes = "1.5"
 
 # Cloud storage SDKs (optional for testing)
@@ -99,16 +118,21 @@ google-cloud-storage = { version = "0.15", optional = true }
 # raft-proto = "0.7"
 
 # Vector operations & SIMD
-ndarray = "0.15"
+# ndarray = "0.15"  # Unused - no imports found, only referenced in logs
+nalgebra = "0.32"  # For PCA eigendecomposition in HELIX engine
 # faiss = { version = "0.11", optional = true }  # Unused - no FAISS integration implemented
-hnsw = "0.11"
+# hnsw = "0.11"  # Unused - ProximaDB has custom HNSW implementation in src/index/axis/indexes/hnsw_index.rs
 
 # CPU optimization
 num_cpus = "1.16"
+raw-cpuid = "11.0"  # CPU feature detection for x86_64
 
 # Random number generation
 rand = "0.8"
 rand_chacha = "0.3"
+
+# Cryptographic hashing
+sha2 = "0.10"
 
 # GPU acceleration (removed - was placeholder code)
 
@@ -121,7 +145,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 prometheus = "0.13"
 metrics = "0.21"
-metrics-prometheus = "0.6"
+# metrics-prometheus = "0.6"  # Unused - using prometheus crate directly
 
 # Configuration
 config = "0.13"
@@ -133,26 +157,34 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # Utilities
-uuid = { version = "1.0", features = ["v4", "serde"] }
-blake3 = "1.5"  # Fast, cryptographic hash for vector ID generation
-chrono = { version = "0.4.19", features = ["serde"] }  # Older version compatible with Arrow 44
-base64 = "0.21"  # For encoding bytes to base64 strings in adapter pattern
+uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
+jsonwebtoken = "9.2"  # JWT token creation and validation
+# # blake3 = "1.5"  # Replaced with internal hash implementation - replaced with internal implementation
+chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
+# base64 = "0.21"  # Using internal implementation in utils::encoding
 crossbeam = "0.8"
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"
-slog = "2.7"
-slog-stdlog = "4.1"
+nom = "7"
+
+# slog = "2.7"  # Unused - using tracing instead
+# slog-stdlog = "4.1"  # Unused - using tracing instead
 
 # REST API
 axum = { version = "0.6", features = ["json"] }
-axum-macros = "0.3"
+# axum-macros = "0.3"  # Unused - no imports found in codebase
 urlencoding = "2.1.3"
-crossbeam-skiplist = "0.1.3"
+# # crossbeam-skiplist = "0.1.3"  # Replaced with internal skiplist implementation  # Replaced with internal implementation
 dashmap = "6.1.0"
-bplustree = "0.1.0"
-lru = "0.12"
+# # bplustree = "0.1.0"  # Replaced with internal btree implementation  # Replaced with internal implementation
+# # lru = "0.12"  # Replaced with internal cache implementation  # Replaced with internal implementation
+moka = { version = "0.12", features = ["future"] }
+# # roaring = "0.10"  # Replaced with internal bitmap implementation - replaced with internal implementation
+
+# Lock-free data structures for Phase 2 optimization
+# arc-swap = "1.7"  # Unused - no imports found in codebase
 
 # Build dependencies
 [build-dependencies]
@@ -172,17 +204,29 @@ reqwest = { version = "0.11", features = ["json"] }
 env_logger = "0.10"
 
 [features]
-default = []  # Minimal features for testing and ARM64 Ubuntu compatibility
+default = ["sql_frontend"]  # Use sql_frontend path by default; fallback to legacy sql_engine when disabled
+distributed = []
+standalone = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # Cloud storage features (optional to avoid linking issues during testing)
 aws = ["dep:aws-config", "dep:aws-sdk-s3"]
 azure = ["dep:azure_storage", "dep:azure_storage_blobs"] 
 gcp = ["dep:google-cloud-storage"]
+
+# Test gating (keeps default test runs lean)
+comprehensive_tests = []
+perf_tests = []
 cloud-full = ["aws", "azure", "gcp"]
 
+# SQL frontend feature flag (default on). When disabled, the server uses legacy sql_engine path.
+sql_frontend = []
+
+# Hardware acceleration features
+gpu = []  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
+debug-filters = []  # Enable debug filtering for search operations
 
 # CPU optimizations - Disabled Intel MKL on ARM64
 # cpu-optimized = ["intel-mkl"]
@@ -227,12 +271,36 @@ opt-level = 1
 debug = true
 incremental = true
 
-# Benchmark configuration (temporarily disabled due to compilation issues)
+# Benchmark configuration
+[[bench]]
+name = "simd_distance_bench"
+harness = false
+path = "benches/simd_distance_bench.rs"
+
+# Arrow dependencies downgraded to avoid compilation conflicts
+
+[[bench]]
+name = "flush_optimization_bench"
+harness = false
+path = "benches/flush_optimization_bench.rs"
+
+[[bench]]
+name = "vector_optimization_bench"
+harness = false
+path = "benches/vector_optimization_bench.rs"
+
+[[bench]]
+name = "engine_comparison_bench"
+harness = false
+path = "benches/engine_comparison_bench.rs"
+
+# Temporarily disabled benchmarks
 # [[bench]]
 # name = "vector_operations"
 # harness = false
 # path = "benches/vector_operations.rs"
 
+# [[bench]]
 # name = "metadata_lifecycle"  
 # harness = false
 # path = "benches/metadata_lifecycle.rs"

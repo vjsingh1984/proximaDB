@@ -15,8 +15,10 @@ from typing import Generator, Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric
-from proximadb.exceptions import ProximaDBError
+from proximadb import CollectionConfig, DistanceMetric
+from proximadb import ProximaDBError
+
+
 
 
 # Configure logging for tests
@@ -29,7 +31,7 @@ logging.basicConfig(
 # Test configuration
 TEST_CONFIG = {
     "rest_endpoint": "http://localhost:5678",
-    "grpc_endpoint": "http://localhost:5679",
+    "grpc_endpoint": "grpc://localhost:5679",
     "default_timeout": 30.0,
     "max_retry_attempts": 3,
     "test_collection_prefix": "pytest_",
@@ -47,7 +49,13 @@ def test_config() -> Dict[str, Any]:
 def verify_server_running(test_config):
     """Verify ProximaDB server is running before tests"""
     try:
-        rest_client = connect_rest(test_config["rest_endpoint"])
+        from proximadb.config import ClientConfig, Protocol
+        config = ClientConfig(
+            url=test_config["rest_endpoint"],
+            protocol=Protocol.REST,
+            timeout=test_config["default_timeout"]
+        )
+        rest_client = ProximaDBClient(config=config)
         
         # Try to connect and get health status
         try:
@@ -69,7 +77,13 @@ def verify_server_running(test_config):
 @pytest.fixture(scope="class")
 def rest_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
     """Shared REST client fixture for test classes"""
-    client = connect_rest(test_config["rest_endpoint"])
+    from proximadb.config import ClientConfig, Protocol
+    config = ClientConfig(
+        url=test_config["rest_endpoint"],
+        protocol=Protocol.REST,
+        timeout=test_config["default_timeout"]
+    )
+    client = ProximaDBClient(config=config)
     yield client
     
     if hasattr(client, 'close'):
@@ -79,7 +93,19 @@ def rest_client(verify_server_running, test_config) -> Generator[ProximaDBClient
 @pytest.fixture(scope="class")
 def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient, None, None]:
     """Shared gRPC client fixture for test classes"""
-    client = connect_grpc(test_config["grpc_endpoint"])
+    from proximadb.config import ClientConfig, Protocol
+    
+    # Ensure grpc_endpoint has the proper scheme
+    grpc_url = test_config["grpc_endpoint"]
+    if not grpc_url.startswith(("grpc://", "grpcs://")):
+        grpc_url = f"grpc://{grpc_url}"
+    
+    config = ClientConfig(
+        url=grpc_url,
+        protocol=Protocol.GRPC,
+        timeout=test_config["default_timeout"]
+    )
+    client = ProximaDBClient(config=config)
     yield client
     
     if hasattr(client, 'close'):
@@ -89,7 +115,7 @@ def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient
 @pytest.fixture
 def unique_collection_name(test_config) -> str:
     """Generate unique collection name for each test"""
-    timestamp = int(time.time() * 1000)  # Millisecond precision
+    timestamp = int(time.time())  # Millisecond precision
     test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
     return f"{test_config['test_collection_prefix']}{test_name}_{timestamp}"
 
@@ -100,7 +126,7 @@ def basic_collection_config() -> CollectionConfig:
     return CollectionConfig(
         name="test_collection",
         dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         description="Test collection created by pytest"
     )
 
@@ -111,7 +137,7 @@ def advanced_collection_config() -> CollectionConfig:
     return CollectionConfig(
         name="test_collection",
         dimension=768,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         description="Advanced test collection with BERT dimensions"
     )
 
@@ -144,9 +170,9 @@ class TestCollectionManager:
             config = CollectionConfig(
             name="test_collection",
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
-        timestamp = int(time.time() * 1000)
+        timestamp = int(time.time())
         collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
         
         collection = self.client.create_collection(collection_name, config)
@@ -231,13 +257,17 @@ def pytest_runtest_setup(item):
 @pytest.fixture(scope="session", autouse=True)
 def configure_test_endpoints(request):
     """Configure test endpoints from command line options"""
-    rest_endpoint = request.config.getoption("--rest-endpoint")
-    grpc_endpoint = request.config.getoption("--grpc-endpoint")
-    
-    TEST_CONFIG["rest_endpoint"] = rest_endpoint
-    TEST_CONFIG["grpc_endpoint"] = grpc_endpoint
-    
-    logging.info(f"Test configuration: REST={rest_endpoint}, gRPC={grpc_endpoint}")
+    try:
+        rest_endpoint = request.config.getoption("--rest-endpoint", default=TEST_CONFIG["rest_endpoint"])
+        grpc_endpoint = request.config.getoption("--grpc-endpoint", default=TEST_CONFIG["grpc_endpoint"])
+        
+        TEST_CONFIG["rest_endpoint"] = rest_endpoint
+        TEST_CONFIG["grpc_endpoint"] = grpc_endpoint
+        
+        logging.info(f"Test configuration: REST={rest_endpoint}, gRPC={grpc_endpoint}")
+    except ValueError:
+        # Options not defined, use defaults from TEST_CONFIG
+        logging.info(f"Using default test configuration: REST={TEST_CONFIG['rest_endpoint']}, gRPC={TEST_CONFIG['grpc_endpoint']}")
 
 
 # Exception handling helpers

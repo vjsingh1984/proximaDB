@@ -1,0 +1,43 @@
+= Unified Metrics Review and Plan
+:toc:
+
+== Status Update (2025-09-11)
+
+- Orchestrator foundations exist (`CrossCacheOrchestrator` with `CacheType` and `register_cache_provider`). Metadata tracking wired in Parquet I/O; footer cache implemented. Provider registration for SST bloom/meta and VIPER footer/meta is pending; export to Prometheus/OTel not yet wired. This spec remains the source of truth for metrics fields and dashboards.
+
+== Current State
+
+- Metrics services present for engines and IO (e.g., zero‑copy metrics, Helix metrics, engine stats).
+- Query layer exposes limited EXPLAIN hints; end‑to‑end traces not standardized.
+- Orchestrator metrics not exported; cache stats per type not visible.
+
+== Strengths
+- Engine‑level counters and IO metrics exist; room for aggregation.
+- Clear places to hook tracing (UnifiedHandlers, QueryEngine, VOS, GraphService).
+
+== Weaknesses
+- No consistent OpenTelemetry spans across layers.
+- Cache hit/miss/eviction by cache type not surfaced; no dashboards.
+- Lack of shard/tenant cardinality breakdown for multi‑tenant readiness.
+
+== Plan
+
+1) Standardize OTel tracing
+   - Spans: request (REST/gRPC), SQL parse/lower, plan, execute (vector/graph/hybrid), engine IO.
+   - Propagate context through handlers → planner → executor → services.
+
+2) Orchestrator metrics
+   - Per CacheType: hit_rate, bytes, entries, evictions, latency (hit/miss), prefetch queue.
+   - Global: budget allocations, top hot keys; rebalance decisions.
+   - Export via Prometheus and OTel.
+
+3) Engine aggregation
+   - VIPER/SST/Helix report footer/meta/bloom cache stats through orchestrator.register_cache_provider.
+   - Unify engine stats into a node summary (p99s, IO, cache effectiveness).
+
+4) Dashboards
+   - Request SLOs (p50/p95/p99), hybrid breakdown, cache effectiveness, hot keys.
+   - Drill‑downs per collection/shard/tenant.
+
+5) Alerts
+   - Cache thrash (low hit_rate + high evictions), prefetch queue overflow, high tail latency.

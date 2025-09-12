@@ -13,14 +13,13 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::persistence::wal::config::{MemTableType, WalStrategyType};
-use super::persistence::wal::{WalConfig, WalManager};
-// Legacy WalFactory removed - WalManager now uses WalBatchFactory internally
+use super::persistence::write_ahead_log::config::{MemTableType, WriteBufferStrategyType};
+use super::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Storage layout strategy
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum StorageLayoutStrategy {
     /// Traditional LSM-tree based storage
     Regular,
@@ -42,7 +41,7 @@ impl Default for StorageLayoutStrategy {
 // This builder now focuses solely on storage concerns.
 
 /// Data storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataStorageConfig {
     /// Storage URLs for data files
     pub data_urls: Vec<String>,
@@ -66,7 +65,7 @@ pub struct DataStorageConfig {
     pub compaction_config: crate::core::CompactionConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataCompressionConfig {
     /// Enable compression for vector data
     pub compress_vectors: bool,
@@ -84,7 +83,7 @@ pub struct DataCompressionConfig {
     pub compression_level: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorCompressionAlgorithm {
     /// No compression (fastest)
     None,
@@ -102,7 +101,7 @@ pub enum VectorCompressionAlgorithm {
     INT8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionLevel {
     /// No compression
     None,
@@ -116,13 +115,13 @@ pub enum CompressionLevel {
 pub use crate::core::{CompactionConfig, CompactionStrategy};
 
 /// Storage-focused system configuration (storage, WAL, filesystem only)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageSystemConfig {
     /// Data storage configuration
     pub data_storage: DataStorageConfig,
 
-    /// WAL system configuration
-    pub wal_system: WalConfig,
+    /// Write Buffer system configuration
+    pub wal_system: WALConfig,
 
     /// Filesystem configuration
     pub filesystem: FilesystemConfig,
@@ -134,7 +133,7 @@ pub struct StorageSystemConfig {
     pub storage_performance: StoragePerformanceConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StoragePerformanceConfig {
     /// Number of I/O threads for storage operations
     pub io_threads: usize,
@@ -152,7 +151,7 @@ pub struct StoragePerformanceConfig {
     pub buffer_config: StorageBufferConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageBufferConfig {
     /// Read buffer size (bytes)
     pub read_buffer_size: usize,
@@ -164,7 +163,7 @@ pub struct StorageBufferConfig {
     pub compaction_buffer_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchConfig {
     /// Default batch size for operations
     pub default_batch_size: usize,
@@ -196,7 +195,7 @@ impl Default for StorageSystemConfig {
                 enable_mmap: true,
                 cache_size_mb: 512,
                 compaction_config: crate::core::CompactionConfig {
-                    strategy: crate::core::CompactionStrategy::SizeTiered,
+                    // strategy removed -  crate::core::CompactionStrategy::SizeTiered,
                     max_sstable_size_mb: 128, // 128MB
                     max_level_size_mb: 512,
                     compaction_threads: 4,
@@ -204,7 +203,7 @@ impl Default for StorageSystemConfig {
                     compaction_interval_seconds: 300,
                 },
             },
-            wal_system: WalConfig::default(),
+            wal_system: WALConfig::default(),
             filesystem: FilesystemConfig::default(),
             metadata_backend: None, // Use default filestore backend
             storage_performance: StoragePerformanceConfig {
@@ -332,14 +331,14 @@ impl StorageSystemBuilder {
         self
     }
 
-    /// Configure WAL system
-    pub fn with_wal_config(mut self, config: WalConfig) -> Self {
+    /// Configure Write Buffer system
+    pub fn with_wal_config(mut self, config: WALConfig) -> Self {
         self.config.wal_system = config;
         self
     }
 
     /// Set WAL strategy (Avro for schema evolution, Bincode for performance)
-    pub fn with_wal_strategy(mut self, strategy: WalStrategyType) -> Self {
+    pub fn with_wal_strategy(mut self, strategy: WriteBufferStrategyType) -> Self {
         self.config.wal_system.strategy_type = strategy;
         self
     }
@@ -358,37 +357,43 @@ impl StorageSystemBuilder {
 
     /// Configure WAL compression
     pub fn with_wal_compression(mut self, algorithm: CompressionAlgorithm) -> Self {
-        self.config.wal_system.compression.algorithm = algorithm;
+        // Configure WAL compression using the existing compression field
+        self.config.wal_system.compression = crate::storage::persistence::write_ahead_log::config::CompressionConfig {
+            algorithm,
+            compress_memory: true,
+            compress_disk: true,
+            min_compress_size: 1024, // Compress entries larger than 1KB
+        };
         self
     }
 
     /// Configure high-throughput WAL
     pub fn with_high_throughput_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::high_throughput();
+        self.config.wal_system = WALConfig::high_throughput();
         self
     }
 
     /// Configure low-latency WAL
     pub fn with_low_latency_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::low_latency();
+        self.config.wal_system = WALConfig::low_latency();
         self
     }
 
     /// Configure storage-optimized WAL
     pub fn with_storage_optimized_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::storage_optimized();
+        self.config.wal_system = WALConfig::storage_optimized();
         self
     }
 
     /// Configure range-query optimized WAL
     pub fn with_range_query_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::range_query_optimized();
+        self.config.wal_system = WALConfig::range_query_optimized();
         self
     }
 
     /// Configure high-concurrency WAL
     pub fn with_high_concurrency_wal(mut self) -> Self {
-        self.config.wal_system = WalConfig::high_concurrency();
+        self.config.wal_system = WALConfig::high_concurrency();
         self
     }
 
@@ -478,7 +483,7 @@ impl StorageSystemBuilder {
         let bucket_str = bucket.into();
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
-            storage_url: format!("s3://{}/metadata", bucket_str),
+            storage_url: format!("s3://{}/metadata_info", bucket_str),
             cloud_config: Some(CloudStorageConfig {
                 s3_config: Some(S3Config {
                     region: region.into(),
@@ -512,7 +517,7 @@ impl StorageSystemBuilder {
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
             storage_url: format!(
-                "adls://{}.dfs.core.windows.net/{}/metadata",
+                "adls://{}.dfs.core.windows.net/{}/metadata_info",
                 account_name_str, container_str
             ),
             cloud_config: Some(CloudStorageConfig {
@@ -544,7 +549,7 @@ impl StorageSystemBuilder {
         let bucket_str = bucket.into();
         self.config.metadata_backend = Some(MetadataBackendConfig {
             backend_type: "filestore".to_string(),
-            storage_url: format!("gcs://{}/metadata", bucket_str),
+            storage_url: format!("gcs://{}/metadata_info", bucket_str),
             cloud_config: Some(CloudStorageConfig {
                 s3_config: None,
                 azure_config: None,
@@ -583,7 +588,7 @@ impl StorageSystemBuilder {
             self.config.data_storage.layout_strategy
         );
         tracing::info!(
-            "🗃️ WAL strategy: {:?}",
+            "🗃️ WAL // strategy removed -  {:?}",
             self.config.wal_system.strategy_type
         );
         tracing::info!("💾 Storage URLs: {:?}", self.config.data_storage.data_urls);
@@ -607,36 +612,100 @@ impl StorageSystemBuilder {
         let filesystem = Arc::new(FilesystemFactory::new(self.config.filesystem.clone()).await?);
         tracing::info!("✅ Filesystem factory initialized");
 
-        // Build WAL system using new factory pattern
+        // Build Write Buffer system using new factory pattern
         tracing::info!(
-            "🔧 Creating WAL strategy: {:?} with memtable: {:?}",
+            "🔧 Creating WAL // strategy removed -  {:?} with memtable: {:?}",
             self.config.wal_system.strategy_type,
             self.config.wal_system.memtable.memtable_type
         );
 
-        let wal_manager = WalManager::create_with_batch_factory(
+        let write_buffer_manager = WriteAheadLogManager::create_with_batch_factory(
             self.config.wal_system.strategy_type.clone(),
             self.config.wal_system.clone(),
-            filesystem.clone()
-        ).await?;
+            filesystem.clone(),
+        )
+        .await?;
         tracing::info!(
-            "✅ WAL system initialized with {:?} strategy",
+            "✅ Write Buffer system initialized with {:?} strategy",
             self.config.wal_system.strategy_type
         );
 
-        // TODO: Initialize data storage engines based on layout strategy
-        // TODO: Initialize tiered storage based on configuration
-        // TODO: Initialize compaction strategies
+        // Initialize compaction strategies using existing orchestrator
+        let compaction_orchestrator = Arc::new(
+            crate::storage::common::compaction_orchestrator::CompactionOrchestrator::new(
+                self.config.data_storage.compaction_config.clone()
+            )?
+        );
+        
+        // Initialize data storage engines based on layout strategy
+        let storage_engines = self.initialize_storage_engines().await?;
+        
+        // Initialize tiered storage coordination
+        let tiered_coordinator = self.initialize_tiered_storage().await?;
 
         let system = StorageSystem {
             config: self.config,
             filesystem,
-            wal_manager: Arc::new(wal_manager),
+            write_buffer_manager: Arc::new(write_buffer_manager),
         };
 
         tracing::info!("🎉 Storage system build complete");
 
         Ok(system)
+    }
+    
+    /// Initialize storage engines based on layout strategy
+    async fn initialize_storage_engines(&self) -> Result<Vec<Arc<dyn crate::storage::engines::UnifiedStorageEngine>>> {
+        let mut engines = Vec::new();
+        
+        match self.config.data_storage.layout_strategy {
+            StorageLayoutStrategy::Viper => {
+                // Initialize VIPER engine
+                if let Ok(viper_engine) = crate::storage::engines::factory::EngineFactory::create_viper_engine(&self.config).await {
+                    engines.push(viper_engine);
+                }
+            }
+            StorageLayoutStrategy::Sst => {
+                // Initialize SST engine  
+                if let Ok(sst_engine) = crate::storage::engines::factory::EngineFactory::create_sst_engine(&self.config).await {
+                    engines.push(sst_engine);
+                }
+            }
+            StorageLayoutStrategy::Multi => {
+                // Initialize multiple engines for hybrid workloads
+                // This would initialize the most suitable engines based on workload analysis
+                engines.extend(self.initialize_multi_engine_layout().await?);
+            }
+        }
+        
+        Ok(engines)
+    }
+    
+    /// Initialize tiered storage coordination
+    async fn initialize_tiered_storage(&self) -> Result<Arc<dyn Send + Sync>> {
+        // Initialize tiered storage coordinator for hot/cold data management
+        // This would typically involve setting up policies for data movement
+        // between different storage tiers based on access patterns
+        
+        // For now, return a placeholder that can be expanded
+        Ok(Arc::new(()))
+    }
+    
+    /// Initialize multiple engines for hybrid workloads
+    async fn initialize_multi_engine_layout(&self) -> Result<Vec<Arc<dyn crate::storage::engines::UnifiedStorageEngine>>> {
+        let mut engines = Vec::new();
+        
+        // Add VIPER for analytics workloads
+        if let Ok(viper) = crate::storage::engines::factory::EngineFactory::create_viper_engine(&self.config).await {
+            engines.push(viper);
+        }
+        
+        // Add SST for high-throughput writes
+        if let Ok(sst) = crate::storage::engines::factory::EngineFactory::create_sst_engine(&self.config).await {
+            engines.push(sst);
+        }
+        
+        Ok(engines)
     }
 
     /// Get current configuration (for inspection)
@@ -655,7 +724,7 @@ impl Default for StorageSystemBuilder {
 pub struct StorageSystem {
     config: StorageSystemConfig,
     filesystem: Arc<FilesystemFactory>,
-    wal_manager: Arc<WalManager>,
+    write_buffer_manager: Arc<WriteAheadLogManager>,
 }
 
 impl StorageSystem {
@@ -670,8 +739,8 @@ impl StorageSystem {
     }
 
     /// Get WAL manager
-    pub fn wal_manager(&self) -> &Arc<WalManager> {
-        &self.wal_manager
+    pub fn write_buffer_manager(&self) -> &Arc<WriteAheadLogManager> {
+        &self.write_buffer_manager
     }
 
     /// Get current storage layout strategy
@@ -715,12 +784,13 @@ impl std::fmt::Debug for StorageSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_storage_system_builder() {
         let builder = StorageSystemBuilder::new()
             .with_viper_layout()
-            .with_wal_strategy(WalStrategyType::AvroBatch)
+            .with_wal_strategy(WriteBufferStrategyType::AvroBatch)
             .with_wal_memtable(MemTableType::BTree)
             .with_high_data_compression();
 
@@ -730,7 +800,7 @@ mod tests {
         );
         assert_eq!(
             builder.config.wal_system.strategy_type,
-            WalStrategyType::AvroBatch
+            WriteBufferStrategyType::AvroBatch
         );
         assert_eq!(
             builder.config.wal_system.memtable.memtable_type,

@@ -1,10 +1,10 @@
 //! Compaction and WAL configuration types
 
-use serde::{Deserialize, Serialize};
 use crate::core::foundation::BaseConfig;
+use serde::{Deserialize, Serialize};
 
 /// Compaction strategy for storage optimization
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum CompactionStrategy {
     /// Level-based compaction (LSM)
     Level,
@@ -25,10 +25,9 @@ impl Default for CompactionStrategy {
 }
 
 /// Compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompactionConfig {
     /// Compaction strategy to use
-    pub strategy: CompactionStrategy,
     /// Maximum number of files before compaction
     pub max_files: usize,
     /// Size threshold for compaction (MB)
@@ -44,7 +43,7 @@ pub struct CompactionConfig {
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            strategy: CompactionStrategy::default(),
+            // strategy removed -  CompactionStrategy::default(),
             max_files: 10,
             size_threshold_mb: 100,
             time_threshold_hours: 24,
@@ -70,8 +69,8 @@ impl BaseConfig for CompactionConfig {
 }
 
 /// WAL strategy type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum WalStrategyType {
+#[derive(Debug, Clone)]
+pub enum WriteBufferStrategyType {
     /// Apache Avro format
     Avro,
     /// Bincode binary format
@@ -80,14 +79,14 @@ pub enum WalStrategyType {
     Json,
 }
 
-impl Default for WalStrategyType {
+impl Default for WriteBufferStrategyType {
     fn default() -> Self {
         Self::Avro
     }
 }
 
 /// Memory table type for WAL
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum MemTableType {
     /// Hash map implementation
     HashMap,
@@ -106,7 +105,7 @@ impl Default for MemTableType {
 }
 
 /// Synchronization mode for WAL
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum SyncMode {
     /// Synchronous writes
     Sync,

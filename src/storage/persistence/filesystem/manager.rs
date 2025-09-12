@@ -78,20 +78,20 @@ impl FilesystemKey {
             "file" => parsed.path().to_string(),
             "s3" | "gcs" => {
                 // For object stores, base path is the bucket + prefix
-                let bucket = parsed.host_str().unwrap_or("");
+                let bucket = parsed.host_str();
                 let prefix = parsed.path().trim_start_matches('/');
                 if prefix.is_empty() {
-                    bucket.to_string()
+                    bucket.unwrap_or("").to_string()
                 } else {
-                    format!("{}/{}", bucket, prefix)
+                    format!("{}/{}", bucket.unwrap_or(""), prefix)
                 }
             }
             "adls" => {
                 // For Azure, base path is account + container + prefix
-                let host = parsed.host_str().unwrap_or("");
+                let host = parsed.host_str();
                 let path_parts: Vec<&str> =
                     parsed.path().trim_start_matches('/').split('/').collect();
-                format!("{}/{}", host, path_parts.join("/"))
+                format!("{}/{}", host.unwrap_or(""), path_parts.join("/"))
             }
             _ => parsed.path().to_string(),
         };
@@ -417,11 +417,11 @@ impl FilesystemManager {
     /// Create filesystem instance for specific key/URL
     async fn create_filesystem_for_key(&self, key: &FilesystemKey, url: &str) -> FsResult<ManagedFilesystem> {
         let parsed_url = Url::parse(url)?;
-        // let auth_provider = self.auth_providers.get(&key.scheme).cloned();
+        // let auth_provider = self.auth_providers.get(key).cloned();
 
-        let filesystem: Box<dyn FileSystem> = match key.scheme.as_str() {
+        let filesystem: Box<dyn FileSystem> = match key.scheme.as_deref() {
             "file" => {
-                let mut local_config = self.config.local.clone().unwrap_or_default();
+                let mut local_config = self.config.local.clone().clone();
                 // Set root directory to the base path from URL
                 local_config.root_dir = Some(PathBuf::from(&key.base_path));
                 Box::new(LocalFileSystem::new(local_config).await?)
@@ -469,7 +469,7 @@ impl FilesystemManager {
 
             if full_path.starts_with(base_path) {
                 Ok(full_path.strip_prefix(base_path)
-                    .unwrap_or("")
+
                     .trim_start_matches('/')
                     .to_string())
             } else {

@@ -43,10 +43,10 @@ class ProximaDBClient:
     def __init__(
         self,
         endpoint: str = "localhost:5679",
-        timeout: float = 30.0,
+        timeout: float = 60.0,
         enable_debug_logging: bool = False,
         use_tls: bool = False,
-        compression: Optional[grpc.Compression] = None
+        compression: Optional[grpc.Compression] = None  # Disabled by default
     ):
         """
         Initialize gRPC client
@@ -77,19 +77,25 @@ class ProximaDBClient:
         
         # Import proto modules dynamically
         try:
-            from .. import proximadb_pb2 as pb2_local
-            from .. import proximadb_pb2_grpc as pb2_grpc_local
-            
-            # Check if imports actually contain the expected classes
-            if not hasattr(pb2_grpc_local, 'ProximaDBStub'):
-                raise ProximaDBError(f"pb2_grpc_local is missing ProximaDBStub: {pb2_grpc_local}")
-            if not hasattr(pb2_local, 'DistanceMetric'):
-                raise ProximaDBError(f"pb2_local is missing DistanceMetric: {pb2_local}")
-                
-            logger.debug(f"Proto imports successful: pb2_local={pb2_local}, pb2_grpc_local={pb2_grpc_local}")
+            # Messages remain in proximadb_pb2; services are under v1
+            from proximadb.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
+            from proximadb.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
+            from proximadb.v1 import types_pb2 as v1_types_pb2  # type: ignore
+            # Optional graph imports
+            try:
+                from proximadb.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
+                from proximadb.v1 import graph_pb2 as v1_graph_pb2  # type: ignore
+            except Exception:
+                v1_graph_pb2_grpc = None
+                v1_graph_pb2 = None
         except ImportError as e:
-            logger.error(f"Failed to import proto modules: {e}")
-            raise ProximaDBError(f"Failed to import proto modules: {e}")
+            logger.error(f"Failed to import v1 proto modules: {e}")
+            raise ProximaDBError(f"Failed to import v1 proto modules: {e}")
+        # Note: DistanceMetric is an enum constant, not a class attribute, so we can't check it this way
+        # if not hasattr(pb2_local, 'DistanceMetric'):
+        #     raise ProximaDBError(f"pb2_local is missing DistanceMetric: {pb2_local}")
+            
+        logger.debug(f"Proto imports successful: pb2_local={pb2_local}, pb2_grpc_local={pb2_grpc_local}")
         
         try:
             # Configure message size limits for bulk vector operations (64MB)
@@ -97,39 +103,126 @@ class ProximaDBClient:
             options = [
                 ('grpc.max_receive_message_length', max_message_size),
                 ('grpc.max_send_message_length', max_message_size),
+                ('grpc.keepalive_time_ms', 10000),
+                ('grpc.keepalive_timeout_ms', 5000),
+                ('grpc.keepalive_permit_without_calls', True),
+                ('grpc.http2.max_pings_without_data', 0),
+                ('grpc.http2.min_time_between_pings_ms', 10000),
+                ('grpc.http2.min_ping_interval_without_data_ms', 5000),
             ]
+            
+            # Add compression options if enabled
+            if self.compression is not None:
+                options.extend([
+                    ('grpc.default_compression_algorithm', self.compression),
+                    ('grpc.default_compression_level', 'high'),
+                ])
+                logger.info(f"gRPC compression enabled: {self.compression}")
+            
             
             if self.use_tls:
                 credentials = grpc.ssl_channel_credentials()
                 self.channel = grpc.secure_channel(self.endpoint, credentials, options=options)
             else:
                 self.channel = grpc.insecure_channel(self.endpoint, options=options)
-            
-            self.stub = pb2_grpc_local.ProximaDBStub(self.channel)
-            logger.info(f"Connected to ProximaDB gRPC service at {self.endpoint} (64MB message limit)")
+            # Use v1 VectorService by default
+            self.stub = v1_vector_pb2_grpc.VectorServiceStub(self.channel)
+            logger.info(f"Connected to proximadb.v1.VectorService at {self.endpoint} (64MB limit)")
             
         except Exception as e:
             raise ProximaDBError(f"Failed to connect to gRPC server: {e}")
     
-    async def connect(self):
-        """Async connect - for compatibility with existing tests"""
+    def connect(self):
+        """Connect - for compatibility with existing tests"""
         self._connect()
     
-    async def close(self):
+    def close(self):
         """Close the gRPC connection"""
         if self.channel:
             self.channel.close()
             logger.info("gRPC connection closed")
+
+    # SQL (v1)
+    def execute_sql(self, query: str, parameters: Optional[list] = None, collection: Optional[str] = None):
+        """Execute SQL via proximadb.v1.SqlService.ExecuteSql (synchronous call)"""
+        try:
+            stub = v1_sql_pb2_grpc.SqlServiceStub(self.channel)
+            req = v1_types_pb2.ExecuteSqlRequest(query=query)
+            if parameters:
+                for p in parameters:
+                    sv = v1_types_pb2.SqlValue()
+                    if isinstance(p, bool):
+                        sv.bool_value = p
+                    elif isinstance(p, (int, float)):
+                        sv.number_value = float(p)
+                    else:
+                        sv.string_value = str(p)
+                    req.parameters.append(sv)
+            if collection:
+                req.collection = collection
+            return stub.ExecuteSql(req, timeout=self.timeout)
+        except Exception as e:
+            raise ProximaDBError(f"ExecuteSql failed: {e}")
     
     def _call_with_timeout(self, method, request, timeout=None):
         """Make gRPC call with timeout and error handling"""
         try:
             timeout = timeout or self.timeout
-            return method(request, timeout=timeout, compression=self.compression)
+            # Add compression metadata
+            metadata = []
+            if self.compression is not None:
+                metadata.append(('grpc-accept-encoding', 'gzip,deflate'))
+            
+            return method(request, timeout=timeout, compression=self.compression, metadata=metadata)
         except grpc.RpcError as e:
             raise ProximaDBError(f"gRPC error: {e.code()}: {e.details()}")
         except Exception as e:
             raise ProximaDBError(f"Unexpected error: {e}")
+
+    # -----------------------------
+    # Graph Operations (gRPC)
+    # -----------------------------
+    def shortest_path(
+        self,
+        start_node_id: str,
+        target_node_id: str,
+        max_depth: Optional[int] = None,
+        edge_types: Optional[List[str]] = None,
+        algorithm: str = "DIJKSTRA",
+        k: Optional[int] = None,
+        enable_prefetch: Optional[bool] = None,
+        prefetch_budget: Optional[int] = None,
+        timeout: Optional[float] = None,
+    ):
+        """Compute shortest path via proximadb.v1.GraphService with per-call prefetch overrides."""
+        try:
+            from proximadb.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
+            from proximadb.v1 import graph_pb2 as v1_graph_pb2  # type: ignore
+        except Exception as e:
+            raise ProximaDBError("GraphService stubs not found. Run: make -C clients/python gen-proto")
+
+        stub = v1_graph_pb2_grpc.GraphServiceStub(self.channel)
+        algo_enum = {
+            "DIJKSTRA": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA,
+            "ASTAR": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_ASTAR,
+        }.get(algorithm.upper(), v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA)
+
+        req = v1_graph_pb2.ShortestPathRequest(
+            start_node_id=start_node_id,
+            target_node_id=target_node_id,
+            max_depth=max_depth or 0,
+            edge_types=edge_types or [],
+            algorithm=algo_enum,
+            k=k or 0,
+        )
+
+        metadata = []
+        if enable_prefetch is not None:
+            metadata.append(("x-graph-prefetch-enabled", "true" if enable_prefetch else "false"))
+        if prefetch_budget is not None:
+            metadata.append(("x-graph-prefetch-budget", str(prefetch_budget)))
+
+        return stub.ShortestPath(req, timeout=timeout or self.timeout, metadata=metadata)
     
     # Collection Operations
     
@@ -148,7 +241,7 @@ class ProximaDBClient:
         """
         return collection_id
     
-    async def get_collection_id_by_name(self, collection_name: str) -> Optional[str]:
+    def get_collection_id_by_name(self, collection_name: str) -> Optional[str]:
         """
         Get collection UUID by name using the dedicated gRPC operation.
         
@@ -168,7 +261,7 @@ class ProximaDBClient:
                 collection_id=collection_name
             )
             
-            response = await self._make_call(
+            response = self._call_with_timeout(
                 self.stub.CollectionOperation,
                 request
             )
@@ -184,21 +277,21 @@ class ProximaDBClient:
             logger.error(f"gRPC error getting collection ID by name: {e}")
             # Fallback to the original method
             try:
-                collection = await self.get_collection(collection_name)
+                collection = self.get_collection(collection_name)
                 if collection and hasattr(collection, 'id'):
                     return collection.id
                 return None
-            except CollectionNotFoundError:
+            except:
                 return None
         except Exception as e:
             logger.error(f"Error getting collection ID by name: {e}")
             # Fallback to the original method
             try:
-                collection = await self.get_collection(collection_name)
+                collection = self.get_collection(collection_name)
                 if collection and hasattr(collection, 'id'):
                     return collection.id
                 return None
-            except CollectionNotFoundError:
+            except:
                 return None
     
     def create_collection(
@@ -214,9 +307,8 @@ class ProximaDBClient:
     ):
         """Create a new collection"""
         
-        # Ensure pb2 is available
-        if pb2 is None:
-            from .. import proximadb_pb2 as pb2
+        # Import pb2 in method scope
+        from .. import proximadb_pb2 as pb2
         
         # Set default values if not provided
         if distance_metric is None:
@@ -230,17 +322,27 @@ class ProximaDBClient:
         if index_configs is None:
             index_configs = []
         
-        # Build CollectionConfig using proto types
+        # Build CollectionConfig using proto types (align with current proto)
         config = pb2.CollectionConfig(
             name=name,
             dimension=dimension,
             distance_metric=distance_metric,
-            primary_indexing_algorithm=indexing_algorithm,
             storage_engine=storage_engine,
             filterable_columns=filterable_columns or [],
-            index_configs=index_configs or [],
-            quantization_config=quantization_config
         )
+        # Indexing: prefer provided index_configs; otherwise create a simple primary index config
+        if index_configs:
+            config.index_configs.extend(index_configs)
+        elif indexing_algorithm is not None:
+            ic = pb2.IndexConfig(
+                index_name=f"{name}_primary",
+                algorithm=indexing_algorithm,
+                is_primary=True,
+            )
+            config.index_configs.extend([ic])
+        # Quantization config
+        if quantization_config is not None:
+            config.quantization.CopyFrom(quantization_config)
         
         # Build CollectionRequest
         request = pb2.CollectionRequest(
@@ -308,7 +410,7 @@ class ProximaDBClient:
         
         return True
     
-    async def update_collection(self, name: str, config):
+    def update_collection(self, name: str, config):
         """Update collection configuration"""
         
         # Use provided config directly (it's already a proto object)
@@ -576,7 +678,8 @@ class ProximaDBClient:
         metadata_filters: Optional[Union[Dict[str, Any], Any]] = None,  # Dict or FilterBuilder
         include_metadata: bool = True,
         include_vectors: bool = False,
-        search_params = None
+        search_params = None,
+        search_hints: Optional[Dict[str, Any]] = None
     ):
         """
         Search for similar vectors
@@ -641,6 +744,29 @@ class ProximaDBClient:
             # Add search parameters if provided
             if search_params:
                 request.search_params.CopyFrom(search_params)
+                
+            # Add search optimization hints if provided
+            if search_hints:
+                from ..search_utils import build_search_params_grpc
+                search_optimization = build_search_params_grpc(
+                    top_k=search_hints.get('top_k', top_k),
+                    enable_two_stage=search_hints.get('enable_two_stage'),
+                    quantization_hint=search_hints.get('quantization_hint'),
+                    accuracy_threshold=search_hints.get('accuracy_threshold'),
+                    enable_clustering_hint=search_hints.get('enable_clustering_hint'),
+                    enable_metadata_filtering_hint=search_hints.get('enable_metadata_filtering_hint'),
+                    include_expired=search_hints.get('include_expired'),
+                    timeout_ms=search_hints.get('timeout_ms'),
+                    custom_hints=search_hints.get('custom_hints'),
+                    distance_metric=search_hints.get('distance_metric'),
+                    requires_ordering=search_hints.get('requires_ordering'),
+                    candidate_multiplier=search_hints.get('candidate_multiplier'),
+                    streaming_buffer_size=search_hints.get('streaming_buffer_size'),
+                    streaming_concurrent_search=search_hints.get('streaming_concurrent_search'),
+                    streaming_max_concurrent_tasks=search_hints.get('streaming_max_concurrent_tasks'),
+                    streaming_batch_size=search_hints.get('streaming_batch_size')
+                )
+                request.search_optimization.CopyFrom(search_optimization)
             
             # Call gRPC service
             response = self._call_with_timeout(self.stub.VectorSearch, request)
@@ -651,7 +777,48 @@ class ProximaDBClient:
             logger.error(f"gRPC error during vector search: {e}")
             raise ProximaDBError(f"Vector search failed: {str(e)}")
     
-    # Removed _value_to_metadata_value - no longer needed with repeated MetadataItem structure
+    def _value_to_metadata_value(self, value: Any) -> "pb2.MetadataValue":
+        """Convert Python value to protobuf MetadataValue"""
+        metadata_value = pb2.MetadataValue()
+        
+        if isinstance(value, bool):
+            metadata_value.bool_value = value
+        elif isinstance(value, int):
+            metadata_value.int_value = value
+        elif isinstance(value, float):
+            metadata_value.float_value = value
+        elif isinstance(value, str):
+            metadata_value.string_value = value
+        else:
+            # Convert to string as fallback
+            metadata_value.string_value = str(value)
+            
+        return metadata_value
+    
+    def upsert_vectors(
+        self,
+        collection_id: str,
+        records: List[Any],
+    ):
+        """Upsert multiple vectors (insert or update)
+        
+        Args:
+            collection_id: Target collection ID
+            records: List of VectorRecord objects
+            
+        Returns:
+            VectorOperationResponse
+        """
+        # Convert VectorRecord objects to dicts
+        vector_dicts = []
+        for record in records:
+            vector_dicts.append({
+                "id": record.id,
+                "vector": record.vector,
+                "metadata": record.metadata if record.metadata else {}
+            })
+        
+        return self.insert_vectors(collection_id, vector_dicts, upsert=True)
     
     def update_vector(
         self,
@@ -675,7 +842,7 @@ class ProximaDBClient:
         # Use upsert to update the vector
         vector_dict = {
             "id": vector_id,
-            "vector": vector or [0.0],  # Placeholder if no vector provided
+            "vector": vector if vector is not None else [],  # Empty list if no vector provided
             "metadata": metadata or {}
         }
         
@@ -692,12 +859,14 @@ class ProximaDBClient:
         Returns:
             VectorOperationResponse proto
         """
-        # Create record with expires_at=0 to mark for deletion
+        # Create record with expires_at set to past timestamp to mark for deletion
+        import time
+        past_timestamp = int(time.time() - 1)  # 1 second ago in seconds (proto expects seconds)
         delete_record = {
             "id": vector_id,
-            "vector": [0.0],  # Placeholder vector
+            "vector": [],  # Empty vector - server should handle appropriately
             "metadata": {},
-            "expires_at": 0  # Mark for deletion
+            "expires_at": past_timestamp  # Mark for deletion with past timestamp
         }
         
         return self.insert_vectors(collection_id, [delete_record], upsert=False)
@@ -710,7 +879,7 @@ class ProximaDBClient:
         include_metadata: bool = True
     ):
         """
-        Get a single vector by ID using VectorGet RPC
+        Get a single vector by ID using the proper VectorGet RPC
         
         Args:
             collection_id: Collection name/ID
@@ -719,41 +888,83 @@ class ProximaDBClient:
             include_metadata: Include metadata
             
         Returns:
-            SearchResult proto or None if not found
+            Dict with vector data or raises ProximaDBError if not found
         """
-        # Create include fields
-        include_fields = pb2.IncludeFields(
-            vector=include_vector,
-            metadata=include_metadata,
-            score=True,
-            rank=True
-        )
-        
-        # Create vector get request
-        request = pb2.VectorGetRequest(
-            collection_id=collection_id,
-            vector_id=vector_id,
-            include_fields=include_fields
-        )
-        
         try:
+            # Create include fields
+            include_fields = pb2.IncludeFields(
+                vector=include_vector,
+                metadata=include_metadata,
+                score=False,  # Not relevant for get operation
+                rank=False   # Not relevant for get operation
+            )
+            
+            # Create get request
+            request = pb2.VectorGetRequest(
+                collection_id=collection_id,
+                vector_id=vector_id,
+                include_fields=include_fields
+            )
+            
+            # Call the proper VectorGet RPC
             response = self._call_with_timeout(self.stub.VectorGet, request)
             
-            if response.success:
-                # Check for results in compact format
-                if hasattr(response, 'result_payload') and response.result_payload:
-                    if hasattr(response.result_payload, 'compact_results'):
-                        compact_results = response.result_payload.compact_results
-                        if compact_results.results:
-                            return compact_results.results[0]
+            # Check if operation was successful
+            if not response.success:
+                raise ProximaDBError(f"Vector not found: {vector_id}")
                 
-            return None
+            # Extract result from response
+            result_data = None
+            if hasattr(response, 'result_payload') and response.result_payload:
+                if hasattr(response.result_payload, 'compact_results') and response.result_payload.compact_results:
+                    if response.result_payload.compact_results.results:
+                        result_data = response.result_payload.compact_results.results[0]
+            elif hasattr(response, 'compact_results') and response.compact_results:
+                if response.compact_results.results:
+                    result_data = response.compact_results.results[0]
+            
+            if not result_data:
+                raise ProximaDBError(f"Vector not found: {vector_id}")
+            
+            # Parse metadata if included
+            metadata = {}
+            if include_metadata and result_data.metadata:
+                for item in result_data.metadata:
+                    # Handle protobuf oneof value
+                    value = None
+                    if item.HasField('string_value'):
+                        value = item.string_value
+                    elif item.HasField('number_value'):
+                        value = item.number_value
+                    elif item.HasField('bool_value'):
+                        value = item.bool_value
+                    
+                    if value is not None:
+                        metadata[item.key] = value
+            
+            return {
+                'id': result_data.id,
+                'vector': list(result_data.vector) if include_vector and result_data.vector else None,
+                'metadata': metadata,
+                'score': result_data.score if hasattr(result_data, 'score') else 0.0,
+                'rank': result_data.rank if hasattr(result_data, 'rank') else 0
+            }
             
         except grpc.RpcError as e:
+            import logging
+            logger = logging.getLogger(__name__)
             logger.error(f"gRPC error during vector get: {e}")
-            return None
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                raise ProximaDBError(f"Vector not found: {vector_id}")
+            else:
+                raise ProximaDBError(f"Get vector failed: {str(e)}")
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Unexpected error during vector get: {e}")
+            raise ProximaDBError(f"Get vector failed: {str(e)}")
     
-    async def update_collection(
+    def update_collection_extended(
         self,
         collection_id: str,
         updates: Dict[str, Any]
@@ -775,7 +986,7 @@ class ProximaDBClient:
                 query_params=updates
             )
             
-            response = await self.stub.CollectionOperation(request, timeout=self.timeout)
+            response = self._call_with_timeout(self.stub.CollectionOperation, request)
             
             if response.success and response.collection:
                 return self._convert_collection(response.collection)
@@ -829,7 +1040,7 @@ class ProximaDBClient:
             logger.error(f"gRPC error during vector deletion by filter: {e}")
             raise ProximaDBError(f"Vector deletion by filter failed: {str(e)}")
     
-    async def get_vector_history(
+    def get_vector_history(
         self,
         collection_id: str,
         vector_id: str,
@@ -849,7 +1060,7 @@ class ProximaDBClient:
         # For now, return placeholder indicating not implemented
         raise ProximaDBError("Vector history not implemented on server yet")
     
-    async def multi_search(
+    def multi_search(
         self,
         collection_id: str,
         queries: List[List[float]],
@@ -895,7 +1106,7 @@ class ProximaDBClient:
                 include_fields=include_fields
             )
             
-            response = await self.stub.VectorSearch(request, timeout=self.timeout)
+            response = self._call_with_timeout(self.stub.VectorSearch, request)
             
             if response.success:
                 results = []
@@ -912,7 +1123,8 @@ class ProximaDBClient:
                             id=result_pb.id if result_pb.id else None,
                             score=result_pb.score,
                             vector=list(result_pb.vector) if result_pb.vector else None,
-                            metadata=metadata_dict if metadata_dict else None
+                            metadata=metadata_dict if metadata_dict else None,
+                            rank=result_pb.rank if hasattr(result_pb, 'rank') and result_pb.rank else None
                         ))
                 return results
             else:
@@ -924,7 +1136,7 @@ class ProximaDBClient:
             logger.error(f"gRPC error during multi-search: {e}")
             raise ProximaDBError(f"Multi-search failed: {str(e)}")
     
-    async def search_with_aggregations(
+    def search_with_aggregations(
         self,
         collection_id: str,
         query: List[float],
@@ -950,7 +1162,7 @@ class ProximaDBClient:
         # For now, return placeholder indicating not implemented
         raise ProximaDBError("Search with aggregations not implemented on server yet")
     
-    async def atomic_insert_vectors(
+    def atomic_insert_vectors(
         self,
         collection_id: str,
         vectors: List[List[float]],
@@ -970,9 +1182,9 @@ class ProximaDBClient:
         """
         # For atomic operations, we could extend the VectorInsertRequest with an atomic flag
         # For now, use regular insert_vectors and hope for atomicity
-        return await self.insert_vectors(collection_id, vectors, ids, metadata)
+        return self.insert_vectors(collection_id, vectors, ids, metadata)
     
-    async def begin_transaction(self) -> str:
+    def begin_transaction(self) -> str:
         """Begin a new transaction and return transaction ID
         
         Returns:
@@ -982,7 +1194,7 @@ class ProximaDBClient:
         # For now, return placeholder indicating not implemented
         raise ProximaDBError("Transactions not implemented on server yet")
     
-    async def commit_transaction(self, transaction_id: str) -> bool:
+    def commit_transaction(self, transaction_id: str) -> bool:
         """Commit a transaction
         
         Args:
@@ -1026,7 +1238,7 @@ class ProximaDBClient:
         logger.debug(f"Creating proto batch for {len(vectors)} vectors")
         
         proto_vectors = []
-        current_time = int(time.time() * 1_000_000)  # Microseconds since epoch
+        current_time = int(time.time())  # Seconds since epoch
         
         try:
             # Convert input vectors to proto VectorRecord messages
@@ -1052,34 +1264,17 @@ class ProximaDBClient:
                     
                     # Set metadata (repeated MetadataItem for zero-copy efficiency)
                     if vec.get('metadata') and isinstance(vec['metadata'], dict):
-                        for key, value in vec['metadata'].items():
-                            metadata_item = pb2.MetadataItem()
-                            metadata_item.key = str(key)
-                            # Convert all values to string for consistent handling
-                            if isinstance(value, str):
-                                metadata_item.value = value
-                            elif isinstance(value, (int, float, bool)):
-                                metadata_item.value = str(value)
-                            elif value is None:
-                                metadata_item.value = ""
-                            else:
-                                # Convert complex types to JSON string
-                                import json
-                                metadata_item.value = json.dumps(value)
-                            
-                            proto_vector.metadata.append(metadata_item)
+                        from ..metadata_utils import dict_to_proto_metadata
+                        proto_vector.metadata.extend(dict_to_proto_metadata(vec['metadata']))
                     
-                    # Set timestamp (optional, microseconds since epoch)
-                    timestamp = vec.get('timestamp')
-                    if timestamp is not None:
-                        if isinstance(timestamp, (int, float)):
-                            # Convert to microseconds if needed
-                            if timestamp < 1e10:  # Assume seconds, convert to microseconds
-                                proto_vector.timestamp = int(timestamp * 1_000_000)
-                            else:  # Already in microseconds
-                                proto_vector.timestamp = int(timestamp)
+                    # Set timestamp (required, seconds since epoch)
+                    timestamp = vec.get('timestamp', current_time)
+                    if isinstance(timestamp, (int, float)):
+                        # Ensure it's in seconds (not microseconds)
+                        if timestamp > 1e10:  # Looks like microseconds, convert to seconds
+                            proto_vector.timestamp = int(timestamp / 1_000_000)
                         else:
-                            proto_vector.timestamp = current_time
+                            proto_vector.timestamp = int(timestamp)
                     else:
                         proto_vector.timestamp = current_time
                     

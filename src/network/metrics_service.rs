@@ -18,17 +18,16 @@
 //! This is a service that creates metrics endpoints, not a server that binds to ports
 
 use axum::{
+    Router,
     extract::{Query, State},
     http::StatusCode,
     response::Json,
     routing::get,
-    Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::monitoring::metrics::exporters::{MetricsExporter, PrometheusExporter};
-use crate::monitoring::metrics::{Alert, SystemMetrics};
+use crate::metrics::exporters::PrometheusExporter;
 use crate::monitoring::MetricsCollector;
 
 /// Metrics Service configuration
@@ -125,11 +124,11 @@ async fn metrics_endpoint(
 
     match format.as_str() {
         "json" => {
-            let metrics = metrics_collector.get_current_metrics().await;
+            let metrics = metrics_collector.current_metrics().await;
             serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
         "prometheus" | _ => {
-            let metrics = metrics_collector.get_current_metrics().await;
+            let metrics = metrics_collector.current_metrics().await;
             let exporter = PrometheusExporter::new();
             exporter
                 .export_system_metrics(&metrics)
@@ -142,9 +141,9 @@ async fn metrics_endpoint(
 async fn json_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
     State(metrics_collector): State<Arc<MetricsCollector>>,
-) -> Json<SystemMetrics> {
+) -> Json<crate::metrics::SystemMetrics> {
     let _since = params.since; // TODO: Use for historical data
-    let metrics = metrics_collector.get_current_metrics().await;
+    let metrics = metrics_collector.current_metrics().await;
     Json(metrics)
 }
 
@@ -152,7 +151,7 @@ async fn json_metrics_endpoint(
 async fn prometheus_metrics_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Result<String, StatusCode> {
-    let metrics = metrics_collector.get_current_metrics().await;
+    let metrics = metrics_collector.current_metrics().await;
     let exporter = PrometheusExporter::new();
     exporter
         .export_system_metrics(&metrics)
@@ -163,7 +162,7 @@ async fn prometheus_metrics_endpoint(
 async fn metrics_health_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Json<MetricsHealthResponse> {
-    let metrics = metrics_collector.get_current_metrics().await;
+    let metrics = metrics_collector.current_metrics().await;
 
     Json(MetricsHealthResponse {
         status: "healthy".to_string(),
@@ -176,7 +175,7 @@ async fn metrics_health_endpoint(
 /// Active alerts endpoint
 async fn alerts_endpoint(
     State(metrics_collector): State<Arc<MetricsCollector>>,
-) -> Json<Vec<Alert>> {
-    let alerts = metrics_collector.get_active_alerts().await;
+) -> Json<Vec<crate::metrics::Alert>> {
+    let alerts = metrics_collector.active_alerts().await;
     Json(alerts)
 }

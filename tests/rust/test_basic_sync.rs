@@ -1,18 +1,19 @@
 //! Basic functionality test
 
 use std::collections::BTreeMap;
+use tracing::{debug, error, info, warn};
 
 fn main() {
-    println!("🧪 Testing basic BTreeMap functionality...");
+    debug!("🧪 Testing basic BTreeMap functionality...");
     
     let mut btree: BTreeMap<String, i32> = BTreeMap::new();
     btree.insert("key1".to_string(), 100);
     
-    match btree.get("key1") {
-        Some(value) => println!("✅ BTreeMap test passed: {}", value),
-        None => println!("❌ BTreeMap test failed"),
+    match btree.get(key) {
+        Some(value) => debug!("✅ BTreeMap test passed: {}", value),
+        None => debug!("❌ BTreeMap test failed"),
     }
     
-    println!("🎉 Basic test completed successfully!");
-    println!("📊 Unified memtable architecture is structurally sound!");
+    debug!("🎉 Basic test completed successfully!");
+    debug!("📊 Unified memtable architecture is structurally sound!");
 }

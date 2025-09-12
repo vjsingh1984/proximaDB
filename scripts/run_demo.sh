@@ -112,7 +112,7 @@ run_local_demo() {
         fi
         
         # Start server in background
-        RUST_LOG=info ./target/release/proximadb-server --config config.toml &
+        RUST_LOG=info ./target/release/proximadb-server --config config/config.toml &
         SERVER_PID=$!
         
         # Wait for server to start
@@ -154,7 +154,7 @@ run_dev_demo() {
     
     # Start server in debug mode
     print_info "Starting ProximaDB server in debug mode..."
-    RUST_LOG=debug cargo run --bin proximadb-server -- --config config.toml &
+    RUST_LOG=debug cargo run --bin proximadb-server -- --config config/config.toml &
     SERVER_PID=$!
     
     # Wait for server

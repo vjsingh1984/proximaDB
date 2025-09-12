@@ -4,30 +4,31 @@
 //! and integration with flush operations.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use proximadb::core::LsmConfig;
-use proximadb::storage::engines::lsm::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::lsm::LsmRecord;
-use proximadb::storage::persistence::wal::background_manager::BackgroundMaintenanceManager;
-use proximadb::storage::persistence::wal::config::WalConfig;
+use proximadb::core::SstConfig;
+use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::sst::SstRecord;
+use proximadb::storage::persistence::write_ahead_log::background_manager::BackgroundMaintenanceManager;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 
 /// Helper function to create test LSM records
-fn create_test_lsm_records(collection_id: &str, count: usize) -> Vec<LsmRecord> {
+fn create_test_sst_records(collection_id: &str, count: usize) -> Vec<SstRecord> {
     let now = chrono::Utc::now().timestamp_millis();
     
     (0..count)
-        .map(|i| LsmRecord {
+        .map(|i| SstRecord {
             id: format!("lsm_record_{}", i),
             collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 100], // 100-dimensional vector
             metadata: std::collections::HashMap::new(),
-            timestamp: now,
+            timestamp: now as u32,
             created_at: now,
-            updated_at: now,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: i as u64,
             level: 0,
@@ -38,7 +39,7 @@ fn create_test_lsm_records(collection_id: &str, count: usize) -> Vec<LsmRecord> 
 /// Helper function to create test SST file with records
 async fn create_test_sst_file(
     file_path: &std::path::Path,
-    records: &[LsmRecord],
+    records: &[SstRecord],
 ) -> Result<()> {
     let mut file_data = Vec::new();
     
@@ -55,11 +56,11 @@ async fn create_test_sst_file(
 #[tokio::test]
 async fn test_compaction_threshold_configuration() -> Result<()> {
     // Test default compaction threshold
-    let default_config = LsmConfig::default();
+    let default_config = SstConfig::default();
     assert_eq!(default_config.compaction_threshold, 4);
     
     // Test custom compaction threshold
-    let mut custom_config = LsmConfig::default();
+    let mut custom_config = SstConfig::default();
     custom_config.compaction_threshold = 2; // More aggressive compaction
     assert_eq!(custom_config.compaction_threshold, 2);
     
@@ -70,7 +71,7 @@ async fn test_compaction_threshold_configuration() -> Result<()> {
     assert!(custom_config.compaction_threshold > 0);
     assert!(custom_config.compaction_threshold < 10); // Reasonable upper bound
     
-    println!("✅ Compaction threshold configuration test passed");
+    debug!("✅ Compaction threshold configuration test passed");
     Ok(())
 }
 
@@ -81,29 +82,30 @@ async fn test_compaction_trigger_conditions() -> Result<()> {
     let collection_dir = temp_dir.path().join(collection_id);
     std::fs::create_dir_all(&collection_dir)?;
     
-    let config = LsmConfig {
+    let config = SstConfig {
         compaction_threshold: 2, // Trigger compaction with 2 files
         data_directory: temp_dir.path().to_string_lossy().to_string(),
-        ..Default::default()
+        ..Default::default(),
+        decompression_cache_config: None,
     };
     
     // Create test records
-    let records_file1 = create_test_lsm_records(collection_id, 100);
-    let records_file2 = create_test_lsm_records(collection_id, 150);
-    let records_file3 = create_test_lsm_records(collection_id, 200);
+    let records_file1 = create_test_sst_records(collection_id, 100);
+    let records_file2 = create_test_sst_records(collection_id, 150);
+    let records_file3 = create_test_sst_records(collection_id, 200);
     
     // Create SST files
-    let sst_file1 = collection_dir.join("sst_1.sst");
-    let sst_file2 = collection_dir.join("sst_2.sst");
-    let sst_file3 = collection_dir.join("sst_3.sst");
+    let sst_file1 = collection_dir.join("sst_1.sstable");
+    let sst_file2 = collection_dir.join("sst_2.sstable");
+    let sst_file3 = collection_dir.join("sst_3.sstable");
     
     create_test_sst_file(&sst_file1, &records_file1).await?;
     create_test_sst_file(&sst_file2, &records_file2).await?;
     create_test_sst_file(&sst_file3, &records_file3).await?;
     
     // Test compaction with threshold reached
-    let compaction_manager = CompactionManager::new(config.clone());
-    let output_file = collection_dir.join("compacted_output.sst");
+    let compaction_manager = CompactionManager::new(config.clone()).await.unwrap();
+    let output_file = collection_dir.join("compacted_output.sstable");
     
     let task = CompactionTask {
         collection_id: collection_id.to_string(),
@@ -122,7 +124,7 @@ async fn test_compaction_trigger_conditions() -> Result<()> {
     assert!(stats.bytes_written > 0);
     assert!(output_file.exists());
     
-    println!("✅ Compaction trigger conditions test passed");
+    debug!("✅ Compaction trigger conditions test passed");
     Ok(())
 }
 
@@ -133,14 +135,15 @@ async fn test_compaction_priority_levels() -> Result<()> {
     let collection_dir = temp_dir.path().join(collection_id);
     std::fs::create_dir_all(&collection_dir)?;
     
-    let config = LsmConfig {
+    let config = SstConfig {
         data_directory: temp_dir.path().to_string_lossy().to_string(),
-        ..Default::default()
+        ..Default::default(),
+        decompression_cache_config: None,
     };
     
     // Create test records
-    let records = create_test_lsm_records(collection_id, 100);
-    let input_file = collection_dir.join("input.sst");
+    let records = create_test_sst_records(collection_id, 100);
+    let input_file = collection_dir.join("input.sstable");
     create_test_sst_file(&input_file, &records).await?;
     
     // Test different priority levels
@@ -152,7 +155,7 @@ async fn test_compaction_priority_levels() -> Result<()> {
     ];
     
     for (i, priority) in priorities.iter().enumerate() {
-        let output_file = collection_dir.join(format!("output_{}.sst", i));
+        let output_file = collection_dir.join(format!("output_{}.sstable", i));
         
         let task = CompactionTask {
             collection_id: collection_id.to_string(),
@@ -168,10 +171,10 @@ async fn test_compaction_priority_levels() -> Result<()> {
         assert_eq!(stats.total_compactions, 1);
         assert!(output_file.exists());
         
-        println!("Compaction with priority {:?} completed", priority);
+        debug!("Compaction with priority {:?} completed", priority);
     }
     
-    println!("✅ Compaction priority levels test passed");
+    debug!("✅ Compaction priority levels test passed");
     Ok(())
 }
 
@@ -182,9 +185,10 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     let collection_dir = temp_dir.path().join(collection_id);
     std::fs::create_dir_all(&collection_dir)?;
     
-    let config = LsmConfig {
+    let config = SstConfig {
         data_directory: temp_dir.path().to_string_lossy().to_string(),
-        ..Default::default()
+        ..Default::default(),
+        decompression_cache_config: None,
     };
     
     let current_time = chrono::Utc::now().timestamp_millis();
@@ -195,7 +199,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     
     // Active records (no expiry)
     for i in 0..50 {
-        records.push(LsmRecord {
+        records.push(SstRecord {
             id: format!("active_record_{}", i),
             collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 100],
@@ -204,7 +208,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
             created_at: current_time,
             updated_at: current_time,
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: i as u64,
             level: 0,
@@ -213,7 +217,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     
     // Expired records (should be deleted during compaction)
     for i in 50..100 {
-        records.push(LsmRecord {
+        records.push(SstRecord {
             id: format!("expired_record_{}", i),
             collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 100],
@@ -222,7 +226,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
             created_at: expired_time,
             updated_at: expired_time,
             expires_at: Some(expired_time),
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: i as u64,
             level: 0,
@@ -230,11 +234,11 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     }
     
     // Create input file
-    let input_file = collection_dir.join("input_with_expired.sst");
+    let input_file = collection_dir.join("input_with_expired.sstable");
     create_test_sst_file(&input_file, &records).await?;
     
     // Perform compaction
-    let output_file = collection_dir.join("compacted_without_expired.sst");
+    let output_file = collection_dir.join("compacted_without_expired.sstable");
     let task = CompactionTask {
         collection_id: collection_id.to_string(),
         level: 0,
@@ -273,7 +277,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = bincode::deserialize::<LsmRecord>(entry_data) {
+        if let Ok(record) = SstRecord::deserialize(entry_data) {
             remaining_records.push(record);
         }
         
@@ -282,14 +286,14 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     
     assert_eq!(remaining_records.len(), 50); // Only active records should remain
     
-    println!("✅ Compaction with expired records test passed");
+    debug!("✅ Compaction with expired records test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_compaction_background_integration() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB
     
     let manager = BackgroundMaintenanceManager::new(Arc::new(config));
@@ -311,7 +315,7 @@ async fn test_compaction_background_integration() -> Result<()> {
     let stats = manager.get_stats().await;
     assert!(stats.total_flush_operations > 0 || stats.total_compaction_operations > 0);
     
-    println!("✅ Compaction background integration test passed");
+    debug!("✅ Compaction background integration test passed");
     Ok(())
 }
 
@@ -330,12 +334,13 @@ async fn test_compaction_level_configuration() -> Result<()> {
     ];
     
     for (level_count, memtable_size) in level_configs {
-        let config = LsmConfig {
+        let config = SstConfig {
             level_count,
             memtable_size_mb: memtable_size / (1024 * 1024) as u64,
             data_directory: temp_dir.path().to_string_lossy().to_string(),
-            ..Default::default()
-        };
+            ..Default::default(),
+        decompression_cache_config: None,
+    };
         
         // Verify configuration is valid
         assert!(config.level_count > 0);
@@ -343,11 +348,11 @@ async fn test_compaction_level_configuration() -> Result<()> {
         assert!(config.memtable_size_mb > 0);
         
         // Test compaction with different levels
-        let records = create_test_lsm_records(collection_id, 100);
-        let input_file = collection_dir.join(format!("input_level_{}.sst", level_count));
+        let records = create_test_sst_records(collection_id, 100);
+        let input_file = collection_dir.join(format!("input_level_{}.sstable", level_count));
         create_test_sst_file(&input_file, &records).await?;
         
-        let output_file = collection_dir.join(format!("output_level_{}.sst", level_count));
+        let output_file = collection_dir.join(format!("output_level_{}.sstable", level_count));
         let task = CompactionTask {
             collection_id: collection_id.to_string(),
             level: 0,
@@ -362,10 +367,10 @@ async fn test_compaction_level_configuration() -> Result<()> {
         assert_eq!(stats.total_compactions, 1);
         assert!(output_file.exists());
         
-        println!("Level {} configuration test passed", level_count);
+        debug!("Level {} configuration test passed", level_count);
     }
     
-    println!("✅ Compaction level configuration test passed");
+    debug!("✅ Compaction level configuration test passed");
     Ok(())
 }
 
@@ -376,20 +381,21 @@ async fn test_compaction_performance_metrics() -> Result<()> {
     let collection_dir = temp_dir.path().join(collection_id);
     std::fs::create_dir_all(&collection_dir)?;
     
-    let config = LsmConfig {
+    let config = SstConfig {
         data_directory: temp_dir.path().to_string_lossy().to_string(),
-        ..Default::default()
+        ..Default::default(),
+        decompression_cache_config: None,
     };
     
     // Create larger dataset for performance testing
-    let large_records = create_test_lsm_records(collection_id, 5000);
-    let input_file = collection_dir.join("large_input.sst");
+    let large_records = create_test_sst_records(collection_id, 5000);
+    let input_file = collection_dir.join("large_input.sstable");
     create_test_sst_file(&input_file, &large_records).await?;
     
     // Measure compaction performance
     let start_time = std::time::Instant::now();
     
-    let output_file = collection_dir.join("performance_output.sst");
+    let output_file = collection_dir.join("performance_output.sstable");
     let task = CompactionTask {
         collection_id: collection_id.to_string(),
         level: 0,
@@ -415,11 +421,11 @@ async fn test_compaction_performance_metrics() -> Result<()> {
     // Calculate throughput
     let throughput_mb_per_sec = (stats.bytes_read as f64 / (1024.0 * 1024.0)) / compaction_duration.as_secs_f64();
     
-    println!("✅ Compaction performance metrics test passed");
-    println!("   Compaction duration: {:?}", compaction_duration);
-    println!("   Bytes read: {}", stats.bytes_read);
-    println!("   Bytes written: {}", stats.bytes_written);
-    println!("   Throughput: {:.2} MB/sec", throughput_mb_per_sec);
+    debug!("✅ Compaction performance metrics test passed");
+    debug!("   Compaction duration: {:?}", compaction_duration);
+    debug!("   Bytes read: {}", stats.bytes_read);
+    debug!("   Bytes written: {}", stats.bytes_written);
+    debug!("   Throughput: {:.2} MB/sec", throughput_mb_per_sec);
     
     Ok(())
 }

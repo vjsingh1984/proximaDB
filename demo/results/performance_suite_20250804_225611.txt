@@ -1,0 +1,346 @@
+ℹ️ Configuration: 2 engines, 2 protocols
+ℹ️ Comparing REST vs gRPC protocol performance for each storage engine
+ℹ️ Testing REST protocol with 1,000 vectors
+📊 SST REST: 3300 vec/s insert, 3.2ms search
+ℹ️ Testing GRPC protocol with 1,000 vectors
+📊 SST GRPC: 5601 vec/s insert, 2.5ms search
+ℹ️ Testing REST protocol with 1,000 vectors
+📊 VIPER REST: 3473 vec/s insert, 3.2ms search
+ℹ️ Testing GRPC protocol with 1,000 vectors
+📊 VIPER GRPC: 5702 vec/s insert, 2.5ms search
+ℹ️ Testing identical workloads on both protocols
+📊 REST 100 vectors: 3079 vec/s insert, 0.99ms search
+📊 REST 500 vectors: 3543 vec/s insert, 1.97ms search
+📊 REST 1000 vectors: 3669 vec/s insert, 4.01ms search
+📊 REST 5000 vectors: 3310 vec/s insert, 12.88ms search
+📊 GRPC 100 vectors: 4752 vec/s insert, 0.61ms search
+📊 GRPC 500 vectors: 5589 vec/s insert, 1.42ms search
+📊 GRPC 1000 vectors: 5654 vec/s insert, 2.48ms search
+📊 GRPC 5000 vectors: 5517 vec/s insert, 12.40ms search
+📊 100 vectors comparison: gRPC is 1.54x faster for insert, 1.61x faster for search
+📊 500 vectors comparison: gRPC is 1.58x faster for insert, 1.39x faster for search
+📊 1000 vectors comparison: gRPC is 1.54x faster for insert, 1.62x faster for search
+📊 5000 vectors comparison: gRPC is 1.67x faster for insert, 1.04x faster for search
+ℹ️ Testing: All Optimizations
+📊 All Optimizations: 1.1ms avg latency
+ℹ️ Testing: Bloom Filter Only
+📊 Bloom Filter Only: 1.1ms avg latency
+ℹ️ Testing: Parallel SST Only
+📊 Parallel SST Only: 1.1ms avg latency
+ℹ️ Testing: No Optimizations
+📊 No Optimizations: 1.1ms avg latency
+ℹ️ Testing SQL on SST engine
+ℹ️   Testing full_data_retrieval
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+📊 SST - full_data_retrieval: 1000.0ms
+ℹ️   Testing filtered_with_fields
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+📊 SST - filtered_with_fields: 1000.0ms
+ℹ️   Testing multi_filter_euclidean
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+📊 SST - multi_filter_euclidean: 1000.0ms
+ℹ️   Testing range_with_dot_product
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+📊 SST - range_with_dot_product: 1000.0ms
+ℹ️   Testing in_operator_manhattan
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+📊 SST - in_operator_manhattan: 1000.0ms
+ℹ️   Testing aggregation_query
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+📊 SST - aggregation_query: 1000.0ms
+ℹ️ Testing SQL on VIPER engine
+ℹ️   Testing full_data_retrieval
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 46","error_code":"SQL_EXECUTION_ERROR"}
+📊 VIPER - full_data_retrieval: 1000.0ms
+ℹ️   Testing filtered_with_fields
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 19","error_code":"SQL_EXECUTION_ERROR"}
+📊 VIPER - filtered_with_fields: 1000.0ms
+ℹ️   Testing multi_filter_euclidean
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+📊 VIPER - multi_filter_euclidean: 1000.0ms
+ℹ️   Testing range_with_dot_product
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 27","error_code":"SQL_EXECUTION_ERROR"}
+📊 VIPER - range_with_dot_product: 1000.0ms
+ℹ️   Testing in_operator_manhattan
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 38","error_code":"SQL_EXECUTION_ERROR"}
+📊 VIPER - in_operator_manhattan: 1000.0ms
+ℹ️   Testing aggregation_query
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+ℹ️   SQL query failed: SQL execution failed (HTTP 400): {"error":"SQL execution failed: Expected FROM at position 15","error_code":"SQL_EXECUTION_ERROR"}
+📊 VIPER - aggregation_query: 1000.0ms
+📊 full_data_retrieval: SST: 1000.0ms, VIPER: 1000.0ms (1.0x faster)
+📊 filtered_with_fields: SST: 1000.0ms, VIPER: 1000.0ms (1.0x faster)
+📊 multi_filter_euclidean: SST: 1000.0ms, VIPER: 1000.0ms (1.0x faster)
+📊 range_with_dot_product: SST: 1000.0ms, VIPER: 1000.0ms (1.0x faster)
+📊 in_operator_manhattan: SST: 1000.0ms, VIPER: 1000.0ms (1.0x faster)
+📊 aggregation_query: SST: 1000.0ms, VIPER: 1000.0ms (1.0x faster)
+ℹ️ Testing optimization hints on SST engine
+ℹ️   Testing no_hints
+📊 SST - no_hints: 31.2ms
+ℹ️   Testing hnsw_ef_50
+📊 SST - hnsw_ef_50: 31.0ms
+ℹ️   Testing hnsw_ef_200
+📊 SST - hnsw_ef_200: 31.2ms
+ℹ️   Testing hnsw_ef_500
+📊 SST - hnsw_ef_500: 31.6ms
+ℹ️   Testing ivf_probe_1
+📊 SST - ivf_probe_1: 31.1ms
+ℹ️   Testing ivf_probe_10
+📊 SST - ivf_probe_10: 31.4ms
+ℹ️   Testing ivf_probe_50
+📊 SST - ivf_probe_50: 31.0ms
+ℹ️   Testing parallel_4_threads
+📊 SST - parallel_4_threads: 31.1ms
+ℹ️   Testing parallel_8_threads
+📊 SST - parallel_8_threads: 31.1ms
+ℹ️   Testing batch_size_100
+📊 SST - batch_size_100: 31.1ms
+ℹ️   Testing batch_size_1000
+📊 SST - batch_size_1000: 31.2ms
+ℹ️   Testing two_stage_search
+📊 SST - two_stage_search: 31.5ms
+ℹ️   Testing no_quantization
+📊 SST - no_quantization: 31.0ms
+ℹ️   Testing scalar_quantization_8
+📊 SST - scalar_quantization_8: 31.6ms
+ℹ️   Testing scalar_quantization_16
+📊 SST - scalar_quantization_16: 30.9ms
+ℹ️   Testing product_quantization_8
+📊 SST - product_quantization_8: 31.5ms
+ℹ️   Testing product_quantization_16
+📊 SST - product_quantization_16: 31.0ms
+ℹ️   Testing metadata_filter_opt
+📊 SST - metadata_filter_opt: 31.2ms
+ℹ️   Testing clustering_hint
+📊 SST - clustering_hint: 32.2ms
+ℹ️ Testing optimization hints on VIPER engine
+ℹ️   Testing no_hints
+📊 VIPER - no_hints: 32.7ms
+ℹ️   Testing hnsw_ef_50
+📊 VIPER - hnsw_ef_50: 31.8ms
+ℹ️   Testing hnsw_ef_200
+📊 VIPER - hnsw_ef_200: 32.4ms
+ℹ️   Testing hnsw_ef_500
+📊 VIPER - hnsw_ef_500: 32.3ms
+ℹ️   Testing ivf_probe_1
+📊 VIPER - ivf_probe_1: 31.4ms
+ℹ️   Testing ivf_probe_10
+📊 VIPER - ivf_probe_10: 31.8ms
+ℹ️   Testing ivf_probe_50
+📊 VIPER - ivf_probe_50: 31.8ms
+ℹ️   Testing parallel_4_threads
+📊 VIPER - parallel_4_threads: 31.5ms
+ℹ️   Testing parallel_8_threads
+📊 VIPER - parallel_8_threads: 31.9ms
+ℹ️   Testing batch_size_100
+📊 VIPER - batch_size_100: 32.2ms
+ℹ️   Testing batch_size_1000
+📊 VIPER - batch_size_1000: 32.3ms
+ℹ️   Testing two_stage_search
+📊 VIPER - two_stage_search: 31.8ms
+ℹ️   Testing no_quantization
+📊 VIPER - no_quantization: 31.7ms
+ℹ️   Testing scalar_quantization_8
+📊 VIPER - scalar_quantization_8: 31.3ms
+ℹ️   Testing scalar_quantization_16
+📊 VIPER - scalar_quantization_16: 33.3ms
+ℹ️   Testing product_quantization_8
+📊 VIPER - product_quantization_8: 33.7ms
+ℹ️   Testing product_quantization_16
+📊 VIPER - product_quantization_16: 33.0ms
+ℹ️   Testing metadata_filter_opt
+📊 VIPER - metadata_filter_opt: 33.2ms
+ℹ️   Testing clustering_hint
+📊 VIPER - clustering_hint: 33.1ms
+ℹ️ 
+SST Engine:
+📊   hnsw_ef_50: 31.0ms (1.0x speedup)
+📊   hnsw_ef_200: 31.2ms (1.0x speedup)
+📊   hnsw_ef_500: 31.6ms (1.0x speedup)
+📊   ivf_probe_1: 31.1ms (1.0x speedup)
+📊   ivf_probe_10: 31.4ms (1.0x speedup)
+📊   ivf_probe_50: 31.0ms (1.0x speedup)
+📊   parallel_4_threads: 31.1ms (1.0x speedup)
+📊   parallel_8_threads: 31.1ms (1.0x speedup)
+📊   batch_size_100: 31.1ms (1.0x speedup)
+📊   batch_size_1000: 31.2ms (1.0x speedup)
+📊   two_stage_search: 31.5ms (1.0x speedup)
+📊   no_quantization: 31.0ms (1.0x speedup)
+📊   scalar_quantization_8: 31.6ms (1.0x speedup)
+📊   scalar_quantization_16: 30.9ms (1.0x speedup)
+📊   product_quantization_8: 31.5ms (1.0x speedup)
+📊   product_quantization_16: 31.0ms (1.0x speedup)
+📊   metadata_filter_opt: 31.2ms (1.0x speedup)
+📊   clustering_hint: 32.2ms (1.0x speedup)
+ℹ️ 
+VIPER Engine:
+📊   hnsw_ef_50: 31.8ms (1.0x speedup)
+📊   hnsw_ef_200: 32.4ms (1.0x speedup)
+📊   hnsw_ef_500: 32.3ms (1.0x speedup)
+📊   ivf_probe_1: 31.4ms (1.0x speedup)
+📊   ivf_probe_10: 31.8ms (1.0x speedup)
+📊   ivf_probe_50: 31.8ms (1.0x speedup)
+📊   parallel_4_threads: 31.5ms (1.0x speedup)
+📊   parallel_8_threads: 31.9ms (1.0x speedup)
+📊   batch_size_100: 32.2ms (1.0x speedup)
+📊   batch_size_1000: 32.3ms (1.0x speedup)
+📊   two_stage_search: 31.8ms (1.0x speedup)
+📊   no_quantization: 31.7ms (1.0x speedup)
+📊   scalar_quantization_8: 31.3ms (1.0x speedup)
+📊   scalar_quantization_16: 33.3ms (1.0x speedup)
+📊   product_quantization_8: 33.7ms (1.0x speedup)
+📊   product_quantization_16: 33.0ms (1.0x speedup)
+📊   metadata_filter_opt: 33.2ms (1.0x speedup)
+📊   clustering_hint: 33.1ms (1.0x speedup)
+ℹ️ Testing distance metrics on SST engine
+ℹ️   Testing cosine distance
+📊 SST - cosine: 12.6ms
+ℹ️   Testing euclidean distance
+📊 SST - euclidean: 12.6ms
+ℹ️   Testing dot_product distance
+📊 SST - dot_product: 12.0ms
+ℹ️   Testing manhattan distance
+📊 SST - manhattan: 12.2ms
+ℹ️   Testing hamming distance
+📊 SST - hamming: 12.1ms
+ℹ️   Testing jaccard distance
+📊 SST - jaccard: 12.1ms
+ℹ️ Testing distance metrics on VIPER engine
+ℹ️   Testing cosine distance
+📊 VIPER - cosine: 11.8ms
+ℹ️   Testing euclidean distance
+📊 VIPER - euclidean: 12.1ms
+ℹ️   Testing dot_product distance
+📊 VIPER - dot_product: 12.1ms
+ℹ️   Testing manhattan distance
+📊 VIPER - manhattan: 11.8ms
+ℹ️   Testing hamming distance
+📊 VIPER - hamming: 12.1ms
+ℹ️   Testing jaccard distance
+📊 VIPER - jaccard: 12.1ms
+ℹ️ 
+SST Engine:
+📊   dot_product: 12.0ms
+📊   jaccard: 12.1ms
+📊   hamming: 12.1ms
+📊   manhattan: 12.2ms
+📊   euclidean: 12.6ms
+📊   cosine: 12.6ms
+ℹ️ 
+VIPER Engine:
+📊   manhattan: 11.8ms
+📊   cosine: 11.8ms
+📊   jaccard: 12.1ms
+📊   dot_product: 12.1ms
+📊   hamming: 12.1ms
+📊   euclidean: 12.1ms
+ℹ️ Total tests run: 70
+ℹ️ Duration: 78.4 seconds
+ℹ️ Results saved to: demo_results/performance_benchmark_20250804_225729.json

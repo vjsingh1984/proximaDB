@@ -10,47 +10,41 @@ data_dir = "./data"
 
 [storage]
 data_dirs = ["./data/storage"]
-wal_dir = "./data/wal"
+write_buffer_dir = "./data/write_buffer"
 mmap_enabled = true
 cache_size_mb = 512
 bloom_filter_bits = 10
 
-[storage.wal_config]
-wal_urls = ["file://./data/wal"]
-distribution_strategy = "RoundRobin"
-collection_affinity = false
-memory_flush_size_bytes = 10485760  # 10MB
-global_flush_threshold = 1073741824  # 1GB
-global_shrink_factor = 0.5
-strategy_type = "Bincode"
+[storage.write_buffer_config]
+write_buffer_size_mb = 8192  # 8GB total across all collections
+memory_flush_size_bytes = 16777216  # 16MB per collection (aggregate of all unflushed batches)
 memtable_type = "BTree"
 sync_mode = "PerBatch"
-batch_threshold = 100
-write_buffer_size_mb = 8
-concurrent_flushes = 2
+write_buffer_directory = "./data/write_buffer"
+enable_wal = true
 
-[storage.lsm_config]
-memtable_size_mb = 32
-memory_flush_size_bytes = 33554432  # 32MB
-memtable_type = "BTree"
+[storage.sst_config]
 level_count = 7
-compaction_threshold = 4
+compaction_threshold = 5  # Minimum 5 files before compaction
 compaction_strategy = "leveled"
 compression = "snappy"
-block_size_kb = 32
+block_size_kb = 8192  # SSTable block size (KB). 8MB optimized for ZSTD compression and modern storage. Range: 4KB-16MB. Backward compatible.
 cache_size_mb = 128
-write_buffer_size_mb = 32
 max_files_per_level = 10
 level_size_multiplier = 10.0
 max_levels = 7
 background_thread_count = 4
-sync_mode = "perbatch"
-enable_wal = true
-wal_directory = "./data/lsm_wal"
-data_directory = "./data/lsm_data"
+data_directory = "./data/sst_data"
 mmap_enabled = true
 prefetch_enabled = true
 prefetch_size_kb = 64
+
+[storage.viper_config]
+row_group_size = 100000
+compression = "snappy"
+enable_statistics = true
+data_directory = "./data/viper_data"
+cache_size_mb = 512
 
 [storage.bloom_filter_config]
 bits_per_key = 10
@@ -67,7 +61,7 @@ mount_point = "./"
 disk_type = { Ssd = { max_iops = 50000 } }
 
 [storage.storage_layout.base_paths.capacity_config]
-max_wal_size_mb = 1024
+max_write_buffer_size_mb = 1024
 metadata_reserved_mb = 256
 warning_threshold_percent = 85.0
 

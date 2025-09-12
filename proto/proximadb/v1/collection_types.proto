@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package proximadb.v1;
+
+import "proximadb/v1/vector_types.proto"; // reuse enums
+
+message CollectionConfig {
+  string name = 1;
+  uint32 dimension = 2;
+  DistanceMetric distance_metric = 3;
+  StorageEngine storage_engine = 4;
+  repeated string tags = 5;
+  optional string description = 6;
+  // Additional fields needed by collection manager
+  repeated FilterableColumnSpec filterable_columns = 7;
+  repeated IndexConfig index_configs = 8;
+  optional QuantizationConfig quantization = 9;
+  optional StorageConfig storage_config = 10;
+  string primary_index = 11;
+  bool auto_index_selection = 12;
+  optional string owner = 13;
+  repeated string embedding_models = 14;
+}
+
+message CollectionStats {
+  int64 vector_count = 1;
+  int64 index_size_bytes = 2;
+  int64 data_size_bytes = 3;
+}
+
+message Collection {
+  string id = 1;
+  CollectionConfig config = 2;
+  CollectionStats stats = 3;
+  int64 created_at = 4;
+  int64 updated_at = 5;
+  optional StorageAssignment storage_assignment = 6;
+}
+
+// Index configuration
+message IndexConfig {
+  string index_name = 1;
+  IndexingAlgorithm algorithm = 2;
+  map<string, string> parameters = 3;
+  bool enabled = 4;
+  // Additional fields for compatibility
+  int32 update_mode = 5;
+  optional uint32 async_update_timeout_ms = 6;
+  optional uint32 async_update_batch_size = 7;
+  bool enable_background_optimization = 8;
+  optional HnswConfig hnsw_config = 9;
+  optional IvfConfig ivf_config = 10;
+  optional LshConfig lsh_config = 11;
+  optional string flat_config = 12;
+  optional string pq_config = 13;
+  optional string annoy_config = 14;
+  uint32 build_concurrency = 15;
+  uint32 memory_limit_mb = 16;
+  uint32 checkpoint_interval_ms = 17;
+  bool is_primary = 18;
+  repeated string use_cases = 19;
+  float selectivity_threshold = 20;
+  bool use_quantization = 21;
+  optional QuantizationConfig quantization_override = 22;
+  string queue_representation = 23;
+}
+
+// Storage configuration
+message StorageConfig {
+  string storage_path = 1;
+  repeated string data_paths = 2;
+  CompressionAlgorithm compression = 3;
+  uint32 max_file_size_mb = 4;
+  bool enable_caching = 5;
+}
+
+// Storage assignment information
+message StorageAssignment {
+  string primary_path = 1;
+  repeated string backup_paths = 2;
+  StorageEngine engine = 3;
+  map<string, string> engine_config = 4;
+  // Additional fields for compatibility
+  string base_location = 5;
+  int64 assigned_at = 6;
+}
+
+message GetCollectionRequest {
+  string collection_id = 1; // name or ID
+}
+
+message ListCollectionsRequest {
+  optional uint32 limit = 1;
+  optional uint32 offset = 2;
+  optional bool include_stats = 3;
+}
+
+message ListCollectionsResponse {
+  repeated Collection collections = 1;
+}
+
+message DeleteCollectionRequest {
+  string collection_id = 1;
+}
+
+message DeleteCollectionResponse {
+  bool success = 1;
+}
+
+// Collection operations enum
+enum CollectionOperation {
+  COLLECTION_OPERATION_UNSPECIFIED = 0;
+  COLLECTION_CREATE = 1;
+  COLLECTION_UPDATE = 2;
+  COLLECTION_GET = 3;
+  COLLECTION_LIST = 4;
+  COLLECTION_DELETE = 5;
+  COLLECTION_MIGRATE = 6;
+  COLLECTION_GET_ID_BY_NAME = 7;
+}
+
+// Unified collection request message
+message CollectionRequest {
+  int32 operation = 1;
+  optional string collection_id = 2;
+  optional CollectionConfig collection_config = 3;
+  map<string, string> query_params = 4;
+  map<string, bool> options = 5;
+  map<string, string> migration_config = 6;
+}
+
+// Unified collection response message  
+message CollectionResponse {
+  bool success = 1;
+  optional Collection collection = 2;
+  repeated Collection collections = 3;
+  optional string error_message = 4;
+  optional string error_code = 5;
+  // Additional legacy fields
+  int32 operation = 6;
+  int64 affected_count = 7;
+  int64 total_count = 8;
+  map<string, string> metadata = 9;
+  int64 processing_time_us = 10;
+}
+
+// Collection snapshot for backups/migrations
+message CollectionSnapshot {
+  Collection collection = 1;
+  repeated VectorRecord vectors = 2;
+  int64 snapshot_timestamp = 3;
+  string snapshot_version = 4;
+}

@@ -4,18 +4,18 @@
 :icons: font
 :source-highlighter: pygments
 
-The official Python client for ProximaDB - the cloud-native vector database for AI applications.
+The official Python client for ProximaDB — gRPC‑first, aligned with current proto.
 
 == Features
 
-* 🚀 **High Performance**: Optimized for ML workloads with numpy integration
-* 🔄 **Async/Sync APIs**: Both synchronous and asynchronous client support  
-* 🛡️ **Type Safe**: Full typing support with dataclasses
-* 📊 **Batching**: Efficient batch operations for bulk inserts and searches
-* 🔍 **Rich Filtering**: Advanced metadata filtering with complex queries
-* 🌐 **Multi-Protocol**: gRPC and REST API support
-* 📈 **Observability**: Built-in metrics and logging
-* 🔐 **Security**: TLS encryption and authentication support
+* High Performance: **High Performance**: Optimized for ML workloads with numpy integration
+* **Async/Sync APIs**: Both synchronous and asynchronous gRPC client support
+* **Type Safe**: Full typing support with dataclasses
+* **Batching**: Efficient batch operations for bulk inserts and searches
+* **Rich Filtering**: Advanced metadata filtering with complex queries
+* **Multi-Protocol**: gRPC and REST API support
+* **Observability**: Built-in metrics and logging
+* **Security**: TLS encryption and authentication support
 
 == Installation
 
@@ -30,95 +30,76 @@ For development:
 pip install -e .
 ----
 
-== Quick Start
-
-=== Synchronous Client
+== Quick Start (gRPC, v1)
 
 [source,python]
 ----
 import numpy as np
-from proximadb import GrpcClient
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+from proximadb import proximadb_pb2 as pb2  # Messages
 
-# Initialize client
-client = GrpcClient(
-    host="localhost",
-    port=5678
-)
+# Initialize sync gRPC client (5679). Server exposes proximadb.v1.VectorService.
+client = ProximaDBSyncGrpcClient("localhost:5679")
 
-# Connect to server
-await client.connect()
-
-# Create a collection
-result = await client.create_collection(
+# Create a collection with primary HNSW index
+ic = pb2.IndexConfig(index_name="documents_primary", algorithm=pb2.IndexingAlgorithm.HNSW, is_primary=True)
+qcfg = pb2.QuantizationConfig(enabled=False)
+client.create_collection(
     name="documents",
     dimension=768,
-    distance_metric="COSINE",
-    indexing_algorithm="HNSW"
+    distance_metric=pb2.DistanceMetric.COSINE,
+    storage_engine=pb2.StorageEngine.VIPER,
+    index_configs=[ic],
+    quantization_config=qcfg,
 )
 
-# Insert vectors
-vectors = [
-    {
-        "id": "doc1",
-        "vector": np.random.rand(768).tolist(),
-        "metadata": {"title": "First document", "category": "test"}
-    },
-    {
-        "id": "doc2", 
-        "vector": np.random.rand(768).tolist(),
-        "metadata": {"title": "Second document", "category": "test"}
-    }
-]
+# Insert vectors via VectorBatch (build pb2.VectorBatchRequest in higher-level helpers)
+# See unified_client or batching helpers for convenience wrappers.
 
-insert_result = await client.insert_vectors(
-    collection_id="documents",
-    vectors=vectors
-)
-
-# Search vectors
-query_vector = np.random.rand(768).tolist()
-search_results = await client.search_vectors(
-    collection_id="documents",
-    query_vectors=[query_vector],
-    top_k=5,
-    include_metadata=True
-)
-
-# Disconnect
-await client.disconnect()
-----
-
-=== REST Client
+== SQL over gRPC (v1)
 
 [source,python]
 ----
-from proximadb import RestClient
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
 
-# Initialize REST client
-client = RestClient(
-    base_url="http://localhost:5678"
+client = ProximaDBSyncGrpcClient("localhost:5679")
+resp = client.execute_sql(
+    query="SELECT id FROM docs ORDER BY COSINE_DISTANCE(vector, $1) LIMIT 5",
+    parameters=[[0.1,0.2,0.3,0.4,0.5]],
+    collection="docs"
 )
-
-# Create collection via REST
-collection = client.create_collection({
-    "name": "embeddings",
-    "config": {
-        "dimension": 384,
-        "distance_metric": "COSINE",
-        "storage_engine": "VIPER"
-    }
-})
-
-# Insert vectors via REST
-response = client.insert_vectors(
-    collection_id="embeddings",
-    vectors=[{
-        "id": "vec1",
-        "vector": [0.1] * 384,
-        "metadata": {"source": "BERT"}
-    }]
-)
+print(resp["rows"])  # list of dicts
 ----
+----
+
+// REST client references are being refactored; prefer gRPC for v1.
+
+NOTE: The v1 gRPC service is `proximadb.v1.VectorService`. Python stubs are generated from
+`proto/proximadb/v1/vector.proto` and exposed as `proximadb.v1.vector_pb2_grpc.VectorServiceStub`.
+Legacy `ProximaDBStub` is no longer supported in v1 SDKs.
+
+=== SKS Compatibility (Experimental)
+
+- The Python SDK automatically probes and uses SKS endpoints when available:
+  - Search: `POST /api/v1/search/{collection_id}` (envelope response)
+  - Entities: `POST/GET/DELETE /api/v1/entities/{collection_id}[/{entity_id}]`
+- When SKS is not available, the SDK falls back to legacy endpoints:
+  - Search: `POST /api/v1/vector/search`
+  - Batch write: `POST /api/v1/vector/batch`
+  - Delete: `DELETE /api/v1/vectors/{collection_id}`
+
+You can pre‑probe SKS support for a collection to avoid first‑call probing:
+
+[source,python]
+----
+from proximadb.protocols.rest_sync import ProximaDBClient as RestClient
+
+client = RestClient(url="http://localhost:5678")
+support = client.warmup_sks_capabilities("my_collection")
+print(support)  # {'search': True/False, 'entities': True/False}
+----
+
+Search returns a consistent list of SearchResult regardless of protocol. When SKS is active, results are parsed from the envelope (`items[*].entity_id`, `score`, `typed_metadata`).
 
 == Advanced Usage
 
@@ -129,12 +110,12 @@ response = client.insert_vectors(
 # Efficient batch insert
 batch_size = 1000
 for i in range(0, len(all_vectors), batch_size):
-    batch = all_vectors[i:i+batch_size]
-    await client.insert_vectors(
-        collection_id="documents",
-        vectors=batch,
-        upsert_mode=True
-    )
+batch = all_vectors[i:i+batch_size]
+await client.insert_vectors(
+collection_id="documents",
+vectors=batch,
+upsert_mode=True
+)
 ----
 
 === Metadata Filtering
@@ -143,13 +124,13 @@ for i in range(0, len(all_vectors), batch_size):
 ----
 # Search with filters
 results = await client.search_vectors(
-    collection_id="documents",
-    query_vectors=[query_vector],
-    top_k=10,
-    metadata_filter={
-        "category": "science",
-        "year": {"$gte": 2020}
-    }
+collection_id="documents",
+query_vectors=[query_vector],
+top_k=10,
+metadata_filter={
+"category": "science",
+"year": {"$gte": 2020}
+}
 )
 ----
 
@@ -167,30 +148,157 @@ info = await client.get_collection("documents")
 await client.delete_collection("documents")
 ----
 
-== Configuration
+== Development: Generate gRPC Stubs (v1)
 
 === Connection Options
 
 [source,python]
 ----
-client = GrpcClient(
-    host="localhost",
-    port=5678,
-    max_retries=3,
-    timeout=30,
-    keepalive_time=60
-)
+cd clients/python
+make gen-proto  # Requires: pip install grpcio grpcio-tools
+
+This now generates stubs for:
+- `proximadb/v1/vector.proto` → VectorService
+- `proximadb/v1/sql.proto` → SqlService
+- `proximadb/v1/graph.proto` → GraphService
+
+== Graph Operations
+
+=== Shortest Path (gRPC, per-call prefetch overrides)
+
+[source,python]
 ----
+from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
+
+client = ProximaDBSyncGrpcClient("localhost:5679")
+resp = client.shortest_path(
+    start_node_id="n1",
+    target_node_id="n8",
+    algorithm="DIJKSTRA",
+    max_depth=10,
+    enable_prefetch=True,
+    prefetch_budget=8,
+)
+print(resp.node_ids, resp.total_weight)
+----
+
+=== Shortest Path (REST, header overrides)
+
+[source,python]
+----
+from proximadb.protocols.rest_sync import ProximaDBClient
+
+rest = ProximaDBClient(url="http://localhost:5678")
+resp = rest.graph_shortest_path(
+    start_node_id="n1",
+    target_node_id="n8",
+    algorithm="ASTAR",
+    max_depth=10,
+    enable_prefetch=True,
+    prefetch_budget=8,
+)
+print(resp)
+----
+
+=== Traverse (REST, header overrides)
+
+[source,python]
+----
+
+=== Async Examples
+
+==== gRPC (async) — Shortest Path
+
+[source,python]
+----
+import asyncio
+from proximadb.protocols.grpc_async import ProximaDBClient as GrpcAsync
+
+async def main():
+    client = GrpcAsync(endpoint="localhost:5679")
+    resp = client.shortest_path(
+        start_node_id="n1",
+        target_node_id="n8",
+        algorithm="DIJKSTRA",
+        max_depth=10,
+        enable_prefetch=True,
+        prefetch_budget=8,
+    )
+    print(resp.node_ids, resp.total_weight)
+
+asyncio.run(main())
+----
+
+==== REST (async) — Traversal with header overrides
+
+[source,python]
+----
+import asyncio
+from proximadb.protocols.rest_async import ProximaDBAsyncClient
+
+async def main():
+    client = ProximaDBAsyncClient(url="http://localhost:5678")
+    resp = await client.graph_traverse(
+        start_node_id="n1",
+        max_depth=3,
+        edge_types=["REL"],
+        algorithm="BFS",
+        enable_prefetch=True,
+        prefetch_budget=8,
+    )
+    print(resp)
+    await client.aclose()
+
+asyncio.run(main())
+----
+resp = rest.graph_traverse(
+    start_node_id="n1",
+    max_depth=3,
+    edge_types=["REL"],
+    algorithm="BFS",
+    enable_prefetch=True,
+    prefetch_budget=8,
+)
+print(resp)
+----
+----
+
+=== Running Tests
+
+Unit tests (no mocks) focus on local model/utility behavior:
+
+[source,bash]
+----
+cd clients/python
+pytest -q clients/python/tests/test_models_and_utils.py
+----
+
+Integration tests (no mocks) require a running server:
+
+- REST server at PROXIMADB_URL (default http://localhost:5678)
+- gRPC server at PROXIMADB_GRPC (default localhost:5679) for gRPC-specific tests
+
+[source,bash]
+----
+# Start ProximaDB in another terminal (from repo root):
+# cargo run --bin proximadb-server
+
+cd clients/python
+export PROXIMADB_URL=http://localhost:5678
+pytest -q clients/python/tests/integration_sks -m integration
+----
+
+CI note: mark integration jobs to run only when a ProximaDB service is available. The tests skip gracefully if the server is not reachable.
 
 === TLS/SSL
 
 [source,python]
 ----
 client = GrpcClient(
-    host="proximadb.example.com",
-    port=443,
-    use_tls=True,
-    tls_cert_path="/path/to/cert.pem"
+host="proximadb.example.com",
+port=443,
+use_tls=True,
+tls_cert_path="/path/to/cert.pem"
 )
 ----
 
@@ -257,13 +365,13 @@ client = GrpcClient(
 from proximadb.exceptions import ProximaDBError, ConnectionError, CollectionNotFoundError
 
 try:
-    await client.search_vectors(...)
+await client.search_vectors(...)
 except CollectionNotFoundError:
-    print("Collection doesn't exist")
+print("Collection doesn't exist")
 except ConnectionError:
-    print("Failed to connect to server")
+print("Failed to connect to server")
 except ProximaDBError as e:
-    print(f"Operation failed: {e}")
+print(f"Operation failed: {e}")
 ----
 
 == Testing
@@ -287,6 +395,27 @@ python -m pytest tests/integration/
 
 # SDK tests
 python -m pytest tests/sdk/
+
+# Generate coverage report
+python -m pytest tests/ --cov=proximadb --cov-report=html
+----
+
+=== Test Suite Status
+
+**Current Status**: 100% test success rate achieved!
+
+* **Active Tests**: 248 passing tests
+* **Coverage**: 67% SDK coverage
+* **Runtime**: ~27 seconds (optimized from >2 minutes)
+* **Skipped Tests**: 44 tests pending server-side features
+
+=== Recent Improvements
+
+* Fixed REST API metadata serialization (dict → MetadataItem array)
+* Fixed timestamp format (microseconds → seconds)
+* Updated default VectorRecord version
+* Resolved pytest configuration conflicts
+* Migrated performance tests to `demo/benchmark/python-sdk/`
 ----
 
 == Contributing

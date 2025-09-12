@@ -13,26 +13,29 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Use proto enums as base types for consistency
-use crate::proto::proximadb::{StorageEngine as ProtoStorageEngine, IndexingAlgorithm as ProtoIndexingAlgorithm, DistanceMetric as ProtoDistanceMetric};
+use crate::proto::proximadb_v1::{
+    DistanceMetric as ProtoDistanceMetric, IndexingAlgorithm as ProtoIndexingAlgorithm,
+    StorageEngine as ProtoStorageEngine,
+};
 
 /// Collection strategy configuration for persistence and lifecycle operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionStrategyConfig {
     /// Indexing algorithm configuration
     pub indexing_config: IndexingConfig,
-    
+
     /// Storage engine configuration
     pub storage_config: StorageConfig,
-    
+
     /// Search engine configuration
     pub search_config: SearchConfig,
-    
+
     /// Performance tuning parameters
     pub performance_config: PerformanceConfig,
 }
 
 /// Indexing algorithm configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexingConfig {
     /// Primary algorithm
     pub algorithm: IndexingAlgorithm,
@@ -41,7 +44,7 @@ pub struct IndexingConfig {
 }
 
 /// Available indexing algorithms with configuration parameters
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World
     HNSW {
@@ -50,15 +53,9 @@ pub enum IndexingAlgorithm {
         ef_search: u32,
     },
     /// Inverted File Index
-    IVF {
-        nlist: u32,
-        nprobe: u32,
-    },
+    IVF { nlist: u32, nprobe: u32 },
     /// Product Quantization
-    PQ {
-        m: u32,
-        nbits: u32,
-    },
+    PQ { m: u32, nbits: u32 },
     /// Flat (brute force) search
     Flat,
 }
@@ -73,7 +70,7 @@ impl IndexingAlgorithm {
             IndexingAlgorithm::Flat => ProtoIndexingAlgorithm::Flat,
         }
     }
-    
+
     /// Create from proto enum with default parameters
     pub fn from_proto_type(proto: ProtoIndexingAlgorithm) -> Self {
         match proto {
@@ -86,10 +83,7 @@ impl IndexingAlgorithm {
                 nlist: 100,
                 nprobe: 1,
             },
-            ProtoIndexingAlgorithm::Pq => IndexingAlgorithm::PQ {
-                m: 8,
-                nbits: 8,
-            },
+            ProtoIndexingAlgorithm::Pq => IndexingAlgorithm::PQ { m: 8, nbits: 8 },
             ProtoIndexingAlgorithm::Flat => IndexingAlgorithm::Flat,
             _ => IndexingAlgorithm::HNSW {
                 m: 16,
@@ -101,7 +95,7 @@ impl IndexingAlgorithm {
 }
 
 /// Storage engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageConfig {
     /// Storage engine type
     pub engine_type: StorageEngineType,
@@ -113,7 +107,7 @@ pub struct StorageConfig {
 pub type StorageEngineType = ProtoStorageEngine;
 
 /// Search engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchConfig {
     /// Distance metric for similarity
     pub distance_metric: DistanceMetric,
@@ -127,7 +121,7 @@ pub struct SearchConfig {
 pub type DistanceMetric = ProtoDistanceMetric;
 
 /// Performance configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceConfig {
     /// Memory limit in MB
     pub memory_limit_mb: u32,
@@ -140,7 +134,7 @@ pub struct PerformanceConfig {
 }
 
 /// Batch processing configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchConfig {
     /// Batch size for operations
     pub batch_size: usize,
@@ -160,7 +154,7 @@ impl Default for CollectionStrategyConfig {
                 parameters: HashMap::new(),
             },
             storage_config: StorageConfig {
-                engine_type: ProtoStorageEngine::Lsm,
+                engine_type: ProtoStorageEngine::Sst,
                 parameters: HashMap::new(),
             },
             search_config: SearchConfig {

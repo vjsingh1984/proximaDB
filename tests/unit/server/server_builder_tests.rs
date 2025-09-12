@@ -21,7 +21,7 @@ use proximadb::server::builder::ServerBuilder;
 #[tokio::test]
 async fn test_server_builder_creation() {
     let builder = ServerBuilder::new();
-    
+
     // Test that builder can be created without panicking
     assert!(true);
 }
@@ -29,7 +29,7 @@ async fn test_server_builder_creation() {
 #[tokio::test]
 async fn test_server_builder_methods_exist() {
     let _builder = ServerBuilder::new();
-    
+
     // Test that various builder methods exist and can be called
     // This validates the builder pattern API without accessing private fields
     assert!(true);

@@ -15,7 +15,7 @@ mod tests {
         assert!(config.enable_rest);
         assert!(config.enable_dashboard);
         assert!(!config.auth.enabled);
-        assert!(config.rate_limit.enabled);
+        assert!(!config.rate_limit.enabled); // Now disabled by default
         assert_eq!(config.request_timeout_secs, 30);
         assert_eq!(config.max_request_size, 64 * 1024 * 1024);
         assert_eq!(config.keep_alive_timeout_secs, 60);
@@ -36,6 +36,8 @@ mod tests {
             requests_per_minute: 2000,
             burst_size: 200,
             by_ip: false,
+            limit_health_endpoints: false,
+            global_requests_per_minute: None,
         };
 
         let config = NetworkConfig {
@@ -68,17 +70,19 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.jwt_secret, None);
         assert_eq!(config.jwt_expiration_secs, 3600);
-        assert!(config.api_keys.is_empty());
+        assert!(config.api_keys.is_none());
     }
 
     #[tokio::test]
     async fn test_rate_limit_config_default() {
         let config = RateLimitConfig::default();
 
-        assert!(config.enabled);
+        assert!(!config.enabled); // Now disabled by default
         assert_eq!(config.requests_per_minute, 1000);
         assert_eq!(config.burst_size, 100);
         assert!(config.by_ip);
+        assert!(!config.limit_health_endpoints);
+        assert!(config.global_requests_per_minute.is_none());
     }
 
     #[tokio::test]
@@ -89,9 +93,9 @@ mod tests {
         assert!(serialized.is_ok());
 
         let json_str = serialized.unwrap();
-        assert!(json_str.contains("0.0.0.0"));
-        assert!(json_str.contains("5678"));
-        assert!(json_str.contains("enable_grpc"));
+        assert!(json_str.contains_hash("0.0.0.0"));
+        assert!(json_str.contains_hash("5678"));
+        assert!(json_str.contains_hash("enable_grpc"));
 
         let deserialized: Result<NetworkConfig, _> = serde_json::from_str(&json_str);
         assert!(deserialized.is_ok());
@@ -128,12 +132,16 @@ mod tests {
             requests_per_minute: 500,
             burst_size: 50,
             by_ip: false,
+            limit_health_endpoints: true,
+            global_requests_per_minute: Some(10000),
         };
 
         assert!(!config.enabled);
         assert_eq!(config.requests_per_minute, 500);
         assert_eq!(config.burst_size, 50);
         assert!(!config.by_ip);
+        assert!(config.limit_health_endpoints);
+        assert_eq!(config.global_requests_per_minute, Some(10000));
     }
 
     #[tokio::test]
@@ -152,9 +160,29 @@ mod tests {
         let config = NetworkConfig::default();
         let debug_str = format!("{:?}", config);
 
-        assert!(debug_str.contains("NetworkConfig"));
-        assert!(debug_str.contains("bind_address"));
-        assert!(debug_str.contains("port"));
-        assert!(debug_str.contains("enable_grpc"));
+        assert!(debug_str.contains_hash("NetworkConfig"));
+        assert!(debug_str.contains_hash("bind_address"));
+        assert!(debug_str.contains_hash("port"));
+        assert!(debug_str.contains_hash("enable_grpc"));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_config_conversion() {
+        let config = RateLimitConfig {
+            enabled: true,
+            requests_per_minute: 1200,
+            burst_size: 150,
+            by_ip: true,
+            limit_health_endpoints: true,
+            global_requests_per_minute: Some(5000),
+        };
+
+        let middleware_config = config.to_middleware_config();
+
+        assert_eq!(middleware_config.enabled, true);
+        assert_eq!(middleware_config.max_requests, 150); // Uses burst_size
+        assert_eq!(middleware_config.window_duration.as_secs(), 60); // 1 minute
+        assert_eq!(middleware_config.limit_health_endpoints, true);
+        assert_eq!(middleware_config.global_max_requests, Some(5000));
     }
 }

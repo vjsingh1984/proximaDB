@@ -7,13 +7,14 @@
 //! - Effective configuration resolution
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use proximadb::core::config::{Config, WalStorageConfig};
-use proximadb::storage::persistence::wal::config::{WalConfig, CollectionWalConfig};
+use proximadb::storage::persistence::write_ahead_log::config::{WriteBufferConfig, CollectionWalConfig};
 use std::collections::HashMap;
 
 #[test]
 fn test_default_flush_configuration() {
-    let config = WalConfig::default();
+    let config = WriteBufferConfig::default();
     
     // Test default collection-level threshold (10MB)
     assert_eq!(config.performance.memory_flush_size_bytes, 10 * 1024 * 1024);
@@ -27,12 +28,12 @@ fn test_default_flush_configuration() {
     // Test default memtable global limit (4GB)
     assert_eq!(config.memtable.global_memory_limit, 4 * 1024 * 1024 * 1024);
     
-    println!("✅ Default flush configuration test passed");
+    debug!("✅ Default flush configuration test passed");
 }
 
 #[test]
 fn test_collection_specific_overrides() {
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     
     // Add collection-specific overrides
     let mut collection_overrides = HashMap::new();
@@ -73,14 +74,14 @@ fn test_collection_specific_overrides() {
     assert_eq!(unknown_config.disk_segment_size, 512 * 1024 * 1024);
     assert_eq!(unknown_config.default_ttl_days, None);
     
-    println!("✅ Collection-specific overrides test passed");
+    debug!("✅ Collection-specific overrides test passed");
 }
 
 #[test]
 fn test_core_config_to_wal_config_conversion() {
     // Create core config with custom values
     let core_config = WalStorageConfig {
-        wal_urls: vec!["file:///test/wal".to_string()],
+        write_ahead_log_urls: vec!["file:///test/wal".to_string()],
         distribution_strategy: proximadb::core::config::WalDistributionStrategy::Hash,
         collection_affinity: false,
         memory_flush_size_bytes: 20 * 1024 * 1024, // 20MB
@@ -89,12 +90,12 @@ fn test_core_config_to_wal_config_conversion() {
         memtable_type: Some("HashMap".to_string()),
         sync_mode: Some("Always".to_string()),
         batch_threshold: Some(1000),
-        write_buffer_size_mb: Some(16),
+        write_ahead_log_size_mb: Some(16),
         concurrent_flushes: Some(8),
         global_shrink_factor: Some(0.6), // 60%
     };
     
-    let wal_config = WalConfig::from(&core_config);
+    let wal_config = WriteBufferConfig::from(&core_config);
     
     // Test conversion of basic values
     assert_eq!(wal_config.multi_disk.data_directories, vec!["file:///test/wal"]);
@@ -104,27 +105,27 @@ fn test_core_config_to_wal_config_conversion() {
     assert_eq!(wal_config.performance.global_shrink_factor, 0.6);
     
     // Test strategy type conversion
-    assert_eq!(wal_config.strategy_type, proximadb::storage::persistence::wal::config::WalStrategyType::Bincode);
+    assert_eq!(wal_config.strategy_type, proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::Bincode);
     
     // Test memtable type conversion
-    assert_eq!(wal_config.memtable.memtable_type, proximadb::storage::persistence::wal::config::MemTableType::HashMap);
+    assert_eq!(wal_config.memtable.memtable_type, proximadb::storage::persistence::write_ahead_log::config::MemTableType::HashMap);
     
     // Test sync mode conversion
-    assert_eq!(wal_config.performance.sync_mode, proximadb::storage::persistence::wal::config::SyncMode::Always);
+    assert_eq!(wal_config.performance.sync_mode, proximadb::storage::persistence::write_ahead_log::config::SyncMode::Always);
     
     // Test performance settings
     assert_eq!(wal_config.performance.batch_threshold, 1000);
-    assert_eq!(wal_config.performance.write_buffer_size, 16 * 1024 * 1024);
+    assert_eq!(wal_config.performance.write_ahead_log_size, 16 * 1024 * 1024);
     assert_eq!(wal_config.performance.concurrent_flushes, 8);
     
-    println!("✅ Core config to WAL config conversion test passed");
+    debug!("✅ Core config to WAL config conversion test passed");
 }
 
 #[test]
 fn test_toml_config_parsing() {
     let toml_content = r#"
 [storage.wal_config]
-wal_urls = ["file:///test/wal1", "file:///test/wal2"]
+write_ahead_log_urls = ["file:///test/wal1", "file:///test/wal2"]
 distribution_strategy = "LoadBalanced"
 collection_affinity = true
 memory_flush_size_bytes = 15728640  # 15MB
@@ -134,7 +135,7 @@ strategy_type = "Avro"
 memtable_type = "BTree"
 sync_mode = "PerBatch"
 batch_threshold = 500
-write_buffer_size_mb = 12
+write_ahead_log_size_mb = 12
 concurrent_flushes = 6
 "#;
     
@@ -144,7 +145,7 @@ concurrent_flushes = 6
         Ok(parsed_config) => {
             let wal_config = &parsed_config.storage.wal_config;
             
-            assert_eq!(wal_config.wal_urls, vec!["file:///test/wal1", "file:///test/wal2"]);
+            assert_eq!(wal_config.write_ahead_log_urls, vec!["file:///test/wal1", "file:///test/wal2"]);
             assert_eq!(wal_config.memory_flush_size_bytes, 15 * 1024 * 1024);
             assert_eq!(wal_config.global_flush_threshold, 2 * 1024 * 1024 * 1024);
             assert_eq!(wal_config.global_shrink_factor, Some(0.3));
@@ -152,10 +153,10 @@ concurrent_flushes = 6
             assert_eq!(wal_config.memtable_type, Some("BTree".to_string()));
             assert_eq!(wal_config.sync_mode, Some("PerBatch".to_string()));
             assert_eq!(wal_config.batch_threshold, Some(500));
-            assert_eq!(wal_config.write_buffer_size_mb, Some(12));
+            assert_eq!(wal_config.write_ahead_log_size_mb, Some(12));
             assert_eq!(wal_config.concurrent_flushes, Some(6));
             
-            println!("✅ TOML config parsing test passed");
+            debug!("✅ TOML config parsing test passed");
         }
         Err(e) => {
             panic!("Failed to parse TOML config: {}", e);
@@ -165,7 +166,7 @@ concurrent_flushes = 6
 
 #[test]
 fn test_flush_threshold_edge_cases() {
-    let config = WalConfig::default();
+    let config = WriteBufferConfig::default();
     
     // Test very small threshold (1KB)
     let mut small_config = config.clone();
@@ -188,12 +189,12 @@ fn test_flush_threshold_edge_cases() {
     let effective_config = zero_config.effective_config_for_collection("test");
     assert_eq!(effective_config.memory_flush_size_bytes, 0);
     
-    println!("✅ Flush threshold edge cases test passed");
+    debug!("✅ Flush threshold edge cases test passed");
 }
 
 #[test]
 fn test_global_shrink_factor_validation() {
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     
     // Test valid shrink factors
     let valid_factors = vec![0.1, 0.25, 0.4, 0.5, 0.75, 0.9];
@@ -211,33 +212,33 @@ fn test_global_shrink_factor_validation() {
     config.performance.global_shrink_factor = 0.99; // 99%
     assert!(config.performance.global_shrink_factor < 1.0);
     
-    println!("✅ Global shrink factor validation test passed");
+    debug!("✅ Global shrink factor validation test passed");
 }
 
 #[test]
 fn test_performance_config_presets() {
     // Test high-throughput configuration
-    let high_throughput = WalConfig::high_throughput();
-    assert_eq!(high_throughput.strategy_type, proximadb::storage::persistence::wal::config::WalStrategyType::Bincode);
-    assert_eq!(high_throughput.memtable.memtable_type, proximadb::storage::persistence::wal::config::MemTableType::HashMap);
+    let high_throughput = WriteBufferConfig::high_throughput();
+    assert_eq!(high_throughput.strategy_type, proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::Bincode);
+    assert_eq!(high_throughput.memtable.memtable_type, proximadb::storage::persistence::write_ahead_log::config::MemTableType::HashMap);
     assert_eq!(high_throughput.performance.memory_flush_size_bytes, 256 * 1024 * 1024);
     assert_eq!(high_throughput.performance.batch_threshold, 500);
-    assert_eq!(high_throughput.performance.sync_mode, proximadb::storage::persistence::wal::config::SyncMode::PerBatch);
+    assert_eq!(high_throughput.performance.sync_mode, proximadb::storage::persistence::write_ahead_log::config::SyncMode::PerBatch);
     
     // Test low-latency configuration
-    let low_latency = WalConfig::low_latency();
-    assert_eq!(low_latency.memtable.memtable_type, proximadb::storage::persistence::wal::config::MemTableType::HashMap);
-    assert_eq!(low_latency.compression.compress_memory, false);
-    assert_eq!(low_latency.compression.compress_disk, false);
+    let low_latency = WriteBufferConfig::low_latency();
+    assert_eq!(low_latency.memtable.memtable_type, proximadb::storage::persistence::write_ahead_log::config::MemTableType::HashMap);
+    assert_eq!(low_latency.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_memory, false);
+    assert_eq!(low_latency.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_disk, false);
     assert_eq!(low_latency.performance.memory_flush_size_bytes, 32 * 1024 * 1024);
-    assert_eq!(low_latency.performance.sync_mode, proximadb::storage::persistence::wal::config::SyncMode::Always);
+    assert_eq!(low_latency.performance.sync_mode, proximadb::storage::persistence::write_ahead_log::config::SyncMode::Always);
     
     // Test storage-optimized configuration
-    let storage_optimized = WalConfig::storage_optimized();
-    assert_eq!(storage_optimized.memtable.memtable_type, proximadb::storage::persistence::wal::config::MemTableType::BTree);
-    assert_eq!(storage_optimized.compression.compress_memory, true);
-    assert_eq!(storage_optimized.compression.min_compress_size, 64);
+    let storage_optimized = WriteBufferConfig::storage_optimized();
+    assert_eq!(storage_optimized.memtable.memtable_type, proximadb::storage::persistence::write_ahead_log::config::MemTableType::BTree);
+    assert_eq!(storage_optimized.storage_config.as_ref().and_then(|s| s.compression.as_ref()).compress_memory, true);
+    assert_eq!(storage_optimized.storage_config.as_ref().and_then(|s| s.compression.as_ref()).min_compress_size, 64);
     assert_eq!(storage_optimized.performance.disk_segment_size, 512 * 1024 * 1024);
     
-    println!("✅ Performance config presets test passed");
+    debug!("✅ Performance config presets test passed");
 }

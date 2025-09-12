@@ -23,7 +23,7 @@ use tokio::time::Duration;
 use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// HDFS authentication types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum HdfsAuthType {
     /// No authentication
     Simple,
@@ -34,7 +34,7 @@ pub enum HdfsAuthType {
 }
 
 /// HDFS configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HdfsConfig {
     /// HDFS NameNode URL (e.g., "http://namenode:9870")
     pub namenode_url: String,
@@ -170,7 +170,7 @@ impl HdfsClient {
             self.base_url, self.config.user
         );
 
-        let response = self.http_client.get(&url).send().await.map_err(|e| {
+        let response = self.http_client.get("Location").send().await.map_err(|e| {
             tracing::error!("❌ HDFS connectivity test failed: {}", e);
             FilesystemError::Network(format!("HDFS connectivity test failed: {}", e))
         })?;
@@ -198,7 +198,7 @@ impl HdfsClient {
 
         tracing::debug!("📥 Reading HDFS file: {}", url);
 
-        let response = self.http_client.get(&url).send().await.map_err(|e| {
+        let response = self.http_client.get("Location").send().await.map_err(|e| {
             tracing::error!("❌ HDFS read request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;
@@ -231,7 +231,7 @@ impl HdfsClient {
         data: &[u8],
         options: Option<FileOptions>,
     ) -> FsResult<()> {
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         // Step 1: Create file (WebHDFS two-step process)
         let create_url = format!(
@@ -241,7 +241,7 @@ impl HdfsClient {
             self.config.user,
             self.config.block_size,
             self.config.replication,
-            options.overwrite
+            options.as_ref().map(|o| o.overwrite).unwrap_or(true)
         );
 
         tracing::debug!("📤 Creating HDFS file: {} ({} bytes)", path, data.len());
@@ -258,7 +258,7 @@ impl HdfsClient {
 
         if create_response.status().as_u16() == 307 {
             // Step 2: Follow redirect to DataNode
-            if let Some(location) = create_response.headers().get("location") {
+            if let Some(location) = create_response.headers().get("Location") {
                 let datanode_url = location.to_str().map_err(|e| {
                     FilesystemError::Network(format!("Invalid location header: {}", e))
                 })?;
@@ -324,7 +324,7 @@ impl HdfsClient {
 
         if append_response.status().as_u16() == 307 {
             // Step 2: Follow redirect to DataNode
-            if let Some(location) = append_response.headers().get("location") {
+            if let Some(location) = append_response.headers().get("Location") {
                 let datanode_url = location.to_str().map_err(|e| {
                     FilesystemError::Network(format!("Invalid location header: {}", e))
                 })?;
@@ -406,7 +406,7 @@ impl HdfsClient {
 
         tracing::debug!("📊 Getting HDFS file status: {}", path);
 
-        let response = self.http_client.get(&url).send().await.map_err(|e| {
+        let response = self.http_client.get("Location").send().await.map_err(|e| {
             tracing::error!("❌ HDFS status request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;
@@ -441,7 +441,7 @@ impl HdfsClient {
 
         tracing::debug!("📋 Listing HDFS directory: {}", path);
 
-        let response = self.http_client.get(&url).send().await.map_err(|e| {
+        let response = self.http_client.get("Location").send().await.map_err(|e| {
             tracing::error!("❌ HDFS list request failed: {}", e);
             FilesystemError::Network(e.to_string())
         })?;
@@ -454,7 +454,7 @@ impl HdfsClient {
 
             let file_statuses = list_json["FileStatuses"]["FileStatus"]
                 .as_array()
-                .unwrap_or(&vec![])
+                .ok_or_else(|| FilesystemError::Network("Invalid HDFS response format".to_string()))?
                 .clone();
 
             tracing::debug!(
@@ -502,6 +502,10 @@ impl HdfsClient {
 
 #[async_trait]
 impl FileSystem for HdfsFileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("📖 HDFS read: {}", path);
         let normalized_path = self.normalize_path(path);
@@ -550,9 +554,9 @@ impl FileSystem for HdfsFileSystem {
 
         let file_status = &status_json["FileStatus"];
 
-        let size = file_status["length"].as_u64().unwrap_or(0);
+        let size = file_status["length"].as_u64();
         let is_directory = file_status["type"].as_str() == Some("DIRECTORY");
-        let path_suffix = file_status["pathSuffix"].as_str().unwrap_or("");
+        let path_suffix = file_status["pathSuffix"].as_str();
 
         // Convert HDFS timestamps (milliseconds since epoch)
         let modification_time = file_status["modificationTime"]
@@ -566,13 +570,13 @@ impl FileSystem for HdfsFileSystem {
 
         tracing::debug!(
             "✅ HDFS metadata retrieved: {} bytes, dir: {}",
-            size,
+            size.unwrap_or(0),
             is_directory
         );
 
         Ok(FileMetadata {
             path: format!("hdfs://{}", normalized_path),
-            size,
+            size: size.unwrap_or(0),
             created: None, // HDFS doesn't track creation time
             modified: modification_time,
             is_directory,
@@ -591,7 +595,7 @@ impl FileSystem for HdfsFileSystem {
 
         for status in file_statuses {
             let name = status["pathSuffix"].as_str().unwrap_or("").to_string();
-            let size = status["length"].as_u64().unwrap_or(0);
+            let size = status["length"].as_u64();
             let is_directory = status["type"].as_str() == Some("DIRECTORY");
 
             let modification_time = status["modificationTime"]
@@ -608,7 +612,7 @@ impl FileSystem for HdfsFileSystem {
 
             let metadata = FileMetadata {
                 path: format!("hdfs://{}", entry_path),
-                size,
+                size: size.unwrap_or(0),
                 created: None,
                 modified: modification_time,
                 is_directory,
@@ -678,6 +682,7 @@ impl FileSystem for HdfsFileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_hdfs_path_normalization() {

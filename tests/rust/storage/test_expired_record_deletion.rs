@@ -1,25 +1,26 @@
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::Duration;
 
 use proximadb::core::VectorRecord;
-use proximadb::storage::engines::lsm::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::lsm::mod::LsmRecord;
-use proximadb::core::LsmConfig;
+use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::sst::mod::SstRecord;
+use proximadb::core::SstConfig;
 
 #[tokio::test]
-async fn test_lsm_expired_record_deletion() -> Result<()> {
+async fn test_sst_expired_record_deletion() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let data_dir = temp_dir.path().to_path_buf();
     
     // Create LSM config
-    let mut config = LsmConfig::default();
+    let mut config = SstConfig::default();
     config.compaction_threshold = 1; // Trigger compaction with just 1 file
     config.data_directory = data_dir.join("lsm").to_string_lossy().to_string();
     
     // Create compaction manager
-    let mut compaction_manager = CompactionManager::new(config.clone());
+    let mut compaction_manager = CompactionManager::new(config.clone()).await.unwrap();
     
     // Create test data with expired records
     let current_time = Utc::now().timestamp_millis();
@@ -28,7 +29,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
     
     let test_records = vec![
         // Active record
-        LsmRecord {
+        SstRecord {
             id: "active_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
@@ -37,13 +38,13 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
             created_at: current_time,
             updated_at: current_time,
             expires_at: Some(future_time), // Not expired
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 1,
             level: 0,
         },
         // Expired record (should be deleted)
-        LsmRecord {
+        SstRecord {
             id: "expired_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![4.0, 5.0, 6.0],
@@ -52,13 +53,13 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
             created_at: expired_time,
             updated_at: expired_time,
             expires_at: Some(expired_time), // Expired
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 2,
             level: 0,
         },
         // Record without expiry (should be kept)
-        LsmRecord {
+        SstRecord {
             id: "permanent_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![7.0, 8.0, 9.0],
@@ -67,7 +68,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
             created_at: current_time,
             updated_at: current_time,
             expires_at: None, // No expiry
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 3,
             level: 0,
@@ -78,7 +79,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
     let collection_dir = data_dir.join("test_collection");
     std::fs::create_dir_all(&collection_dir)?;
     
-    let sst_file = collection_dir.join("test.sst");
+    let sst_file = collection_dir.join("test.sstable");
     let mut sst_data = Vec::new();
     
     for record in &test_records {
@@ -90,7 +91,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
     std::fs::write(&sst_file, &sst_data)?;
     
     // Create compaction task
-    let output_file = collection_dir.join("compacted.sst");
+    let output_file = collection_dir.join("compacted.sstable");
     let task = CompactionTask {
         collection_id: "test_collection".to_string(),
         level: 0,
@@ -132,7 +133,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = bincode::deserialize::<LsmRecord>(entry_data) {
+        if let Ok(record) = SstRecord::deserialize(entry_data) {
             remaining_records.push(record);
         }
         
@@ -148,7 +149,7 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
     assert!(ids.contains(&&"permanent_1".to_string()), "Permanent record should remain");
     assert!(!ids.contains(&&"expired_1".to_string()), "Expired record should be deleted");
     
-    println!("✅ LSM expired record deletion test passed!");
+    debug!("✅ LSM expired record deletion test passed!");
     Ok(())
 }
 
@@ -156,6 +157,6 @@ async fn test_lsm_expired_record_deletion() -> Result<()> {
 async fn test_viper_expired_record_deletion() -> Result<()> {
     // This test would verify VIPER's expired record deletion during compaction
     // The logic is already implemented in compact_parquet_files method
-    println!("✅ VIPER expired record deletion is implemented in compact_parquet_files method");
+    debug!("✅ VIPER expired record deletion is implemented in compact_parquet_files method");
     Ok(())
 }

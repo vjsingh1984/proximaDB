@@ -2,7 +2,7 @@
 
 use super::MemtableSerializer;
 use anyhow::Result;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 pub struct AvroSerializer;
 

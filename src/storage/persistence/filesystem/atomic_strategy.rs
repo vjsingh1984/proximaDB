@@ -21,11 +21,12 @@ use rand;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 
 use super::{FileOptions, FileSystem, FilesystemError, FsResult};
 
 /// Atomic write strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AtomicWriteConfig {
     /// Strategy to use based on environment
     pub strategy: AtomicWriteStrategy,
@@ -41,7 +42,7 @@ pub struct AtomicWriteConfig {
 }
 
 /// Atomic write strategies
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum AtomicWriteStrategy {
     /// Direct write - fastest, suitable for R&D and local testing
     /// Risk: Power failure can corrupt files
@@ -61,7 +62,7 @@ pub enum AtomicWriteStrategy {
     /// Write locally first, then flush to cloud storage atomically
     CloudOptimized {
         local_temp_dir: PathBuf,
-        enable_compression: bool,
+        compression: bool,
         chunk_size_mb: usize,
     },
 
@@ -70,7 +71,7 @@ pub enum AtomicWriteStrategy {
 }
 
 /// Temp directory configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TempDirectoryConfig {
     /// Enable cleanup of temp files on startup
     pub cleanup_on_startup: bool,
@@ -83,7 +84,7 @@ pub struct TempDirectoryConfig {
 }
 
 /// Cleanup configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CleanupConfig {
     /// Enable automatic cleanup of failed operations
     pub enable_auto_cleanup: bool,
@@ -96,7 +97,7 @@ pub struct CleanupConfig {
 }
 
 /// Retry configuration for atomic operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AtomicRetryConfig {
     pub max_retries: usize,
     pub initial_delay_ms: u64,
@@ -173,11 +174,20 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
         filesystem: &dyn FileSystem,
         final_path: &str,
         data: &[u8],
-        options: Option<FileOptions>,
+        _options: Option<FileOptions>,
     ) -> FsResult<()> {
         // Create parent directories if needed
         if let Some(parent) = Path::new(final_path).parent() {
-            filesystem.create_dir_all(&parent.to_string_lossy()).await.ok();
+            if let Err(e) = filesystem.create_dir_all(&parent.to_string_lossy()).await {
+                return Err(FilesystemError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!(
+                        "Failed to create parent directory {}: {}",
+                        parent.display(),
+                        e
+                    ),
+                )));
+            }
         }
 
         // Direct write - fastest but not atomic
@@ -198,7 +208,6 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
 #[derive(Clone)]
 pub struct SameMountTempExecutor {
     temp_suffix: String,
-    #[allow(dead_code)]
     config: AtomicWriteConfig,
 }
 
@@ -211,39 +220,35 @@ impl SameMountTempExecutor {
     }
 
     fn generate_temp_path(&self, final_path: &str) -> FsResult<String> {
-        // Handle URLs properly
+        // Use centralized URL path extraction for consistent handling
+        use super::FilesystemFactory;
+
         let (base_url, path_part) = if final_path.contains("://") {
-            // It's a URL - extract the path part after the scheme
-            let parts: Vec<&str> = final_path.splitn(2, "://").collect();
-            if parts.len() != 2 {
-                return Err(FilesystemError::InvalidPath("Invalid URL format".to_string()));
-            }
-            let scheme = parts[0];
-            let remaining = parts[1];
-            
-            // For file:// URLs, the path starts after the third slash
-            let path_start = if scheme == "file" {
-                remaining
-            } else {
-                // For other schemes (s3://, gs://), find the first slash after the bucket
-                remaining.splitn(2, '/').nth(1).unwrap_or(remaining)
-            };
-            
-            (format!("{}://", scheme), path_start)
+            // Extract scheme for URL reconstruction
+            use url::Url;
+            let parsed_url = Url::parse(final_path)?;
+            let scheme = parsed_url.scheme();
+
+            // Use centralized path extraction (handles relative paths correctly)
+            let path = FilesystemFactory::resolve_path(final_path)?;
+
+            (format!("{}://", scheme), path)
         } else {
             // Not a URL, treat as regular path
-            ("".to_string(), final_path)
+            ("".to_string(), final_path.to_string())
         };
-        
+
         let final_path = Path::new(&path_part);
-        let parent = final_path.parent().unwrap_or(Path::new("."));
+        let parent = final_path.parent();
         let filename = final_path
             .file_name()
             .and_then(|f| f.to_str())
             .ok_or_else(|| FilesystemError::InvalidPath("Invalid filename".to_string()))?;
 
         // Create temp directory path in same mount
-        let temp_dir = parent.join(&self.temp_suffix);
+        let temp_dir = parent
+            .ok_or_else(|| FilesystemError::InvalidPath("No parent directory".to_string()))?
+            .join(&self.temp_suffix);
 
         // Generate unique temp filename with timestamp and process ID
         let timestamp = SystemTime::now()
@@ -290,13 +295,18 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
                 None
             }
         } else {
-            Path::new(&temp_path).parent().map(|p| p.to_string_lossy().to_string())
+            Path::new(&temp_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
         };
-        
+
         if let Some(parent) = temp_parent {
-            filesystem.create_dir_all(&parent).await.ok();
+            if let Err(e) = filesystem.create_dir_all(&parent).await {
+                tracing::warn!("Failed to create temp parent directory {}: {}", parent, e);
+                // Try to continue, as the directory might already exist
+            }
         }
-        
+
         let final_parent = if final_path.contains("://") {
             // For URLs, find the parent directory part
             if let Some(last_slash) = final_path.rfind('/') {
@@ -305,23 +315,43 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
                 None
             }
         } else {
-            Path::new(final_path).parent().map(|p| p.to_string_lossy().to_string())
+            Path::new(final_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
         };
-        
+
         if let Some(parent) = final_parent {
-            filesystem.create_dir_all(&parent).await.ok();
+            if let Err(e) = filesystem.create_dir_all(&parent).await {
+                return Err(FilesystemError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to create parent directory {}: {}", parent, e),
+                )));
+            }
         }
 
         // Write to temp file
+        debug!("🔍 DEBUG ATOMIC: Writing to temp_path: {}", temp_path);
         filesystem.write(&temp_path, data, None).await?;
+        debug!(
+            "🔍 DEBUG ATOMIC: Successfully wrote to temp_path: {}",
+            temp_path
+        );
 
         // Atomic move to final location (move is atomic, copy is not)
+        debug!(
+            "🔍 DEBUG ATOMIC: Moving from temp_path: {} to final_path: {}",
+            temp_path, final_path
+        );
         filesystem.move_file(&temp_path, final_path).await?;
+        debug!(
+            "🔍 DEBUG ATOMIC: Successfully moved to final_path: {}",
+            final_path
+        );
 
         Ok(())
     }
 
-    async fn cleanup_temp_files(&self, filesystem: &dyn FileSystem) -> FsResult<()> {
+    async fn cleanup_temp_files(&self, _filesystem: &dyn FileSystem) -> FsResult<()> {
         // Implementation for cleaning up temp files older than configured age
         // This would scan for files matching temp patterns and clean them up
         tracing::debug!("Cleaning up temp files with suffix: {}", self.temp_suffix);
@@ -336,7 +366,7 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
 /// Cloud-optimized executor - local staging + cloud flush
 pub struct CloudOptimizedExecutor {
     local_temp_dir: PathBuf,
-    enable_compression: bool,
+    compression: bool,
     chunk_size_mb: usize,
     config: AtomicWriteConfig,
 }
@@ -344,26 +374,26 @@ pub struct CloudOptimizedExecutor {
 impl CloudOptimizedExecutor {
     pub fn new(
         local_temp_dir: PathBuf,
-        enable_compression: bool,
+        compression: bool,
         chunk_size_mb: usize,
         config: AtomicWriteConfig,
     ) -> Self {
         Self {
             local_temp_dir,
-            enable_compression,
+            compression,
             chunk_size_mb,
             config,
         }
     }
 
     async fn compress_data(&self, data: &[u8]) -> FsResult<Vec<u8>> {
-        if !self.enable_compression {
+        if !self.compression {
             return Ok(data.to_vec());
         }
 
         // Use compression (e.g., Snappy for speed or ZSTD for ratio)
-        use flate2::write::GzEncoder;
         use flate2::Compression;
+        use flate2::write::GzEncoder;
         use std::io::Write;
 
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
@@ -406,7 +436,7 @@ impl AtomicWriteExecutor for CloudOptimizedExecutor {
             .await?;
 
         // Atomic flush to cloud storage
-        let cloud_data = if self.enable_compression {
+        let cloud_data = if self.compression {
             // If compressed, upload compressed data
             data_to_write
         } else {
@@ -523,11 +553,11 @@ impl AtomicWriteExecutorFactory {
             }
             AtomicWriteStrategy::CloudOptimized {
                 local_temp_dir,
-                enable_compression,
+                compression,
                 chunk_size_mb,
             } => Box::new(CloudOptimizedExecutor::new(
                 local_temp_dir.clone(),
-                *enable_compression,
+                *compression,
                 *chunk_size_mb,
                 config.clone(),
             )),
@@ -556,7 +586,7 @@ impl AtomicWriteExecutorFactory {
         let config = AtomicWriteConfig {
             strategy: AtomicWriteStrategy::CloudOptimized {
                 local_temp_dir: local_temp_dir.clone(),
-                enable_compression: true,
+                compression: true,
                 chunk_size_mb: 8,
             },
             ..Default::default()

@@ -24,7 +24,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::proto::proximadb::Collection as Collection;
+use crate::proto::proximadb_v1::Collection;
 
 /// Collection index entry - contains both record and secondary keys
 #[derive(Debug, Clone)]
@@ -39,7 +39,11 @@ pub struct CollectionIndexEntry {
 
 impl CollectionIndexEntry {
     pub fn new(record: Collection) -> Self {
-        let name_key = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        let name_key = record
+            .config
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "unnamed".to_string());
         let uuid_key = record.id.clone();
 
         Self {
@@ -51,14 +55,18 @@ impl CollectionIndexEntry {
 
     /// Update with new record, maintaining key consistency
     pub fn update_record(&mut self, new_record: Collection) {
-        self.name_key = new_record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
+        self.name_key = new_record
+            .config
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "unnamed".to_string());
         self.uuid_key = new_record.id.clone();
         self.record = Arc::new(new_record);
     }
 }
 
 /// Performance metrics for the single index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SingleIndexMetrics {
     pub total_collections: usize,
     pub memory_usage_bytes: usize,
@@ -78,7 +86,7 @@ pub struct SingleCollectionIndex {
     /// Primary store: UUID -> CollectionIndexEntry
     /// DashMap provides lock-free concurrent access with excellent performance
     entries: DashMap<String, CollectionIndexEntry>,
-    
+
     /// Secondary index: Name -> UUID for O(1) name lookups
     /// This eliminates the O(n) scan for name-based lookups
     name_to_uuid: DashMap<String, String>,
@@ -111,15 +119,19 @@ impl SingleCollectionIndex {
     pub fn upsert_collection(&self, record: Collection) {
         let start = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
-        
+        let name = record
+            .config
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "unnamed".to_string());
+
         // Check if this is an update (collection exists)
         let old_name = self.entries.get(&uuid).map(|e| e.name_key.clone());
-        
+
         // Update primary index
         let entry = CollectionIndexEntry::new(record);
         self.entries.insert(uuid.clone(), entry);
-        
+
         // Update secondary index
         // If name changed, remove old mapping
         if let Some(old_name) = old_name {
@@ -187,8 +199,13 @@ impl SingleCollectionIndex {
         let start = std::time::Instant::now();
 
         // O(1) lookup in secondary index
-        let result = self.name_to_uuid.get(name)
-            .and_then(|uuid| self.entries.get(uuid.as_str()))
+        let result = self
+            .name_to_uuid
+            .get(name)
+            .and_then(|uuid| {
+                let uuid_str: &str = uuid.as_ref();
+                self.entries.get(uuid_str)
+            })
             .map(|entry| entry.record.clone());
 
         // Update metrics
@@ -249,22 +266,26 @@ impl SingleCollectionIndex {
     pub fn rebuild_from_records(&self, records: Vec<Collection>) {
         // Clear and rebuild atomically
         self.clear();
-        
+
         // Batch rebuild for better performance
         let mut name_mappings = Vec::with_capacity(records.len());
-        
+
         for record in records {
             let uuid = record.id.clone();
-            let name = record.config.as_ref().map(|c| c.name.clone()).unwrap_or_default();
-            
+            let name = record
+                .config
+                .as_ref()
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| "unnamed".to_string());
+
             // Insert into primary index
             let entry = CollectionIndexEntry::new(record);
             self.entries.insert(uuid.clone(), entry);
-            
+
             // Collect for batch secondary index update
             name_mappings.push((name, uuid));
         }
-        
+
         // Batch update secondary index
         for (name, uuid) in name_mappings {
             self.name_to_uuid.insert(name, uuid);
@@ -286,6 +307,11 @@ impl SingleCollectionIndex {
         self.metrics.read().clone()
     }
 
+    /// Get metrics (alias for get_metrics)
+    pub fn metrics(&self) -> SingleIndexMetrics {
+        self.get_metrics()
+    }
+
     /// Filter collections by predicate - O(n) parallel scan
     pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<Collection>>
     where
@@ -304,10 +330,7 @@ impl SingleCollectionIndex {
         self.name_to_uuid
             .iter()
             .filter(|entry| entry.key().starts_with(prefix))
-            .filter_map(|entry| {
-                self.entries.get(entry.value().as_str())
-                    .map(|e| e.record.clone())
-            })
+            .filter_map(|entry| self.entries.get(entry.value()).map(|e| e.record.clone()))
             .collect()
     }
 
@@ -318,19 +341,21 @@ impl SingleCollectionIndex {
                 32 +  // UUID key
                 64 +  // Name key (average)
                 std::mem::size_of::<Collection>() +
-                64    // Arc and entry overhead
+                64
+                // Arc and entry overhead
             );
-        
+
         let secondary_size = self.name_to_uuid.len()
             * (
                 64 +  // Name key (average)
                 32 +  // UUID value
-                32    // DashMap overhead
+                32
+                // DashMap overhead
             );
-            
+
         primary_size + secondary_size
     }
-    
+
     /// Export all collections as a map for snapshots
     pub fn export_all(&self) -> std::collections::BTreeMap<String, Collection> {
         self.entries
@@ -403,7 +428,7 @@ impl ThreadSafeSingleIndex {
     }
 
     pub fn get_metrics(&self) -> SingleIndexMetrics {
-        self.index.get_metrics()
+        self.index.metrics()
     }
 
     pub fn filter_collections<F>(&self, predicate: F) -> Vec<Arc<Collection>>

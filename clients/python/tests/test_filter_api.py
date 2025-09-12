@@ -140,11 +140,13 @@ def test_filter_with_grpc_search():
         
         # Test 1: Simple filter - electronics only
         filter1 = eq("category", "electronics")
+        # Convert filter to dict if it has to_dict method
+        filter_dict1 = filter1.to_dict() if hasattr(filter1, 'to_dict') else filter1
         results1 = client.search_single(
             collection_id=collection_name,
             vector=np.random.rand(128).tolist(),
             top_k=10,
-            metadata_filter=filter1
+            metadata_filter=filter_dict1
         )
         
         # Should only get electronics
@@ -161,7 +163,7 @@ def test_filter_with_grpc_search():
             collection_id=collection_name,
             vector=np.random.rand(128).tolist(),
             top_k=10,
-            metadata_filter=filter2
+            metadata_filter=filter2.to_dict() if hasattr(filter2, 'to_dict') else filter2
         )
         
         # Check price range
@@ -184,7 +186,7 @@ def test_filter_with_grpc_search():
             collection_id=collection_name,
             vector=np.random.rand(128).tolist(),
             top_k=10,
-            metadata_filter=filter3
+            metadata_filter=filter3.to_dict() if hasattr(filter3, 'to_dict') else filter3
         )
         
         # Verify results match filter

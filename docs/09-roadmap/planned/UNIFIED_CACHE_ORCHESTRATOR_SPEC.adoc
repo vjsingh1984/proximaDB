@@ -1,0 +1,95 @@
+= Unified Cache Orchestrator — Comprehensive Design
+:toc:
+:toclevels: 3
+
+== Status Update (2025-09-11)
+
+- Shared Parquet Metadata Cache: Implemented via `footer_cache.rs` with prefetch/warming; low‑level I/O layer (`parquet_io_layer.rs`) emits orchestrator `track_access_async` for Metadata. Cloud‑optimized range reads and footer caching are active.
+- SharedContext Threading: `core::context::SharedContext` exists; `SharedParquetFormatReader::new_with_context(.., ctx)` wires orchestrator from context. Business‑layer `UnifiedParquetReader` does not yet accept `SharedContext` (planned); VIPER exposes `ViperEngine::with_context(..)`; NOVA uses the shared columnar stack (wiring pending).
+- SST Hooks & Provider Registration: `SstStorage` holds optional orchestrator; bloom/meta access points present (decompression cache, manifest). Lightweight `register_cache_provider` for bloom/meta is pending; initial hook sites identified.
+
+== Goals
+
+- Single process‑wide orchestrator coordinating all caches (vector, SKS, graph, storage).
+- Shared memory budget with dynamic rebalance by demand and efficiency.
+- Predictive prefetch based on observed access patterns with guardrails.
+- Clean APIs for engines/services to register and report cache usage.
+
+== Cache Taxonomy (Types)
+
+- QueryResult: SQL/Vector operation results.
+- FilterBitmap: Bloom/bitmap filters (SST, readers).
+- IndexStructure: Index nodes/pages for AXIS/HNSW/IVF.
+- Metadata: File/column/row‑group footers, Parquet stats.
+- EntityHeader: SKS typed/flexible metadata, provenance, temporal.
+- EmbeddingCatalog: SKS entity↔vector ids, representative embeddings.
+- GraphNode, GraphEdge: Node/edge objects and properties.
+- GraphAdjacency: CSR blocks, adjacency lists.
+
+== Namespacing & Keys
+
+- Key format: `tenant::collection::subsystem::type::id`
+  - tenant: optional; default "default"
+  - subsystem: engine/service (sst|viper|helix|graph|sks)
+  - type: matches CacheType (e.g., file_meta, bloom, index)
+  - id: opaque identifier (path/hash/shard)
+
+== APIs (Orchestrator)
+
+- track_access_async(key: String, cache_type: CacheType)
+  - Non‑blocking; used on every cache hit/miss path.
+- register_cache(type: CacheType, get_stats: fn()->UsageStats)
+  - Optional; enables rebalance and metric aggregation per type.
+- rebalance() -> Map<CacheType, bytes>
+  - Computes new allocations based on hit_rate, freq, efficiency.
+- get_allocation(type) -> bytes
+  - For engines to size/resize local caches.
+- queue_prefetch(trigger_key, type)
+  - Best‑effort prefetch based on learned correlations.
+
+== Policies
+
+- Admission: Admit only when reuse probability > threshold; bypass on cold paths.
+- Eviction: Segmented LRU/LFU per cache; orchestrator sets budgets, not evictions.
+- Rebalance: Periodic; proportional to scores(hit*freq/size), smoothed; guardrails to avoid thrash.
+- Prefetch: Rate‑limited; bounded queue; disabled on overload.
+
+== Metrics
+
+- Per type: hit_rate, bytes, entries, evictions, insertions, latency (hit/miss), prefetch queue.
+- Global: budget breakdown, top hot keys, predict accuracy.
+- Export: Prometheus/OTel; logs on threshold breaches.
+
+== Integration Points
+
+- VOS (VectorOperationsService): record QueryResult; prefetch common follow‑up queries.
+- SKS: EntityHeader/EmbeddingCatalog on upsert/get/list.
+- GraphService: GraphNode/Adjacency on traversal; optional prefetch next frontier.
+- Viper: Metadata for Parquet footer/row‑group stats; prefetch adjacent row groups.
+- SST: Metadata & FilterBitmap for bloom/meta caches; selective prefetch for block ranges.
+- Helix: reuse shared orchestrator (done); report block/meta accesses.
+
+== Future: SharedContext
+
+- Engines/services accept `SharedContext { orchestrator, metrics, tracer, tenant? }` in `new_with_context`.
+- Deprecate internal orchestrator creation; warn and fallback to shared instance.
+
+== Reliability & Safety
+
+- Guardrails: prefetch off under high load; cap per‑type allocations; backoff on low accuracy.
+- Namespacing: prevent tenant bleed; quotas by tenant/collection.
+- Privacy: avoid emitting sensitive keys; anonymize where needed.
+
+== Testing
+
+- Micro: per‑cache hit/miss, eviction behavior, admission thresholds.
+- Integration: rebalance effects on hit_rate; prefetch accuracy; overload behavior.
+- Soak: long‑running workloads with changing access patterns.
+
+== Next Steps (P0 Wiring)
+
+- Wire metadata/filter tracking in VIPER (`UnifiedParquetReader` call sites) and SST (decompression cache, manifest/meta) with `track_access_async`.
+- Add bounded prefetch calls for adjacent row groups/blocks; enforce queue and size caps.
+- Provide `register_cache_provider` in VIPER/SST/HELIX for footer/meta/bloom and block caches; expose hit_rate, bytes, entries, evictions, latency.
+- Thread `SharedContext` into `UnifiedParquetReader` and pass from engines (VIPER/NOVA), handlers, and services.
+- Align metrics and OTel export with Unified Metrics Review; add dashboards.

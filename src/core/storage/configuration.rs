@@ -1,11 +1,11 @@
 //! Storage configuration types
 
-use serde::{Deserialize, Serialize};
-use crate::core::foundation::BaseConfig;
 use super::{CompressionConfig, StorageEngine};
+use crate::core::foundation::BaseConfig;
+use serde::{Deserialize, Serialize};
 
 /// Unified storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UnifiedStorageConfig {
     /// Primary storage engine
     pub engine: StorageEngine,
@@ -15,7 +15,7 @@ pub struct UnifiedStorageConfig {
     pub data_dirs: Vec<std::path::PathBuf>,
     /// Maximum file size before splitting
     pub max_file_size_mb: usize,
-    /// Enable write-ahead logging
+    /// Enable write bufferging
     pub enable_wal: bool,
     /// Sync frequency in seconds
     pub sync_interval_secs: u64,
@@ -39,11 +39,11 @@ impl BaseConfig for UnifiedStorageConfig {
         if self.data_dirs.is_empty() {
             return Err("At least one data directory must be specified".to_string());
         }
-        
+
         if self.max_file_size_mb == 0 {
             return Err("Max file size must be greater than 0".to_string());
         }
-        
+
         self.compression.validate()?;
         Ok(())
     }

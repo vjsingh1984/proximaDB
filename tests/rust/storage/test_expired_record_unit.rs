@@ -1,77 +1,74 @@
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use chrono::Utc;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use proximadb::core::LsmConfig;
-use proximadb::storage::engines::lsm::compaction::{CompactionManager, CompactionTask, CompactionPriority, CompactionStats};
-use proximadb::storage::engines::lsm::LsmRecord;
+use proximadb::core::SstConfig;
+use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority, CompactionStats};
+use proximadb::storage::engines::sst::SstRecord;
 
 /// Unit test for LSM compaction expired record deletion logic
 #[tokio::test]
-async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
+async fn test_sst_compaction_expired_deletion_unit() -> Result<()> {
     // Create test data with controlled timestamps
-    let current_time = Utc::now().timestamp_millis();
-    let expired_time = current_time - (5 * 60 * 60 * 1000); // 5 hours ago
-    let future_time = current_time + (5 * 60 * 60 * 1000); // 5 hours from now
+    let current_time = Utc::now().timestamp() as u32;
+    let expired_time = current_time - (5 * 60 * 60); // 5 hours ago
+    let future_time = current_time + (5 * 60 * 60); // 5 hours from now
     
     let test_records = vec![
         // Active record (no expiry)
-        LsmRecord {
+        SstRecord {
             id: "active_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: current_time,
-            created_at: current_time,
-            updated_at: current_time,
+            updated_at: Some(current_time),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 1,
             level: 0,
         },
         // Expired record (should be deleted)
-        LsmRecord {
+        SstRecord {
             id: "expired_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![4.0, 5.0, 6.0],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: expired_time,
-            created_at: expired_time,
-            updated_at: expired_time,
+            updated_at: Some(expired_time),
             expires_at: Some(expired_time),
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 2,
             level: 0,
         },
         // Active record with future expiry
-        LsmRecord {
+        SstRecord {
             id: "future_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![7.0, 8.0, 9.0],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: current_time,
-            created_at: current_time,
-            updated_at: current_time,
+            updated_at: Some(current_time),
             expires_at: Some(future_time),
-            version: 1,
+            version: Some(1),
             is_tombstone: false,
             sequence_number: 3,
             level: 0,
         },
         // Old tombstone (should be removed)
-        LsmRecord {
+        SstRecord {
             id: "old_tombstone".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![],
-            metadata: HashMap::new(),
+            metadata: vec![],
             timestamp: expired_time,
-            created_at: expired_time,
-            updated_at: expired_time,
+            updated_at: Some(expired_time),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             is_tombstone: true,
             sequence_number: 4,
             level: 0,
@@ -83,8 +80,8 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
     let collection_dir = temp_dir.path().join("test_collection");
     std::fs::create_dir_all(&collection_dir)?;
     
-    let input_file = collection_dir.join("input.sst");
-    let output_file = collection_dir.join("output.sst");
+    let input_file = collection_dir.join("input.sstable");
+    let output_file = collection_dir.join("output.sstable");
     
     // Write test data to input file
     let mut input_data = Vec::new();
@@ -105,7 +102,7 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
     };
     
     // Create config and perform compaction
-    let config = LsmConfig::default();
+    let config = SstConfig::default();
     let stats = CompactionManager::perform_compaction(&task, &config).await?;
     
     // Verify statistics
@@ -139,7 +136,7 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = bincode::deserialize::<LsmRecord>(entry_data) {
+        if let Ok(record) = SstRecord::deserialize(entry_data) {
             remaining_records.push(record);
         }
         
@@ -155,11 +152,11 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
     assert!(!remaining_ids.contains(&&"expired_1".to_string()), "Expired record should be deleted");
     assert!(!remaining_ids.contains(&&"old_tombstone".to_string()), "Old tombstone should be removed");
     
-    println!("✅ LSM compaction expired deletion unit test passed!");
-    println!("   - Input records: {}", test_records.len());
-    println!("   - Remaining records: {}", remaining_records.len());
-    println!("   - Expired deleted: {}", stats.expired_records_deleted);
-    println!("   - Tombstones removed: {}", stats.tombstones_removed);
+    debug!("✅ LSM compaction expired deletion unit test passed!");
+    debug!("   - Input records: {}", test_records.len());
+    debug!("   - Remaining records: {}", remaining_records.len());
+    debug!("   - Expired deleted: {}", stats.expired_records_deleted);
+    debug!("   - Tombstones removed: {}", stats.tombstones_removed);
     
     Ok(())
 }
@@ -168,9 +165,9 @@ async fn test_lsm_compaction_expired_deletion_unit() -> Result<()> {
 #[tokio::test]
 async fn test_viper_expired_record_logic_unit() -> Result<()> {
     // This test mocks the VIPER expiry logic from compact_parquet_files
-    let current_time = Utc::now().timestamp_millis();
-    let expired_time = current_time - (2 * 60 * 60 * 1000); // 2 hours ago
-    let future_time = current_time + (2 * 60 * 60 * 1000); // 2 hours from now
+    let current_time = Utc::now().timestamp() as u32;
+    let expired_time = current_time - (2 * 60 * 60); // 2 hours ago
+    let future_time = current_time + (2 * 60 * 60); // 2 hours from now
     
     // Mock record data (simulating what would be in Parquet files)
     let mock_records = vec![
@@ -188,7 +185,7 @@ async fn test_viper_expired_record_logic_unit() -> Result<()> {
         if let Some(expires_at) = expires_at {
             if expires_at < current_time {
                 expired_count += 1;
-                println!("⏰ VIPER: Skipping expired record {} (expired at {})", record_id, expires_at);
+                debug!("⏰ VIPER: Skipping expired record {} (expired at {})", record_id, expires_at);
                 continue;
             }
         }
@@ -205,10 +202,10 @@ async fn test_viper_expired_record_logic_unit() -> Result<()> {
     assert!(kept_ids.contains(&"future_record"), "Future expiry record should be kept");
     assert!(!kept_ids.contains(&"expired_record"), "Expired record should be filtered out");
     
-    println!("✅ VIPER expired record logic unit test passed!");
-    println!("   - Input records: 3");
-    println!("   - Kept records: {}", kept_records.len());
-    println!("   - Expired filtered: {}", expired_count);
+    debug!("✅ VIPER expired record logic unit test passed!");
+    debug!("   - Input records: 3");
+    debug!("   - Kept records: {}", kept_records.len());
+    debug!("   - Expired filtered: {}", expired_count);
     
     Ok(())
 }
@@ -241,7 +238,7 @@ async fn test_expiry_edge_cases_unit() -> Result<()> {
                   name, expires_at, current_time, should_be_expired);
     }
     
-    println!("✅ Expiry edge cases unit test passed!");
+    debug!("✅ Expiry edge cases unit test passed!");
     Ok(())
 }
 
@@ -269,6 +266,6 @@ async fn test_tombstone_cleanup_unit() -> Result<()> {
                   name, age, should_keep);
     }
     
-    println!("✅ Tombstone cleanup unit test passed!");
+    debug!("✅ Tombstone cleanup unit test passed!");
     Ok(())
 }

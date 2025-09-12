@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1200" height="420" viewBox="0 0 1200 420" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Clean gradients -->
+    <linearGradient id="panelGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f8fafc"/>
+    </linearGradient>
+    <linearGradient id="panelGradBlue" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#eef6ff"/>
+      <stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+    <linearGradient id="panelGradPurple" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f5f3ff"/>
+      <stop offset="100%" stop-color="#ede9fe"/>
+    </linearGradient>
+    <linearGradient id="panelGradGreen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ecfdf5"/>
+      <stop offset="100%" stop-color="#d1fae5"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Title -->
+  <text x="600" y="30" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:20px; font-weight:bold; fill:#111827;">Enterprise RAG on ProximaDB: Unified Vector + Graph + SKS</text>
+
+  <!-- TIER 1: Data Ingestion and Processing (Top Row) -->
+  
+  <!-- Ingestion -->
+  <rect x="80" y="70" width="280" height="120" rx="12" ry="12" style="fill:url(#panelGrad); stroke:#374151; stroke-width:2;"/>
+  <!-- Media icon -->
+  <rect x="195" y="82" width="20" height="16" fill="#ff6b35" stroke="#e55a2b" stroke-width="2" rx="2"/>
+  <circle cx="201" cy="88" r="2" fill="#ffffff"/>
+  <polygon points="207,86 207,94 212,90" fill="#ffffff"/>
+  <!-- Document stack -->
+  <rect x="217" y="85" width="16" height="20" fill="#10b981" stroke="#059669" stroke-width="1.5" rx="2"/>
+  <rect x="219" y="83" width="16" height="20" fill="#34d399" stroke="#10b981" stroke-width="1.5" rx="2"/>
+  <line x1="222" y1="89" x2="232" y2="89" stroke="#ffffff" stroke-width="1"/>
+  <line x1="222" y1="92" x2="230" y2="92" stroke="#ffffff" stroke-width="1"/>
+  <text x="220" y="125" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Ingestion</text>
+  <text x="100" y="150" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Documents → Embeddings</text>
+  <text x="100" y="165" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Multi-modal content</text>
+  <text x="100" y="180" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Metadata extraction</text>
+
+  <!-- SKS (Center) -->
+  <rect x="460" y="70" width="280" height="120" rx="12" ry="12" style="fill:url(#panelGradPurple); stroke:#6b21a8; stroke-width:2;"/>
+  <!-- SKS icon -->
+  <g transform="translate(600, 105)">
+    <rect x="-12" y="-16" width="24" height="32" rx="3.2" fill="#8b5cf6" stroke="#7c3aed" stroke-width="2"/>
+    <polygon points="12,-16 6,-10 12,-10" fill="#a78bfa" stroke="#7c3aed" stroke-width="2"/>
+    <line x1="6" y1="-10" x2="12" y2="-10" stroke="#7c3aed" stroke-width="2"/>
+    <line x1="-6" y1="4" x2="-2" y2="8" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+    <line x1="-2" y1="8" x2="6" y2="0" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <text x="600" y="128" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Semantic Knowledge Store</text>
+  <text x="480" y="153" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Entities with embeddings</text>
+  <text x="480" y="168" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Provenance &amp; temporal info</text>
+  <text x="480" y="183" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Semantic relationships</text>
+
+  <!-- Graph -->
+  <rect x="840" y="70" width="280" height="120" rx="12" ry="12" style="fill:url(#panelGradBlue); stroke:#1d4ed8; stroke-width:2;"/>
+  <!-- Graph network icon -->
+  <circle cx="975" cy="95" r="6" fill="#0ea5e9" stroke="#0284c7" stroke-width="2"/>
+  <circle cx="1000" cy="90" r="6" fill="#38bdf8" stroke="#0284c7" stroke-width="2"/>
+  <circle cx="995" cy="115" r="6" fill="#06b6d4" stroke="#0284c7" stroke-width="2"/>
+  <circle cx="965" cy="110" r="6" fill="#22d3ee" stroke="#0284c7" stroke-width="2"/>
+  <line x1="975" y1="95" x2="1000" y2="90" style="stroke:#ffffff; stroke-width:3;"/>
+  <line x1="975" y1="95" x2="965" y2="110" style="stroke:#ffffff; stroke-width:3;"/>
+  <line x1="1000" y1="90" x2="995" y2="115" style="stroke:#ffffff; stroke-width:3;"/>
+  <line x1="965" y1="110" x2="995" y2="115" style="stroke:#ffffff; stroke-width:3;"/>
+  <text x="980" y="128" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Graph Relationships</text>
+  <text x="860" y="153" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• References &amp; dependencies</text>
+  <text x="860" y="168" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Constraints &amp; traversal</text>
+  <text x="860" y="183" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Path optimization</text>
+
+  <!-- Top row arrows -->
+  <line x1="360" y1="130" x2="455" y2="130" style="stroke:#374151; stroke-width:2;"/>
+  <polygon points="455,126 465,130 455,134" style="fill:#374151;"/>
+  <line x1="740" y1="130" x2="835" y2="130" style="stroke:#374151; stroke-width:2;"/>
+  <polygon points="835,126 845,130 835,134" style="fill:#374151;"/>
+
+  <!-- TIER 2: Query Processing (Middle Row) -->
+  
+  <!-- SQL Query -->
+  <rect x="100" y="225" width="300" height="100" rx="12" ry="12" style="fill:url(#panelGrad); stroke:#374151; stroke-width:2;"/>
+  <text x="250" y="250" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">SQL Query Interface</text>
+  <rect x="120" y="260" width="260" height="45" rx="15" ry="15" style="fill:#f3f4f6; stroke:#9ca3af; stroke-width:1.5;"/>
+  <text x="250" y="278" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">SELECT passage, source, owner</text>
+  <text x="250" y="295" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">WHERE SIMILAR(...) AND FOLLOW(...)</text>
+
+  <!-- Vector Operations -->
+  <rect x="470" y="205" width="200" height="77" rx="12" ry="12" style="fill:url(#panelGradGreen); stroke:#065f46; stroke-width:2;">
+    <animate attributeName="opacity" values="0.95;1;0.95" dur="3s" repeatCount="indefinite"/>
+  </rect>
+  <text x="570" y="225" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:14px; font-weight:bold; fill:#111827;">Vector Operations</text>
+  <text x="490" y="245" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">• Similarity search</text>
+  <text x="490" y="260" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">• Progressive filtering</text>
+  <text x="490" y="275" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">• SIMD optimization</text>
+
+  <!-- Graph Service -->
+  <rect x="470" y="287" width="200" height="77" rx="12" ry="12" style="fill:url(#panelGradBlue); stroke:#1d4ed8; stroke-width:2;"/>
+  <text x="570" y="307" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:14px; font-weight:bold; fill:#111827;">Graph Service</text>
+  <text x="490" y="327" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">• Traversal &amp; pathfinding</text>
+  <text x="490" y="342" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">• Relationship analysis</text>
+  <text x="490" y="357" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">• Streaming results</text>
+
+  <!-- Middle row arrows -->
+  <line x1="400" y1="255" x2="465" y2="243" style="stroke:#374151; stroke-width:2;"/>
+  <polygon points="465,239 475,243 465,247" style="fill:#374151;"/>
+  <line x1="400" y1="295" x2="465" y2="325" style="stroke:#374151; stroke-width:2;"/>
+  <polygon points="465,321 475,325 465,329" style="fill:#374151;"/>
+
+  <!-- TIER 3: Results Processing (Bottom Row) -->
+  
+  <!-- Fusion -->
+  <rect x="740" y="230" width="180" height="90" rx="12" ry="12" style="fill:url(#panelGrad); stroke:#374151; stroke-width:2;">
+    <animate attributeName="opacity" values="0.9;1;0.9" dur="2.5s" repeatCount="indefinite"/>
+  </rect>
+  <text x="830" y="255" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Fusion Engine</text>
+  <text x="760" y="280" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• RRF ranking</text>
+  <text x="760" y="298" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Result deduplication</text>
+  <text x="760" y="316" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Score normalization</text>
+
+  <!-- Answer -->
+  <rect x="980" y="230" width="180" height="90" rx="12" ry="12" style="fill:url(#panelGrad); stroke:#374151; stroke-width:2;"/>
+  <text x="1070" y="255" text-anchor="middle" style="font-family:Arial, sans-serif; font-size:16px; font-weight:bold; fill:#111827;">Answer + Citations</text>
+  <text x="1000" y="280" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Cited sources</text>
+  <text x="1000" y="298" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Owner &amp; timestamp</text>
+  <text x="1000" y="316" style="font-family:Arial, sans-serif; font-size:12px; fill:#374151;">• Context window</text>
+
+  <!-- Bottom arrows -->
+  <line x1="670" y1="243" x2="735" y2="275" style="stroke:#374151; stroke-width:2;"/>
+  <polygon points="735,271 745,275 735,279" style="fill:#374151;"/>
+  <line x1="670" y1="325" x2="735" y2="275" style="stroke:#374151; stroke-width:2;"/>
+  <line x1="920" y1="275" x2="975" y2="275" style="stroke:#374151; stroke-width:2;"/>
+  <polygon points="975,271 985,275 975,279" style="fill:#374151;"/>
+
+  <!-- Legend -->
+  <rect x="200" y="372" width="350" height="40" rx="15" ry="15" style="fill:#f3f4f6; stroke:#9ca3af; stroke-width:1.5;"/>
+  <circle cx="220" cy="392" r="5" style="fill:#0ea5e9;"/>
+  <text x="235" y="397" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">Vector Search</text>
+  <circle cx="320" cy="392" r="5" style="fill:#8b5cf6;"/>
+  <text x="335" y="397" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">Graph Traversal</text>
+  <rect x="430" y="388" width="12" height="8" style="fill:#10b981;"/>
+  <text x="450" y="397" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">SKS Processing</text>
+
+  <rect x="600" y="372" width="350" height="40" rx="15" ry="15" style="fill:#f3f4f6; stroke:#9ca3af; stroke-width:1.5;"/>
+  <rect x="620" y="388" width="12" height="8" style="fill:#f59e0b;"/>
+  <text x="640" y="397" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">Provenance Tracking</text>
+  <rect x="780" y="388" width="12" height="8" style="fill:#ef4444;"/>
+  <text x="800" y="397" style="font-family:Arial, sans-serif; font-size:11px; fill:#374151;">Fusion Processing</text>
+
+</svg>

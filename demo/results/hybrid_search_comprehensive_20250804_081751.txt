@@ -1,0 +1,73 @@
+✅ Created collection: hybrid_demo_4fc5237e
+ℹ️ Loading corpus data...
+ℹ️ Generating sample corpus...
+✅ Generated 100 documents with embeddings
+ℹ️ Inserting 100 vectors in batches of 100
+✅ Inserted 100 vectors
+📊 Insert throughput: 1391.2563520810943vec/s
+📊 Total insert time: 0.07187747955322266s
+ℹ️ Query: 'artificial intelligence machine learning algorithms'
+ℹ️ Target IDs: ['doc_1', 'doc_5', 'doc_10']
+ℹ️ Metadata filter: {'category': 'AI', 'doc_type': 'research_paper'}
+ℹ️ 
+1️⃣ Search by ID only
+📊 ID search time: 149.98149871826172ms
+ℹ️    Found 3 results
+ℹ️ 
+2️⃣ Metadata filtering only
+📊 Metadata filter time: 0.10371208190917969ms
+ℹ️    Found 17 results
+ℹ️ 
+3️⃣ Similarity search only
+📊 Similarity search time: 3.501415252685547ms
+ℹ️    Found 10 results
+ℹ️ 
+4️⃣ ID + Similarity search
+📊 ID+Similarity time: 196.47574424743652ms
+ℹ️    Found 10 results
+ℹ️ 
+5️⃣ ID + Metadata filtering
+📊 ID+Metadata time: 149.58930015563965ms
+ℹ️    Found 0 results
+ℹ️ 
+6️⃣ Metadata + Similarity search
+📊 Metadata+Similarity time: 49.895524978637695ms
+ℹ️    Found 0 results
+ℹ️ 
+7️⃣ All three combined (Ultimate search)
+📊 All combined time: 49.98135566711426ms
+ℹ️    Found 0 results
+ℹ️ 
+High selectivity scenario:
+ℹ️ Filter: {'category': 'AI', 'year': 2024}
+ℹ️ Expected selectivity: 5.0%
+ℹ️ Estimated costs:
+ℹ️      vector_first: 80.7ms
+ℹ️   ✅ metadata_first: 28.2ms
+ℹ️      parallel: 82.2ms
+✅ Optimal strategy: metadata_first
+ℹ️ 
+Medium selectivity scenario:
+ℹ️ Filter: {'category': 'ML'}
+ℹ️ Expected selectivity: 17.0%
+ℹ️ Estimated costs:
+ℹ️      vector_first: 80.7ms
+ℹ️   ✅ metadata_first: 49.3ms
+ℹ️      parallel: 82.2ms
+✅ Optimal strategy: metadata_first
+ℹ️ 
+Low selectivity scenario:
+ℹ️ Filter: {'doc_type': 'article'}
+ℹ️ Expected selectivity: 67.0%
+ℹ️ Estimated costs:
+ℹ️      vector_first: 80.7ms
+ℹ️   ✅ metadata_first: 73.1ms
+ℹ️      parallel: 82.2ms
+✅ Optimal strategy: metadata_first
+✅ Hybrid search demo completed successfully!
+ℹ️ • All 7 search combinations provide flexibility
+ℹ️ • Query planning optimizes performance
+ℹ️ • BERT embeddings enable semantic understanding
+ℹ️ • Metadata filtering narrows results effectively
+ℹ️ • Combined approaches yield best results
+✅ Cleaned up test collection

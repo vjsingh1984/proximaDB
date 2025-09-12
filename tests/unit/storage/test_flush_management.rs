@@ -4,15 +4,16 @@
 //! and intelligent collection selection for flush operations.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tempfile::TempDir;
 
 use proximadb::core::VectorRecord;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-use proximadb::storage::persistence::wal::background_manager::{BackgroundMaintenanceManager, BackgroundTaskStatus};
-use proximadb::storage::persistence::wal::config::WalConfig;
+use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
+use proximadb::storage::persistence::write_ahead_log::background_manager::{BackgroundMaintenanceManager, BackgroundTaskStatus};
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -22,14 +23,21 @@ fn create_test_vector_records(collection_id: &str, count: usize, size_per_vector
     
     (0..count)
         .map(|i| VectorRecord {
-            id: Some(format!("vector_{}", i)),
+            id: Some(format!("vector_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
             vector: vector_data.clone(),
             metadata: vec![],
-            timestamp: now,
+            timestamp: now as u32,
             created_at: now,
-            updated_at: now,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -38,18 +46,19 @@ fn create_test_vector_records(collection_id: &str, count: usize, size_per_vector
 }
 
 /// Helper function to create test WAL batch
-fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
+fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
     let total_size_bytes = vectors.iter().map(|v| v.actual_size_bytes()).sum();
     let vector_count = vectors.len() as u64;
     let end_sequence = if vector_count > 0 { vector_count } else { 1 };
     let batch_id = BatchId::new(collection_id.to_string(), 1, end_sequence);
     
-    WalVectorBatch {
+    WriteBufferVectorBatch {
         batch_id,
         vector_records: vectors,
         created_at: SystemTime::now(),
         total_size_bytes,
         is_flushed: false,
+            metadata_bloom_filter: None,
     }
 }
 
@@ -80,7 +89,7 @@ async fn test_collection_flush_threshold_trigger() -> Result<()> {
     let collections_to_flush = memtable.collections_needing_flush(10 * 1024 * 1024).await?;
     assert!(collections_to_flush.contains(&collection_id.to_string()));
     
-    println!("✅ Collection flush threshold trigger test passed");
+    debug!("✅ Collection flush threshold trigger test passed");
     Ok(())
 }
 
@@ -119,7 +128,7 @@ async fn test_multiple_collections_flush_selection() -> Result<()> {
     let collections_to_flush = memtable.collections_needing_flush(100 * 1024).await?;
     assert_eq!(collections_to_flush.len(), 4);
     
-    println!("✅ Multiple collections flush selection test passed");
+    debug!("✅ Multiple collections flush selection test passed");
     Ok(())
 }
 
@@ -155,17 +164,17 @@ async fn test_global_memory_threshold_calculation() -> Result<()> {
     for (collection_id, (count, size)) in all_collection_stats {
         assert_eq!(count, 1000);
         assert!(size > 1024 * 1024); // Each collection > 1MB
-        println!("Collection {}: {} vectors, {} bytes", collection_id, count, size);
+        debug!("Collection {}: {} vectors, {} bytes", collection_id, count, size);
     }
     
-    println!("✅ Global memory threshold calculation test passed");
+    debug!("✅ Global memory threshold calculation test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_background_manager_flush_trigger() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB for testing
     
     let manager = BackgroundMaintenanceManager::new(Arc::new(config));
@@ -192,14 +201,14 @@ async fn test_background_manager_flush_trigger() -> Result<()> {
     let status = manager.get_collection_status(&collection_id).await;
     assert_eq!(status, BackgroundTaskStatus::Flushing);
     
-    println!("✅ Background manager flush trigger test passed");
+    debug!("✅ Background manager flush trigger test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_flush_coordination_prevents_concurrent_flushes() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB for testing
     
     let manager = BackgroundMaintenanceManager::new(Arc::new(config));
@@ -222,14 +231,14 @@ async fn test_flush_coordination_prevents_concurrent_flushes() -> Result<()> {
     let stats = manager.get_stats().await;
     assert_eq!(stats.flush_operations_skipped, 1);
     
-    println!("✅ Flush coordination prevents concurrent flushes test passed");
+    debug!("✅ Flush coordination prevents concurrent flushes test passed");
     Ok(())
 }
 
 #[tokio::test]
 async fn test_collection_isolation_in_flush_decisions() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    let mut config = WalConfig::default();
+    let mut config = WriteBufferConfig::default();
     config.performance.memory_flush_size_bytes = 1024 * 1024; // 1MB for testing
     
     let manager = BackgroundMaintenanceManager::new(Arc::new(config));
@@ -258,7 +267,7 @@ async fn test_collection_isolation_in_flush_decisions() -> Result<()> {
     assert_eq!(status_1, BackgroundTaskStatus::Flushing);
     assert_eq!(status_2, BackgroundTaskStatus::Flushing);
     
-    println!("✅ Collection isolation in flush decisions test passed");
+    debug!("✅ Collection isolation in flush decisions test passed");
     Ok(())
 }
 
@@ -292,7 +301,7 @@ async fn test_memtable_clear_functionality() -> Result<()> {
     assert_eq!(vector_count, 0);
     assert_eq!(total_size, 0);
     
-    println!("✅ Memtable clear functionality test passed");
+    debug!("✅ Memtable clear functionality test passed");
     Ok(())
 }
 
@@ -317,6 +326,6 @@ async fn test_flush_threshold_edge_cases() -> Result<()> {
     let high_threshold_collections = memtable.collections_needing_flush(1024 * 1024 * 1024).await?; // 1GB
     assert!(high_threshold_collections.is_empty());
     
-    println!("✅ Flush threshold edge cases test passed");
+    debug!("✅ Flush threshold edge cases test passed");
     Ok(())
 }

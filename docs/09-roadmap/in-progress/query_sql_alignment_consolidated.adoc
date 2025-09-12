@@ -1,0 +1,49 @@
+= ProximaDB Unified Query Layer Implementation Guide
+ :toc:
+ :status: in-progress
+
+== 🎯 Mission: SQL Frontend as Single Source of Truth
+
+**Objective**: Migrate from dual SQL parsers to unified `sql_frontend` (sqlparser-rs) with HashMap-optimized metadata filtering for 10x performance improvement.
+
+**Key Decision**: sql_frontend is the authoritative SQL parser; the old sql_engine is deprecated.
+
+== Current State (Verified 2025-09-10)
+
+Implemented:
+- REST/gRPC SQL endpoints using the new frontend by default (`/api/v1/sql/execute`, SqlService/ExecuteSql)
+- `sql_frontend/{parser,lowering}.rs` with sqlparser-rs, placeholders → Expr::Param, SKS validation
+- Unified execution: `query/execution/{mod,planner,executor}.rs`; VOS HashMap-based metadata filtering
+- SKS functions: SIMILAR/FOLLOW lowered and mapped to VectorSearch/GraphTraversal; Hybrid uses RRF
+- GROUP BY/HAVING: Aggregate op + numeric aggregation; HAVING evaluation over aggregate rows
+- JOIN: Planner emits Join ops (INNER/LEFT); executor implements equality hash-join across buffers. Note: planner uses left/right key fields while executor currently expects a parsed `ON` string — enum alignment required.
+
+Completed:
+- AST lowering foundation (`lowering.rs`): SELECT/WHERE/ORDER BY/LIMIT, HashMap-friendly filter lowering
+- Unified execution engine integrated via `UnifiedHandlers::execute_sql_frontend`
+- Hybrid fusion algorithms available (RRF, Adaptive) in executor
+- Parameter binding in frontend (no SQL string substitution)
+
+In Progress:
+- JOIN: align planner/executor Join schema; expand ON handling (qualified identifiers, multiple joins), predicate/project pushdown
+- Aggregates: group-by expressions; preserve select-item aliases through execution
+- UNION/CTE: currently parse-only; execution planning pending
+- Streaming/pagination for large results
+
+TODO:
+- Model registry integration for embedding validation (optional)
+
+== 🗺️ Implementation Roadmap
+
+[cols="1,2,1,2",options="header"]
+|===
+| Priority | Component | Status | Implementation Focus
+| **P1** | AST Lowering | ✅ Done | `sql_frontend/lowering.rs` - SELECT/WHERE/ORDER BY/LIMIT/GROUP BY/HAVING.
+| **P2** | Execution Engine | ✅ Done | `query/execution/{mod,planner,executor}.rs` - vector/graph/hybrid, including hash-join.
+| **P3** | SKS Functions | ✅ Done | Lowered to execution operations.
+| **P4** | Integration | ✅ Done | `execute_sql_frontend()` is the default in UnifiedHandlers.
+|===
+
+== 🔧 Implementation Guide for Agents
+
+This document is intended for developers and AI agents to understand the architecture and implementation details of the unified query layer.

@@ -1,10 +1,10 @@
 //! Compression algorithms and configuration
 
-use serde::{Deserialize, Serialize};
 use crate::core::foundation::BaseConfig;
+use serde::{Deserialize, Serialize};
 
 /// Unified compression algorithm enum - replaces 10+ duplicates
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
@@ -20,6 +20,10 @@ pub enum CompressionAlgorithm {
     Gzip,
     /// Deflate compression
     Deflate,
+    /// Brotli compression
+    Brotli,
+    /// Mixed adaptive compression
+    Mixed,
 }
 
 impl Default for CompressionAlgorithm {
@@ -30,7 +34,7 @@ impl Default for CompressionAlgorithm {
 }
 
 /// Unified compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompressionConfig {
     /// Algorithm to use
     pub algorithm: CompressionAlgorithm,
@@ -54,7 +58,7 @@ impl Default for CompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
             min_compress_size: 1024, // 1KB minimum
-            target_ratio: 0.5, // 50% target compression
+            target_ratio: 0.5,       // 50% target compression
         }
     }
 }

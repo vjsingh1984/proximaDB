@@ -24,7 +24,7 @@ use super::auth::{AzureCredentialProvider, AzureCredentials};
 use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// Azure blob tier options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AzureBlobTier {
     Hot,
     Cool,
@@ -42,7 +42,7 @@ impl AzureBlobTier {
 }
 
 /// Azure ADLS configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AzureConfig {
     /// Azure storage account name
     pub account_name: String,
@@ -70,7 +70,7 @@ pub struct AzureConfig {
 }
 
 /// Azure credential configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AzureCredentialConfig {
     /// Credential provider type
     pub provider: AzureCredentialProviderType,
@@ -97,7 +97,7 @@ pub struct AzureCredentialConfig {
     pub refresh_interval: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AzureCredentialProviderType {
     /// Use storage account key
     AccountKey,
@@ -301,7 +301,7 @@ impl AzureClient {
 
         let mut request = self
             .http_client
-            .get(&url)
+            .get("Location")
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
@@ -380,7 +380,7 @@ impl AzureClient {
             )
         };
 
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         let mut request = self
             .http_client
@@ -394,17 +394,21 @@ impl AzureClient {
             .body(data.to_vec());
 
         // Add blob tier if specified
-        if let Some(storage_class) = options.storage_class {
-            request = request.header("x-ms-access-tier", storage_class);
+        if let Some(ref opts) = options {
+            if let Some(ref storage_class) = opts.storage_class {
+                request = request.header("x-ms-access-tier", storage_class);
+            } else {
+                request = request.header("x-ms-access-tier", self.config.default_blob_tier.as_str());
+            }
+            
+            // Add metadata if specified
+            if let Some(ref metadata) = opts.metadata {
+                for (key, value) in metadata {
+                    request = request.header(format!("x-ms-meta-{}", key), value);
+                }
+            }
         } else {
             request = request.header("x-ms-access-tier", self.config.default_blob_tier.as_str());
-        }
-
-        // Add metadata if specified
-        if let Some(metadata) = options.metadata {
-            for (key, value) in metadata {
-                request = request.header(format!("x-ms-meta-{}", key), value);
-            }
         }
 
         let response = request
@@ -425,6 +429,10 @@ impl AzureClient {
 
 #[async_trait]
 impl FileSystem for AzureFileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("📖 Azure read: {}", path);
         let (container, blob_path) = self.parse_azure_url(path)?;
@@ -548,26 +556,26 @@ impl FileSystem for AzureFileSystem {
         if response.status().is_success() {
             let size = response
                 .headers()
-                .get("content-length")
+                .get("Location")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
+                ;
 
             let etag = response
                 .headers()
-                .get("etag")
+                .get("Location")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 
             let blob_tier = response
                 .headers()
-                .get("x-ms-access-tier")
+                .get("Location")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 
             Ok(FileMetadata {
                 path: format!("adls://{}/{}", container, blob_path),
-                size,
+                size: size.unwrap_or(0),
                 created: None,       // Would need to parse x-ms-creation-time header
                 modified: None,      // Would need to parse Last-Modified header
                 is_directory: false, // Azure blobs are always files
@@ -625,6 +633,28 @@ impl FileSystem for AzureFileSystem {
 
     async fn sync(&self) -> FsResult<()> {
         // Azure operations are immediately durable
+        Ok(())
+    }
+    
+    async fn sync_file(&self, path: &str) -> FsResult<()> {
+        // Azure doesn't support or need file-level sync
+        // When using TransactionCoordinator pattern:
+        // 1. Data is written to staging location (possibly local)
+        // 2. Move operation from staging to final location is atomic
+        // 3. Once move completes, data is durable in Azure
+        
+        tracing::debug!("sync_file called on Azure path {} - no-op as Azure guarantees durability after atomic move", path);
+        
+        // Note: Azure Blob Storage provides durability guarantees:
+        // - LRS: 99.999999999% (11 9's) durability 
+        // - ZRS: 99.9999999999% (12 9's) durability
+        // - GRS: 99.99999999999999% (16 9's) durability
+        // 
+        // The atomic move operation ensures:
+        // 1. Old file is not deleted until new file is confirmed written
+        // 2. If move fails, original data remains intact
+        // 3. No partial writes are visible to readers
+        
         Ok(())
     }
 
@@ -762,6 +792,7 @@ impl AzureCredentialProvider for ServicePrincipalProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_azure_url_parsing() {

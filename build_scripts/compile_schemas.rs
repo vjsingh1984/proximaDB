@@ -7,9 +7,10 @@
 use std::fs;
 use std::path::Path;
 use apache_avro::{Schema, Writer};
+use tracing::{debug, error, info};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔨 Compiling Avro schemas at build time...");
+    debug!("🔨 Compiling Avro schemas at build time...");
     
     // Read the protocol file
     let schema_content = fs::read_to_string("schemas/proximadb_core.avsc")?;
@@ -25,11 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             match Schema::parse_str(&type_schema_str) {
                 Ok(schema) => {
-                    println!("✅ Compiled schema: {}", type_name);
+                    info!("✅ Compiled schema: {}", type_name);
                     schemas.insert(type_name.to_string(), schema);
                 }
                 Err(e) => {
-                    eprintln!("❌ Failed to compile schema {}: {}", type_name, e);
+                    eerror!("❌ Failed to compile schema {}: {}", type_name, e);
                     return Err(e.into());
                 }
             }
@@ -77,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name.to_lowercase()
         ));
         code.push_str(&format!(
-            "    COMPILED_SCHEMAS.get(\"{}\").unwrap()\n",
+            "    COMPILED_SCHEMAS.get(key).unwrap()\n",
             name
         ));
         code.push_str("}\n\n");
@@ -87,8 +88,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("src/schema_constants")?;
     fs::write("src/schema_constants.rs", code)?;
     
-    println!("✅ Schema compilation complete - generated src/schema_constants.rs");
-    println!("📦 Schemas: {:?}", schemas.keys().collect::<Vec<_>>());
+    info!("✅ Schema compilation complete - generated src/schema_constants.rs");
+    debug!("📦 Schemas: {:?}", schemas.keys().collect::<Vec<_>>());
     
     Ok(())
 }

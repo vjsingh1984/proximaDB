@@ -104,12 +104,19 @@ where
         let old_count = data.len();
         let key_exists = data.contains_key(&key);
 
-        tracing::info!("🌲 BTree Memtable Insert: key={:?}, old_count={}, key_exists={}", 
-                      key, old_count, key_exists);
+        tracing::info!(
+            "🌲 BTree Memtable Insert: key={:?}, old_count={}, key_exists={}",
+            key,
+            old_count,
+            key_exists
+        );
 
         let old_size = if key_exists {
             let old_entry_size = Self::estimate_entry_size(&key, data.get(&key).unwrap());
-            tracing::info!("🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: Replacing existing entry (old size: {} bytes)", old_entry_size);
+            tracing::info!(
+                "🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: Replacing existing entry (old size: {} bytes)",
+                old_entry_size
+            );
             old_entry_size
         } else {
             tracing::info!("🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: New entry insertion");
@@ -332,6 +339,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_btree_basic_operations() {
@@ -342,14 +350,14 @@ mod tests {
         assert!(memtable.insert(2u64, "value2".to_string()).await.is_ok());
 
         assert_eq!(
-            memtable.get(&1u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value1".to_string())
         );
         assert_eq!(
-            memtable.get(&2u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value2".to_string())
         );
-        assert_eq!(memtable.get(&3u64).await.unwrap(), None);
+        assert_eq!(memtable.get(&hash).await.unwrap(), None);
 
         // Test range scan
         let results = memtable.range_scan(1u64, Some(10)).await.unwrap();
@@ -389,10 +397,12 @@ mod tests {
 
         // Insert test data
         for i in 1..=5 {
-            assert!(memtable
-                .insert(i as u64, format!("value{}", i))
-                .await
-                .is_ok());
+            assert!(
+                memtable
+                    .insert(i as u64, format!("value{}", i))
+                    .await
+                    .is_ok()
+            );
         }
 
         assert_eq!(memtable.len().await, 5);

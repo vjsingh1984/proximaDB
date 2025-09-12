@@ -7,7 +7,8 @@ features added to ProximaDB.
 
 import pytest
 import numpy as np
-from proximadb.models import (
+import logging
+from proximadb import (
     QuantizationType,
     QuantizationConfig,
     SearchOptimization,
@@ -17,9 +18,12 @@ from proximadb.models import (
 )
 from proximadb import ProximaDBClient, Protocol
 
+logger = logging.getLogger(__name__)
+
 try:
     from proximadb import proximadb_pb2
-except ImportError:
+except ImportError as e:
+    logger.debug(f"Failed to import proximadb_pb2: {e}")
     proximadb_pb2 = None
 
 
@@ -145,7 +149,7 @@ class TestCollectionWithQuantization:
         config = CollectionConfig(
             name="test_collection",
             dimension=768,
-            distance_metric=DistanceMetric.COSINE,
+            distance_metric="cosine",
             quantization_config=quantization
         )
         
@@ -158,7 +162,7 @@ class TestCollectionWithQuantization:
         config = CollectionConfig(
             name="test_collection",
             dimension=384,
-            distance_metric=DistanceMetric.EUCLIDEAN
+            distance_metric="euclidean"
         )
         
         assert config.quantization_config is None
@@ -238,7 +242,7 @@ class TestProtoQuantizationMessages:
         config = proximadb_pb2.CollectionConfig()
         config.name = "test_collection"
         config.dimension = 768
-        config.distance_metric = proximadb_pb2.DistanceMetric.COSINE
+        config.distance_metric = proximadb_pb2.COSINE
         config.storage_engine = proximadb_pb2.StorageEngine.VIPER
         config.primary_indexing_algorithm = proximadb_pb2.IndexingAlgorithm.HNSW
         
@@ -319,23 +323,21 @@ class TestQuantizationIntegration:
             pytest.skip("ProximaDB server not running")
             
         # Create collection with quantization
-        config = CollectionConfig(
-            name="test_quantization_collection",
-            dimension=128,
-            distance_metric=DistanceMetric.COSINE,
-            quantization_config=QuantizationConfig(
-                enabled=True,
-                type=QuantizationType.SCALAR,
-                bits_per_vector=8,
-                accuracy_threshold=0.95
-            )
-        )
-        
         collection_name = f"test_quant_{np.random.randint(1000000)}"
         
         try:
             # Create collection
-            collection = client.create_collection(collection_name, config)
+            collection = client.create_collection(
+                collection_name,
+                dimension=128,
+                distance_metric="cosine",
+                quantization_config=QuantizationConfig(
+                    enabled=True,
+                    type=QuantizationType.SCALAR,
+                    bits_per_vector=8,
+                    accuracy_threshold=0.95
+                )
+            )
             assert collection.name == collection_name
             
             # Verify collection was created

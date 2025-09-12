@@ -16,8 +16,10 @@
 
 //! Unit tests for unified collection index functionality
 
+use proximadb::proto::proximadb::{
+    Collection, CollectionConfig, CollectionStats, DistanceMetric, IndexingAlgorithm, StorageEngine,
+};
 use proximadb::storage::metadata::unified_index::UnifiedCollectionIndex;
-use proximadb::proto::proximadb::{Collection, CollectionConfig, CollectionStats, DistanceMetric, StorageEngine, IndexingAlgorithm};
 
 fn create_test_collection(id: &str, name: &str) -> Collection {
     Collection {
@@ -30,12 +32,15 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
             primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
             filterable_columns: vec![],
             index_configs: vec![],
-            quantization_config: None,
-            primary_index_name: "default".to_string(),
-            enable_automatic_index_selection: false,
+            quantization: None,
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test_user".to_string()),
+            compression: None,
+            optimization_hints: None,
+            storage_location: None,
         }),
         stats: Some(CollectionStats {
             vector_count: 100,
@@ -44,39 +49,40 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         }),
         created_at: chrono::Utc::now().timestamp_millis(),
         updated_at: chrono::Utc::now().timestamp_millis(),
+        storage_assignment: None,
     }
 }
 
 #[test]
 fn test_basic_operations() {
     let index = UnifiedCollectionIndex::new();
-    
+
     let collection = create_test_collection("uuid-123", "test-collection");
-    
+
     // Test upsert
     index.upsert_collection(collection.clone());
     assert_eq!(index.count(), 1);
-    
+
     // Test UUID lookup
     let result = index.get_by_uuid("uuid-123");
     assert!(result.is_some());
     assert_eq!(result.unwrap().id, "uuid-123");
-    
+
     // Test name lookup
     let result = index.get_by_name("test-collection");
     assert!(result.is_some());
     assert_eq!(result.unwrap().id, "uuid-123");
-    
+
     // Test UUID by name
     let uuid = index.get_uuid_by_name("test-collection");
     assert_eq!(uuid.unwrap(), "uuid-123");
-    
+
     // Test existence checks
     assert!(index.exists_by_uuid("uuid-123"));
     assert!(index.exists_by_name("test-collection"));
     assert!(!index.exists_by_uuid("nonexistent"));
     assert!(!index.exists_by_name("nonexistent"));
-    
+
     // Test removal
     let removed = index.remove_collection("uuid-123");
     assert!(removed.is_some());
@@ -89,44 +95,47 @@ fn test_basic_operations() {
 fn test_concurrent_access() {
     use std::sync::Arc;
     use std::thread;
-    
+
     let index = Arc::new(UnifiedCollectionIndex::new());
     let mut handles = vec![];
-    
+
     // Spawn multiple threads doing concurrent operations
     for i in 0..10 {
         let index_clone = index.clone();
         let handle = thread::spawn(move || {
-            let collection = create_test_collection(&format!("uuid-{}", i), &format!("collection-{}", i));
+            let collection =
+                create_test_collection(&format!("uuid-{}", i), &format!("collection-{}", i));
             index_clone.upsert_collection(collection);
-            
+
             // Immediate lookup to test consistency
             let result = index_clone.get_by_uuid(&format!("uuid-{}", i));
             assert!(result.is_some());
-            
+
             let result = index_clone.get_by_name(&format!("collection-{}", i));
             assert!(result.is_some());
         });
         handles.push(handle);
     }
-    
+
     // Wait for all threads
     for handle in handles {
         handle.join().unwrap();
     }
-    
+
     // Verify final state
     assert_eq!(index.count(), 10);
-    
+
     // Test concurrent reads
-    let handles: Vec<_> = (0..10).map(|i| {
-        let index_clone = index.clone();
-        thread::spawn(move || {
-            let result = index_clone.get_by_uuid(&format!("uuid-{}", i));
-            assert!(result.is_some());
+    let handles: Vec<_> = (0..10)
+        .map(|i| {
+            let index_clone = index.clone();
+            thread::spawn(move || {
+                let result = index_clone.get_by_uuid(&format!("uuid-{}", i));
+                assert!(result.is_some());
+            })
         })
-    }).collect();
-    
+        .collect();
+
     for handle in handles {
         handle.join().unwrap();
     }
@@ -135,19 +144,19 @@ fn test_concurrent_access() {
 #[test]
 fn test_rebuild_from_records() {
     let index = UnifiedCollectionIndex::new();
-    
+
     let records = vec![
         create_test_collection("uuid-1", "collection-1"),
         create_test_collection("uuid-2", "collection-2"),
         create_test_collection("uuid-3", "collection-3"),
     ];
-    
+
     index.rebuild_from_records(records);
-    
+
     assert_eq!(index.count(), 3);
     assert!(index.exists_by_uuid("uuid-1"));
     assert!(index.exists_by_name("collection-2"));
-    
+
     let metrics = index.get_metrics();
     assert!(metrics.last_rebuild_timestamp.is_some());
 }
@@ -156,14 +165,14 @@ fn test_rebuild_from_records() {
 fn test_performance_metrics() {
     let index = UnifiedCollectionIndex::new();
     let collection = create_test_collection("uuid-perf", "perf-collection");
-    
+
     index.upsert_collection(collection);
-    
+
     // Perform some operations to generate metrics
     index.get_by_uuid("uuid-perf");
     index.get_by_name("perf-collection");
     index.get_by_uuid("nonexistent"); // Cache miss
-    
+
     let metrics = index.get_metrics();
     assert_eq!(metrics.total_collections, 1);
     assert_eq!(metrics.uuid_lookups, 2);

@@ -15,8 +15,9 @@ from typing import Generator, Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric
-from proximadb.exceptions import ProximaDBError
+from proximadb import CollectionConfig, DistanceMetric, StorageEngine
+from proximadb import ProximaDBError
+
 
 
 # Configure logging for tests
@@ -89,7 +90,7 @@ def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient
 @pytest.fixture
 def unique_collection_name(test_config) -> str:
     """Generate unique collection name for each test"""
-    timestamp = int(time.time() * 1000)  # Millisecond precision
+    timestamp = int(time.time())  # Seconds (proto expects seconds, not milliseconds)
     test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
     return f"{test_config['test_collection_prefix']}{test_name}_{timestamp}"
 
@@ -100,7 +101,7 @@ def basic_collection_config() -> CollectionConfig:
     return CollectionConfig(
             name="test_collection",
             dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         description="Test collection created by pytest"
     )
 
@@ -111,7 +112,7 @@ def advanced_collection_config() -> CollectionConfig:
     return CollectionConfig(
             name="test_collection",
             dimension=768,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         description="Advanced test collection with BERT dimensions",
         storage_engine=StorageEngine.VIPER
     )
@@ -145,9 +146,9 @@ class TestCollectionManager:
             config = CollectionConfig(
             name="test_collection",
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
-        timestamp = int(time.time() * 1000)
+        timestamp = int(time.time())  # Seconds (proto expects seconds)
         collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
         
         collection = self.client.create_collection(collection_name, config)
@@ -197,6 +198,67 @@ def pytest_configure(config):
     )
 
 
+# Additional fixtures for integration tests
+@pytest.fixture
+def client(rest_client):
+    """Alias for rest_client to match integration test expectations"""
+    return rest_client
+
+@pytest.fixture
+def cleanup_collection(unique_collection_name):
+    """Collection name that will be automatically cleaned up"""
+    return unique_collection_name
+
+@pytest.fixture(scope="session")
+def corpus_data():
+    """Generate sample corpus data for integration tests"""
+    try:
+        # Create a smaller sample corpus for unit tests (reduced from 10MB)
+        sample_docs = [
+            {
+                "id": f"doc_{i}",
+                "text": f"Sample document {i} about technology and innovation in artificial intelligence",
+                "category": "technology" if i % 2 == 0 else "science",
+                "importance": i % 10,
+                "author": f"Author_{i % 3}"
+            }
+            for i in range(20)  # 100 documents instead of 10MB
+        ]
+        return sample_docs
+    except Exception as e:
+        logging.warning(f"Failed to create corpus data: {e}")
+        return None
+
+@pytest.fixture(scope="session")
+def bert_service():
+    """BERT embedding service for tests"""
+    try:
+        # Try to import sentence_transformers
+        from sentence_transformers import SentenceTransformer
+        return SentenceTransformer("all-MiniLM-L6-v2")  # 384 dimensions
+    except ImportError:
+        logging.warning("sentence-transformers not available, skipping BERT service")
+        return None
+    except Exception as e:
+        logging.warning(f"Failed to create BERT service: {e}")
+        return None
+
+@pytest.fixture(scope="session")
+def cached_embeddings(corpus_data, bert_service):
+    """Pre-computed embeddings for corpus data"""
+    if not corpus_data or not bert_service:
+        logging.warning("Corpus data or BERT service not available")
+        return None
+    
+    try:
+        texts = [doc["text"] for doc in corpus_data]
+        embeddings = bert_service.encode(texts, show_progress_bar=False)
+        return embeddings.tolist()  # Convert to list for JSON serialization
+    except Exception as e:
+        logging.warning(f"Failed to compute embeddings: {e}")
+        return None
+
+
 # Pytest hooks
 def pytest_collection_modifyitems(config, items):
     """Modify test collection to add markers and skip conditions"""
@@ -232,13 +294,17 @@ def pytest_runtest_setup(item):
 @pytest.fixture(scope="session", autouse=True)
 def configure_test_endpoints(request):
     """Configure test endpoints from command line options"""
-    rest_endpoint = request.config.getoption("--rest-endpoint")
-    grpc_endpoint = request.config.getoption("--grpc-endpoint")
-    
-    TEST_CONFIG["rest_endpoint"] = rest_endpoint
-    TEST_CONFIG["grpc_endpoint"] = grpc_endpoint
-    
-    logging.info(f"Test configuration: REST={rest_endpoint}, gRPC={grpc_endpoint}")
+    try:
+        rest_endpoint = request.config.getoption("--rest-endpoint", default=TEST_CONFIG["rest_endpoint"])
+        grpc_endpoint = request.config.getoption("--grpc-endpoint", default=TEST_CONFIG["grpc_endpoint"])
+        
+        TEST_CONFIG["rest_endpoint"] = rest_endpoint
+        TEST_CONFIG["grpc_endpoint"] = grpc_endpoint
+        
+        logging.info(f"Test configuration: REST={rest_endpoint}, gRPC={grpc_endpoint}")
+    except ValueError:
+        # Options not defined, use defaults from TEST_CONFIG
+        logging.info(f"Using default test configuration: REST={TEST_CONFIG['rest_endpoint']}, gRPC={TEST_CONFIG['grpc_endpoint']}")
 
 
 # Exception handling helpers

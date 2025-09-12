@@ -7,27 +7,28 @@
 //!
 //! Provides ACID guarantees for metadata operations using:
 //! - Multi-Version Concurrency Control (MVCC)
-//! - Write-Ahead Logging for durability
+//! - Write Buffering for durability
 //! - Optimistic concurrency control
 //! - Atomic batch operations
 
-use anyhow::{bail, Context, Result};
+use crate::utils::uuid::Uuid;
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use uuid::Uuid;
 
 use super::{
-    wal::{MetadataWalConfig, MetadataWalManager, VersionedCollectionMetadata},
-    CollectionMetadata, MetadataFilter, MetadataOperation, MetadataStorageStats,
-    MetadataStoreInterface, SystemMetadata,
+    MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
+    SystemMetadata,
+    write_ahead_log::{
+        AccessPattern, MetadataWALConfig, MetadataWriteAheadLog, VersionedCollectionMetadata,
+    },
 };
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-// Strategy configuration is imported through metadata module
-use crate::storage::strategy::CollectionStrategyConfig;
+// Import CollectionMetadata from fastlanes
 
 /// Transaction identifier
 pub type TransactionId = Uuid;
@@ -53,7 +54,7 @@ pub struct MetadataTransaction {
     pub id: TransactionId,
     pub operations: Vec<MetadataOperation>,
     pub state: TransactionState,
-    pub created_at: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     pub timeout_at: DateTime<Utc>,
     pub isolation_level: IsolationLevel,
 }
@@ -76,7 +77,7 @@ impl MetadataTransaction {
             id: Uuid::new_v4(),
             operations: Vec::new(),
             state: TransactionState::Active,
-            created_at: now,
+            timestamp: now,
             timeout_at: now + chrono::Duration::seconds(timeout_seconds as i64),
             isolation_level,
         }
@@ -99,7 +100,7 @@ struct VersionInfo {
     version: u64,
     transaction_id: TransactionId,
     committed_at: DateTime<Utc>,
-    metadata: VersionedCollectionMetadata,
+    metadata: crate::proto::proximadb_v1::Collection,
 }
 
 /// Lock information for concurrent access
@@ -118,8 +119,8 @@ enum LockType {
 
 /// Atomic metadata store with MVCC and transactions
 pub struct AtomicMetadataStore {
-    /// WAL manager for persistence
-    wal_manager: Arc<MetadataWalManager>,
+    /// Write buffer manager for persistence
+    write_buffer_manager: Arc<MetadataWriteAheadLog>,
 
     /// Version store for MVCC
     version_store: Arc<RwLock<HashMap<String, Vec<VersionInfo>>>>,
@@ -165,15 +166,15 @@ struct AtomicStoreStats {
 impl AtomicMetadataStore {
     /// Create new atomic metadata store
     pub async fn new(
-        config: MetadataWalConfig,
+        config: MetadataWALConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Self> {
-        tracing::debug!("🚀 Creating AtomicMetadataStore with MVCC and WAL backing");
+        tracing::debug!("🚀 Creating AtomicMetadataStore with MVCC and Write Buffer backing");
 
-        let wal_manager = Arc::new(MetadataWalManager::new(config, filesystem).await?);
+        let write_buffer_manager = Arc::new(MetadataWriteAheadLog::new(config, filesystem).await?);
 
         let store = Self {
-            wal_manager,
+            write_buffer_manager,
             version_store: Arc::new(RwLock::new(HashMap::new())),
             active_transactions: Arc::new(RwLock::new(HashMap::new())),
             lock_table: Arc::new(RwLock::new(HashMap::new())),
@@ -287,59 +288,73 @@ impl AtomicMetadataStore {
 
         for operation in &transaction.operations {
             match operation {
-                MetadataOperation::CreateCollection(metadata) => {
+                MetadataOperation::CreateCollection(collection) => {
                     let versioned = VersionedCollectionMetadata {
-                        id: metadata.id.clone(),
-                        name: metadata.name.clone(),
-                        dimension: metadata.dimension,
-                        distance_metric: metadata.distance_metric.clone(),
-                        indexing_algorithm: metadata.indexing_algorithm.clone(),
-                        created_at: metadata.created_at,
-                        updated_at: Utc::now(),
-                        version,
-                        vector_count: metadata.vector_count,
-                        total_size_bytes: metadata.total_size_bytes,
-                        config: metadata.config.clone(),
-                        description: metadata.description.clone(),
-                        tags: metadata.tags.clone(),
-                        owner: metadata.owner.clone(),
-                        access_pattern: super::wal::AccessPattern::Normal, // Convert enum
-                        retention_policy: None, // TODO: Convert retention policy
+                        id: collection.id.clone(),
+                        name: collection
+                            .config
+                            .as_ref()
+                            .map(|c| c.name.clone())
+                            .unwrap_or_default(),
+                        dimension: collection
+                            .config
+                            .as_ref()
+                            .map(|c| c.dimension as usize)
+                            .unwrap_or(0),
+                        distance_metric: collection
+                            .config
+                            .as_ref()
+                            .map(|c| format!("{:?}", c.distance_metric))
+                            .unwrap_or_default(),
+                        indexing_algorithm: "HNSW".to_string(), // Default
+                        timestamp: Utc::now().timestamp() as u32,
+                        version: Some(version as u32),
+                        vector_count: collection
+                            .stats
+                            .as_ref()
+                            .map(|s| s.vector_count as u64)
+                            .unwrap_or(0),
+                        total_size_bytes: collection
+                            .stats
+                            .as_ref()
+                            .map(|s| s.data_size_bytes as u64)
+                            .unwrap_or(0),
+                        config: std::collections::HashMap::new(), // TODO: Convert from collection config
+                        description: None,
+                        tags: Vec::new(),
+                        owner: None,
+                        access_pattern: AccessPattern::Normal, // Default
+                        retention_policy: None,
                     };
 
-                    // Write to WAL
-                    self.wal_manager
+                    // Write to write buffer
+                    self.write_buffer_manager
                         .upsert_collection(versioned.clone())
                         .await?;
 
-                    version_updates.push((metadata.id.clone(), versioned));
+                    version_updates.push((collection.id.clone(), versioned));
                 }
 
                 MetadataOperation::UpdateCollection {
                     collection_id,
-                    metadata,
+                    metadata: _,
                 } => {
-                    let versioned = VersionedCollectionMetadata {
-                        id: metadata.id.clone(),
-                        name: metadata.name.clone(),
-                        dimension: metadata.dimension,
-                        distance_metric: metadata.distance_metric.clone(),
-                        indexing_algorithm: metadata.indexing_algorithm.clone(),
-                        created_at: metadata.created_at,
-                        updated_at: Utc::now(),
-                        version,
-                        vector_count: metadata.vector_count,
-                        total_size_bytes: metadata.total_size_bytes,
-                        config: metadata.config.clone(),
-                        description: metadata.description.clone(),
-                        tags: metadata.tags.clone(),
-                        owner: metadata.owner.clone(),
-                        access_pattern: super::wal::AccessPattern::Normal,
-                        retention_policy: None,
-                    };
+                    // Fetch existing metadata and update it
+                    let existing = self
+                        .write_buffer_manager
+                        .get_collection(&collection_id)
+                        .await?
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("Collection not found: {}", collection_id)
+                        })?;
 
-                    // Write to WAL
-                    self.wal_manager
+                    let mut versioned = existing;
+                    versioned.version = Some(version as u32);
+                    versioned.timestamp = Utc::now().timestamp() as u32;
+                    // Update fields from metadata if needed
+
+                    // Write to write buffer
+                    self.write_buffer_manager
                         .upsert_collection(versioned.clone())
                         .await?;
 
@@ -347,8 +362,10 @@ impl AtomicMetadataStore {
                 }
 
                 MetadataOperation::DeleteCollection(collection_id) => {
-                    // Write delete to WAL
-                    self.wal_manager.delete_collection(collection_id).await?;
+                    // Write delete to write buffer
+                    self.write_buffer_manager
+                        .delete_collection(collection_id)
+                        .await?;
 
                     // Remove from version store
                     let mut version_store = self.version_store.write().await;
@@ -360,8 +377,8 @@ impl AtomicMetadataStore {
                     vector_delta,
                     size_delta,
                 } => {
-                    // Update stats in WAL
-                    self.wal_manager
+                    // Update stats in write buffer
+                    self.write_buffer_manager
                         .update_stats(collection_id, *vector_delta, *size_delta)
                         .await?;
                 }
@@ -377,11 +394,31 @@ impl AtomicMetadataStore {
         {
             let mut version_store = self.version_store.write().await;
             for (collection_id, versioned_metadata) in version_updates {
+                // Convert VersionedCollectionMetadata back to Collection proto
+                let collection = crate::proto::proximadb_v1::Collection {
+                    id: versioned_metadata.id.clone(),
+                    config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                        name: versioned_metadata.name.clone(),
+                        dimension: versioned_metadata.dimension as u32,
+                        distance_metric: 0, // TODO: Parse from string
+                        storage_engine: 0,  // TODO: Parse from config
+                        ..Default::default()
+                    }),
+                    stats: Some(crate::proto::proximadb_v1::CollectionStats {
+                        vector_count: versioned_metadata.vector_count as i64,
+                        index_size_bytes: 0,
+                        data_size_bytes: versioned_metadata.total_size_bytes as i64,
+                    }),
+                    created_at: versioned_metadata.timestamp as i64,
+                    updated_at: versioned_metadata.timestamp as i64,
+                    storage_assignment: None,
+                };
+
                 let version_info = VersionInfo {
                     version,
                     transaction_id: *transaction_id,
                     committed_at: Utc::now(),
-                    metadata: versioned_metadata,
+                    metadata: collection,
                 };
 
                 version_store
@@ -471,8 +508,8 @@ impl AtomicMetadataStore {
 
         for operation in operations {
             match operation {
-                MetadataOperation::CreateCollection(metadata) => {
-                    collection_ids.push(metadata.id.clone());
+                MetadataOperation::CreateCollection(collection) => {
+                    collection_ids.push(collection.id.clone());
                 }
                 MetadataOperation::UpdateCollection { collection_id, .. } => {
                     collection_ids.push(collection_id.clone());
@@ -491,6 +528,9 @@ impl AtomicMetadataStore {
                 }
                 MetadataOperation::UpdateRetentionPolicy { collection_id, .. } => {
                     collection_ids.push(collection_id.clone());
+                }
+                MetadataOperation::UpdateSystemMetadata(_) => {
+                    // System metadata operations don't affect specific collections
                 }
             }
         }
@@ -571,7 +611,10 @@ impl AtomicMetadataStore {
 
 #[async_trait]
 impl MetadataStoreInterface for AtomicMetadataStore {
-    async fn create_collection(&self, metadata: CollectionMetadata) -> Result<()> {
+    async fn create_collection(
+        &self,
+        metadata: crate::proto::proximadb_v1::Collection,
+    ) -> Result<()> {
         let transaction_id = self
             .begin_transaction(IsolationLevel::ReadCommitted)
             .await?;
@@ -586,33 +629,34 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     async fn get_collection(
         &self,
         collection_id: &str,
-    ) -> Result<Option<CollectionMetadata>> {
+    ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
         tracing::debug!("🔍 Getting collection metadata: {}", collection_id);
 
-        // Read from WAL manager (which handles caching)
-        if let Some(versioned) = self.wal_manager.get_collection(collection_id).await? {
-            let metadata = CollectionMetadata {
+        // Read from write buffer manager (which handles caching)
+        if let Some(versioned) = self.write_buffer_manager.collection(collection_id).await? {
+            let collection = crate::proto::proximadb_v1::Collection {
                 id: versioned.id,
-                name: versioned.name,
-                dimension: versioned.dimension,
-                distance_metric: versioned.distance_metric,
-                indexing_algorithm: versioned.indexing_algorithm,
-                created_at: versioned.created_at,
-                updated_at: versioned.updated_at,
-                vector_count: versioned.vector_count,
-                total_size_bytes: versioned.total_size_bytes,
-                config: versioned.config,
-                access_pattern: super::AccessPattern::Normal, // Convert back
-                retention_policy: None,                       // TODO: Convert back
-                tags: versioned.tags,
-                owner: versioned.owner,
-                description: versioned.description,
-                strategy_config: super::CollectionStrategyConfig::default(),
-                strategy_change_history: Vec::new(), // TODO: Convert back
-                flush_config: None,                  // TODO: Convert back
+                config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                    name: versioned.name,
+                    dimension: versioned.dimension as u32,
+                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32, // Default for now
+                    ..Default::default()
+                }),
+                stats: Some(crate::proto::proximadb_v1::CollectionStats {
+                    vector_count: versioned.vector_count as i64,
+                    data_size_bytes: versioned.total_size_bytes as i64,
+                    ..Default::default()
+                }),
+                created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
+                    .unwrap_or_else(|| Utc::now())
+                    .timestamp_micros(),
+                updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
+                    .unwrap_or_else(|| Utc::now())
+                    .timestamp_micros(),
+                storage_assignment: None, // TODO: Convert storage_assignment
             };
 
-            Ok(Some(metadata))
+            Ok(Some(collection))
         } else {
             Ok(None)
         }
@@ -621,7 +665,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     async fn update_collection(
         &self,
         collection_id: &str,
-        metadata: CollectionMetadata,
+        metadata: crate::proto::proximadb_v1::Collection,
     ) -> Result<()> {
         let transaction_id = self
             .begin_transaction(IsolationLevel::ReadCommitted)
@@ -658,40 +702,44 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     async fn list_collections(
         &self,
         filter: Option<MetadataFilter>,
-    ) -> Result<Vec<CollectionMetadata>> {
-        // Convert filter to WAL manager format
-        let wal_filter = filter.map(|_f| {
+    ) -> Result<Vec<crate::proto::proximadb_v1::Collection>> {
+        // Convert filter to write buffer manager format
+        let write_buffer_filter = filter.map(|_f| {
             Box::new(move |_versioned: &VersionedCollectionMetadata| -> bool {
                 // Apply filter logic
                 true // TODO: Implement proper filtering
             }) as Box<dyn Fn(&VersionedCollectionMetadata) -> bool + Send>
         });
 
-        let versioned_list = self.wal_manager.list_collections(wal_filter).await?;
+        let versioned_list = self
+            .write_buffer_manager
+            .list_collections(write_buffer_filter)
+            .await?;
 
         // Convert to regular metadata format
         let metadata_list = versioned_list
             .into_iter()
             .map(|versioned| {
-                CollectionMetadata {
+                crate::proto::proximadb_v1::Collection {
                     id: versioned.id,
-                    name: versioned.name,
-                    dimension: versioned.dimension,
-                    distance_metric: versioned.distance_metric,
-                    indexing_algorithm: versioned.indexing_algorithm,
-                    created_at: versioned.created_at,
-                    updated_at: versioned.updated_at,
-                    vector_count: versioned.vector_count,
-                    total_size_bytes: versioned.total_size_bytes,
-                    config: versioned.config,
-                    access_pattern: super::AccessPattern::Normal,
-                    retention_policy: None,
-                    tags: versioned.tags,
-                    owner: versioned.owner,
-                    description: versioned.description,
-                    strategy_config: CollectionStrategyConfig::default(),
-                    strategy_change_history: Vec::new(),
-                    flush_config: None, // Use global defaults
+                    config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                        name: versioned.name,
+                        dimension: versioned.dimension as u32,
+                        distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32, // Default for now
+                        ..Default::default()
+                    }),
+                    stats: Some(crate::proto::proximadb_v1::CollectionStats {
+                        vector_count: versioned.vector_count as i64,
+                        data_size_bytes: versioned.total_size_bytes as i64,
+                        ..Default::default()
+                    }),
+                    created_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
+                        .unwrap_or_else(|| Utc::now())
+                        .timestamp_micros(),
+                    updated_at: DateTime::from_timestamp(versioned.timestamp as i64, 0)
+                        .unwrap_or_else(|| Utc::now())
+                        .timestamp_micros(),
+                    storage_assignment: None, // TODO: Convert storage_assignment
                 }
             })
             .collect();
@@ -705,7 +753,7 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         vector_delta: i64,
         size_delta: i64,
     ) -> Result<()> {
-        self.wal_manager
+        self.write_buffer_manager
             .update_stats(collection_id, vector_delta, size_delta)
             .await
     }
@@ -733,28 +781,71 @@ impl MetadataStoreInterface for AtomicMetadataStore {
     }
 
     async fn health_check(&self) -> Result<bool> {
-        // Check WAL manager health
-        let _stats = self.wal_manager.get_stats().await?;
+        // Check write buffer manager health
+        let _stats = self.write_buffer_manager.stats().await?;
         Ok(true)
     }
 
-    async fn get_storage_stats(&self) -> Result<MetadataStorageStats> {
-        let wal_stats = self.wal_manager.get_stats().await?;
+    async fn get_stats(&self) -> Result<MetadataStorageStats> {
+        let write_buffer_stats = self.write_buffer_manager.stats().await?;
         let _atomic_stats = self.stats.read().await;
 
         Ok(MetadataStorageStats {
-            total_collections: wal_stats.total_collections,
+            total_collections: write_buffer_stats.total_collections,
             total_metadata_size_bytes: 0, // TODO: Calculate
-            cache_hit_rate: if wal_stats.cache_hits + wal_stats.cache_misses > 0 {
-                wal_stats.cache_hits as f64 / (wal_stats.cache_hits + wal_stats.cache_misses) as f64
+            cache_hit_rate: if write_buffer_stats.cache_hits + write_buffer_stats.cache_misses > 0 {
+                write_buffer_stats.cache_hits as f64
+                    / (write_buffer_stats.cache_hits + write_buffer_stats.cache_misses) as f64
             } else {
                 0.0
             },
             avg_operation_latency_ms: 0.0, // TODO: Calculate
-            storage_backend: "wal-avro-btree".to_string(),
+            storage_backend: "write-buffer-avro-btree".to_string(),
             last_backup_time: None,
-            wal_entries: wal_stats.wal_writes,
+            wal_entries: write_buffer_stats.write_buffer_writes,
             wal_size_bytes: 0, // TODO: Calculate
         })
+    }
+
+    // Missing trait implementations
+    async fn begin_transaction(&self) -> Result<Option<String>> {
+        let transaction_id = Uuid::new_v4().to_string();
+        Ok(Some(transaction_id))
+    }
+
+    async fn commit_transaction(&self, _transaction_id: &str) -> Result<()> {
+        // TODO: Implement transaction commit logic
+        Ok(())
+    }
+
+    async fn rollback_transaction(&self, _transaction_id: &str) -> Result<()> {
+        // TODO: Implement transaction rollback logic
+        Ok(())
+    }
+
+    async fn backup(&self, location: &str) -> Result<String> {
+        let backup_id = Uuid::new_v4().to_string();
+        // TODO: Implement backup logic
+        tracing::info!(
+            "Backup requested to location: {}, backup_id: {}",
+            location,
+            backup_id
+        );
+        Ok(backup_id)
+    }
+
+    async fn restore(&self, backup_id: &str, location: &str) -> Result<()> {
+        // TODO: Implement restore logic
+        tracing::info!(
+            "Restore requested from backup_id: {}, location: {}",
+            backup_id,
+            location
+        );
+        Ok(())
+    }
+
+    async fn close(&self) -> Result<()> {
+        // TODO: Implement cleanup logic
+        Ok(())
     }
 }

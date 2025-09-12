@@ -22,38 +22,80 @@ use axum::{
     middleware::Next,
     response::{Json, Response},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-/// Rate limiting configuration
+/// Rate limiting configuration - consolidated from network module
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
     /// Enable rate limiting (if false, all requests pass through)
     pub enabled: bool,
-    /// Maximum requests per window
-    pub max_requests: u32,
-    /// Time window duration
-    pub window_duration: Duration,
+
+    /// Maximum requests per minute (TOML-friendly)
+    pub requests_per_minute: u32,
+
+    /// Burst allowance for sudden spikes
+    pub burst_size: u32,
+
+    /// Apply rate limiting per IP address
+    pub by_ip: bool,
+
     /// Whether to apply rate limiting to health endpoints
     pub limit_health_endpoints: bool,
-    /// Global rate limit (applies to all IPs combined)
-    pub global_max_requests: Option<u32>,
+
+    /// Global rate limit (applies to all IPs combined, optional)
+    pub global_requests_per_minute: Option<u32>,
+}
+
+// Default functions for serde
+fn default_requests_per_minute() -> u32 {
+    1000
+}
+fn default_burst_size() -> u32 {
+    100
+}
+fn default_true() -> bool {
+    true
 }
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
-            max_requests: 100,
-            window_duration: Duration::from_secs(60), // 1 minute
+            enabled: false, // Disabled by default for demo and testing
+            requests_per_minute: 1000,
+            burst_size: 100,
+            by_ip: true,
             limit_health_endpoints: false,
-            global_max_requests: None,
+            global_requests_per_minute: None,
         }
     }
+}
+
+impl RateLimitConfig {
+    /// Convert to the internal format used by middleware
+    pub fn to_middleware_config(&self) -> MiddlewareRateLimitConfig {
+        MiddlewareRateLimitConfig {
+            enabled: self.enabled,
+            max_requests: self.burst_size, // Use burst as max for short windows
+            window_duration: Duration::from_secs(60), // 1 minute window
+            limit_health_endpoints: self.limit_health_endpoints,
+            global_max_requests: self.global_requests_per_minute,
+        }
+    }
+}
+
+/// Internal rate limiting configuration used by middleware logic
+#[derive(Debug, Clone)]
+pub struct MiddlewareRateLimitConfig {
+    pub enabled: bool,
+    pub max_requests: u32,
+    pub window_duration: Duration,
+    pub limit_health_endpoints: bool,
+    pub global_max_requests: Option<u32>,
 }
 
 /// Rate limit bucket for tracking requests
@@ -98,13 +140,13 @@ impl RateLimitBucket {
 
 /// Rate limiting state
 pub struct RateLimitState {
-    config: RateLimitConfig,
+    config: MiddlewareRateLimitConfig,
     buckets: Arc<RwLock<HashMap<IpAddr, RateLimitBucket>>>,
     global_bucket: Arc<RwLock<RateLimitBucket>>,
 }
 
 impl RateLimitState {
-    pub fn new(config: RateLimitConfig) -> Self {
+    pub fn new(config: MiddlewareRateLimitConfig) -> Self {
         Self {
             config,
             buckets: Arc::new(RwLock::new(HashMap::new())),
@@ -129,7 +171,7 @@ pub struct RateLimitLayer {
 impl RateLimitLayer {
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
-            state: Arc::new(RateLimitState::new(config)),
+            state: Arc::new(RateLimitState::new(config.to_middleware_config())),
         }
     }
 
@@ -142,13 +184,14 @@ impl RateLimitLayer {
     }
 
     /// Create a rate limiting layer with specific limits
-    pub fn with_limits(max_requests: u32, window_duration: Duration) -> Self {
+    pub fn with_limits(requests_per_minute: u32, burst_size: u32) -> Self {
         Self::new(RateLimitConfig {
             enabled: true,
-            max_requests,
-            window_duration,
+            requests_per_minute,
+            burst_size,
+            by_ip: true,
             limit_health_endpoints: false,
-            global_max_requests: None,
+            global_requests_per_minute: None,
         })
     }
 }
@@ -286,9 +329,9 @@ mod tests {
     fn test_rate_limit_config_default() {
         let config = RateLimitConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.max_requests, 100);
-        assert_eq!(config.window_duration, Duration::from_secs(60));
+        assert_eq!(config.burst_size, 100);
+        assert_eq!(config.requests_per_minute, 1000);
         assert!(!config.limit_health_endpoints);
-        assert!(config.global_max_requests.is_none());
+        assert!(config.global_requests_per_minute.is_none());
     }
 }

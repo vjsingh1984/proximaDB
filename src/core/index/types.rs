@@ -3,12 +3,12 @@
 use serde::{Deserialize, Serialize};
 
 /// General index type categories
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum IndexType {
+#[derive(Debug, Clone)]
+pub enum Index {
     /// Vector similarity index
-    Vector(VectorIndexType),
+    Vector(VectorIndex),
     /// Metadata filter index
-    Metadata(MetadataIndexType),
+    Metadata(MetadataIndex),
     /// Full-text search index
     FullText,
     /// Composite index combining multiple types
@@ -16,8 +16,8 @@ pub enum IndexType {
 }
 
 /// Vector index algorithm types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum VectorIndexType {
+#[derive(Debug, Clone)]
+pub enum VectorIndex {
     /// Hierarchical Navigable Small World
     HNSW {
         m: u32,
@@ -39,8 +39,8 @@ pub enum VectorIndexType {
 }
 
 /// Metadata index types for efficient filtering
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum MetadataIndexType {
+#[derive(Debug, Clone)]
+pub enum MetadataIndex {
     /// Hash index for equality queries
     Hash,
     /// B-tree for range queries

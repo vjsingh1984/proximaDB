@@ -10,16 +10,19 @@ import json
 import time
 import hashlib
 import pickle
+import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 try:
     from sentence_transformers import SentenceTransformer
     SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
-    print("⚠️ Warning: sentence-transformers not available. Using simulated embeddings.")
+    logger.warning("⚠️ Warning: sentence-transformers not available. Using simulated embeddings.")
 
 class BERTEmbeddingService:
     """Service for generating BERT embeddings from text"""
@@ -41,10 +44,10 @@ class BERTEmbeddingService:
         
         # Load model if available
         if SENTENCE_TRANSFORMERS_AVAILABLE:
-            print(f"🤖 Loading BERT model: {model_name}")
+            logger.info(f"🤖 Loading BERT model: {model_name}")
             self.model = SentenceTransformer(model_name)
             self.dimension = self.model.get_sentence_embedding_dimension()
-            print(f"✅ Model loaded with {self.dimension} dimensions")
+            logger.info(f"✅ Model loaded with {self.dimension} dimensions")
         else:
             # Fallback dimensions for common models
             dimensions = {
@@ -55,7 +58,7 @@ class BERTEmbeddingService:
             }
             self.dimension = dimensions.get(model_name, 384)
             self.model = None
-            print(f"⚠️ Using simulated {self.dimension}D embeddings (install sentence-transformers for real BERT)")
+            logger.warning(f"⚠️ Using simulated {self.dimension}D embeddings (install sentence-transformers for real BERT)")
     
     def get_cache_path(self, text: str) -> Path:
         """Get cache file path for text"""
@@ -123,10 +126,10 @@ class BERTEmbeddingService:
             
             if show_progress:
                 progress = (i + len(batch)) / total * 100
-                print(f"\r🔄 Embedding progress: {progress:.1f}% ({i + len(batch)}/{total})", end="", flush=True)
+                logger.info(f"\r🔄 Embedding progress: {progress:.1f}% ({i + len(batch)}/{total})", end="", flush=True)
         
         if show_progress:
-            print()  # New line after progress
+            logger.info("")  # New line after progress
         
         return embeddings
     
@@ -202,7 +205,7 @@ def create_sample_corpus(size_mb: float = 10.0) -> List[Dict[str, str]]:
     Returns:
         List of documents with text and metadata
     """
-    print(f"📚 Creating {size_mb}MB sample corpus...")
+    logger.info(f"📚 Creating {size_mb}MB sample corpus...")
     
     # Sample texts (these will be repeated and varied to reach target size)
     base_texts = [
@@ -277,10 +280,10 @@ def create_sample_corpus(size_mb: float = 10.0) -> List[Dict[str, str]]:
         doc_id += 1
         
         if doc_id % 1000 == 0:
-            print(f"Generated {doc_id} documents, {total_size / (1024*1024):.1f}MB", end="\r")
+            logger.info(f"Generated {doc_id} documents, {total_size / (1024*1024):.1f}MB", end="\r")
     
     actual_size = total_size / (1024 * 1024)
-    print(f"\n✅ Created corpus: {len(corpus)} documents, {actual_size:.1f}MB")
+    logger.info(f"\n✅ Created corpus: {len(corpus)} documents, {actual_size:.1f}MB")
     
     return corpus
 
@@ -291,9 +294,9 @@ if __name__ == "__main__":
     # Test embedding
     sample_text = "This is a test document about machine learning and AI."
     embedding = service.embed_text(sample_text)
-    print(f"Sample embedding shape: {embedding.shape}")
-    print(f"Sample embedding (first 10 dims): {embedding[:10]}")
+    logger.info(f"Sample embedding shape: {embedding.shape}")
+    logger.info(f"Sample embedding (first 10 dims): {embedding[:10]}")
     
     # Create sample corpus
     corpus = create_sample_corpus(1.0)  # 1MB for demo
-    print(f"Sample document: {corpus[0]}")
+    logger.info(f"Sample document: {corpus[0]}")

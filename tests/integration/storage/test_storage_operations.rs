@@ -16,18 +16,18 @@ use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::{
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm, MetadataItem
 };
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::wal::{WalManager, WalConfig};
-use proximadb::storage::persistence::wal::batch_strategy::WalStrategyType;
+use proximadb::storage::persistence::write_ahead_log::{WriteBufferManager, WriteBufferConfig};
+use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferStrategyType;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::engines::viper::ViperEngine;
-use proximadb::storage::engines::lsm::LsmEngine;
+use proximadb::storage::engines::sst::SstStorage as LsmEngine;
 
 /// Test setup helper
 async fn create_test_setup() -> (
-    DirectVectorService,
+    VectorOperationsService,
     CollectionService,
     Arc<FilesystemFactory>,
     TempDir,
@@ -45,12 +45,10 @@ async fn create_test_setup() -> (
         2 * 1024 * 1024,  // 2MB flush threshold
     ));
     
-    // Create services
-    let direct_vector_service = DirectVectorService::new(
-        filesystem.clone(),
-        memtable.clone(),
-        temp_dir.path().to_path_buf(),
-    );
+    // Create services using test utilities
+    let direct_vector_service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+        .await
+        .expect("Failed to create VectorOperationsService");
     
     let collection_service = CollectionService::new(
         filesystem.clone(),
@@ -69,7 +67,14 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
                 .collect();
             
             VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: Some(format!("vec_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
                 vector,
                 metadata: vec![
                     MetadataItem {
@@ -81,9 +86,9 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
                         value: format!("batch_{}", i / 10),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
                 created_at: chrono::Utc::now().timestamp_millis(),
-                updated_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
                 distance: 0.0,
                 rank: 0,
@@ -96,6 +101,7 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
 /// Test WAL operations and batching
 #[tokio::test]
 async fn test_wal_operations_and_batching() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
     // Create test collection
@@ -105,13 +111,15 @@ async fn test_wal_operations_and_batching() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
     // Create WAL manager
-    let wal_config = WalConfig {
+    let wal_config = WriteBufferConfig {
         wal_dir: _temp_dir.path().join("wal"),
         max_batch_size: 1000,
         flush_interval_ms: 5000,
@@ -119,9 +127,9 @@ async fn test_wal_operations_and_batching() {
         ..Default::default()
     };
     
-    let wal_manager = WalManager::new(
+    let write_ahead_log_manager = WriteBufferManager::new(
         "wal_test_collection",
-        WalStrategyType::ProtoBatch,
+        WriteBufferStrategyType::ProtoBatch,
         &wal_config,
         filesystem.clone(),
     ).await.unwrap();
@@ -130,7 +138,7 @@ async fn test_wal_operations_and_batching() {
     let batch_size = 100;
     let vectors = create_test_vectors("wal_test_collection", batch_size);
     
-    let sequences = wal_manager
+    let sequences = write_ahead_log_manager
         .insert_vectors("wal_test_collection".to_string(), vectors.clone())
         .await
         .unwrap();
@@ -143,7 +151,7 @@ async fn test_wal_operations_and_batching() {
     }
     
     // Test reading from WAL
-    let read_vectors = wal_manager
+    let read_vectors = write_ahead_log_manager
         .read_vectors_by_sequence_range(sequences[0], sequences[batch_size-1])
         .await
         .unwrap();
@@ -151,7 +159,7 @@ async fn test_wal_operations_and_batching() {
     assert_eq!(read_vectors.len(), batch_size);
     
     // Test WAL recovery
-    let recovery_vectors = wal_manager
+    let recovery_vectors = write_ahead_log_manager
         .recover_vectors_from_sequence(0)
         .await
         .unwrap();
@@ -159,10 +167,10 @@ async fn test_wal_operations_and_batching() {
     assert!(recovery_vectors.len() >= batch_size);
     
     // Test WAL compaction
-    wal_manager.compact_wal().await.unwrap();
+    write_ahead_log_manager.compact_wal().await.unwrap();
     
     // Verify data is still readable after compaction
-    let post_compaction_vectors = wal_manager
+    let post_compaction_vectors = write_ahead_log_manager
         .read_vectors_by_sequence_range(sequences[0], sequences[batch_size-1])
         .await
         .unwrap();
@@ -173,6 +181,7 @@ async fn test_wal_operations_and_batching() {
 /// Test flush operations
 #[tokio::test]
 async fn test_flush_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
     // Create test collection
@@ -182,8 +191,10 @@ async fn test_flush_operations() {
         distance_metric: DistanceMetric::Euclidean as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -279,17 +290,20 @@ async fn test_flush_operations() {
 /// Test compaction operations
 #[tokio::test]
 async fn test_compaction_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
-    // Create test collection with LSM engine for compaction testing
+    // Create test collection with SST engine for compaction testing
     let config = CollectionConfig {
         name: "compaction_test_collection".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::Manhattan as i32,
-        storage_engine: StorageEngine::Lsm as i32,
+        storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -334,43 +348,34 @@ async fn test_compaction_operations() {
     
     assert!(pre_compaction_results.vectors.len() > 0);
     
-    // Create LSM engine for compaction testing
-    let lsm_config = proximadb::core::LsmConfig {
+    // Create SST engine for compaction testing
+    let sst_config = proximadb::core::SstConfig {
         memtable_size_mb: 1,
         level_count: 7,
         compaction_threshold: 2,
-        block_size_kb: 64,
+        block_size_kb: 3072,
         memory_flush_size_bytes: 1024 * 1024,
-        write_buffer_size_mb: 1,
+        write_ahead_log_size_mb: 1,
         max_levels: 7,
-        compaction_strategy: "level".to_string(),
-        enable_bloom_filter: true,
+        compaction_strategy: "leveled".to_string(),
+        compression: "lz4".to_string(),
         bloom_filter_config: Some(proximadb::core::bloom::BloomFilterConfig {
             bits_per_key: 10,
             enabled: true,
-            ..Default::default()
-        }),
-        enable_compression: true,
-        compression_algorithm: "lz4".to_string(),
-        max_open_files: 1000,
+            ..Default::default(),
+        decompression_cache_config: None,
+    }),
         cache_size_mb: 128,
-        enable_statistics: true,
-        paranoid_checks: false,
-        disable_auto_compaction: false,
-        block_cache_size_mb: 64,
-        index_cache_size_mb: 32,
-        compaction_readahead_size_mb: 2,
+        level_size_multiplier: 10.0,
         enable_write_ahead_log: true,
-        wal_sync_mode: "sync".to_string(),
-        level_size_multiplier: 10,
-        target_file_size_mb: 64,
-        target_level_size_mb: 256,
+        sync_mode: "sync".to_string(),
+        ..Default::default()
     };
     
-    let lsm_engine = LsmEngine::new(lsm_config, filesystem.clone()).await.unwrap();
+    let sst_engine = LsmEngine::new(sst_config, filesystem.clone()).await.unwrap();
     
     // Trigger compaction
-    lsm_engine.compact_collection("compaction_test_collection").await.unwrap();
+    sst_engine.compact_collection("compaction_test_collection").await.unwrap();
     
     // Verify all data is still searchable after compaction
     let post_compaction_results = direct_service
@@ -397,6 +402,7 @@ async fn test_compaction_operations() {
 /// Test cross-engine consistency
 #[tokio::test]
 async fn test_cross_engine_consistency() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, filesystem, _temp_dir) = create_test_setup().await;
     
     // Create identical collections with different engines
@@ -406,20 +412,24 @@ async fn test_cross_engine_consistency() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
-    let lsm_config = CollectionConfig {
+    let sst_config = CollectionConfig {
         name: "lsm_consistency_test".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::Cosine as i32,
-        storage_engine: StorageEngine::Lsm as i32,
+        storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&viper_config).await.unwrap();
-    collection_service.create_collection(&lsm_config).await.unwrap();
+    collection_service.create_collection(&sst_config).await.unwrap();
     
     // Insert identical data to both engines
     let vectors = create_test_vectors("consistency_test", 200);
@@ -500,6 +510,7 @@ async fn test_cross_engine_consistency() {
 /// Test atomic operations
 #[tokio::test]
 async fn test_atomic_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _filesystem, _temp_dir) = create_test_setup().await;
     
     // Create test collection
@@ -509,8 +520,10 @@ async fn test_atomic_operations() {
         distance_metric: DistanceMetric::DotProduct as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Pq as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     

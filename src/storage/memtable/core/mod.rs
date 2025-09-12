@@ -1,7 +1,7 @@
 //! Core Memtable Traits and Abstractions
 //!
 //! Provides unified interfaces for memtable implementations used by both
-//! WAL (Write-Ahead Log) and LSM (Log-Structured Merge-tree) engines.
+//! WAL (Write Buffer) and LSM (Log-Structured Merge-tree) engines.
 //!
 //! Architecture:
 //! - WAL uses BTree for ordered writes and optimal compression
@@ -16,7 +16,7 @@ use std::hash::Hash;
 /// Core memtable trait for unified storage operations
 ///
 /// Generic over key and value types to support:
-/// - WAL: K=u64 (sequence), V=WalVectorBatch
+/// - WAL: K=u64 (sequence), V=WALVectorBatch
 /// - LSM: K=VectorId, V=LsmEntry
 #[async_trait]
 pub trait MemtableCore<K, V>: Send + Sync + Debug
@@ -100,8 +100,8 @@ pub struct MemtableConfig {
 impl Default for MemtableConfig {
     fn default() -> Self {
         Self {
-            max_size_bytes: 64 * 1024 * 1024,        // 64MB
-            flush_threshold_bytes: 2 * 1024 * 1024,  // 2MB - reduced for faster recovery as per CLAUDE.md
+            max_size_bytes: 64 * 1024 * 1024,       // 64MB
+            flush_threshold_bytes: 2 * 1024 * 1024, // 2MB - reduced for faster recovery as per CLAUDE.md
             enable_mvcc: true,
             mvcc_cleanup_interval_secs: 300, // 5 minutes
             max_versions_per_key: 10,
@@ -111,5 +111,5 @@ impl Default for MemtableConfig {
 
 // Re-export common types for convenience (these may not exist yet)
 // pub use crate::core::{VectorId, VectorRecord};
-// pub use crate::storage::memtable::specialized::wal_behavior::WalVectorBatch;
-// pub use crate::storage::engines::lsm::LsmEntry;
+// pub use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+// pub use crate::storage::engines::impls::sst::LsmEntry;

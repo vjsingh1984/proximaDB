@@ -9,7 +9,7 @@
 //! It's responsible for:
 //! - Merging incremental operations into snapshots
 //! - Archiving old snapshots and incremental logs
-//! - Cleaning up obsolete files
+//! - Cleaning up old files
 //! - Maintaining the last N snapshots for recovery
 //!
 //! The checkpoint creation process is atomic and blocks all API operations during execution.
@@ -21,10 +21,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::proto::proximadb::Collection as Collection;
-use crate::storage::metadata::backends::filestore_backend::{
-    IncrementalOperation, OperationType,
-};
+use crate::proto::proximadb_v1::Collection;
+use crate::storage::metadata::backends::universal_backend::{IncrementalOperation, OperationType};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 // NOTE: Using unified CompactionConfig from unified_types.rs
@@ -69,7 +67,7 @@ pub struct CheckpointStats {
 }
 
 /// Checkpoint manager for filestore backend
-pub struct FilestoreCheckpointManager {
+pub struct FilestoreCheckpoint {
     config: MetadataCheckpointConfig,
     filesystem: Arc<FilesystemFactory>,
     filestore_url: String,
@@ -77,7 +75,7 @@ pub struct FilestoreCheckpointManager {
     stats: CheckpointStats,
 }
 
-impl FilestoreCheckpointManager {
+impl FilestoreCheckpoint {
     /// Create new checkpoint manager
     pub fn new(
         config: MetadataCheckpointConfig,
@@ -88,7 +86,7 @@ impl FilestoreCheckpointManager {
             config,
             filesystem,
             filestore_url,
-            metadata_path: PathBuf::from("metadata"),
+            metadata_path: PathBuf::from("metadata_info"),
             stats: CheckpointStats::default(),
         }
     }
@@ -126,20 +124,22 @@ impl FilestoreCheckpointManager {
         let fs = self.filesystem.get_filesystem(&self.filestore_url)?;
 
         // Step 1: Load current snapshot
-        let mut memtable = self.load_current_snapshot(fs).await?;
+        let mut memtable = self.load_current_snapshot(fs.as_ref()).await?;
         let initial_count = memtable.len();
 
         // Step 2: Apply incremental operations
-        let (ops_count, ops_size) = self.apply_incremental_operations(fs, &mut memtable).await?;
+        let (ops_count, ops_size) = self
+            .apply_incremental_operations(fs.as_ref(), &mut memtable)
+            .await?;
 
         // Step 3: Create new snapshot
-        self.create_new_snapshot(fs, &memtable).await?;
+        self.create_new_snapshot(fs.as_ref(), &memtable).await?;
 
         // Step 4: Archive old files
-        let archive_path = self.archive_current_state(fs).await?;
+        let archive_path = self.archive_current_state(fs.as_ref()).await?;
 
         // Step 5: Clean up old archives
-        self.cleanup_old_archives(fs).await?;
+        self.cleanup_old_archives(fs.as_ref()).await?;
 
         // Update stats
         self.stats.last_checkpoint_time = Some(Utc::now());
@@ -305,11 +305,12 @@ impl FilestoreCheckpointManager {
             _ => return Err(anyhow::anyhow!("Invalid operation type: {}", op_type_str)),
         };
 
-        let collection_data = collection_data_json
-            .and_then(|json| serde_json::from_str::<Collection>(&json).ok());
+        let collection_data =
+            collection_data_json.and_then(|json| serde_json::from_str::<Collection>(&json).ok());
 
         // Parse timestamp string to i64
-        let timestamp_i64 = timestamp.parse::<i64>()
+        let timestamp_i64 = timestamp
+            .parse::<i64>()
             .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis());
 
         Ok(IncrementalOperation {
@@ -341,14 +342,15 @@ impl FilestoreCheckpointManager {
         for record in memtable.values() {
             collections.push(record.clone());
         }
-        
+
         // Create a wrapper message for all collections
-        let snapshot = crate::proto::proximadb::CollectionSnapshot {
-            collections,
-            version: 1,
-            timestamp: chrono::Utc::now().timestamp_micros(),
+        let snapshot = crate::proto::proximadb_v1::CollectionSnapshot {
+            collection: collections.get(0).cloned(),
+            vectors: Vec::new(),
+            snapshot_timestamp: chrono::Utc::now().timestamp_micros(),
+            snapshot_version: "1".to_string(),
         };
-        
+
         // Serialize to protobuf binary
         let data = if self.config.compress_snapshots {
             // Compress with zstd

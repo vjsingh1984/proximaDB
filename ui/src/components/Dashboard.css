@@ -1,0 +1,68 @@
+.dashboard-container {
+  font-family: 'Arial', sans-serif;
+  color: #333;
+  background-color: #f4f7f6;
+  min-height: 100vh;
+}
+
+.dashboard-header {
+  background-color: #2c3e50; /* Dark blue/grey */
+  color: #ffffff;
+  padding: 20px 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.logo-section {
+  display: flex;
+  align-items: center;
+}
+
+.logo-section h1 {
+  margin: 0 0 0 15px;
+  font-size: 2.2em;
+  font-weight: 600;
+}
+
+.tagline {
+  font-size: 1.1em;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.dashboard-nav {
+  background-color: #34495e; /* Slightly lighter dark blue/grey */
+  padding: 10px 40px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.dashboard-nav button {
+  background: none;
+  border: none;
+  color: #ffffff;
+  padding: 10px 20px;
+  margin-right: 10px;
+  font-size: 1.1em;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+  border-radius: 5px;
+}
+
+.dashboard-nav button:hover {
+  background-color: #4a627a;
+}
+
+.dashboard-nav button.active {
+  background-color: #007bff; /* Accent blue */
+  font-weight: bold;
+}
+
+.dashboard-content {
+  padding: 20px 40px;
+  background-color: #ffffff;
+  margin: 20px 40px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}

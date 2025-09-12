@@ -4,6 +4,7 @@
 //! and quantization support.
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use reqwest::Client;
 use serde_json::json;
 use std::collections::HashMap;
@@ -17,7 +18,7 @@ struct CreateCollectionRequest {
     distance_metric: String,
     storage_engine: String,
     indexing_algorithm: String,
-    quantization_config: Option<serde_json::Value>,
+    quantization: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -59,7 +60,7 @@ struct SearchOptimizationHints {
 }
 
 async fn create_test_collection(client: &Client, collection_name: &str) -> Result<()> {
-    let quantization_config = json!({
+    let quantization = json!({
         "enabled": true,
         "storage_quantization": {
             "enabled": true,
@@ -81,7 +82,7 @@ async fn create_test_collection(client: &Client, collection_name: &str) -> Resul
         distance_metric: "cosine".to_string(),
         storage_engine: "viper".to_string(),
         indexing_algorithm: "hnsw".to_string(),
-        quantization_config: Some(quantization_config),
+        quantization: Some(quantization),
     };
 
     let response = client
@@ -136,6 +137,7 @@ async fn insert_test_vectors(client: &Client, collection_name: &str) -> Result<(
 
 #[tokio::test]
 async fn test_rest_vector_search_with_quantization() -> Result<()> {
+    setup_hardware_capabilities();
     let client = Client::new();
     let collection_name = format!("test_rest_quant_{}", uuid::Uuid::new_v4());
 
@@ -180,7 +182,7 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
     assert_eq!(response.status(), 200);
     let result: serde_json::Value = response.json().await?;
     assert!(result["success"].as_bool().unwrap_or(false));
-    println!("✅ Binary quantization search passed");
+    debug!("✅ Binary quantization search passed");
 
     // Test 2: INT8 scalar quantization search
     let int8_search = SearchVectorRequest {
@@ -214,7 +216,7 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
     assert_eq!(response.status(), 200);
     let result: serde_json::Value = response.json().await?;
     assert!(result["success"].as_bool().unwrap_or(false));
-    println!("✅ INT8 quantization search passed");
+    debug!("✅ INT8 quantization search passed");
 
     // Test 3: Product quantization search
     let pq_search = SearchVectorRequest {
@@ -248,7 +250,7 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
     assert_eq!(response.status(), 200);
     let result: serde_json::Value = response.json().await?;
     assert!(result["success"].as_bool().unwrap_or(false));
-    println!("✅ Product quantization search passed");
+    debug!("✅ Product quantization search passed");
 
     // Test 4: Full precision search (FP32)
     let fp32_search = SearchVectorRequest {
@@ -282,7 +284,7 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
     assert_eq!(response.status(), 200);
     let result: serde_json::Value = response.json().await?;
     assert!(result["success"].as_bool().unwrap_or(false));
-    println!("✅ Full precision search passed");
+    debug!("✅ Full precision search passed");
 
     // Test 5: Search with metadata filters
     let filtered_search = SearchVectorRequest {
@@ -327,13 +329,13 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
         for item in data {
             if let Some(metadata) = item["metadata"].as_object() {
                 assert_eq!(
-                    metadata.get("category").and_then(|v| v.as_str()),
+                    metadata.get(key).and_then(|v| v.as_str()),
                     Some("test")
                 );
             }
         }
     }
-    println!("✅ Filtered search passed");
+    debug!("✅ Filtered search passed");
 
     // Clean up
     let delete_response = client
@@ -342,13 +344,14 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
         .await?;
 
     assert_eq!(delete_response.status(), 200);
-    println!("✅ Collection cleanup passed");
+    debug!("✅ Collection cleanup passed");
 
     Ok(())
 }
 
 #[tokio::test]
 async fn test_rest_search_performance_comparison() -> Result<()> {
+    setup_hardware_capabilities();
     let client = Client::new();
     let collection_name = format!("test_rest_perf_{}", uuid::Uuid::new_v4());
 
@@ -417,7 +420,7 @@ async fn test_rest_search_performance_comparison() -> Result<()> {
     
     let binary_time = start.elapsed();
     assert_eq!(response.status(), 200);
-    println!("Binary search completed in {:?}", binary_time);
+    debug!("Binary search completed in {:?}", binary_time);
 
     // INT8 quantization (balanced)
     let start = std::time::Instant::now();
@@ -451,7 +454,7 @@ async fn test_rest_search_performance_comparison() -> Result<()> {
     
     let int8_time = start.elapsed();
     assert_eq!(response.status(), 200);
-    println!("INT8 search completed in {:?}", int8_time);
+    debug!("INT8 search completed in {:?}", int8_time);
 
     // FP32 (most accurate)
     let start = std::time::Instant::now();
@@ -485,13 +488,13 @@ async fn test_rest_search_performance_comparison() -> Result<()> {
     
     let fp32_time = start.elapsed();
     assert_eq!(response.status(), 200);
-    println!("FP32 search completed in {:?}", fp32_time);
+    debug!("FP32 search completed in {:?}", fp32_time);
 
     // Verify performance hierarchy
-    println!("\n📊 Performance Summary:");
-    println!("   Binary: {:?} (fastest)", binary_time);
-    println!("   INT8: {:?} (balanced)", int8_time);
-    println!("   FP32: {:?} (most accurate)", fp32_time);
+    debug!("\n📊 Performance Summary:");
+    debug!("   Binary: {:?} (fastest)", binary_time);
+    debug!("   INT8: {:?} (balanced)", int8_time);
+    debug!("   FP32: {:?} (most accurate)", fp32_time);
     
     // Clean up
     client

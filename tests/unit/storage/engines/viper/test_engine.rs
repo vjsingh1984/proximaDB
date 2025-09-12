@@ -11,9 +11,9 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::test;
 
-use crate::storage::engines::viper::{ViperEngine, ViperConfig};
-use crate::storage::engines::viper::types::{CollectionMetadata, PartitionStrategy, CompressionStats};
-use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+use proximadb::storage::engines::viper::{ViperEngine, ViperConfig};
+use proximadb::storage::engines::viper::types::{CollectionMetadata, PartitionStrategy, CompressionStats};
+use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 
 /// Test helper to create a temporary directory
 fn create_temp_dir() -> TempDir {
@@ -70,11 +70,11 @@ async fn test_collection_metadata_management() {
         total_size_bytes: 25_000_000,
         active_clusters: vec!["cluster_1".to_string(), "cluster_2".to_string()],
         quantization_enabled: true,
-        quantization_config: None,
+        quantization: None,
         partition_strategy: PartitionStrategy::ByCluster,
         compression_stats: CompressionStats::default(),
         filterable_columns: Vec::new(),
-        schema_version: 1,
+        schema_version: Some(1),
         flush_size_bytes: Some(32 * 1024 * 1024),
     };
     
@@ -271,11 +271,11 @@ async fn test_multiple_collections() {
         total_size_bytes: 5_000_000,
         active_clusters: vec!["cluster_a".to_string()],
         quantization_enabled: false,
-        quantization_config: None,
+        quantization: None,
         partition_strategy: PartitionStrategy::ByTimestamp,
         compression_stats: CompressionStats::default(),
         filterable_columns: Vec::new(),
-        schema_version: 1,
+        schema_version: Some(1),
         flush_size_bytes: Some(16 * 1024 * 1024),
     };
     
@@ -289,11 +289,11 @@ async fn test_multiple_collections() {
         total_size_bytes: 10_000_000,
         active_clusters: vec!["cluster_b".to_string(), "cluster_c".to_string()],
         quantization_enabled: true,
-        quantization_config: None,
+        quantization: None,
         partition_strategy: PartitionStrategy::ByCluster,
         compression_stats: CompressionStats::default(),
         filterable_columns: Vec::new(),
-        schema_version: 1,
+        schema_version: Some(1),
         flush_size_bytes: Some(32 * 1024 * 1024),
     };
     

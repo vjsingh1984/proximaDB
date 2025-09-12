@@ -1,6 +1,6 @@
-//! Integration tests for DirectVectorService operations
+//! Integration tests for VectorOperationsService operations
 //!
-//! Tests the complete vector lifecycle using the current DirectVectorService API:
+//! Tests the complete vector lifecycle using the current VectorOperationsService API:
 //! - Vector insertion (single and batch)
 //! - Vector search (unified and streaming)
 //! - Collection management
@@ -9,20 +9,20 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use tempfile::TempDir;
-use uuid::Uuid;
+use proximadb::utils::uuid::Uuid;
 
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::{
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm, MetadataItem
 };
-use proximadb::services::direct_vector_service::DirectVectorService;
+use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::wal::WalManager;
+use proximadb::storage::persistence::write_ahead_log::WriteBufferManager;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 
 /// Helper to create test configuration
-async fn create_test_services() -> (DirectVectorService, CollectionService, TempDir) {
+async fn create_test_services() -> (VectorOperationsService, CollectionService, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     
     // Create filesystem
@@ -36,12 +36,10 @@ async fn create_test_services() -> (DirectVectorService, CollectionService, Temp
         2 * 1024 * 1024,  // 2MB flush threshold
     ));
     
-    // Create DirectVectorService
-    let direct_vector_service = DirectVectorService::new(
-        filesystem.clone(),
-        memtable.clone(),
-        temp_dir.path().to_path_buf(),
-    );
+    // Create VectorOperationsService using test utilities
+    let direct_vector_service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+        .await
+        .expect("Failed to create VectorOperationsService");
     
     // Create CollectionService
     let collection_service = CollectionService::new(
@@ -67,21 +65,28 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
                 },
                 MetadataItem {
                     key: "score".to_string(),
-                    value: (i as f64 / count as f64).to_string(),
+                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i as f64 / count as f64).to_string())),
                 },
                 MetadataItem {
                     key: "is_active".to_string(),
-                    value: (i % 2 == 0).to_string(),
+                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 2 == 0).to_string())),
                 },
             ];
             
             VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: Some(format!("vec_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i)),
                 vector,
                 metadata,
-                timestamp: chrono::Utc::now().timestamp_millis(),
+                timestamp: chrono::Utc::now().timestamp() as u32,
                 created_at: chrono::Utc::now().timestamp_millis(),
-                updated_at: chrono::Utc::now().timestamp_millis(),
+                updated_at: Some(chrono::Utc::now().timestamp() as u32),
                 expires_at: None,
                 distance: 0.0,
                 rank: 0,
@@ -94,6 +99,7 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
 /// Test basic vector insertion and search
 #[tokio::test]
 async fn test_basic_vector_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -103,8 +109,10 @@ async fn test_basic_vector_operations() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -153,6 +161,7 @@ async fn test_basic_vector_operations() {
 /// Test batch vector insertion
 #[tokio::test]
 async fn test_batch_vector_insertion() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -160,10 +169,12 @@ async fn test_batch_vector_insertion() {
         name: "batch_test_collection".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Lsm as i32,
+        storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -214,6 +225,7 @@ async fn test_batch_vector_insertion() {
 /// Test streaming search
 #[tokio::test]
 async fn test_streaming_search() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -223,8 +235,10 @@ async fn test_streaming_search() {
         distance_metric: DistanceMetric::Manhattan as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -268,6 +282,7 @@ async fn test_streaming_search() {
 /// Test metadata filtering
 #[tokio::test]
 async fn test_metadata_filtering() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -282,8 +297,10 @@ async fn test_metadata_filtering() {
             "score".to_string(),
             "is_active".to_string(),
         ],
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -361,6 +378,7 @@ async fn test_metadata_filtering() {
 /// Test flush operations
 #[tokio::test]
 async fn test_flush_operations() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -368,10 +386,12 @@ async fn test_flush_operations() {
         name: "flush_test_collection".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::DotProduct as i32,
-        storage_engine: StorageEngine::Lsm as i32,
+        storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Pq as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -432,6 +452,7 @@ async fn test_flush_operations() {
 /// Test metrics and health check
 #[tokio::test]
 async fn test_metrics_and_health() {
+    setup_hardware_capabilities();
     let (direct_service, collection_service, _temp_dir) = create_test_services().await;
     
     // Create test collection
@@ -441,8 +462,10 @@ async fn test_metrics_and_health() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default()
-    };
+        ..Default::default(),
+                compression: None,
+                optimization_hints: None,
+            };
     
     collection_service.create_collection(&config).await.unwrap();
     
@@ -481,16 +504,17 @@ async fn test_metrics_and_health() {
     assert!(metrics.contains_key("memtable_size"));
     
     // Verify metrics have reasonable values
-    let insert_count = metrics.get("insert_count").unwrap();
+    let insert_count = metrics.get(key).unwrap();
     assert!(*insert_count >= 50.0);
     
-    let search_count = metrics.get("search_count").unwrap();
+    let search_count = metrics.get(key).unwrap();
     assert!(*search_count >= 1.0);
 }
 
 /// Test error handling
 #[tokio::test]
 async fn test_error_handling() {
+    setup_hardware_capabilities();
     let (direct_service, _collection_service, _temp_dir) = create_test_services().await;
     
     // Test search on non-existent collection

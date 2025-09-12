@@ -10,10 +10,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-use crate::core::bloom::{BloomFilterStrategy, BloomFilterConfig, hash};
+use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Byte-aligned bloom filter optimized for SSTable storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ByteAlignedBloomFilter {
     /// Bit storage using byte array
     bits: Vec<u8>,
@@ -35,7 +35,7 @@ impl ByteAlignedBloomFilter {
         let num_bits = ((expected_elements as u64 * bits_per_key as u64) as u32).max(8); // Minimum 8 bits
         let num_bytes = ((num_bits + 7) / 8) as usize;
         let num_hashes = ((bits_per_key as f64 * 0.69).round() as u32).max(1);
-        
+
         Self {
             bits: vec![0; num_bytes],
             num_bits,
@@ -44,13 +44,13 @@ impl ByteAlignedBloomFilter {
             bits_per_key,
         }
     }
-    
+
     /// Create from serialized data
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
         bincode::deserialize(data)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize ByteAlignedBloomFilter: {}", e))
     }
-    
+
     /// Set a bit at the given index
     #[inline]
     fn set_bit(&mut self, index: usize) {
@@ -60,7 +60,7 @@ impl ByteAlignedBloomFilter {
             self.bits[byte_index] |= 1 << bit_index;
         }
     }
-    
+
     /// Check if a bit is set at the given index
     #[inline]
     fn is_bit_set(&self, index: usize) -> bool {
@@ -81,7 +81,7 @@ impl BloomFilterStrategy for ByteAlignedBloomFilter {
         }
         self.num_elements += 1;
     }
-    
+
     fn might_contain(&self, key: &[u8]) -> bool {
         if self.num_bits == 0 {
             return true; // Always return true for empty filter to avoid false negatives
@@ -89,43 +89,45 @@ impl BloomFilterStrategy for ByteAlignedBloomFilter {
         let positions = hash::double_hash(key, self.num_hashes, self.num_bits as usize);
         positions.iter().all(|&pos| self.is_bit_set(pos))
     }
-    
+
     fn bit_count(&self) -> usize {
         self.num_bits as usize
     }
-    
-    fn hash_count(&self) -> u32 {
-        self.num_hashes
+
+    fn hash_count(&self) -> usize {
+        self.num_hashes as usize
     }
-    
+
     fn serialize(&self) -> Result<Vec<u8>> {
         bincode::serialize(self)
             .map_err(|e| anyhow::anyhow!("Failed to serialize bloom filter: {}", e))
     }
-    
+
     fn memory_usage(&self) -> usize {
         std::mem::size_of::<Self>() + self.bits.capacity()
     }
-    
+
     fn clear(&mut self) {
         self.bits.fill(0);
         self.num_elements = 0;
     }
-    
+
     fn false_positive_rate(&self) -> f64 {
         if self.num_elements == 0 {
             return 0.0;
         }
-        
+
         // Calculate actual false positive rate based on fill ratio
-        let bits_set = self.bits.iter()
+        let bits_set = self
+            .bits
+            .iter()
             .map(|&byte| byte.count_ones() as usize)
             .sum::<usize>();
-        
+
         let fill_ratio = bits_set as f64 / self.num_bits as f64;
         fill_ratio.powf(self.num_hashes as f64)
     }
-    
+
     fn num_elements(&self) -> usize {
         self.num_elements
     }
@@ -134,48 +136,48 @@ impl BloomFilterStrategy for ByteAlignedBloomFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_byte_aligned_basic() {
         let config = BloomFilterConfig {
-            strategy: crate::core::bloom::BloomStrategy::ByteAligned,
+            // strategy removed -  crate::storage::engines::core::formats::row_based::bloom_filter::BloomStrategy::ByteAligned,
             bits_per_key: 10,
             expected_items: 100,
             ..Default::default()
         };
-        
+
         let mut filter = ByteAlignedBloomFilter::new(100, &config);
-        
+
         // Test basic insert and lookup
         filter.insert(b"test_key");
         assert!(filter.might_contain(b"test_key"));
         assert!(!filter.might_contain(b"unknown_key"));
-        
+
         // Test multiple inserts
         for i in 0..10 {
             filter.insert(&format!("key_{}", i).into_bytes());
         }
-        
+
         for i in 0..10 {
             assert!(filter.might_contain(&format!("key_{}", i).into_bytes()));
         }
     }
-    
+
     #[test]
     fn test_serialization() {
         let config = BloomFilterConfig::default();
         let mut filter = ByteAlignedBloomFilter::new(50, &config);
-        
+
         // Add some data
         filter.insert(b"key1");
         filter.insert(b"key2");
-        
+
         // Serialize
         let serialized = BloomFilterStrategy::serialize(&filter).unwrap();
-        
+
         // Deserialize
         let restored = ByteAlignedBloomFilter::from_bytes(&serialized).unwrap();
-        
+
         // Verify
         assert!(restored.might_contain(b"key1"));
         assert!(restored.might_contain(b"key2"));

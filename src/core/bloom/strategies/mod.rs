@@ -9,10 +9,10 @@
 
 pub mod bit_packed;
 pub mod byte_aligned;
-pub mod simple;
 pub mod composite;
+pub mod simple;
 
 pub use bit_packed::BitPackedBloomFilter;
 pub use byte_aligned::ByteAlignedBloomFilter;
-pub use simple::SimpleBloomFilter;
 pub use composite::CompositeBloomFilter;
+pub use simple::SimpleBloomFilter;

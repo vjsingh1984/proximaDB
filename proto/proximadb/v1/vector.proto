@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package proximadb.v1;
+
+import "proximadb/v1/vector_types.proto";
+
+// Vector operations (v1, versioned namespace)
+service VectorService {
+  rpc VectorBatch(VectorBatchRequest) returns (VectorOperationResponse);
+  rpc VectorSearch(VectorSearchRequest) returns (VectorOperationResponse);
+  rpc VectorGet(VectorGetRequest) returns (VectorOperationResponse);
+}

@@ -15,7 +15,8 @@
  */
 
 use proximadb::core::{
-    ApiConfig, Config, ConsensusConfig, LsmConfig, MonitoringConfig, ServerConfig, StorageConfig,
+use tracing::{debug, error, info, warn};
+    ApiConfig, Config, ConsensusConfig, SstConfig, MonitoringConfig, ServerConfig, StorageConfig,
     bloom::BloomFilterConfig,
 };
 use proximadb::network::middleware::auth::UserInfo;
@@ -27,6 +28,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 async fn test_authentication_middleware() {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let data_dir = temp_dir.path().join("data");
     let wal_dir = temp_dir.path().join("wal");
@@ -53,12 +55,13 @@ async fn test_authentication_middleware() {
             data_dirs: vec![data_dir.clone()],
             wal_dir: wal_dir.clone(),
             mmap_enabled: true,
-            lsm_config: LsmConfig {
+            sst_config: SstConfig {
                 memtable_size_mb: 10,
                 level_count: 7,
                 compaction_threshold: 4,
-                block_size_kb: 64,
-            },
+                block_size_kb: 3072,
+        decompression_cache_config: None,
+    },
             cache_size_mb: 10,
             bloom_filter_config: Some(BloomFilterConfig {
                 bits_per_key: 10,
@@ -105,11 +108,11 @@ async fn test_authentication_middleware() {
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
 
-    println!("Testing authentication against: {}", base_url);
+    debug!("Testing authentication against: {}", base_url);
 
     // Test 1: Health endpoint should work without authentication (when require_auth_for_health is false)
     let response = client
-        .get(&format!("{}/health", base_url))
+        .get(key))
         .send()
         .await
         .unwrap();
@@ -117,7 +120,7 @@ async fn test_authentication_middleware() {
 
     // Test 2: Collections endpoint should require authentication
     let response = client
-        .get(&format!("{}/collections", base_url))
+        .get(key))
         .send()
         .await
         .unwrap();
@@ -125,7 +128,7 @@ async fn test_authentication_middleware() {
 
     // Test 3: Valid API key should allow access
     let response = client
-        .get(&format!("{}/collections", base_url))
+        .get(key))
         .header("Authorization", "Bearer test-api-key-123")
         .send()
         .await
@@ -134,14 +137,14 @@ async fn test_authentication_middleware() {
 
     // Test 4: Invalid API key should be rejected
     let response = client
-        .get(&format!("{}/collections", base_url))
+        .get(key))
         .header("Authorization", "Bearer invalid-key")
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), 401); // Unauthorized
 
-    println!("Authentication middleware test passed!");
+    debug!("Authentication middleware test passed!");
 
     // Stop the database
     db.stop().await.unwrap();
@@ -149,6 +152,7 @@ async fn test_authentication_middleware() {
 
 #[tokio::test]
 async fn test_rate_limiting_middleware() {
+    setup_hardware_capabilities();
     let temp_dir = TempDir::new().unwrap();
     let data_dir = temp_dir.path().join("data");
     let wal_dir = temp_dir.path().join("wal");
@@ -164,12 +168,13 @@ async fn test_rate_limiting_middleware() {
             data_dirs: vec![data_dir.clone()],
             wal_dir: wal_dir.clone(),
             mmap_enabled: true,
-            lsm_config: LsmConfig {
+            sst_config: SstConfig {
                 memtable_size_mb: 10,
                 level_count: 7,
                 compaction_threshold: 4,
-                block_size_kb: 64,
-            },
+                block_size_kb: 3072,
+        decompression_cache_config: None,
+    },
             cache_size_mb: 10,
             bloom_filter_config: Some(BloomFilterConfig {
                 bits_per_key: 10,
@@ -218,11 +223,11 @@ async fn test_rate_limiting_middleware() {
     let http_address = db.http_address().unwrap();
     let base_url = format!("http://{}", http_address);
 
-    println!("Testing rate limiting against: {}", base_url);
+    debug!("Testing rate limiting against: {}", base_url);
 
     // Test 1: Health endpoint should work without rate limiting (when limit_health_endpoints is false)
     let response = client
-        .get(&format!("{}/health", base_url))
+        .get(key))
         .send()
         .await
         .unwrap();
@@ -231,24 +236,24 @@ async fn test_rate_limiting_middleware() {
     // Test 2: First few requests to collections should work
     for i in 1..=3 {
         let response = client
-            .get(&format!("{}/collections", base_url))
+            .get(key))
             .send()
             .await
             .unwrap();
-        println!("Request {}: {}", i, response.status());
+        debug!("Request {}: {}", i, response.status());
         assert_eq!(response.status(), 200); // Should work within limit
     }
 
     // Test 3: Request beyond limit should be rate limited
     let response = client
-        .get(&format!("{}/collections", base_url))
+        .get(key))
         .send()
         .await
         .unwrap();
-    println!("Rate limited request: {}", response.status());
+    debug!("Rate limited request: {}", response.status());
     assert_eq!(response.status(), 429); // Too Many Requests
 
-    println!("Rate limiting middleware test passed!");
+    debug!("Rate limiting middleware test passed!");
 
     // Stop the database
     db.stop().await.unwrap();

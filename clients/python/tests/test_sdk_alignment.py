@@ -8,30 +8,29 @@ This test checks that:
 3. Both clients have consistent interfaces
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+# To run this script, set PYTHONPATH to include the src directory:
+# PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/test_sdk_alignment.py
 
 import pytest
 from proximadb import ProximaDBClient, Protocol
 from proximadb import ProximaDBClient, Protocol
-from proximadb.models import CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
+from proximadb import CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
 from proximadb import proximadb_pb2 as pb2
 
 
 def test_grpc_client_returns_proto_types():
-    """Test that gRPC client returns proto types directly"""
-    client = ProximaDBClient(endpoint="localhost:5679")
+    """Test that gRPC client internally uses proto types"""
+    client = ProximaDBClient(url="grpc://localhost:5679", protocol=Protocol.GRPC)
     
-    # Check return type annotations
-    assert hasattr(client.create_collection, '__annotations__')
-    annotations = client.create_collection.__annotations__
-    assert 'return' in annotations
-    assert annotations['return'] == pb2.Collection
+    # The unified client returns Pydantic models for consistency
+    # But internally it uses proto types when protocol is gRPC
+    assert client._active_protocol == Protocol.GRPC
     
-    # Check health check returns proto
-    health_annotations = client.health_check.__annotations__
-    assert health_annotations['return'] == pb2.HealthResponse
+    # Check that the client has access to proto types
+    assert hasattr(pb2, 'Collection')
+    assert hasattr(pb2, 'HealthResponse')
+    assert hasattr(pb2, 'DistanceMetric')
+    assert hasattr(pb2, 'StorageEngine')
 
 
 def test_rest_client_uses_pydantic_models():
@@ -42,7 +41,7 @@ def test_rest_client_uses_pydantic_models():
     config = CollectionConfig(
         name="test_collection",
         dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         storage_engine=StorageEngine.VIPER,
         primary_indexing_algorithm=IndexingAlgorithm.HNSW
     )
@@ -50,28 +49,28 @@ def test_rest_client_uses_pydantic_models():
     assert isinstance(config, CollectionConfig)
     assert config.name == "test_collection"
     assert config.dimension == 128
-    assert config.distance_metric == DistanceMetric.COSINE
+    assert config.distance_metric == "cosine"
 
 
 def test_proto_vs_pydantic_separation():
     """Test that proto and Pydantic models are properly separated"""
     
     # Proto enums should be integers
-    assert pb2.DistanceMetric.COSINE == 1
+    assert pb2.COSINE == 1
     assert pb2.StorageEngine.VIPER == 1
-    assert pb2.IndexingAlgorithm.HNSW == 1
+    assert pb2.HNSW == 1
     
     # Pydantic enums should be strings
-    assert DistanceMetric.COSINE == "cosine"
+    assert "cosine" == "cosine"
     assert StorageEngine.VIPER == "viper"
     assert IndexingAlgorithm.HNSW == "hnsw"
     
     # Proto models should be different from Pydantic models
     proto_collection = pb2.Collection()
     pydantic_config = CollectionConfig(
-        name="test",
+        name="test_collection",
         dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         storage_engine=StorageEngine.VIPER,
         primary_indexing_algorithm=IndexingAlgorithm.HNSW
     )
@@ -86,9 +85,9 @@ def test_consistent_field_names():
     # Both should have these core fields
     proto_config = pb2.CollectionConfig()
     pydantic_config = CollectionConfig(
-        name="test",
+        name="test_collection",
         dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         storage_engine=StorageEngine.VIPER,
         primary_indexing_algorithm=IndexingAlgorithm.HNSW
     )

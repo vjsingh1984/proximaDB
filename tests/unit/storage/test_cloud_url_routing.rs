@@ -1,23 +1,24 @@
-//! Unit tests for cloud URL routing in WalBatchStrategy
+//! Unit tests for cloud URL routing in WriteBufferBatchStrategy
 //!
 //! Tests comprehensive URL validation, parsing, and routing for different cloud providers.
 //!
-//! NOTE: These tests are disabled as they use obsolete WalBatchStrategy APIs.
+//! NOTE: These tests are disabled as they use obsolete WriteBufferBatchStrategy APIs.
 //! Cloud URL routing is now handled internally by the unified batch strategy.
 
 #![cfg(disabled_due_to_obsolete_apis)]
 
 use anyhow::Result;
+use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use proximadb::core::VectorRecord;
-use proximadb::storage::memtable::specialized::wal_behavior::WalVectorBatch;
+use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::persistence::wal::batch_strategy::WalBatchStrategy;
-use proximadb::storage::persistence::wal::bincode_batch::BincodeWalBatchStrategy;
-use proximadb::storage::persistence::wal::config::WalConfig;
+use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferBatchStrategy;
+use proximadb::storage::persistence::write_ahead_log::bincode_batch::BincodeWalBatchStrategy;
+use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 use proximadb::storage::BatchId;
 
 /// Helper function to create test vector records
@@ -26,15 +27,22 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
     
     (0..count)
         .map(|i| VectorRecord {
-            id: format!("vector_{}", i),
+            id: format!("vector_{,
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            distance: None,
+            rank: None,
+            score: None,
+        }", i),
             collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 100], // 100-dimensional vector
             metadata: HashMap::new(),
-            timestamp: now,
+            timestamp: now as u32,
             created_at: now,
-            updated_at: now,
+            updated_at: Some(now as u32),
             expires_at: None,
-            version: 1,
+            version: Some(1),
             rank: None,
             score: None,
             distance: None,
@@ -43,16 +51,17 @@ fn create_test_vector_records(collection_id: &str, count: usize) -> Vec<VectorRe
 }
 
 /// Helper function to create test WAL batch
-fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WalVectorBatch {
+fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WriteBufferVectorBatch {
     let total_size_bytes = vectors.iter().map(|v| v.actual_size_bytes()).sum();
     let batch_id = BatchId::new(collection_id.to_string(), 1, vectors.len() as u64);
     
-    WalVectorBatch {
+    WriteBufferVectorBatch {
         batch_id,
         vector_records: vectors,
         created_at: SystemTime::now(),
         total_size_bytes,
         is_flushed: false,
+            metadata_bloom_filter: None,
     }
 }
 
@@ -83,7 +92,7 @@ async fn test_url_validation_for_different_providers() -> Result<()> {
     for url in valid_urls {
         let result = filesystem_factory.validate_url(url);
         assert!(result.is_ok(), "URL validation failed for valid URL: {}", url);
-        println!("✅ Valid URL: {}", url);
+        debug!("✅ Valid URL: {}", url);
     }
     
     // Test invalid URLs
@@ -100,10 +109,10 @@ async fn test_url_validation_for_different_providers() -> Result<()> {
     for url in invalid_urls {
         let result = filesystem_factory.validate_url(url);
         assert!(result.is_err(), "URL validation should have failed for invalid URL: {}", url);
-        println!("❌ Invalid URL: {} - {}", url, result.unwrap_err());
+        debug!("❌ Invalid URL: {} - {}", url, result.unwrap_err());
     }
     
-    println!("✅ URL validation test completed successfully");
+    debug!("✅ URL validation test completed successfully");
     Ok(())
 }
 
@@ -136,7 +145,7 @@ async fn test_bucket_extraction_from_urls() -> Result<()> {
     let bucket = filesystem_factory.extract_bucket_from_url(file_url)?;
     assert_eq!(bucket, None);
     
-    println!("✅ Bucket extraction test completed successfully");
+    debug!("✅ Bucket extraction test completed successfully");
     Ok(())
 }
 
@@ -159,7 +168,7 @@ async fn test_account_extraction_from_azure_urls() -> Result<()> {
     let account = filesystem_factory.extract_account_from_url(s3_url)?;
     assert_eq!(account, None);
     
-    println!("✅ Account extraction test completed successfully");
+    debug!("✅ Account extraction test completed successfully");
     Ok(())
 }
 
@@ -197,7 +206,7 @@ async fn test_path_extraction_from_urls() -> Result<()> {
     let path = filesystem_factory.extract_path_from_url(hdfs_url)?;
     assert_eq!(path, "/user/data/file.bin");
     
-    println!("✅ Path extraction test completed successfully");
+    debug!("✅ Path extraction test completed successfully");
     Ok(())
 }
 
@@ -207,7 +216,7 @@ async fn test_wal_batch_strategy_url_routing() -> Result<()> {
     
     // Create WAL batch strategy
     let mut strategy = BincodeWalBatchStrategy::new();
-    let config = WalConfig::default();
+    let config = WriteBufferConfig::default();
     
     // Initialize with filesystem
     strategy.initialize(&config, filesystem_factory.clone()).await?;
@@ -237,10 +246,10 @@ async fn test_wal_batch_strategy_url_routing() -> Result<()> {
         // depending on whether the cloud provider is configured and accessible
         match health_result {
             Ok(is_healthy) => {
-                println!("✅ Health check for {}: {}", cloud_url, is_healthy);
+                debug!("✅ Health check for {}: {}", cloud_url, is_healthy);
             }
             Err(e) => {
-                println!("⚠️ Health check error for {}: {}", cloud_url, e);
+                debug!("⚠️ Health check error for {}: {}", cloud_url, e);
             }
         }
     }
@@ -257,15 +266,15 @@ async fn test_wal_batch_strategy_url_routing() -> Result<()> {
         match health_result {
             Ok(is_healthy) => {
                 assert!(!is_healthy, "Invalid URL should result in unhealthy status");
-                println!("✅ Invalid URL correctly marked as unhealthy: {}", cloud_url);
+                debug!("✅ Invalid URL correctly marked as unhealthy: {}", cloud_url);
             }
             Err(e) => {
-                println!("✅ Invalid URL correctly rejected: {} - {}", cloud_url, e);
+                debug!("✅ Invalid URL correctly rejected: {} - {}", cloud_url, e);
             }
         }
     }
     
-    println!("✅ WAL batch strategy URL routing test completed successfully");
+    debug!("✅ WAL batch strategy URL routing test completed successfully");
     Ok(())
 }
 
@@ -298,11 +307,11 @@ async fn test_cloud_url_construction() -> Result<()> {
         let bucket = filesystem_factory.extract_bucket_from_url(&full_url)?;
         let path = filesystem_factory.extract_path_from_url(&full_url)?;
         
-        println!("✅ Base URL: {} -> Full URL: {}", base_url, full_url);
-        println!("   Bucket: {:?}, Path: {}", bucket, path);
+        debug!("✅ Base URL: {} -> Full URL: {}", base_url, full_url);
+        debug!("   Bucket: {:?}, Path: {}", bucket, path);
     }
     
-    println!("✅ Cloud URL construction test completed successfully");
+    debug!("✅ Cloud URL construction test completed successfully");
     Ok(())
 }
 
@@ -323,12 +332,12 @@ async fn test_edge_cases_in_url_parsing() -> Result<()> {
         if let Ok(_) = filesystem_factory.validate_url(url) {
             let path = filesystem_factory.extract_path_from_url(url)?;
             assert_eq!(path, expected_path, "Path extraction failed for URL: {}", url);
-            println!("✅ Edge case URL: {} -> Path: '{}'", url, path);
+            debug!("✅ Edge case URL: {} -> Path: '{}'", url, path);
         } else {
-            println!("⚠️ Edge case URL validation failed: {}", url);
+            debug!("⚠️ Edge case URL validation failed: {}", url);
         }
     }
     
-    println!("✅ Edge cases in URL parsing test completed successfully");
+    debug!("✅ Edge cases in URL parsing test completed successfully");
     Ok(())
 }

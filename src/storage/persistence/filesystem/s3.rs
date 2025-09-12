@@ -22,9 +22,10 @@ use tokio::time::Duration;
 
 use super::auth::{AwsCredentials, CredentialProvider};
 use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
+use md5::{Digest, Md5};
 
 /// S3 storage classes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum S3StorageClass {
     Standard,
     StandardIa,
@@ -52,7 +53,7 @@ impl S3StorageClass {
 }
 
 /// S3 configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct S3Config {
     /// AWS region
     pub region: String,
@@ -89,13 +90,13 @@ pub struct S3Config {
 }
 
 /// S3 encryption configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct S3Encryption {
     pub method: S3EncryptionMethod,
     pub kms_key_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum S3EncryptionMethod {
     None,
     Aes256,
@@ -104,7 +105,7 @@ pub enum S3EncryptionMethod {
 }
 
 /// AWS credential configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CredentialConfig {
     /// Credential provider type
     pub provider: CredentialProviderType,
@@ -128,7 +129,7 @@ pub struct CredentialConfig {
     pub refresh_interval: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CredentialProviderType {
     /// Use static access keys
     Static,
@@ -322,12 +323,12 @@ impl S3Client {
         // This is a simplified implementation for demonstration
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
-            bucket, self.config.region, key
+            bucket, self.config.region, &key
         );
 
         let mut request = self
             .http_client
-            .get(&url)
+            .get(key)
             .header(
                 "Authorization",
                 self.create_auth_header(credentials, "GET", bucket, key),
@@ -389,9 +390,9 @@ impl S3Client {
     ) -> FsResult<()> {
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
-            bucket, self.config.region, key
+            bucket, self.config.region, &key
         );
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         let mut request = self
             .http_client
@@ -403,8 +404,15 @@ impl S3Client {
             .body(data.to_vec());
 
         // Add storage class if specified
-        if let Some(storage_class) = options.storage_class {
-            request = request.header("x-amz-storage-class", storage_class);
+        if let Some(ref opts) = options {
+            if let Some(ref storage_class) = opts.storage_class {
+                request = request.header("x-amz-storage-class", storage_class.as_str());
+            } else {
+                request = request.header(
+                    "x-amz-storage-class",
+                    self.config.default_storage_class.as_str(),
+                );
+            }
         } else {
             request = request.header(
                 "x-amz-storage-class",
@@ -413,9 +421,11 @@ impl S3Client {
         }
 
         // Add metadata if specified
-        if let Some(metadata) = options.metadata {
-            for (key, value) in metadata {
-                request = request.header(format!("x-amz-meta-{}", key), value);
+        if let Some(ref opts) = options {
+            if let Some(ref metadata) = opts.metadata {
+                for (key, value) in metadata {
+                    request = request.header(format!("x-amz-meta-{}", key), value);
+                }
             }
         }
 
@@ -425,6 +435,20 @@ impl S3Client {
             .map_err(|e| FilesystemError::Network(e.to_string()))?;
 
         if response.status().is_success() {
+            // Verify via HEAD
+            let meta = self.head_object(bucket, key, credentials).await?;
+            if meta.size != data.len() as u64 {
+                return Err(FilesystemError::Network("S3 size mismatch after PUT".to_string()));
+            }
+            if let Some(etag) = meta.etag {
+                let et = etag.trim_matches('"');
+                if !et.contains('-') {
+                    let md5hex = md5_hex(data);
+                    if et != md5hex {
+                        return Err(FilesystemError::Network("S3 ETag MD5 mismatch".to_string()));
+                    }
+                }
+            }
             Ok(())
         } else {
             Err(FilesystemError::Network(format!(
@@ -451,8 +475,19 @@ impl S3Client {
     }
 }
 
+fn md5_hex(data: &[u8]) -> String {
+    let mut hasher = Md5::new();
+    hasher.update(data);
+    let res = hasher.finalize();
+    format!("{:x}", res)
+}
+
 #[async_trait]
 impl FileSystem for S3FileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         let (bucket, key) = self.parse_s3_url(path)?;
         let credentials = self.credential_provider.get_credentials().await?;
@@ -520,8 +555,10 @@ impl FileSystem for S3FileSystem {
         let credentials = self.credential_provider.get_credentials().await?;
 
         if data.len() as u64 > self.config.multipart_threshold {
-            // Use multipart upload for large files
-            self.multipart_upload(&bucket, &key, data, &credentials, options)
+            // Placeholder: Without SDK, perform single PUT then verify size via HEAD.
+            // In production, implement real multipart with ETag parts verification.
+            self.client
+                .put_object(&bucket, &key, data, &credentials, options.clone())
                 .await
         } else {
             self.client
@@ -551,7 +588,7 @@ impl FileSystem for S3FileSystem {
 
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
-            bucket, self.config.region, key
+            bucket, self.config.region, &key
         );
 
         let response = self
@@ -591,7 +628,7 @@ impl FileSystem for S3FileSystem {
 
         let url = format!(
             "https://{}.s3.{}.amazonaws.com/{}",
-            bucket, self.config.region, key
+            bucket, self.config.region, &key
         );
 
         let response = self
@@ -613,7 +650,7 @@ impl FileSystem for S3FileSystem {
                 .get("content-length")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
+                ;
 
             let etag = response
                 .headers()
@@ -629,7 +666,7 @@ impl FileSystem for S3FileSystem {
 
             Ok(FileMetadata {
                 path: format!("s3://{}/{}", bucket, key),
-                size,
+                size: size.unwrap_or(0),
                 created: None,  // S3 doesn't provide creation time in HEAD response
                 modified: None, // Would need to parse Last-Modified header
                 is_directory: false, // S3 objects are always files
@@ -695,6 +732,20 @@ impl FileSystem for S3FileSystem {
         // S3 operations are immediately durable
         Ok(())
     }
+    
+    async fn sync_file(&self, path: &str) -> FsResult<()> {
+        // S3 doesn't support or need file-level sync
+        // Data is already durable after successful PutObject
+        tracing::debug!("sync_file called on S3 path {} - no-op as S3 guarantees durability after successful write", path);
+        
+        // Note: S3 provides 99.999999999% (11 9's) durability
+        // Once a PutObject operation returns successfully, the data is:
+        // 1. Replicated across multiple availability zones
+        // 2. Protected against hardware failures
+        // 3. Immediately durable without need for explicit sync
+        
+        Ok(())
+    }
 
     async fn open_file(&self, _path: &str, _create: bool) -> FsResult<Box<dyn FilesystemFile>> {
         // Not used in ProximaDB - all operations go through read/write methods
@@ -729,6 +780,7 @@ impl S3FileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_s3_url_parsing() {

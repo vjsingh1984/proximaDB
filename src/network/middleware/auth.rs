@@ -18,7 +18,7 @@
 
 use axum::{
     extract::State,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode},
     middleware::Next,
     response::{Json, Response},
 };
@@ -63,7 +63,6 @@ pub struct AuthErrorResponse {
 
 /// Authentication layer for Axum
 pub struct AuthLayer {
-    #[allow(dead_code)]
     config: AuthConfig,
 }
 
@@ -115,7 +114,7 @@ pub async fn auth_middleware<B>(
     // Extract Authorization header
     let auth_header = request
         .headers()
-        .get(header::AUTHORIZATION)
+        .get(hyper::header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok());
 
     let api_key = match auth_header {
@@ -192,7 +191,7 @@ mod tests {
     fn test_auth_config_default() {
         let config = AuthConfig::default();
         assert!(!config.enabled);
-        assert!(config.api_keys.is_empty());
+        assert!(config.api_keys.is_none());
         assert!(!config.require_auth_for_health);
     }
 }

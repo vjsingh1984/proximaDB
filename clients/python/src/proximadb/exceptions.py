@@ -28,12 +28,14 @@ class ProximaDBError(Exception):
         error_code: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
         request_id: Optional[str] = None,
+        retryable: bool = False,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.error_code = error_code
         self.details = details or {}
         self.request_id = request_id
+        self.retryable = retryable
     
     def __str__(self) -> str:
         parts = [self.message]
@@ -162,6 +164,21 @@ class NetworkError(ProximaDBError):
         self.original_error = original_error
 
 
+class TransportError(ProximaDBError):
+    """Transport layer error (REST/gRPC)"""
+    
+    def __init__(
+        self,
+        message: str = "Transport error",
+        transport_type: Optional[str] = None,
+        original_error: Optional[Exception] = None,
+        **kwargs
+    ) -> None:
+        super().__init__(message, error_code="TRANSPORT_ERROR", **kwargs)
+        self.transport_type = transport_type
+        self.original_error = original_error
+
+
 class TimeoutError(ProximaDBError):
     """Request timeout"""
     
@@ -240,7 +257,7 @@ def map_http_error(status_code: int, response_data: dict) -> ProximaDBError:
             actual = details.get("actual_dimension")
             if expected and actual:
                 return VectorDimensionError(expected, actual, request_id=request_id)
-        return ProximaDBError(message, error_code, details, request_id)
+        return ProximaDBError(message, error_code, details, request_id, retryable=False)
     
     elif status_code == 401:
         return AuthenticationError(message, request_id=request_id, details=details)
@@ -255,13 +272,13 @@ def map_http_error(status_code: int, response_data: dict) -> ProximaDBError:
         elif error_code == "VECTOR_NOT_FOUND":
             vector_id = details.get("vector_id", "unknown")
             return VectorNotFoundError(vector_id, request_id=request_id)
-        return ProximaDBError(message, error_code, details, request_id)
+        return ProximaDBError(message, error_code, details, request_id, retryable=False)
     
     elif status_code == 409:
         if error_code == "COLLECTION_EXISTS":
             collection_name = details.get("collection_name", "unknown")
             return CollectionExistsError(collection_name, request_id=request_id)
-        return ProximaDBError(message, error_code, details, request_id)
+        return ProximaDBError(message, error_code, details, request_id, retryable=False)
     
     elif status_code == 429:
         retry_after = details.get("retry_after")
@@ -275,7 +292,7 @@ def map_http_error(status_code: int, response_data: dict) -> ProximaDBError:
         return ServerError(message, status_code=status_code, request_id=request_id, details=details)
     
     else:
-        return ProximaDBError(message, error_code, details, request_id)
+        return ProximaDBError(message, error_code, details, request_id, retryable=False)
 
 
 def map_grpc_error(grpc_error) -> ProximaDBError:

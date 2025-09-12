@@ -9,14 +9,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::index::axis::types::{DataType, IndexAlgorithm, IndexSpecification};
+use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
 
-use crate::compute::distance::DistanceMetric;
-use crate::compute::unified_distance::UnifiedDistanceCompute;
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::VectorRecord;
 
+// Export ClusterManager
+pub use super::cluster_manager::ClusterManager;
+
 /// Clustering configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusteringConfig {
     /// Algorithm to use
     pub algorithm: ClusteringAlgorithm,
@@ -49,7 +52,7 @@ impl Default for ClusteringConfig {
 }
 
 /// Clustering algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ClusteringAlgorithm {
     /// K-Means clustering
     KMeans(KMeansConfig),
@@ -60,7 +63,7 @@ pub enum ClusteringAlgorithm {
 }
 
 /// K-Means configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct KMeansConfig {
     /// Number of clusters (k)
     pub k: usize,
@@ -87,7 +90,7 @@ impl Default for KMeansConfig {
 }
 
 /// K-Means initialization methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum KMeansInit {
     /// Random initialization
     Random,
@@ -98,7 +101,7 @@ pub enum KMeansInit {
 }
 
 /// Hierarchical clustering configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HierarchicalConfig {
     /// Linkage criterion
     pub linkage: LinkageCriterion,
@@ -107,7 +110,7 @@ pub struct HierarchicalConfig {
 }
 
 /// Linkage criteria for hierarchical clustering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum LinkageCriterion {
     Single,
     Complete,
@@ -116,7 +119,7 @@ pub enum LinkageCriterion {
 }
 
 /// DBSCAN configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DBSCANConfig {
     /// Epsilon neighborhood distance
     pub eps: f32,
@@ -125,7 +128,7 @@ pub struct DBSCANConfig {
 }
 
 /// Cluster assignment for a vector
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusterAssignment {
     /// Cluster ID
     pub cluster_id: u32,
@@ -136,7 +139,7 @@ pub struct ClusterAssignment {
 }
 
 /// Clustering model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusteringModel {
     /// Algorithm used
     pub algorithm: ClusteringAlgorithm,
@@ -147,15 +150,13 @@ pub struct ClusteringModel {
     /// Total vectors clustered
     pub total_vectors: usize,
     /// Model version
-    pub version: u64,
-    /// When model was created
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub version: Option<u32>,
     /// Model quality metrics
     pub metrics: ClusteringMetrics,
 }
 
 /// Clustering quality metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusteringMetrics {
     /// Silhouette score (-1 to 1, higher is better)
     pub silhouette_score: f32,
@@ -164,9 +165,9 @@ pub struct ClusteringMetrics {
     /// Calinski-Harabasz index (higher is better)
     pub calinski_harabasz_index: f32,
     /// Average intra-cluster distance
-    pub avg_intra_cluster_distance: f32,
+    pub avg_intra_cluster_similarity: f32,
     /// Average inter-cluster distance
-    pub avg_inter_cluster_distance: f32,
+    pub avg_inter_cluster_similarity: f32,
 }
 
 /// AXIS clustering engine
@@ -181,6 +182,42 @@ pub struct AxisClusteringEngine {
     distance_compute: Arc<UnifiedDistanceCompute>,
     /// Statistics
     stats: Arc<RwLock<ClusteringStats>>,
+}
+
+/// Reusable clustering interface for storage engines
+///
+/// This trait provides a simplified interface for storage engines like RAPTOR
+/// to perform clustering without the full AXIS overhead. Designed specifically
+/// for p²+k×p clustering algorithms used in row group assignment.
+pub trait ReusableClusteringEngine {
+    /// Perform k-means clustering with k-means++ initialization
+    /// Returns centroids and cluster assignments
+    fn cluster_vectors_simple(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        distance_metric: DistanceMetric,
+        max_iterations: usize,
+    ) -> Result<(Vec<Vec<f32>>, Vec<usize>)>;
+
+    /// Calculate centroid-to-centroid distance matrix for p²+k×p algorithm
+    /// Returns k×k matrix where entry (i,j) is distance between centroids i and j
+    fn calculate_centroid_distance_matrix(
+        &self,
+        centroids: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>>;
+
+    /// Assign vectors to clusters with component boosting
+    /// Returns cluster assignments with boosted distances for RAPTOR
+    fn assign_vectors_with_component_boosting(
+        &self,
+        vectors: &[Vec<f32>],
+        centroids: &[Vec<f32>],
+        centroid_distances: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+        boosting_weights: &[f32], // [α₁, α₂, α₃, β₁, β₂] for 5-component formula
+    ) -> Result<Vec<(usize, f32)>>; // (cluster_id, boosted_distance)
 }
 
 /// Clustering statistics
@@ -215,7 +252,7 @@ impl AxisClusteringEngine {
         vectors: Vec<VectorRecord>,
     ) -> Result<ClusteringModel> {
         let start_time = std::time::Instant::now();
-        
+
         tracing::info!(
             "🎯 Training clustering model for collection {} with {} vectors",
             collection_id,
@@ -232,22 +269,15 @@ impl AxisClusteringEngine {
         }
 
         // Extract vector data
-        let vector_data: Vec<Vec<f32>> = vectors
-            .iter()
-            .map(|v| v.vector.clone())
-            .collect();
+        let vector_data: Vec<Vec<f32>> = vectors.iter().map(|v| v.vector.clone()).collect();
 
         // Train based on algorithm
         let model = match &self.config.algorithm {
-            ClusteringAlgorithm::KMeans(config) => {
-                self.train_kmeans(config, vector_data).await?
-            }
+            ClusteringAlgorithm::KMeans(config) => self.train_kmeans(config, vector_data).await?,
             ClusteringAlgorithm::Hierarchical(config) => {
                 self.train_hierarchical(config, vector_data).await?
             }
-            ClusteringAlgorithm::DBSCAN(config) => {
-                self.train_dbscan(config, vector_data).await?
-            }
+            ClusteringAlgorithm::DBSCAN(config) => self.train_dbscan(config, vector_data).await?,
         };
 
         // Update stats
@@ -256,9 +286,10 @@ impl AxisClusteringEngine {
             let mut stats = self.stats.write().await;
             stats.total_clustering_ops += 1;
             stats.total_vectors_clustered += vectors.len() as u64;
-            stats.avg_clustering_time_ms = 
-                (stats.avg_clustering_time_ms * (stats.total_clustering_ops - 1) as f64 
-                + elapsed.as_millis() as f64) / stats.total_clustering_ops as f64;
+            stats.avg_clustering_time_ms = (stats.avg_clustering_time_ms
+                * (stats.total_clustering_ops - 1) as f64
+                + elapsed.as_millis() as f64)
+                / stats.total_clustering_ops as f64;
         }
 
         // Store model
@@ -283,21 +314,21 @@ impl AxisClusteringEngine {
         vector: &[f32],
     ) -> Result<ClusterAssignment> {
         let models = self.models.read().await;
-        let model = models
-            .get(collection_id)
-            .ok_or_else(|| anyhow::anyhow!("No clustering model for collection {}", collection_id))?;
+        let model = models.get(collection_id).ok_or_else(|| {
+            anyhow::anyhow!("No clustering model for collection {}", collection_id)
+        })?;
 
         // Find nearest centroid
         let mut best_cluster = 0;
         let mut best_distance = f32::MAX;
-        
+
         for (idx, centroid) in model.centroids.iter().enumerate() {
             let similarity = self.distance_compute.calculate_distance(
                 vector,
                 centroid,
                 &self.config.distance_metric,
             );
-            
+
             if similarity.raw_value < best_distance {
                 best_distance = similarity.raw_value;
                 best_cluster = idx;
@@ -315,16 +346,16 @@ impl AxisClusteringEngine {
     }
 
     /// Get top-k nearest clusters
-    pub async fn get_nearest_clusters(
+    pub async fn nearest_clusters(
         &self,
         collection_id: &str,
         vector: &[f32],
         k: usize,
     ) -> Result<Vec<(u32, f32)>> {
         let models = self.models.read().await;
-        let model = models
-            .get(collection_id)
-            .ok_or_else(|| anyhow::anyhow!("No clustering model for collection {}", collection_id))?;
+        let model = models.get(collection_id).ok_or_else(|| {
+            anyhow::anyhow!("No clustering model for collection {}", collection_id)
+        })?;
 
         // Calculate distances to all centroids
         let mut cluster_distances: Vec<(u32, f32)> = model
@@ -397,51 +428,51 @@ impl AxisClusteringEngine {
 
         // Initialize centroids
         let mut centroids = self.initialize_kmeans_centroids(&vectors, k, &config.init_method)?;
-        
+
         // Run K-Means iterations
         let mut cluster_assignments = vec![0usize; vectors.len()];
         let mut cluster_sizes = vec![0usize; k];
-        
+
         for iteration in 0..config.max_iterations {
             let mut changed = false;
-            
+
             // Assignment step
             for (idx, vector) in vectors.iter().enumerate() {
                 let mut best_cluster = 0;
                 let mut best_distance = f32::MAX;
-                
+
                 for (cluster_idx, centroid) in centroids.iter().enumerate() {
                     let similarity = self.distance_compute.calculate_distance(
                         vector,
                         centroid,
                         &self.config.distance_metric,
                     );
-                    
+
                     if similarity.raw_value < best_distance {
                         best_distance = similarity.raw_value;
                         best_cluster = cluster_idx;
                     }
                 }
-                
+
                 if cluster_assignments[idx] != best_cluster {
                     changed = true;
                     cluster_assignments[idx] = best_cluster;
                 }
             }
-            
+
             // Update step
             cluster_sizes.fill(0);
             centroids.iter_mut().for_each(|c| c.fill(0.0));
-            
+
             for (idx, vector) in vectors.iter().enumerate() {
                 let cluster = cluster_assignments[idx];
                 cluster_sizes[cluster] += 1;
-                
+
                 for (i, val) in vector.iter().enumerate() {
                     centroids[cluster][i] += val;
                 }
             }
-            
+
             // Average centroids
             for (cluster_idx, size) in cluster_sizes.iter().enumerate() {
                 if *size > 0 {
@@ -450,7 +481,7 @@ impl AxisClusteringEngine {
                     }
                 }
             }
-            
+
             // Check convergence
             if !changed {
                 tracing::debug!("K-Means converged at iteration {}", iteration);
@@ -459,15 +490,15 @@ impl AxisClusteringEngine {
         }
 
         // Calculate metrics
-        let metrics = self.calculate_clustering_metrics(&vectors, &centroids, &cluster_assignments)?;
+        let metrics =
+            self.calculate_clustering_metrics(&vectors, &centroids, &cluster_assignments)?;
 
         Ok(ClusteringModel {
             algorithm: ClusteringAlgorithm::KMeans(config.clone()),
             centroids,
             cluster_sizes,
             total_vectors: vectors.len(),
-            version: 1,
-            created_at: chrono::Utc::now(),
+            version: Some(1),
             metrics,
         })
     }
@@ -479,7 +510,9 @@ impl AxisClusteringEngine {
         _vectors: Vec<Vec<f32>>,
     ) -> Result<ClusteringModel> {
         // TODO: Implement hierarchical clustering
-        Err(anyhow::anyhow!("Hierarchical clustering not yet implemented"))
+        Err(anyhow::anyhow!(
+            "Hierarchical clustering not yet implemented"
+        ))
     }
 
     /// Train DBSCAN model
@@ -506,7 +539,7 @@ impl AxisClusteringEngine {
                 let mut rng = rand::thread_rng();
                 let mut indices: Vec<usize> = (0..vectors.len()).collect();
                 indices.shuffle(&mut rng);
-                
+
                 Ok(indices
                     .into_iter()
                     .take(k)
@@ -536,15 +569,15 @@ impl AxisClusteringEngine {
         use rand::Rng;
         let mut rng = rand::thread_rng();
         let mut centroids = Vec::with_capacity(k);
-        
+
         // Choose first centroid randomly
         let first_idx = rng.gen_range(0..vectors.len());
         centroids.push(vectors[first_idx].clone());
-        
+
         // Choose remaining centroids
         for _ in 1..k {
             let mut distances = vec![f32::MAX; vectors.len()];
-            
+
             // Calculate minimum distance to existing centroids
             for (idx, vector) in vectors.iter().enumerate() {
                 for centroid in &centroids {
@@ -556,12 +589,12 @@ impl AxisClusteringEngine {
                     distances[idx] = distances[idx].min(similarity.raw_value);
                 }
             }
-            
+
             // Choose next centroid with probability proportional to squared distance
             let total_dist: f32 = distances.iter().map(|d| d * d).sum();
             let mut cumsum = 0.0;
-            let target = rng.gen::<f32>() * total_dist;
-            
+            let target = rng.gen_range(0.0..1.0) * total_dist;
+
             for (idx, dist) in distances.iter().enumerate() {
                 cumsum += dist * dist;
                 if cumsum >= target {
@@ -570,7 +603,7 @@ impl AxisClusteringEngine {
                 }
             }
         }
-        
+
         Ok(centroids)
     }
 
@@ -579,14 +612,14 @@ impl AxisClusteringEngine {
         // Simple heuristic: sqrt(n/2)
         let n = vectors.len();
         let optimal_k = ((n as f32 / 2.0).sqrt() as usize).clamp(2, max_k);
-        
+
         tracing::debug!(
             "Determined optimal k={} for {} vectors (max_k={})",
             optimal_k,
             n,
             max_k
         );
-        
+
         Ok(optimal_k)
     }
 
@@ -608,7 +641,8 @@ impl AxisClusteringEngine {
             );
             intra_distances.push(similarity.raw_value);
         }
-        let avg_intra_cluster_distance = intra_distances.iter().sum::<f32>() / intra_distances.len() as f32;
+        let avg_intra_cluster_distance =
+            intra_distances.iter().sum::<f32>() / intra_distances.len() as f32;
 
         // Calculate average inter-cluster distance
         let mut inter_distances = Vec::new();
@@ -630,7 +664,7 @@ impl AxisClusteringEngine {
 
         // Simple silhouette approximation
         let silhouette_score = if avg_inter_cluster_distance > 0.0 {
-            (avg_inter_cluster_distance - avg_intra_cluster_distance) 
+            (avg_inter_cluster_distance - avg_intra_cluster_distance)
                 / avg_inter_cluster_distance.max(avg_intra_cluster_distance)
         } else {
             0.0
@@ -638,10 +672,12 @@ impl AxisClusteringEngine {
 
         Ok(ClusteringMetrics {
             silhouette_score,
-            davies_bouldin_index: avg_intra_cluster_distance / avg_inter_cluster_distance.max(0.001),
-            calinski_harabasz_index: avg_inter_cluster_distance / avg_intra_cluster_distance.max(0.001),
-            avg_intra_cluster_distance,
-            avg_inter_cluster_distance,
+            davies_bouldin_index: avg_intra_cluster_distance
+                / avg_inter_cluster_distance.max(0.001),
+            calinski_harabasz_index: avg_inter_cluster_distance
+                / avg_intra_cluster_distance.max(0.001),
+            avg_intra_cluster_similarity: avg_intra_cluster_distance,
+            avg_inter_cluster_similarity: avg_inter_cluster_distance,
         })
     }
 }
@@ -652,10 +688,10 @@ impl AxisClusteringEngine {
     pub fn index_supports_clustering(spec: &IndexSpecification) -> bool {
         // Clustering only makes sense for vector data types
         let is_vector_data = matches!(
-            spec.data_type, 
-            DataType::DenseVector { .. } | DataType::SparseVector { .. }
+            spec.data_type,
+            Data::DenseVector { .. } | Data::SparseVector { .. }
         );
-        
+
         // And for algorithms that can benefit from clustering
         let supports_clustering_algo = matches!(
             spec.algorithm,
@@ -664,14 +700,317 @@ impl AxisClusteringEngine {
             IndexAlgorithm::PQ { .. } |
             IndexAlgorithm::LSH { .. }
         );
-        
+
         is_vector_data && supports_clustering_algo
+    }
+}
+
+/// Implementation of ReusableClusteringEngine for AxisClusteringEngine
+/// Provides simplified clustering interface for storage engines like RAPTOR
+impl ReusableClusteringEngine for AxisClusteringEngine {
+    /// Perform k-means clustering with k-means++ initialization
+    /// Returns centroids and cluster assignments
+    fn cluster_vectors_simple(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        distance_metric: DistanceMetric,
+        max_iterations: usize,
+    ) -> Result<(Vec<Vec<f32>>, Vec<usize>)> {
+        tracing::debug!(
+            "🎯 ReusableClusteringEngine: k-means clustering {} vectors into {} clusters",
+            vectors.len(),
+            k
+        );
+
+        if vectors.is_empty() {
+            return Err(anyhow::anyhow!("Cannot cluster empty vector set"));
+        }
+
+        if k > vectors.len() {
+            return Err(anyhow::anyhow!(
+                "k={} cannot be larger than number of vectors={}",
+                k,
+                vectors.len()
+            ));
+        }
+
+        // Initialize centroids using k-means++
+        let mut centroids = self.kmeans_plusplus_init_simple(vectors, k, &distance_metric)?;
+
+        // Run K-Means iterations
+        let mut cluster_assignments = vec![0usize; vectors.len()];
+
+        for iteration in 0..max_iterations {
+            let mut changed = false;
+
+            // Assignment step
+            for (idx, vector) in vectors.iter().enumerate() {
+                let mut best_cluster = 0;
+                let mut best_distance = f32::MAX;
+
+                for (cluster_idx, centroid) in centroids.iter().enumerate() {
+                    let similarity = self.distance_compute.calculate_distance(
+                        vector,
+                        centroid,
+                        &distance_metric,
+                    );
+
+                    if similarity.raw_value < best_distance {
+                        best_distance = similarity.raw_value;
+                        best_cluster = cluster_idx;
+                    }
+                }
+
+                if cluster_assignments[idx] != best_cluster {
+                    changed = true;
+                    cluster_assignments[idx] = best_cluster;
+                }
+            }
+
+            // Update step - recalculate centroids
+            let mut cluster_sizes = vec![0usize; k];
+            centroids.iter_mut().for_each(|c| c.fill(0.0));
+
+            for (idx, vector) in vectors.iter().enumerate() {
+                let cluster = cluster_assignments[idx];
+                cluster_sizes[cluster] += 1;
+
+                for (i, val) in vector.iter().enumerate() {
+                    centroids[cluster][i] += val;
+                }
+            }
+
+            // Average centroids
+            for (cluster_idx, size) in cluster_sizes.iter().enumerate() {
+                if *size > 0 {
+                    for val in centroids[cluster_idx].iter_mut() {
+                        *val /= *size as f32;
+                    }
+                }
+            }
+
+            // Check convergence
+            if !changed {
+                tracing::debug!("K-Means converged at iteration {}", iteration);
+                break;
+            }
+        }
+
+        tracing::debug!(
+            "✅ ReusableClusteringEngine: clustering complete with {} centroids",
+            centroids.len()
+        );
+        Ok((centroids, cluster_assignments))
+    }
+
+    /// Calculate centroid-to-centroid distance matrix for p²+k×p algorithm
+    /// Returns k×k matrix where entry (i,j) is distance between centroids i and j
+    fn calculate_centroid_distance_matrix(
+        &self,
+        centroids: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>> {
+        let k = centroids.len();
+        let mut distance_matrix = vec![vec![0.0; k]; k];
+
+        tracing::debug!(
+            "🎯 ReusableClusteringEngine: building {}×{} centroid distance matrix",
+            k,
+            k
+        );
+
+        for i in 0..k {
+            for j in 0..k {
+                if i == j {
+                    distance_matrix[i][j] = 0.0; // Distance to self is 0
+                } else {
+                    let similarity = self.distance_compute.calculate_distance(
+                        &centroids[i],
+                        &centroids[j],
+                        &distance_metric,
+                    );
+                    distance_matrix[i][j] = similarity.raw_value;
+                }
+            }
+        }
+
+        tracing::debug!("✅ ReusableClusteringEngine: centroid distance matrix complete");
+        Ok(distance_matrix)
+    }
+
+    /// Assign vectors to clusters with component boosting
+    /// Returns cluster assignments with boosted distances for RAPTOR
+    fn assign_vectors_with_component_boosting(
+        &self,
+        vectors: &[Vec<f32>],
+        centroids: &[Vec<f32>],
+        centroid_distances: &[Vec<f32>],
+        distance_metric: DistanceMetric,
+        boosting_weights: &[f32], // [α₁, α₂, α₃, β₁, β₂] for 5-component formula
+    ) -> Result<Vec<(usize, f32)>> {
+        tracing::debug!(
+            "🎯 ReusableClusteringEngine: assigning {} vectors with component boosting",
+            vectors.len()
+        );
+
+        if boosting_weights.len() != 5 {
+            return Err(anyhow::anyhow!(
+                "Expected 5 boosting weights [α₁, α₂, α₃, β₁, β₂], got {}",
+                boosting_weights.len()
+            ));
+        }
+
+        let mut assignments = Vec::with_capacity(vectors.len());
+
+        for vector in vectors {
+            let mut best_cluster = 0;
+            let mut best_boosted_distance = f32::MAX;
+
+            for (cluster_idx, centroid) in centroids.iter().enumerate() {
+                // Component 1: Direct vector-to-centroid distance (α₁)
+                let d1 = self
+                    .distance_compute
+                    .calculate_distance(vector, centroid, &distance_metric)
+                    .raw_value;
+
+                // Component 2: Average distance to other centroids (α₂) - boundary penalty
+                let mut other_centroid_distances = 0.0;
+                let mut count = 0;
+                for (other_idx, other_centroid) in centroids.iter().enumerate() {
+                    if other_idx != cluster_idx {
+                        let d_other = self
+                            .distance_compute
+                            .calculate_distance(vector, other_centroid, &distance_metric)
+                            .raw_value;
+                        other_centroid_distances += d_other;
+                        count += 1;
+                    }
+                }
+                let d2 = if count > 0 {
+                    other_centroid_distances / count as f32
+                } else {
+                    0.0
+                };
+
+                // Component 3: Distance variance (α₃) - cluster compactness
+                let mut variance = 0.0;
+                for other_centroid in centroids {
+                    let d_var = self
+                        .distance_compute
+                        .calculate_distance(vector, other_centroid, &distance_metric)
+                        .raw_value;
+                    variance += (d_var - d1).powi(2);
+                }
+                let d3 = if centroids.len() > 1 {
+                    (variance / (centroids.len() - 1) as f32).sqrt()
+                } else {
+                    0.0
+                };
+
+                // Component 4: Minimum inter-centroid distance (β₁) - cluster separation
+                let mut min_inter_centroid = f32::MAX;
+                for (other_idx, _) in centroids.iter().enumerate() {
+                    if other_idx != cluster_idx {
+                        min_inter_centroid =
+                            min_inter_centroid.min(centroid_distances[cluster_idx][other_idx]);
+                    }
+                }
+                let d4 = if min_inter_centroid < f32::MAX {
+                    min_inter_centroid
+                } else {
+                    0.0
+                };
+
+                // Component 5: Maximum inter-centroid distance (β₂) - global structure
+                let mut max_inter_centroid: f32 = 0.0;
+                for (other_idx, _) in centroids.iter().enumerate() {
+                    if other_idx != cluster_idx {
+                        max_inter_centroid =
+                            max_inter_centroid.max(centroid_distances[cluster_idx][other_idx]);
+                    }
+                }
+                let d5 = max_inter_centroid;
+
+                // Apply 5-component boosting formula: D = α₁·d1 + α₂·d2 + α₃·d3 + β₁·d4 + β₂·d5
+                let boosted_distance = boosting_weights[0] * d1
+                    + boosting_weights[1] * d2
+                    + boosting_weights[2] * d3
+                    + boosting_weights[3] * d4
+                    + boosting_weights[4] * d5;
+
+                if boosted_distance < best_boosted_distance {
+                    best_boosted_distance = boosted_distance;
+                    best_cluster = cluster_idx;
+                }
+            }
+
+            assignments.push((best_cluster, best_boosted_distance));
+        }
+
+        tracing::debug!("✅ ReusableClusteringEngine: component boosting assignment complete");
+        Ok(assignments)
+    }
+}
+
+/// Helper methods for simplified clustering
+impl AxisClusteringEngine {
+    /// Simplified K-Means++ initialization without full AXIS overhead
+    fn kmeans_plusplus_init_simple(
+        &self,
+        vectors: &[Vec<f32>],
+        k: usize,
+        distance_metric: &DistanceMetric,
+    ) -> Result<Vec<Vec<f32>>> {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut centroids = Vec::with_capacity(k);
+
+        // Choose first centroid randomly
+        let first_idx = rng.gen_range(0..vectors.len());
+        centroids.push(vectors[first_idx].clone());
+
+        // Choose remaining centroids
+        for _ in 1..k {
+            let mut distances = vec![f32::MAX; vectors.len()];
+
+            // Calculate minimum distance to existing centroids
+            for (idx, vector) in vectors.iter().enumerate() {
+                for centroid in &centroids {
+                    let similarity =
+                        self.distance_compute
+                            .calculate_distance(vector, centroid, distance_metric);
+                    distances[idx] = distances[idx].min(similarity.raw_value);
+                }
+            }
+
+            // Choose next centroid with probability proportional to squared distance
+            let total_dist: f32 = distances.iter().map(|d| d * d).sum();
+            if total_dist == 0.0 {
+                // All remaining vectors are identical to existing centroids
+                break;
+            }
+
+            let mut cumsum = 0.0;
+            let target = rng.gen_range(0.0..1.0) * total_dist;
+
+            for (idx, dist) in distances.iter().enumerate() {
+                cumsum += dist * dist;
+                if cumsum >= target {
+                    centroids.push(vectors[idx].clone());
+                    break;
+                }
+            }
+        }
+
+        Ok(centroids)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing::{debug, error, info};
 
     #[tokio::test]
     async fn test_kmeans_clustering() {
@@ -681,12 +1020,12 @@ mod tests {
                 ..Default::default()
             }),
             min_vectors_for_clustering: 3,
-            adaptive_cluster_count: false,  // Disable adaptive to use exact k=3
+            adaptive_cluster_count: false, // Disable adaptive to use exact k=3
             ..Default::default()
         };
 
         let engine = AxisClusteringEngine::new(config);
-        
+
         // Create test vectors
         let vectors = vec![
             VectorRecord {
@@ -694,46 +1033,43 @@ mod tests {
                 vector: vec![1.0, 0.0],
                 metadata: vec![],
                 timestamp: 0,
-                created_at: 0,
-                updated_at: 0,
+                updated_at: Some(0),
                 expires_at: None,
-                version: 1,
-                rank: None,
-                score: None,
-                distance: None,
+                version: Some(1),
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             },
             VectorRecord {
                 id: Some("2".to_string()),
                 vector: vec![0.0, 1.0],
                 metadata: vec![],
                 timestamp: 0,
-                created_at: 0,
-                updated_at: 0,
+                updated_at: Some(0),
                 expires_at: None,
-                version: 1,
-                rank: None,
-                score: None,
-                distance: None,
+                version: Some(1),
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             },
             VectorRecord {
                 id: Some("3".to_string()),
                 vector: vec![-1.0, 0.0],
                 metadata: vec![],
                 timestamp: 0,
-                created_at: 0,
-                updated_at: 0,
+                updated_at: Some(0),
                 expires_at: None,
-                version: 1,
-                rank: None,
-                score: None,
-                distance: None,
+                version: Some(1),
+                // rank removed -  None,
+                similarity: None,
+                similarity: None,
             },
         ];
 
         let model = engine.train_model("test", vectors).await.unwrap();
         assert_eq!(model.centroids.len(), 3);
         assert_eq!(model.total_vectors, 3);
-        
+
         // Test assignment
         let assignment = engine.assign_vector("test", &[0.9, 0.1]).await.unwrap();
         assert!(assignment.confidence > 0.0);

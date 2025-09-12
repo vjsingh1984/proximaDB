@@ -1,32 +1,10 @@
 //! Unit tests for AXIS Strategy Selection
 
-use super::strategy::*;
 use super::types::*;
+use super::*;
 use std::collections::HashMap;
 
-#[test]
-fn test_optimization_config_creation() {
-    let config = OptimizationConfig {
-        goal: OptimizationGoal::MinLatency,
-        max_memory_gb: Some(4.0),
-        target_latency_ms: Some(10.0),
-        min_accuracy: Some(0.95),
-    };
-
-    assert!(matches!(config.goal, OptimizationGoal::MinLatency));
-    assert_eq!(config.max_memory_gb, Some(4.0));
-    assert_eq!(config.target_latency_ms, Some(10.0));
-    assert_eq!(config.min_accuracy, Some(0.95));
-}
-
-#[test]
-fn test_optimization_config_defaults() {
-    let config = OptimizationConfig::default();
-    assert!(matches!(config.goal, OptimizationGoal::Balanced));
-    assert_eq!(config.max_memory_gb, Some(8.0));
-    assert_eq!(config.target_latency_ms, Some(100.0));
-    assert_eq!(config.min_accuracy, Some(0.95));
-}
+// Removed outdated OptimizationConfig tests; configuration lives in optimizers
 
 #[test]
 fn test_collection_statistics_creation() {
@@ -71,9 +49,9 @@ fn test_index_strategy_builder_creation() {
         typical_k: 10,
         recall_requirement: 0.95,
     };
-    
+
     let builder = IndexStrategyBuilder::new(stats, patterns);
-    
+
     assert_eq!(builder.collection_stats.total_vectors, 10_000);
     assert_eq!(builder.query_patterns.avg_queries_per_second, 100.0);
 }
@@ -97,16 +75,15 @@ fn test_index_strategy_builder_build() {
         typical_k: 10,
         recall_requirement: 0.95,
     };
-    
-    let strategy = IndexStrategyBuilder::new(stats, patterns)
-        .build()
-        .unwrap();
-    
-    assert!(!strategy.indexes.is_empty());
-    assert!(!strategy.routing_rules.is_empty());
-    
-    let has_vector_index = strategy.indexes.iter().any(|idx| {
-        matches!(idx.data_type, DataType::DenseVector { .. })
-    });
+
+    let strategy = IndexStrategyBuilder::new(stats, patterns).build().unwrap();
+
+    assert!(!strategy.indexes.is_none());
+    assert!(!strategy.routing_rules.is_none());
+
+    let has_vector_index = strategy
+        .indexes
+        .iter()
+        .any(|idx| matches!(idx.data_type, Data::DenseVector { .. }));
     assert!(has_vector_index);
 }

@@ -24,7 +24,7 @@ use super::auth::{GcsCredentialProvider, GcsCredentials};
 use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// GCS storage classes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum GcsStorageClass {
     Standard,
     Nearline,
@@ -44,7 +44,7 @@ impl GcsStorageClass {
 }
 
 /// GCS configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GcsConfig {
     /// Google Cloud project ID
     pub project_id: String,
@@ -75,7 +75,7 @@ pub struct GcsConfig {
 }
 
 /// GCS credential configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GcsCredentialConfig {
     /// Credential provider type
     pub provider: GcsCredentialProviderType,
@@ -90,7 +90,7 @@ pub struct GcsCredentialConfig {
     pub refresh_interval: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum GcsCredentialProviderType {
     /// Use Application Default Credentials (ADC)
     ApplicationDefault,
@@ -292,7 +292,7 @@ impl GcsClient {
 
         let mut request = self
             .http_client
-            .get(&url)
+            .get("Location")
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
@@ -329,21 +329,21 @@ impl GcsClient {
             }
             Ok(data)
         } else if status.as_u16() == 404 {
-            tracing::warn!("🔍 GCS object not found: gcs://{}/{}", bucket, object_path);
+            tracing::warn!("🔍 GCS object not found: gs://{}/{}", bucket, object_path);
             Err(FilesystemError::NotFound(format!(
-                "gcs://{}/{}",
+                "gs://{}/{}",
                 bucket, object_path
             )))
         } else if status.as_u16() == 416 {
             // Range not satisfiable
             Err(FilesystemError::Config(format!(
-                "Invalid range request for gcs://{}/{}",
+                "Invalid range request for gs://{}/{}",
                 bucket, object_path
             )))
         } else {
             tracing::error!("❌ GCS GET error: {}", status);
             Err(FilesystemError::Network(format!(
-                "GCS error: {} for gcs://{}/{}",
+                "GCS error: {} for gs://{}/{}",
                 status, bucket, object_path
             )))
         }
@@ -366,7 +366,7 @@ impl GcsClient {
 
         tracing::debug!("📤 Uploading {} bytes to GCS: {}", data.len(), url);
 
-        let options = options.unwrap_or_default();
+        let options = options.clone();
 
         let mut request = self
             .http_client
@@ -379,20 +379,27 @@ impl GcsClient {
             .body(data.to_vec());
 
         // Add storage class if specified
-        if let Some(storage_class) = options.storage_class {
-            request = request.header("x-goog-storage-class", storage_class);
+        if let Some(ref opts) = options {
+            if let Some(ref storage_class) = opts.storage_class {
+                request = request.header("x-goog-storage-class", storage_class);
+            } else {
+                request = request.header(
+                    "x-goog-storage-class",
+                    self.config.default_storage_class.as_str(),
+                );
+            }
+
+            // Add metadata if specified
+            if let Some(ref metadata) = opts.metadata {
+                for (key, value) in metadata {
+                    request = request.header(format!("x-goog-meta-{}", key), value);
+                }
+            }
         } else {
             request = request.header(
                 "x-goog-storage-class",
                 self.config.default_storage_class.as_str(),
             );
-        }
-
-        // Add metadata if specified
-        if let Some(metadata) = options.metadata {
-            for (key, value) in metadata {
-                request = request.header(format!("x-goog-meta-{}", key), value);
-            }
         }
 
         let response = request.send().await.map_err(|e| {
@@ -415,6 +422,10 @@ impl GcsClient {
 
 #[async_trait]
 impl FileSystem for GcsFileSystem {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    
     async fn read(&self, path: &str) -> FsResult<Vec<u8>> {
         tracing::debug!("📖 GCS read: {}", path);
         let (bucket, object_path) = self.parse_gcs_url(path)?;
@@ -557,7 +568,7 @@ impl FileSystem for GcsFileSystem {
         let response = self
             .client
             .http_client
-            .get(&url)
+            .get("Location")
             .header(
                 "Authorization",
                 format!("Bearer {}", credentials.access_token),
@@ -578,18 +589,18 @@ impl FileSystem for GcsFileSystem {
             let size = metadata_json["size"]
                 .as_str()
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(0);
+                ;
 
             let etag = metadata_json["etag"].as_str().map(|s| s.to_string());
             let storage_class = metadata_json["storageClass"]
                 .as_str()
                 .map(|s| s.to_string());
 
-            tracing::debug!("✅ GCS metadata retrieved: {} bytes", size);
+            tracing::debug!("✅ GCS metadata retrieved: {} bytes", size.unwrap_or(0));
 
             Ok(FileMetadata {
-                path: format!("gcs://{}/{}", bucket, object_path),
-                size,
+                path: format!("gs://{}/{}", bucket, object_path),
+                size: size.unwrap_or(0),
                 created: None,       // Would need to parse timeCreated field
                 modified: None,      // Would need to parse updated field
                 is_directory: false, // GCS objects are always files
@@ -599,12 +610,12 @@ impl FileSystem for GcsFileSystem {
             })
         } else if response.status().as_u16() == 404 {
             tracing::warn!(
-                "🔍 GCS metadata not found: gcs://{}/{}",
+                "🔍 GCS metadata not found: gs://{}/{}",
                 bucket,
                 object_path
             );
             Err(FilesystemError::NotFound(format!(
-                "gcs://{}/{}",
+                "gs://{}/{}",
                 bucket, object_path
             )))
         } else {
@@ -665,6 +676,29 @@ impl FileSystem for GcsFileSystem {
     async fn sync(&self) -> FsResult<()> {
         tracing::trace!("🔄 GCS sync (no-op)");
         // GCS operations are immediately durable
+        Ok(())
+    }
+    
+    async fn sync_file(&self, path: &str) -> FsResult<()> {
+        // GCS doesn't support or need file-level sync
+        // When using TransactionCoordinator pattern:
+        // 1. Data is written to staging location (possibly local)
+        // 2. Move operation from staging to final location is atomic
+        // 3. Once move completes, data is durable in GCS
+        
+        tracing::debug!("sync_file called on GCS path {} - no-op as GCS guarantees durability after atomic move", path);
+        
+        // Note: Google Cloud Storage provides durability guarantees:
+        // - 99.999999999% (11 9's) annual durability
+        // - Data is automatically replicated across multiple regions/zones
+        // - Strong global consistency for object operations
+        // 
+        // The atomic move operation ensures:
+        // 1. Data is fully written before becoming visible
+        // 2. Move operation is atomic - either succeeds or fails completely
+        // 3. No partial writes or corrupted data visible to readers
+        // 4. Immediate consistency after successful write/move
+        
         Ok(())
     }
 
@@ -784,6 +818,7 @@ impl GcsCredentialProvider for ServiceAccountKeyJsonProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+use tracing::{debug, error, info, warn};
 
     #[tokio::test]
     async fn test_gcs_url_parsing() {

@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package proximadb.v1;
+
+import "proximadb/v1/entity.proto";
+
+option go_package = "github.com/proximadb/proto/go/proximadb/v1";
+
+// NOTE: This file was synthesized based on the design document, as the exact content was not provided.
+
+// Service for assembling context and documents from stored chunks.
+service ContextService {
+  // Reconstructs a full document from its constituent chunks.
+  rpc AssembleDocument(AssembleDocumentRequest) returns (AssembleDocumentResponse);
+
+  // Assembles a coherent context around a set of entities.
+  rpc AssembleContext(AssembleContextRequest) returns (AssembleContextResponse);
+}
+
+message AssembleDocumentRequest {
+  string collection_id = 1;
+  string source_id = 2;
+}
+
+message DocumentSegment {
+  string text = 1;
+  Provenance provenance = 2;
+  uint32 order = 3; // To maintain document structure
+}
+
+message AssembleDocumentResponse {
+  string source_id = 1;
+  repeated DocumentSegment segments = 2;
+}
+
+message AssembleContextRequest {
+  string collection_id = 1;
+  repeated string entity_ids = 2;
+  uint32 radius = 3; // e.g., number of chunks before and after each entity's chunk
+}
+
+message ContextSegment {
+  string text = 1;
+  Provenance provenance = 2;
+  float score = 3; // Relevance score to the query/entities
+}
+
+message AssembleContextResponse {
+  repeated ContextSegment segments = 1;
+}

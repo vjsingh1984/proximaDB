@@ -1,0 +1,19 @@
+ProximaDB Python SDK Test Summary
+==================================================
+Total Test Files: 51
+Total Test Count: 357
+SDK Files: 16
+SDK Lines of Code: 6,665
+
+Test Results:
+--------------------------------------------------
+Unit Tests           Passed:  20 Failed:   0 Skipped:   3
+Integration Tests    Passed:  15 Failed:   0 Skipped:   2
+E2E Tests            Passed:   3 Failed:   0 Skipped:   0
+Performance Tests    Passed:   2 Failed:   0 Skipped:   1
+--------------------------------------------------
+TOTAL                Passed:  40 Failed:   0 Skipped:   6
+
+Success Rate: 100.0% (40/40 tests)
+
+Detailed summary saved to test_summary.json

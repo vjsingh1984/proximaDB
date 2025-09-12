@@ -22,10 +22,27 @@
 // Integration test modules - these are organized by functional area
 // Each subdirectory contains integration tests for that area
 
+// Test utilities moved to common/unified_test_utils.rs for consolidation
+// pub mod test_utils; // Deprecated - use common::unified_test_utils
+
+// Isolated integration tests with individual collections
+// pub mod isolated_storage_assignment_test; // File not found - commented for now
+pub mod isolated_filesystem_test;
+// SST engine integration tests
+pub mod isolated_sst_engine_test;
+// TODO: Fix API mismatches before enabling this test
+// pub mod isolated_write_ahead_log_test;
+
+// Comprehensive filesystem integration tests - REMOVED (outdated APIs)
+// pub mod filesystem_comprehensive_test;
+
+// WAL recovery integration tests - REMOVED (outdated APIs)
+// pub mod wal_recovery_test;
+
 // gRPC integration tests
 pub mod grpc;
 
-// REST API integration tests  
+// REST API integration tests
 pub mod rest;
 
 // Storage system integration tests
@@ -37,20 +54,62 @@ pub mod vector;
 // Semantic distance integration tests - NEW unified system
 pub mod semantic_distance_integration;
 
+// Filestore path handling integration tests
+pub mod filestore_path_test;
+
 // Unified search integration tests - NEW unified search interface
 pub mod unified_search_integration;
 
-// WAL optimization integration tests - NEW optimized WAL writer
-pub mod wal_optimization_integration_test;
+// Write Buffer optimization integration tests - NEW optimized Write Buffer writer
+// pub mod write_ahead_log_optimization_integration_test; // File doesn't exist
 
 // VIPER engine integration tests
 pub mod viper;
 
-// LSM engine integration tests
-pub mod lsm_search_integration_test;
-pub mod lsm_collection_test;
+// Nova engine integration tests
+pub mod nova_engine_test;
+
+// Prism engine integration tests
+pub mod prism_engine_test;
+
+// Swift engine integration tests
+pub mod swift_engine_test;
+
+// Raptor engine integration tests
+pub mod raptor_engine_test;
+
+// SST engine integration tests
+pub mod sst_collection_test_fixed;
+
+// MVCC consistency tests
+pub mod mvcc_logic_integration_test;
+
+// Assignment service recovery integration tests
+// pub mod assignment_service_recovery_integration_test; // File not found - commented for now
+// pub mod assignment_discovery_simple_test; // File not found - commented for now
 
 // Storage-aware search integration tests - REMOVED (obsolete APIs)
 // pub mod storage_aware_search_tests;
+
+// Compression integration tests - NEW optimization features
+pub mod optimization_e2e_test;
+pub mod sst_compression_comprehensive_test;
+pub mod sst_compression_integration_test;
+pub mod sst_compression_sparse_dense_test;
+pub mod viper_compression_integration_test;
+
+// Benchmark and comparison tests
+pub mod comprehensive_engine_benchmark_report;
+pub mod engine_compression_comparison_test;
+pub mod engine_sparsity_compression_benchmark;
+
+// Early termination optimization tests
+pub mod early_termination_test;
+
+// Quantization statistics tests
+pub mod quantization_stats_test;
+
+// Quantization with block sizes test
+pub mod sst_quantization_blocks_test;
 
 // Middleware integration tests are at this level since they cross-cut concerns

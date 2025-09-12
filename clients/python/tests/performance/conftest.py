@@ -15,8 +15,8 @@ from typing import Generator, Dict, Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from proximadb import ProximaDBClient, connect_rest, connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric
-from proximadb.exceptions import ProximaDBError
+from proximadb import CollectionConfig, DistanceMetric
+from proximadb import ProximaDBError
 
 
 # Configure logging for tests
@@ -89,7 +89,7 @@ def grpc_client(verify_server_running, test_config) -> Generator[ProximaDBClient
 @pytest.fixture
 def unique_collection_name(test_config) -> str:
     """Generate unique collection name for each test"""
-    timestamp = int(time.time() * 1000)  # Millisecond precision
+    timestamp = int(time.time())  # Millisecond precision
     test_name = os.environ.get('PYTEST_CURRENT_TEST', 'unknown').split('::')[-1].split('[')[0]
     return f"{test_config['test_collection_prefix']}{test_name}_{timestamp}"
 
@@ -100,7 +100,7 @@ def basic_collection_config() -> CollectionConfig:
     return CollectionConfig(
             name="test_collection",
             dimension=128,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         description="Test collection created by pytest"
     )
 
@@ -111,7 +111,7 @@ def advanced_collection_config() -> CollectionConfig:
     return CollectionConfig(
             name="test_collection",
             dimension=384,
-        distance_metric=DistanceMetric.COSINE,
+        distance_metric="cosine",
         description="Advanced test collection with BERT dimensions",
         storage_engine=StorageEngine.VIPER
     )
@@ -145,9 +145,9 @@ class TestCollectionManager:
             config = CollectionConfig(
             name="test_collection",
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
-        timestamp = int(time.time() * 1000)
+        timestamp = int(time.time())
         collection_name = f"{self.config['test_collection_prefix']}{name_suffix}_{timestamp}"
         
         collection = self.client.create_collection(collection_name, config)

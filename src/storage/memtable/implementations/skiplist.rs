@@ -14,7 +14,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 // Use crossbeam-skiplist for lock-free concurrent access
-use crossbeam_skiplist::SkipMap;
+use crate::utils::skiplist::SkipList;
 
 use super::super::core::{MemtableCore, MemtableMetrics};
 
@@ -29,7 +29,7 @@ where
     V: Clone + Send + Sync + Debug + 'static,
 {
     /// Main SkipList storage with lock-free concurrent access
-    data: Arc<SkipMap<K, V>>,
+    data: Arc<SkipList<K, V>>,
 
     /// Approximate memory usage tracking (atomic for concurrent access)
     size_bytes: Arc<std::sync::atomic::AtomicUsize>,
@@ -46,7 +46,7 @@ where
     /// Create new SkipList memtable
     pub fn new() -> Self {
         Self {
-            data: Arc::new(SkipMap::new()),
+            data: Arc::new(SkipList::new()),
             size_bytes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             metrics: Arc::new(RwLock::new(MemtableMetrics::default())),
         }
@@ -102,7 +102,7 @@ where
 
     async fn get(&self, key: &K) -> Result<Option<V>> {
         // Lock-free read operation
-        let result = self.data.get(key).map(|entry| entry.value().clone());
+        let result = self.data.get(key);
 
         // Update metrics
         let mut metrics = self.metrics.write().await;
@@ -121,7 +121,7 @@ where
                     break;
                 }
             }
-            results.push((entry.key().clone(), entry.value().clone()));
+            results.push(entry);
         }
 
         // Update metrics
@@ -144,16 +144,12 @@ where
         let mut removed_size = 0;
 
         // Collect keys to remove (lock-free iteration)
-        let keys_to_remove: Vec<K> = self
-            .data
-            .range(..=threshold)
-            .map(|entry| entry.key().clone())
-            .collect();
+        let keys_to_remove: Vec<K> = self.data.range(..=threshold).map(|(key, _)| key).collect();
 
         // Remove entries (each remove is lock-free)
         for key in keys_to_remove {
-            if let Some(entry) = self.data.remove(&key) {
-                let entry_size = Self::estimate_entry_size(entry.key(), entry.value());
+            if let Some(value) = self.data.remove(&key) {
+                let entry_size = Self::estimate_entry_size(&key, &value);
                 removed_size += entry_size;
                 removed_count += 1;
             }
@@ -179,11 +175,7 @@ where
 
     async fn get_all_ordered(&self) -> Result<Vec<(K, V)>> {
         // Lock-free iteration in sorted order
-        let results = self
-            .data
-            .iter()
-            .map(|entry| (entry.key().clone(), entry.value().clone()))
-            .collect();
+        let results = self.data.iter().map(|entry| entry).collect();
 
         Ok(results)
     }
@@ -210,7 +202,7 @@ where
         let mut results = Vec::with_capacity(keys.len());
 
         for key in keys {
-            let value = self.data.get(key).map(|entry| entry.value().clone());
+            let value = self.data.get(key);
             results.push((key.clone(), value));
         }
 
@@ -226,20 +218,19 @@ where
     ) -> Result<Vec<(K, V)>> {
         let mut results = Vec::new();
 
-        let iter: Box<dyn Iterator<Item = crossbeam_skiplist::map::Entry<K, V>>> =
-            if let Some(to) = to {
-                Box::new(self.data.range(from..=to))
-            } else {
-                Box::new(self.data.range(from..))
-            };
+        let iter: Box<dyn Iterator<Item = (K, V)>> = if let Some(to) = to {
+            Box::new(self.data.range(from..=to))
+        } else {
+            Box::new(self.data.range(from..))
+        };
 
-        for entry in iter {
+        for (key, value) in iter {
             if let Some(limit) = limit {
                 if results.len() >= limit {
                     break;
                 }
             }
-            results.push((entry.key().clone(), entry.value().clone()));
+            results.push((key, value));
         }
 
         Ok(results)
@@ -247,12 +238,11 @@ where
 
     /// Count entries in range without loading values (memory efficient)
     pub async fn count_range(&self, from: K, to: Option<K>) -> usize {
-        let iter: Box<dyn Iterator<Item = crossbeam_skiplist::map::Entry<K, V>>> =
-            if let Some(to) = to {
-                Box::new(self.data.range(from..=to))
-            } else {
-                Box::new(self.data.range(from..))
-            };
+        let iter: Box<dyn Iterator<Item = (K, V)>> = if let Some(to) = to {
+            Box::new(self.data.range(from..=to))
+        } else {
+            Box::new(self.data.range(from..))
+        };
 
         iter.count()
     }
@@ -271,14 +261,14 @@ mod tests {
         assert!(memtable.insert(2u64, "value2".to_string()).await.is_ok());
 
         assert_eq!(
-            memtable.get(&1u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value1".to_string())
         );
         assert_eq!(
-            memtable.get(&2u64).await.unwrap(),
+            memtable.get(&hash).await.unwrap(),
             Some("value2".to_string())
         );
-        assert_eq!(memtable.get(&3u64).await.unwrap(), None);
+        assert_eq!(memtable.get(&hash).await.unwrap(), None);
 
         // Test range scan
         let results = memtable.range_scan(1u64, Some(10)).await.unwrap();

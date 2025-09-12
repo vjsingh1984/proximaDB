@@ -11,8 +11,8 @@ import asyncio
 from typing import List, Dict, Any
 
 from proximadb import connect_grpc
-from proximadb.models import CollectionConfig, DistanceMetric
-from proximadb.exceptions import ProximaDBError, CollectionNotFoundError
+from proximadb import CollectionConfig, DistanceMetric
+from proximadb import ProximaDBError, CollectionNotFoundError
 
 
 class TestGRPCAPICompleteness:
@@ -32,7 +32,7 @@ class TestGRPCAPICompleteness:
         config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
         
         collection = grpc_client.create_collection(collection_name, config)
         yield collection_name
@@ -54,7 +54,7 @@ class TestGRPCAPICompleteness:
             config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
             collection = grpc_client.create_collection(collection_name, config)
             assert collection is not None
             print("✅ CreateCollection - Create collection: WORKING")
@@ -214,8 +214,8 @@ class TestGRPCAPICompleteness:
             query_vector = np.random.random(32).astype(np.float32).tolist()
             results = grpc_client.search(
                 collection_id=test_collection,
-                query=query_vector,
-                k=5,
+                vector=query_vector,
+                top_k=5,
                 include_metadata=True,
                 include_vectors=False
             )
@@ -244,9 +244,9 @@ class TestGRPCAPICompleteness:
         try:
             filtered_results = grpc_client.search(
                 collection_id=test_collection,
-                query=query_vector,
-                k=5,
-                filter={"category": "category_0"},
+                vector=query_vector,
+                top_k=5,
+                metadata_filter={"category": "category_0"},
                 include_metadata=True
             )
             if filtered_results:
@@ -259,12 +259,12 @@ class TestGRPCAPICompleteness:
         # 3. Search with different k values
         try:
             # Test k=1
-            single_result = grpc_client.search(test_collection, query_vector, k=1)
+            single_result = grpc_client.search(test_collection, query_vector, top_k=1)
             if len(single_result) == 1:
                 print("✅ SearchVectors (k=1) - Single result: WORKING")
             
             # Test k > collection size
-            large_k_results = grpc_client.search(test_collection, query_vector, k=100)
+            large_k_results = grpc_client.search(test_collection, query_vector, top_k=100)
             if len(large_k_results) == 3:  # Should return all 3 vectors
                 print("✅ SearchVectors (k>collection) - Returns all vectors: WORKING")
             
@@ -403,7 +403,7 @@ class TestGRPCAPICompleteness:
             config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
             collection = grpc_client.create_collection(collection_name, config)
             
             try:
@@ -435,12 +435,12 @@ class TestGRPCAPICompleteness:
             config = CollectionConfig(
             name=collection_name,
             dimension=128,
-            distance_metric=DistanceMetric.COSINE)
+            distance_metric="cosine")
             collection = grpc_client.create_collection(collection_name, config)
             
             try:
                 empty_vector = []
-                results = grpc_client.search(collection_name, empty_vector, k=5)
+                results = grpc_client.search(collection_name, empty_vector, top_k=5)
                 print("❌ Search(empty vector) - Should return INVALID_ARGUMENT")
             except Exception as e:
                 if "empty" in str(e).lower() or "INVALID_ARGUMENT" in str(e):

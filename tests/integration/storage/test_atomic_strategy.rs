@@ -29,6 +29,7 @@ async fn create_test_filesystem() -> (LocalFileSystem, TempDir) {
 
 #[tokio::test]
 async fn test_direct_write_executor_real_io() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     let executor = DirectWriteExecutor;
     
@@ -52,6 +53,7 @@ async fn test_direct_write_executor_real_io() {
 
 #[tokio::test]
 async fn test_same_mount_temp_executor_real_io() {
+    setup_hardware_capabilities();
     let (fs, temp_dir) = create_test_filesystem().await;
     let config = AtomicWriteConfig::default();
     let executor = SameMountTempExecutor::new("___test_temp".to_string(), config);
@@ -89,6 +91,7 @@ async fn test_same_mount_temp_executor_real_io() {
 
 #[tokio::test]
 async fn test_same_mount_temp_nested_directories() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     let config = AtomicWriteConfig::default();
     let executor = SameMountTempExecutor::new("___temp".to_string(), config);
@@ -110,6 +113,7 @@ async fn test_same_mount_temp_nested_directories() {
 
 #[tokio::test]
 async fn test_cloud_optimized_executor_simplified() {
+    setup_hardware_capabilities();
     let (fs, temp_dir) = create_test_filesystem().await;
     let local_temp = temp_dir.path().join("cloud_temp");
     std::fs::create_dir_all(&local_temp).expect("Should create local temp dir");
@@ -134,6 +138,7 @@ async fn test_cloud_optimized_executor_simplified() {
 
 #[tokio::test]
 async fn test_cloud_optimized_compression() {
+    setup_hardware_capabilities();
     let local_temp = PathBuf::from("/tmp/proximadb_test");
     let config = AtomicWriteConfig::default();
     let executor = CloudOptimizedExecutor::new(local_temp, true, 8, config);
@@ -159,6 +164,7 @@ async fn test_cloud_optimized_compression() {
 
 #[tokio::test]
 async fn test_auto_detect_executor_real_io() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     let config = AtomicWriteConfig::default();
     let executor = AutoDetectExecutor::new(config);
@@ -183,6 +189,7 @@ async fn test_auto_detect_executor_real_io() {
 
 #[tokio::test]
 async fn test_atomic_write_executor_factory() {
+    setup_hardware_capabilities();
     // Test Direct strategy creation
     let direct_config = AtomicWriteConfig {
         strategy: AtomicWriteStrategy::Direct,
@@ -224,6 +231,7 @@ async fn test_atomic_write_executor_factory() {
 
 #[tokio::test]
 async fn test_factory_convenience_methods() {
+    setup_hardware_capabilities();
     // Test dev executor
     let dev_executor = AtomicWriteExecutorFactory::create_dev_executor();
     assert_eq!(dev_executor.strategy_name(), "direct");
@@ -241,6 +249,7 @@ async fn test_factory_convenience_methods() {
 
 #[tokio::test]
 async fn test_multiple_sequential_writes() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     let config = AtomicWriteConfig::default();
     let executor = SameMountTempExecutor::new("___sequential".to_string(), config);
@@ -262,6 +271,7 @@ async fn test_multiple_sequential_writes() {
 
 #[tokio::test]
 async fn test_large_file_atomic_write() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     let executor = DirectWriteExecutor;  // Use direct executor to avoid complexity
     
@@ -280,6 +290,7 @@ async fn test_large_file_atomic_write() {
 
 #[tokio::test]
 async fn test_error_handling_invalid_path() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     let executor = DirectWriteExecutor;
     
@@ -294,6 +305,7 @@ async fn test_error_handling_invalid_path() {
 
 #[tokio::test] 
 async fn test_retry_config_calculation() {
+    setup_hardware_capabilities();
     let retry_config = AtomicRetryConfig {
         max_retries: 3,
         initial_delay_ms: 100,
@@ -318,6 +330,7 @@ async fn test_retry_config_calculation() {
 
 #[tokio::test]
 async fn test_temp_path_generation() {
+    setup_hardware_capabilities();
     let config = AtomicWriteConfig::default();
     let executor = SameMountTempExecutor::new("___test_gen".to_string(), config);
     
@@ -341,6 +354,7 @@ async fn test_temp_path_generation() {
 
 #[tokio::test]
 async fn test_atomic_write_config_default() {
+    setup_hardware_capabilities();
     let config = AtomicWriteConfig::default();
     
     // Verify default strategy
@@ -359,6 +373,7 @@ async fn test_atomic_write_config_default() {
 
 #[tokio::test]
 async fn test_file_options_integration() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     let executor = DirectWriteExecutor;
     
@@ -386,6 +401,7 @@ async fn test_file_options_integration() {
 
 #[tokio::test]
 async fn test_concurrent_atomic_writes() {
+    setup_hardware_capabilities();
     let (fs, _temp_dir) = create_test_filesystem().await;
     let fs = std::sync::Arc::new(fs);
     let config = AtomicWriteConfig::default();

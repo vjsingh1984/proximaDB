@@ -8,13 +8,14 @@
 //! This module provides comprehensive validation for storage configurations
 //! to catch errors early and provide helpful error messages.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::Path;
 use url::Url;
 
 use super::builder::{DataStorageConfig, StorageLayoutStrategy, StorageSystemConfig};
 use super::persistence::filesystem::FilesystemConfig;
-use super::persistence::wal::WalConfig;
+use super::persistence::write_ahead_log::WALConfig;
+use tracing::warn;
 //use super::wal::WalSystemConfig;
 
 /// Comprehensive configuration validator
@@ -27,7 +28,7 @@ impl ConfigValidator {
             .context("Data storage configuration validation failed")?;
 
         Self::validate_wal_system(&config.wal_system)
-            .context("WAL system configuration validation failed")?;
+            .context("Write Buffer system configuration validation failed")?;
 
         Self::validate_filesystem(&config.filesystem)
             .context("Filesystem configuration validation failed")?;
@@ -85,11 +86,11 @@ impl ConfigValidator {
         Ok(())
     }
 
-    /// Validate WAL system configuration
-    pub fn validate_wal_system(config: &WalConfig) -> Result<()> {
+    /// Validate Write Buffer system configuration
+    pub fn validate_wal_system(config: &WALConfig) -> Result<()> {
         // Validate multi-disk configuration
         if config.multi_disk.data_directories.is_empty() {
-            bail!("WAL system must have at least one data directory");
+            bail!("Write Buffer system must have at least one data directory");
         }
 
         // Validate each data directory URL
@@ -309,11 +310,11 @@ impl ConfigValidator {
         let sys_info = sysinfo::System::new_all().total_memory();
         if sys_info < 1024 * 1024 * 1024 {
             // Less than 1GB
-            eprintln!("⚠️  Warning: System has less than 1GB RAM, performance may be impacted");
+            warn!("⚠️  Warning: System has less than 1GB RAM, performance may be impacted");
         }
 
         // Check available disk space for temp directories
-        if let Ok(temp_space) = std::fs::metadata("/tmp") {
+        if let Ok(_temp_space) = std::fs::metadata("/tmp") {
             // Basic check that temp directory exists and is writable
             let test_file = "/tmp/.proximadb_test";
             std::fs::write(test_file, "test").context("Cannot write to /tmp directory")?;
@@ -323,7 +324,7 @@ impl ConfigValidator {
         // Check CPU count for thread configuration recommendations
         let cpu_count = num_cpus::get();
         if cpu_count < 2 {
-            eprintln!(
+            warn!(
                 "⚠️  Warning: System has only {} CPU core, performance may be limited",
                 cpu_count
             );
@@ -430,6 +431,6 @@ mod tests {
         let recommendations = ConfigValidator::generate_recommendations(&config);
 
         // Should provide some recommendations for default config
-        assert!(!recommendations.is_empty() || recommendations.is_empty()); // Either is fine
+        assert!(!recommendations.is_none() || recommendations.is_none()); // Either is fine
     }
 }

@@ -22,7 +22,7 @@ def test_atomic_wal():
         print(f"✅ Health: {response.status_code} - {response.text}")
     except Exception as e:
         print(f"❌ Health check failed: {e}")
-        return False
+        assert False, f"Health check failed: {e}"
     
     # Test 2: Collection creation (try different endpoints)
     collection_id = "simple_atomic_test"
@@ -37,31 +37,28 @@ def test_atomic_wal():
         "storage_engine": "viper"
     }
     
-    # Try different possible endpoints
-    endpoints_to_try = [
-        "/collections",           # Standard
-        "/api/v1/collections",   # Versioned API  
-        "/api/collections",      # API prefix
-    ]
+    # Use the correct REST API endpoint
+    endpoint = "/api/v1/collection"
     
     collection_created = False
-    for endpoint in endpoints_to_try:
-        try:
-            print(f"   Trying: POST {endpoint}")
-            response = requests.post(
-                f"{base_url}{endpoint}",
-                json=collection_data,
-                headers={"Content-Type": "application/json"}
-            )
-            print(f"   Response: {response.status_code} - {response.text[:200]}")
+    try:
+        print(f"   Trying: POST {endpoint}")
+        response = requests.post(
+            f"{base_url}{endpoint}",
+            json={
+                "operation": "create",
+                "config": collection_data
+            },
+            headers={"Content-Type": "application/json"}
+        )
+        print(f"   Response: {response.status_code} - {response.text[:200]}")
+        
+        if response.status_code in [200, 201]:
+            collection_created = True
+            print(f"✅ Collection created via {endpoint}")
             
-            if response.status_code in [200, 201]:
-                collection_created = True
-                print(f"✅ Collection created via {endpoint}")
-                break
-                
-        except Exception as e:
-            print(f"   Error: {e}")
+    except Exception as e:
+        print(f"   Error: {e}")
     
     if not collection_created:
         print("❌ Failed to create collection via any endpoint")
@@ -75,7 +72,7 @@ def test_atomic_wal():
         except:
             pass
             
-        return False
+        assert False, "Failed to create collection via any endpoint"
     
     # Test 3: Vector insertion (if collection was created)
     print(f"\n🔥 Testing vector insertion...")
@@ -117,7 +114,7 @@ def test_atomic_wal():
     else:
         print("⚠️ Vector insertion failed, but collection creation worked")
     
-    return collection_created
+    assert collection_created, "Collection creation failed"
 
 
 def check_wal_logs():
@@ -129,14 +126,15 @@ def check_wal_logs():
         with open('server_atomic_test.log', 'r') as f:
             logs = f.read()
         
-        # Look for WAL-related messages
+        # Look for WriteBuffer-related messages
         wal_keywords = [
             "WAL",
+            "WriteBuffer",
             "memtable", 
             "disk write",
             "atomic write",
             "PerBatch",
-            "Avro"
+            "Proto"
         ]
         
         found_logs = []

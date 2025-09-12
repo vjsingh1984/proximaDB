@@ -9,8 +9,8 @@ use chrono::Utc;
 
 use super::*;
 use crate::core::VectorRecord;
-use crate::proto::proximadb;
-use crate::index::axis::types::{IndexSelectionStrategy, IndexSpecification, DataType, IndexAlgorithm};
+use crate::proto::proximadb_v1 as proximadb;
+use crate::index::axis::types::{IndexSelectionStrategy, IndexSpecification, Data, IndexAlgorithm};
 
 /// Mock collection service for testing
 #[derive(Debug, Clone)]
@@ -41,7 +41,7 @@ impl MockCollectionService {
             return Err(anyhow::anyhow!("Mock collection service failed"));
         }
         
-        Ok(self.index_configs.lock().unwrap().get(collection_id).cloned())
+        Ok(self.index_configs.lock().unwrap().get(key).cloned())
     }
 }
 
@@ -53,14 +53,20 @@ fn create_test_vector(id: &str, _collection_id: &str, dimension: usize) -> Vecto
         metadata: vec![
             proximadb::MetadataItem {
                 key: "category".to_string(),
-                value: "test".to_string(),
-            },
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("test".to_string())),
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
+        },
             proximadb::MetadataItem {
                 key: "score".to_string(),
-                value: "0.95".to_string(),
+                value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("0.95".to_string())),
             },
         ],
-        created_at: Utc::now().timestamp_micros(),
+        timestamp: Utc::now().timestamp_micros(),
         expires_at: None,
     }
 }
@@ -71,9 +77,14 @@ fn create_expired_vector(id: &str, _collection_id: &str, dimension: usize) -> Ve
         id: Some(id.to_string()),
         vector: (0..dimension).map(|i| i as f32 / 100.0).collect(),
         metadata: vec![],
-        created_at: Utc::now().timestamp_micros(),
-        expires_at: Some(Utc::now().timestamp_millis() - 1000), // Expired 1 second ago
-    }
+        timestamp: Utc::now().timestamp_micros(),
+        expires_at: Some(Utc::now().timestamp_millis() - 1000), // Expired 1 second ago,
+            timestamp: 0,
+            updated_at: None,
+            similarity: None,
+            // rank removed -  None,
+            similarity: None,
+        }
 }
 
 /// Create test index selection strategy
@@ -81,12 +92,12 @@ fn create_test_strategy() -> IndexSelectionStrategy {
     IndexSelectionStrategy {
         indexes: vec![
             IndexSpecification {
-                data_type: DataType::DenseVector { dimension: 128 },
+                // data_type removed -  Data::DenseVector { dimension: 128 },
                 algorithm: IndexAlgorithm::HNSW,
                 configuration: HashMap::new(),
             },
             IndexSpecification {
-                data_type: DataType::Metadata,
+                // data_type removed -  Data::Metadata,
                 algorithm: IndexAlgorithm::BTree,
                 configuration: HashMap::new(),
             },
@@ -122,11 +133,11 @@ mod construction_tests {
         
         // Check collections strategies are empty
         let strategies = manager.collection_strategies.read().await;
-        assert!(strategies.is_empty());
+        assert!(strategies.is_none());
         
         // Check active migrations are empty
         let migrations = manager.active_migrations.read().await;
-        assert!(migrations.is_empty());
+        assert!(migrations.is_none());
     }
     
     #[tokio::test]
@@ -157,7 +168,7 @@ mod index_config_tests {
         let manager = AxisManager::new(config).await.unwrap();
         
         // Should return default config when no service is set
-        let result = manager.get_native_index_config("test_collection").await;
+        let result = manager.native_index_config("test_collection").await;
         assert!(result.is_ok());
         
         let index_config = result.unwrap();
@@ -321,7 +332,7 @@ mod strategy_tests {
         assert!(result.is_ok());
         
         let strategy = result.unwrap();
-        assert!(!strategy.indexes.is_empty());
+        assert!(!strategy.indexes.is_none());
     }
     
     #[tokio::test]
@@ -372,7 +383,7 @@ mod search_tests {
         assert!(result.is_ok());
         
         let search_results = result.unwrap();
-        assert!(!search_results.is_empty());
+        assert!(!search_results.is_none());
         assert!(search_results.len() <= 3); // Should respect k limit
     }
     
@@ -405,7 +416,7 @@ mod search_tests {
         
         let search_results = result.unwrap();
         // Should find the vector that matches the filter
-        assert!(!search_results.is_empty());
+        assert!(!search_results.is_none());
     }
     
     #[tokio::test]
@@ -425,7 +436,7 @@ mod search_tests {
         assert!(result.is_ok());
         
         let search_results = result.unwrap();
-        assert!(search_results.is_empty()); // Should return empty results
+        assert!(search_results.is_none()); // Should return empty results
     }
     
     #[tokio::test]
@@ -455,7 +466,7 @@ mod search_tests {
         assert!(result.is_ok());
         
         let search_results = result.unwrap();
-        assert!(!search_results.is_empty());
+        assert!(!search_results.is_none());
     }
 }
 
@@ -475,7 +486,7 @@ mod metrics_tests {
             manager.insert("test_collection", &vector).await.unwrap();
         }
         
-        let metrics = manager.get_metrics().await;
+        let metrics = manager.metrics().await;
         
         assert_eq!(metrics.total_vectors_indexed, 3);
         assert_eq!(metrics.total_migrations, 0); // No migrations yet
@@ -489,7 +500,7 @@ mod metrics_tests {
         let manager = AxisManager::new(config).await.unwrap();
         
         // Initial metrics
-        let initial_metrics = manager.get_metrics().await;
+        let initial_metrics = manager.metrics().await;
         assert_eq!(initial_metrics.total_vectors_indexed, 0);
         
         // Insert vectors
@@ -499,7 +510,7 @@ mod metrics_tests {
         }
         
         // Updated metrics
-        let updated_metrics = manager.get_metrics().await;
+        let updated_metrics = manager.metrics().await;
         assert_eq!(updated_metrics.total_vectors_indexed, 5);
     }
 }
@@ -529,7 +540,7 @@ mod migration_tests {
         let migrations = manager.active_migrations.read().await;
         assert!(migrations.contains_key("test_collection"));
         
-        let migration_status = migrations.get("test_collection").unwrap();
+        let migration_status = migrations.get(key).unwrap();
         assert_eq!(migration_status.migration_id, migration_id);
         assert_eq!(migration_status.progress_percentage, 0.0);
     }
@@ -661,7 +672,7 @@ mod data_structure_tests {
     #[test]
     fn test_migration_status() {
         let migration_status = MigrationStatus {
-            migration_id: uuid::Uuid::new_v4(),
+            migration_id: crate::utils::uuid::Uuid::new_v4(),
             from_strategy: create_test_strategy(),
             to_strategy: create_test_strategy(),
             start_time: Utc::now(),
@@ -713,10 +724,10 @@ mod integration_tests {
         };
         
         let search_results = manager.search(&query).await.unwrap();
-        assert!(!search_results.is_empty());
+        assert!(!search_results.is_none());
         
         // Check metrics
-        let metrics = manager.get_metrics().await;
+        let metrics = manager.metrics().await;
         assert_eq!(metrics.total_vectors_indexed, 10);
         
         // Evaluate migration
@@ -758,7 +769,7 @@ mod integration_tests {
         }
         
         // Check overall metrics
-        let metrics = manager.get_metrics().await;
+        let metrics = manager.metrics().await;
         assert_eq!(metrics.total_vectors_indexed, 15); // 3 collections * 5 vectors
         
         // Check that all collections have strategies

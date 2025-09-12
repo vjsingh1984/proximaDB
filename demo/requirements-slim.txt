@@ -1,0 +1,20 @@
+# Minimal requirements for production demo
+# ~2GB total vs 10GB with full requirements
+
+# Core dependencies only
+numpy>=1.24.0
+requests>=2.28.0
+
+# BERT embeddings - smallest model only
+sentence-transformers>=2.2.0
+torch>=2.0.0,<2.1.0  # CPU-only version
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Essential for demos
+nltk>=3.8.0
+aiohttp>=3.8.0
+aiohttp-cors>=0.7.0
+
+# No visualization, no dev tools, no testing
+# No transformers library (use sentence-transformers only)
+# No pandas, scikit-learn unless absolutely needed
