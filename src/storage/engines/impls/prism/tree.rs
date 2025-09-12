@@ -351,7 +351,6 @@ pub struct SearchResult {
     pub score: f64,
     pub metadata: HashMap<String, serde_json::Value>,
 }
-}
 
 impl Default for PrismTree {
     fn default() -> Self {

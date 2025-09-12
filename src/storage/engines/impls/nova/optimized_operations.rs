@@ -118,6 +118,17 @@ impl OptimizedNovaOperations {
             ).await?);
         }
     }
+
+    /// Load Parquet metadata from file system
+    async fn load_parquet_metadata(&self, file_path: &str) -> Result<parquet::file::metadata::ParquetMetaData> {
+        use parquet::file::reader::{FileReader, SerializedFileReader};
+        use std::fs::File;
+
+        let file = File::open(file_path)?;
+        let reader = SerializedFileReader::new(file)?;
+        Ok(reader.metadata().clone())
+    }
+
     /// Prune row groups using Parquet statistics
     fn prune_row_groups(
         &self,
@@ -127,6 +138,41 @@ impl OptimizedNovaOperations {
         // For now, return all row groups until proper integration
         let candidate_groups = vec![0]; // Placeholder
         Ok(candidate_groups)
+    }
+
+    /// Prune row groups using Parquet metadata (with metadata suffix for API consistency)
+    fn prune_row_groups_with_metadata(
+        &self,
+        parquet_metadata: &parquet::file::metadata::ParquetMetaData,
+        query: &[f32],
+    ) -> Result<Vec<usize>> {
+        // Delegate to the main implementation
+        self.prune_row_groups(parquet_metadata, query)
+    }
+
+    /// Execute columnar search with metadata (with metadata suffix for API consistency)
+    async fn execute_columnar_search_with_metadata(
+        &self,
+        parquet_metadata: &parquet::file::metadata::ParquetMetaData,
+        candidate_row_groups: &[usize],
+        query: &[f32],
+        top_k: usize,
+    ) -> Result<Vec<VectorRecord>> {
+        // Build search candidates from row groups
+        let config = ColumnarSearchConfig::default();
+        let projection = self.build_projection_mask(&config);
+        
+        let candidates = self.columnar_filter_simd(
+            parquet_metadata,
+            query,
+            candidate_row_groups,
+            &projection,
+            top_k * 2, // Get more candidates for better accuracy
+        ).await?;
+
+        // Compute distances and return top-k results
+        let results = self.batch_compute_distances(candidates, query, top_k).await?;
+        Ok(results.into_iter().map(|(record, _)| record).collect())
     }
 
     /// Columnar filtering using SIMD operations

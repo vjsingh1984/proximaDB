@@ -8,10 +8,11 @@
 use axum::{
     extract::{Json, Path, Query, State},
     http::StatusCode,
-    response::Json as JsonResponse,
+    response::{Json as JsonResponse, IntoResponse},
 };
 use std::sync::Arc;
 use tracing::{error, info};
+use serde_json::json;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
@@ -145,7 +146,7 @@ pub async fn collection_operation(
 /// Health check endpoint with proper error handling
 pub async fn health_check(
     State(_state): State<AppState>,
-) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
+) -> ApiResult<JsonResponse<serde_json::Value>> {
     // Return basic health status
     // TODO: Add actual health checks when UnifiedHandlers supports it
 
@@ -205,8 +206,8 @@ pub struct ListCollectionsQuery {
 }
 
 pub async fn list_collections(
-    Query(params): Query<ListCollectionsQuery>,
     State(state): State<AppState>,
+    Query(params): Query<ListCollectionsQuery>,
 ) -> ApiResult<JsonResponse<CollectionResponse>> {
     let mut query_params = std::collections::HashMap::new();
 
@@ -301,11 +302,8 @@ pub async fn vector_search_with_metadata(
                 request_id, elapsed.as_millis()
             );
 
-            // Convert proto response to JSON wrapper
-            let json_response = response;
-            let success_response = Ok(axum::Json(json_response));
-
-            Ok(JsonResponse(success_response))
+            // Return the proto response directly
+            Ok(JsonResponse(response))
         }
         Err(e) => {
             error!("Vector search {} failed: {}", request_id, e);
@@ -354,7 +352,7 @@ pub struct SqlColumnInfo {
 pub async fn execute_sql(
     State(state): State<AppState>,
     Json(request): Json<SqlQueryRequest>,
-) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
+) -> ApiResult<JsonResponse<serde_json::Value>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
 
@@ -398,22 +396,25 @@ pub async fn execute_sql(
             // TODO: Create proper JsonExecuteSqlResponse wrapper if needed
             let json_data = serde_json::json!({
                 "rows": v1_resp.rows.iter().map(|row| {
-                    row.fields.iter().map(sql_value_to_json).collect::<Vec<_>>()
+                    row.fields.iter().map(|field| {
+                        let value = field.value.as_ref().map(sql_value_to_json).unwrap_or(serde_json::Value::Null);
+                        serde_json::json!({"key": field.key, "value": value})
+                    }).collect::<Vec<_>>()
                 }).collect::<Vec<_>>(),
-                "column_names": v1_resp.column_names,
+                "columns": v1_resp.columns,
+                "column_types": v1_resp.column_types,
                 "execution_time_ms": execution_time_ms,
-                "affected_rows": v1_resp.affected_rows,
+                "rows_returned": v1_resp.rows_returned,
+                "rows_scanned": v1_resp.rows_scanned,
                 "request_id": request_id
             });
-
-            let success_response = Ok(axum::Json(json_data));
 
             info!(
                 "SQL query {} completed in {}ms",
                 request_id, execution_time_ms
             );
 
-            Ok(JsonResponse(success_response))
+            Ok(JsonResponse(json_data))
         }
         Err(e) => {
             error!("SQL query {} failed: {}", request_id, e);
@@ -479,7 +480,7 @@ pub struct ExplainQueryResponse {
 pub async fn explain_sql(
     State(state): State<AppState>,
     Json(request): Json<ExplainQueryRequest>,
-) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
+) -> ApiResult<JsonResponse<ExplainQueryResponse>> {
     let request_id = Uuid::new_v4().to_string();
 
     info!(
@@ -509,10 +510,8 @@ pub async fn explain_sql(
         request_id: request_id.clone(),
     };
 
-    let success_response = Ok(axum::Json(response));
-
     info!("EXPLAIN query {} completed", request_id);
-    Ok(JsonResponse(success_response))
+    Ok(JsonResponse(response))
 }
 
 // Note: EXPLAIN now uses QueryEngine::explain_sql() for real plans/hints.

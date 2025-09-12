@@ -3,7 +3,7 @@
 //! This module provides hot configuration reloading capabilities for production
 //! deployments where configuration changes need to be applied without restart.
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};

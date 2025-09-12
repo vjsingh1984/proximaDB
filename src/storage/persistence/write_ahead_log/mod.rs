@@ -1806,7 +1806,7 @@ impl WriteAheadLogManager {
                 let search_result = crate::core::search::results::OptimizedSearchRecord {
                     id: vector_record.id.clone(),
                     vector_id: Some(vector_record.id.clone()),
-                    score: similarity_result.final_score,
+                    score: similarity_result.distance,
                     similarity: Some(similarity_result.raw_value),
                     vector: if include_vectors {
                         Some(Arc::new(vector_record.vector.clone()))
@@ -1824,7 +1824,7 @@ impl WriteAheadLogManager {
                     timestamp: Some(vector_record.timestamp),
                     updated_at: vector_record.updated_at,
                     expires_at: vector_record.expires_at,
-                    source: vector_record.source.clone(),
+                    source: vector_record.source,
                     expanded_context: Vec::new(),
                     semantic_similarity: Some(similarity_result.clone()),
                     quantization_info: None, // TODO: Add quantization info if available

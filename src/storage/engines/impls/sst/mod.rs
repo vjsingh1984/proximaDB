@@ -494,7 +494,7 @@ impl SstEntry {
 pub const SST_MAGIC: [u8; 4] = *b"SST1";
 
 /// SSTable header for row-based storage format with hierarchical optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstableHeader {
     pub version: u32,
     pub level: u8,

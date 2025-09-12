@@ -932,7 +932,7 @@ impl QueryExecutor {
                     // Track access for caching optimization
                     if let Some(orch) = CrossCacheOrchestrator::global() {
                         // Track graph node access for cache optimization
-                        orch.track_access_async(
+                        orch.as_ref().track_access_async(
                             format!("graph_node:{}", n.id), 
                             crate::storage::cache::orchestrator::CacheType::GraphNode
                         );
@@ -942,7 +942,7 @@ impl QueryExecutor {
             // Track access for caching optimization
             if let Some(orch) = CrossCacheOrchestrator::global() {
                 // Track graph adjacency access for cache optimization
-                orch.track_access_async(
+                orch.as_ref().track_access_async(
                     format!("graph_adj:{}", start), 
                     crate::storage::cache::orchestrator::CacheType::GraphAdjacency
                 );

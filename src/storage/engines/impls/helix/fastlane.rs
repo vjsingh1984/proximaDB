@@ -22,7 +22,7 @@ use crate::storage::persistence::filesystem::FileSystem;
 pub use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesMetadata as FastLaneMetadata;
 
 /// HELIX-specific SSTable metadata with clustering information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixBlockMetadata {
     /// Base FastLanes metadata
     pub fastlanes_metadata: FastLanesBlockMetadata,
@@ -35,7 +35,7 @@ pub struct HelixBlockMetadata {
 }
 
 /// PCA projection statistics for a block
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PCAStats {
     pub mean_projection: Vec<f32>,
     pub variance_explained: f32,
@@ -43,7 +43,7 @@ pub struct PCAStats {
 }
 
 /// Liquid clustering hints based on query patterns
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusteringHints {
     pub access_frequency: f32,
     pub last_accessed: Option<chrono::DateTime<chrono::Utc>>,

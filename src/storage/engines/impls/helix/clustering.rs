@@ -15,7 +15,7 @@ use crate::core::VectorRecord;
 pub type HilbertKey = u64;
 
 /// PCA model for dimensionality reduction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PCAModel {
     /// Principal components (eigenvectors)
     pub components: Vec<Vec<f32>>,

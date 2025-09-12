@@ -12,7 +12,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, broadcast};
 use tokio::time::interval;
-use tracing::error;
+use tracing::{error, info, warn};
+
+use crate::metrics::collectors::MetricsCollector as MetricsCollectorTrait;
 
 use crate::index::axis::{AlertThresholds, AxisConfig, MonitoringConfig};
 
@@ -827,23 +829,27 @@ impl HealthChecker {
     /// Get CPU usage percentage using system metrics collector
     async fn get_cpu_usage(&self) -> Result<f64> {
         // Use existing system metrics collector to avoid duplication
+        use crate::metrics::collectors::MetricsCollector as _;
         let system_collector = crate::metrics::collectors::SystemMetricsCollector::new();
-        system_collector.get_cpu_usage().await
+        let sample = system_collector.collect().await?;
+        Ok(sample.values.get("cpu_usage_percent").copied().unwrap_or(0.0))
     }
     
     /// Get memory usage percentage using system metrics collector
     async fn get_memory_usage(&self) -> Result<f64> {
         // Use existing system metrics collector to avoid duplication
+        use crate::metrics::collectors::MetricsCollector as _;
         let system_collector = crate::metrics::collectors::SystemMetricsCollector::new();
-        let memory_stats = system_collector.get_memory_stats().await?;
-        Ok(memory_stats.usage_percent)
+        let sample = system_collector.collect().await?;
+        Ok(sample.values.get("memory_usage_percent").copied().unwrap_or(0.0))
     }
     
     /// Get disk usage percentage using system metrics collector
     async fn get_disk_usage(&self) -> Result<f64> {
         // Use existing system metrics collector to avoid duplication
+        use crate::metrics::collectors::MetricsCollector as _;
         let system_collector = crate::metrics::collectors::SystemMetricsCollector::new();
-        let disk_stats = system_collector.get_disk_stats().await?;
-        Ok(disk_stats.usage_percent)
+        let sample = system_collector.collect().await?;
+        Ok(sample.values.get("disk_usage_percent").copied().unwrap_or(0.0))
     }
 }

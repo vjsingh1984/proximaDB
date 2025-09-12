@@ -178,7 +178,6 @@ pub use quantization::*;
 #[cfg(test)]
 mod tests;
 
-use serde::{Deserialize, Serialize};
 
 /// Vector computation configuration
 #[derive(Debug, Clone)]

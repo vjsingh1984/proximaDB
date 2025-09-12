@@ -28,7 +28,7 @@ use anyhow::Result;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, DistanceMetric, IndexingAlgorithm, MetadataItem,
-    SearchParams, SearchQuery, SearchResult as ProtoSearchResult, SearchVectorRecord, SqlValue,
+    SearchQuery, SearchResult as ProtoSearchResult, SearchVectorRecord, SqlValue,
     StorageEngine, VectorOperation, VectorSearchRequest,
 };
 use std::collections::HashMap;

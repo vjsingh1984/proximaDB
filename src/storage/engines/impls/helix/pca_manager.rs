@@ -46,7 +46,7 @@ impl Default for PCAManagerConfig {
 }
 
 /// Model version metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelVersion {
     /// Version identifier
     pub version: u32,
@@ -67,7 +67,7 @@ pub struct ModelVersion {
 }
 
 /// Drift detection metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriftMetrics {
     /// Reconstruction error over time
     pub reconstruction_errors: VecDeque<f32>,

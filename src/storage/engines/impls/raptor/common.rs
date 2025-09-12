@@ -529,7 +529,7 @@ pub use crate::proto::proximadb_v1::SqlValue as MetadataValue;
 
 // ====== File Metadata (unified) ======
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// CONSOLIDATED RaptorFileMetadata - Single source of truth
 /// This combines all fields from the three duplicate definitions
 pub struct RaptorFileMetadata {
@@ -693,7 +693,7 @@ pub enum PredicateOp {
 
 /// Per-RowGroup bloom filter for fast membership testing
 /// Optimized for scattered ID access patterns
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupBloomFilter {
     /// Bloom filter bits (typically 10 bits per ID for 1% false positive)
     pub bits: Vec<u8>,
@@ -991,7 +991,7 @@ pub struct LocalityCluster {
 /// - P×K matrices loaded on-demand per active rowgroup
 /// - Cached indefinitely (file doesn't change, footer doesn't change)
 /// - OS page cache or memory-mapped for zero-copy access
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaptorFooter {
     /// All centroids sorted by rowgroup_id for O(1) indexing
     /// Stored using FastLanes columnar encoding for compression
@@ -1460,7 +1460,7 @@ impl InterCentroidCompressionMetadata {
 
 /// P×K Vector-to-centroid distance matrix for a specific rowgroup
 /// Contains distances from all P vectors in rowgroup to all K centroids
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VectorCentroidMatrix {
     /// Rowgroup this matrix belongs to
     pub rowgroup_id: u16,
@@ -1788,7 +1788,7 @@ pub struct RowGroupRange {
 }
 
 /// Pre-computed P×(P-1)/2 distances for exact intra-rowgroup search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct P2Matrix {
     /// Number of vectors in this rowgroup
     pub num_vectors: u32,

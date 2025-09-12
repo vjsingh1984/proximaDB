@@ -281,7 +281,7 @@ pub async fn readiness_check(
 async fn check_storage_health(state: &HealthState, timeout: Duration) -> ComponentHealth {
     let start_time = std::time::Instant::now();
     
-    let (status, message, mut metrics) = match tokio::time::timeout(timeout, async {
+    let (status, message) = match tokio::time::timeout(timeout, async {
         // Try to get storage engine status
         if let Err(e) = state.unified_handlers.vector_operations_service.unified_engine().collect_engine_metrics().await {
             return (HealthStatus::Unhealthy, format!("Storage engine error: {}", e));
@@ -297,6 +297,8 @@ async fn check_storage_health(state: &HealthState, timeout: Duration) -> Compone
         Ok(result) => result,
         Err(_) => (HealthStatus::Unhealthy, "Storage health check timed out".to_string()),
     };
+
+    let mut metrics = HashMap::new();
 
     metrics.insert("response_time_ms".to_string(), 
                    serde_json::json!(start_time.elapsed().as_millis()));
@@ -317,7 +319,7 @@ async fn check_graph_health(state: &HealthState, timeout: Duration) -> Component
     
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Try to get basic graph statistics
-        match state.unified_handlers.graph_service.get_graph_stats().await {
+        match state.unified_handlers.graph_service.get_stats() {
             Ok(_stats) => (HealthStatus::Healthy, "Graph engine operational".to_string()),
             Err(e) => (HealthStatus::Degraded, format!("Graph engine warning: {}", e)),
         }

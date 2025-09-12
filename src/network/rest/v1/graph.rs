@@ -68,6 +68,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
+// For base64 encoding of bytes (using standard library instead)
+// use base64;
+
 // Use proto types directly with custom serde implementations
 use crate::graph::{
     Edge, EdgeQuery, Node, NodeQuery, TraversalRequest,
@@ -258,8 +261,8 @@ impl From<&Node> for RestNode {
             labels: node.labels.clone(),
             properties: convert_properties_to_json(&node.properties),
             embedding: node.embedding.as_ref().map(RestEmbeddingVersion::from),
-            created_at: node.created_at_ms.as_ref().map(|t| format_timestamp(t)),
-            updated_at: node.updated_at_ms.as_ref().map(|t| format_timestamp(t)),
+            created_at: Some(format_timestamp(&node.created_at_ms)),
+            updated_at: Some(format_timestamp(&node.updated_at_ms)),
         }
     }
 }
@@ -273,8 +276,8 @@ impl From<&Edge> for RestEdge {
             edge_type: edge.edge_type.clone(),
             properties: convert_properties_to_json(&edge.properties),
             weight: edge.weight,
-            created_at: edge.created_at.as_ref().map(|t| format_timestamp(t)),
-            updated_at: edge.updated_at.as_ref().map(|t| format_timestamp(t)),
+            created_at: Some(format_timestamp(&edge.created_at_ms)),
+            updated_at: Some(format_timestamp(&edge.updated_at_ms)),
         }
     }
 }
@@ -364,12 +367,12 @@ impl From<RestNodeInput> for Node {
                 model_version: e.version,
                 model_id: String::new(), // Set default empty string
                 dimension: e.vector.len() as u32,
-                created_at: None,
+                created_at_ms: 0,
                 model_params: std::collections::HashMap::new(),
                 modality: 0, // Default to first modality value
             }),
-            created_at: None, // Set by service
-            updated_at: None, // Set by service
+            created_at_ms: 0, // Set by service
+            updated_at_ms: 0, // Set by service
         }
     }
 }
@@ -383,8 +386,8 @@ impl From<RestEdgeInput> for Edge {
             edge_type: input.edge_type,
             properties: convert_json_to_properties(input.properties),
             weight: input.weight,
-            created_at: None, // Set by service
-            updated_at: None, // Set by service
+            created_at_ms: 0, // Set by service
+            updated_at_ms: 0, // Set by service
         }
     }
 }
@@ -398,6 +401,15 @@ fn convert_properties_to_json(props: &HashMap<String, PropertyValue>) -> HashMap
             Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
             Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(arr)) => {
                 serde_json::Value::Array(arr.values.iter().map(|v| convert_property_value_to_json(v)).collect())
+            },
+            Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
+                serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
+            },
+            Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
+                serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
+            },
+            Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
+                serde_json::Value::Array(vec.vector.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
             },
             None => serde_json::Value::Null,
         };
@@ -420,6 +432,15 @@ fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
         Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(|v| convert_property_value_to_json(v)).collect())
+        },
+        Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
+            serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
+        },
+        Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
+            serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
+        },
+        Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
+            serde_json::Value::Array(vec.vector.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
         },
         None => serde_json::Value::Null,
     }

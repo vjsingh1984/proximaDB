@@ -54,10 +54,11 @@ impl crate::storage::engines::impls::sst::SstStorage {
         
         for condition in &filter.conditions {
             let field_name = match condition {
-                crate::query::unified_query_optimizer::FilterCondition::Equality { field, .. } => field.clone(),
-                crate::query::unified_query_optimizer::FilterCondition::Range { field, .. } => field.clone(),
-                crate::query::unified_query_optimizer::FilterCondition::In { field, .. } => field.clone(),
-                crate::query::unified_query_optimizer::FilterCondition::Contains { field, .. } => field.clone(),
+                crate::query::unified_query_optimizer::FilterCondition::Equals { column, .. } => column.clone(),
+                crate::query::unified_query_optimizer::FilterCondition::Range { column, .. } => column.clone(),
+                crate::query::unified_query_optimizer::FilterCondition::In { column, .. } => column.clone(),
+                crate::query::unified_query_optimizer::FilterCondition::Contains { column, .. } => column.clone(),
+                _ => continue, // Skip unsupported filter types
             };
             
             // Configure bloom filter for this metadata field

@@ -126,12 +126,12 @@ impl QueryLowering {
             from,
             joins,
             selection,
-            group_by: self.lower_group_by(&stmt.group_by).await?,
-            having: if let Some(having_expr) = &stmt.having {
+            group_by: self.lower_group_by(&select.group_by).await?,
+            having: if let Some(having_expr) = &select.having {
                 Some(self.lower_expr(having_expr).await?)
             } else {
                 None
-            }
+            },
             order_by,
             limit,
             offset,
@@ -247,6 +247,18 @@ impl QueryLowering {
         Ok(order_exprs)
     }
 
+    /// Lower GROUP BY expressions - converts SQL expressions to internal representation
+    async fn lower_group_by(&self, group_by: &[SqlExpr]) -> Result<Vec<Expr>> {
+        let mut group_exprs = Vec::new();
+
+        for expr in group_by {
+            let lowered_expr = self.lower_expr(expr).await?;
+            group_exprs.push(lowered_expr);
+        }
+
+        Ok(group_exprs)
+    }
+
     /// Lower function calls with special handling for vector and SKS functions
     async fn lower_function_call(&self, func: &Function) -> Result<Expr> {
         let name = func.name.to_string();
@@ -265,7 +277,7 @@ impl QueryLowering {
             "SIMILAR" | "FOLLOW" | "ASSEMBLE"
         ) {
             // Parse SKS function arguments with validation and convert to structured AST
-            self.lower_sks_function(&name, &args).await
+            self.lower_sks_function(&name, &func.args).await
         }
         // Regular functions
         else {
@@ -439,7 +451,7 @@ impl QueryLowering {
             JoinOperator::FullOuter(constraint) => {
                 match constraint {
                     sqlparser::ast::JoinConstraint::On(expr) => {
-                        Some(self.lower_expression(expr).await?)
+                        Some(self.lower_expr(expr).await?)
                     },
                     sqlparser::ast::JoinConstraint::Using(_) => {
                         return Err(anyhow!("USING constraint not yet implemented"));

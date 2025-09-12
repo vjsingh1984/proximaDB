@@ -633,8 +633,9 @@ impl StorageSystemBuilder {
         // Initialize compaction strategies using existing orchestrator
         let compaction_orchestrator = Arc::new(
             crate::storage::common::compaction_orchestrator::CompactionOrchestrator::new(
+                filesystem.clone(),
                 self.config.data_storage.compaction_config.clone()
-            )?
+            )
         );
         
         // Initialize data storage engines based on layout strategy
@@ -661,17 +662,21 @@ impl StorageSystemBuilder {
         match self.config.data_storage.layout_strategy {
             StorageLayoutStrategy::Viper => {
                 // Initialize VIPER engine
-                if let Ok(viper_engine) = crate::storage::engines::factory::StorageEngineFactory::create_viper_engine(&self.config).await {
+                if let Ok(viper_engine) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
+                    crate::storage::traits::StorageEngineStrategy::Viper
+                ) {
                     engines.push(viper_engine);
                 }
             }
-            StorageLayoutStrategy::Sst => {
-                // Initialize SST engine  
-                if let Ok(sst_engine) = crate::storage::engines::factory::StorageEngineFactory::create_sst_engine(&self.config).await {
+            StorageLayoutStrategy::Regular => {
+                // Initialize SST engine for traditional LSM-tree storage
+                if let Ok(sst_engine) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
+                    crate::storage::traits::StorageEngineStrategy::Lsm
+                ) {
                     engines.push(sst_engine);
                 }
             }
-            StorageLayoutStrategy::Multi => {
+            StorageLayoutStrategy::Hybrid => {
                 // Initialize multiple engines for hybrid workloads
                 // This would initialize the most suitable engines based on workload analysis
                 engines.extend(self.initialize_multi_engine_layout().await?);
@@ -696,12 +701,16 @@ impl StorageSystemBuilder {
         let mut engines = Vec::new();
         
         // Add VIPER for analytics workloads
-        if let Ok(viper) = crate::storage::engines::factory::StorageEngineFactory::create_viper_engine(&self.config).await {
+        if let Ok(viper) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
+            crate::storage::traits::StorageEngineStrategy::Viper
+        ) {
             engines.push(viper);
         }
         
         // Add SST for high-throughput writes
-        if let Ok(sst) = crate::storage::engines::factory::StorageEngineFactory::create_sst_engine(&self.config).await {
+        if let Ok(sst) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
+            crate::storage::traits::StorageEngineStrategy::Lsm
+        ) {
             engines.push(sst);
         }
         

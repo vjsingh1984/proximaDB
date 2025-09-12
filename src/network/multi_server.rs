@@ -798,7 +798,7 @@ impl SharedServices {
                 // Insert each vector into the VectorOperationsService memtable
                 for vector_record in batch.vector_records.iter() {
                     match self.vector_operations_service
-                        .insert_vectors_direct(collection_id, vec![vector_record.clone()])
+                        .insert_vectors_direct(collection_id, Arc::new(vec![vector_record.clone()]))
                         .await
                     {
                         Ok(_) => {

@@ -1234,12 +1234,9 @@ impl VectorOperationsService {
             storage_results.len()
         );
 
-        // Convert WAL results to OptimizedSearchRecord and merge with storage results
+        // WAL results are already OptimizedSearchRecord, no conversion needed
         let wal_optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
-            wal_results
-                .into_iter()
-                .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r))
-                .collect();
+            wal_results;
 
         // Merge and rank results from both stages
         let mut all_results =
@@ -1820,7 +1817,7 @@ impl VectorOperationsService {
                 match self.storage_engine.compact_collection(&collection_id, Some(&collection)).await {
                     Ok(result) => {
                         info!("✅ Compacted collection {}: {} files processed", 
-                              collection_id, result.files_created().len());
+                              collection_id, result.output_files.unwrap_or(0));
                     }
                     Err(e) => {
                         debug!("⚠️ Compaction failed for collection {}: {}", collection_id, e);
@@ -1846,8 +1843,8 @@ impl VectorOperationsService {
         if let Some(collection) = self.collection_cache.get(collection_id) {
             match self.storage_engine.compact_collection(collection_id, Some(&collection)).await {
                 Ok(result) => {
-                    info!("✅ Compacted collection {}: {} files created, {} files deleted", 
-                          collection_id, result.files_created().len(), result.files_deleted().len());
+                    info!("✅ Compacted collection {}: {} files created, {} files processed", 
+                          collection_id, result.output_files.unwrap_or(0), result.input_files.unwrap_or(0));
                 }
                 Err(e) => {
                     debug!("⚠️ Compaction failed for collection {}: {}", collection_id, e);
@@ -1871,8 +1868,8 @@ impl VectorOperationsService {
             Ok(health) => serde_json::json!({
                 "status": health.status,
                 "response_time_ms": health.response_time_ms,
-                "engine_type": health.engine_type,
-                "details": health.details
+                "healthy": health.healthy,
+                "warnings": health.warnings
             }),
             Err(e) => serde_json::json!({
                 "status": "error",
@@ -1946,7 +1943,6 @@ impl VectorOperationsService {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
-            "issues": issues,
             "collections": self.collection_cache.len(),
         }))
     }

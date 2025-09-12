@@ -1315,7 +1315,7 @@ impl UnifiedQueryOptimizer {
     /// Build cost analysis (stub implementation)
     fn build_cost_analysis(
         &self,
-        _context: &UnifiedQueryContext<'_>,
+        context: &UnifiedQueryContext<'_>,
         _analysis: &QueryAnalysis,
     ) -> Result<CostAnalysis> {
         Ok(CostAnalysis {

@@ -927,6 +927,11 @@ impl CrossCacheOrchestrator {
         self.pattern_tracker.clone()
     }
 
+    /// Track access async - delegates to pattern tracker for non-blocking tracking
+    pub fn track_access_async(&self, key: String, cache_type: CacheType) {
+        self.pattern_tracker.track_access_async(key, cache_type);
+    }
+
     /// Hint the orchestrator to prefetch related items (bounded by internal queue caps)
     pub async fn request_prefetch(&self, key: &str, cache_type: CacheType) {
         // Best-effort; internal engine enforces queue size and guardrails

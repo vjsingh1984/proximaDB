@@ -4,11 +4,9 @@
 //! VectorRecord (service-level, not proto), search requests/responses, collection operations,
 //! and metrics. These types form the core API for the vector operations service.
 
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::core::search::OptimizedSearchRecord;
 use apache_avro::{Reader, Schema, Writer};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
 // SearchResult is now only used from proto layer - not re-exported in core::search
