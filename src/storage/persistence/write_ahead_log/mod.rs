@@ -1845,7 +1845,7 @@ impl WriteAheadLogManager {
         });
         all_results.truncate(top_k);
 
-        // Ranks are not part of InternalSearchResult
+        // Ranks are handled via score field in OptimizedSearchRecord
         // They can be computed by the caller if needed
 
         tracing::info!(
