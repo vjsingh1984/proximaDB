@@ -126,8 +126,12 @@ impl QueryLowering {
             from,
             joins,
             selection,
-            group_by: vec![], // TODO: Implement GROUP BY support
-            having: None,     // TODO: Implement HAVING support
+            group_by: self.lower_group_by(&stmt.group_by).await?,
+            having: if let Some(having_expr) = &stmt.having {
+                Some(self.lower_expr(having_expr).await?)
+            } else {
+                None
+            }
             order_by,
             limit,
             offset,

@@ -1243,11 +1243,18 @@ This section consolidates findings from comprehensive roadmap analysis, integrat
 
 ==== Cross-Cache Orchestrator Completion
 **Current State**: Foundation implemented, metadata tracking active, prefetch queues exist
+**Architecture Update**: ✅ **QueueManager TODOs are OBSOLETE** - Replaced by EventLog + AXIS pattern
 **Next Steps**:
-- Complete provider registration for all engines (SST bloom/meta, VIPER footer, HELIX zone maps)
+- Complete provider registration for all engines (SST bloom/meta, VIPER footer, HELIX zone maps)  
 - Wire SharedContext into UnifiedParquetReader and engine constructors
 - Implement bounded prefetch with safety guardrails
 - Export metrics via Prometheus/OTel for production monitoring
+
+**Critical Architecture Note**: The compaction orchestrator previously referenced a deprecated QueueManager for coordination. This has been replaced with the EventLog + AXIS pattern:
+- EventLog tracks flush events and index hydration status
+- AXIS consumer processes events asynchronously and acknowledges completion
+- Compaction uses EventLog.can_compact() to ensure files aren't removed before indexes are hydrated
+- This provides superior consistency guarantees and distributed deployment support
 
 ==== Unified Operations Framework
 **Current State**: Background task orchestration implemented, locking primitives in place
