@@ -27,6 +27,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("SqlObject", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("PropertyArray", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("PropertyObject", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to config types needed for JSON serialization
+        .type_attribute("IndexConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("QuantizationConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         // oneof types (SqlValue, PropertyValue) get custom serde from serde_impls.rs but PartialEq works fine
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(

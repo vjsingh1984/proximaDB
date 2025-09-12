@@ -228,7 +228,7 @@ pub use multi_tier_deduplication::{
 
 // Filter types are already defined above, no need to re-export
 pub use results::{
-    OptimizedSearchRecord,
+    EngineStats, OptimizedSearchRecord, QuantizationInfo, SearchDebugInfo,
     SearchResultSet,
 };
 // NOTE: Proto types (SearchResult, SearchVectorRecord) should NOT be re-exported here.

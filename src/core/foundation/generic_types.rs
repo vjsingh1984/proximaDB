@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenericConfig<T>
 where
-    T: Serialize + for<'de> Deserialize<'de>,
+    T: Serialize + serde::de::DeserializeOwned,
 {
     pub data: T,
     pub validation_rules: HashMap<String, String>,
@@ -56,7 +56,7 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenericMetadata<T>
 where
-    T: Serialize + for<'de> Deserialize<'de>,
+    T: Serialize + serde::de::DeserializeOwned,
 {
     pub id: String,
     pub data: T,
@@ -120,7 +120,7 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenericStats<T>
 where
-    T: Serialize + for<'de> Deserialize<'de>,
+    T: Serialize + serde::de::DeserializeOwned,
 {
     pub data: T,
     pub timestamp: DateTime<Utc>,
@@ -171,7 +171,7 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenericResult<T>
 where
-    T: Serialize + for<'de> Deserialize<'de>,
+    T: Serialize + serde::de::DeserializeOwned,
 {
     pub success: bool,
     pub data: Option<T>,

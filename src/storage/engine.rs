@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{info, warn, debug};
 
 /// Calculate cosine similarity between two vectors
 fn calculate_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
@@ -361,11 +361,11 @@ impl StorageEngine {
                 .update_stats(collection_id, 1, vector_size as i64)
                 .await?;
         } else {
-        //     tracing::warn!(
-        //         "⚠️ No metadata provider available, cannot update stats for collection {}",
-        //         collection_id
-        //     );
-        // }
+            tracing::warn!(
+                "⚠️ No metadata provider available, cannot update stats for collection {}",
+                collection_id
+            );
+        }
         tracing::debug!(
             "✅ Completed metadata stats update for collection {}",
             collection_id

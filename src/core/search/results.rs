@@ -65,7 +65,27 @@ fn convert_json_map_to_sql_value_map(
 
 // MIGRATION COMPLETE: InternalSearchResult eliminated entirely
 // All functionality moved to OptimizedSearchRecord for better performance
-// Use OptimizedSearchRecord directly for all search operations
+
+// Type definitions needed by OptimizedSearchRecord
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SearchDebugInfo {
+    pub engine_used: String,
+    pub search_time_ms: f64,
+    pub candidates_evaluated: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QuantizationInfo {
+    pub quantization_type: String,
+    pub compression_ratio: f32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EngineStats {
+    pub vectors_scanned: usize,
+    pub cache_hits: usize,
+    pub io_operations: usize,
+}
 
 /// Optimized search record structure with performance improvements
 /// This variant uses Arc for vectors and TypedMetadata for better performance

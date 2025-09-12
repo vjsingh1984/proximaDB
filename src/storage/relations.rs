@@ -139,12 +139,12 @@ impl InMemoryRelationsStore {
         // Use ORION graph engine to load relationships from persistent storage
         // This leverages the existing graph storage infrastructure
         
-        if let Some(ref graph_engine) = self.graph_engine {
+        if let Some(ref graph_engine) = self.storage_engine {
             // Query ORION engine for all edges in this collection
             match graph_engine.get_all_edges(Some(collection_id)) {
                 Ok(edges) => {
-                    let mut forward_map = self.forward_index.write().await;
-                    let mut reverse_map = self.reverse_index.write().await;
+                    let mut forward_map = self.forward_edges.write().await;
+                    let mut reverse_map = self.reverse_edges.write().await;
                     
                     // Rebuild adjacency lists from ORION storage
                     for edge in edges {
@@ -188,7 +188,7 @@ impl InMemoryRelationsStore {
     /// Persist a relationship to storage using ORION engine
     async fn persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         // Use ORION graph engine for persistence instead of direct file I/O
-        if let Some(ref graph_engine) = self.graph_engine {
+        if let Some(ref graph_engine) = self.storage_engine {
             let edge = crate::proto::proximadb_v1::Edge {
                 id: format!("{}:{}:{}", relation.source_entity_id, relation.relation_type, relation.target_entity_id),
                 from_node_id: relation.source_entity_id.clone(),
@@ -210,7 +210,7 @@ impl InMemoryRelationsStore {
     
     /// Remove a relationship from storage using ORION engine  
     async fn remove_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
-        if let Some(ref graph_engine) = self.graph_engine {
+        if let Some(ref graph_engine) = self.storage_engine {
             let edge_id = format!("{}:{}:{}", relation.source_entity_id, relation.relation_type, relation.target_entity_id);
             graph_engine.delete_edge(&edge_id)?;
             debug!("Removed relation from ORION: {}", edge_id);
