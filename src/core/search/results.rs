@@ -63,12 +63,9 @@ fn convert_json_map_to_sql_value_map(
 }
 
 
-// MIGRATION COMPLETE: InternalSearchResult eliminated
+// MIGRATION COMPLETE: InternalSearchResult eliminated entirely
 // All functionality moved to OptimizedSearchRecord for better performance
-
-// Type alias for backwards compatibility - InternalSearchResult is now OptimizedSearchRecord
-#[deprecated(since = "1.0.0", note = "Use OptimizedSearchRecord directly")]
-pub type InternalSearchResult = OptimizedSearchRecord;
+// Use OptimizedSearchRecord directly for all search operations
 
 /// Optimized search record structure with performance improvements
 /// This variant uses Arc for vectors and TypedMetadata for better performance
@@ -116,8 +113,14 @@ impl Serialize for OptimizedSearchRecord {
     where
         S: serde::Serializer,
     {
-        // Convert to InternalSearchResult for serialization
-        self.clone().to_internal().serialize(serializer)
+        // Direct serialization of OptimizedSearchRecord
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("OptimizedSearchRecord", 16)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("score", &self.score)?;
+        state.serialize_field("vector", &self.vector)?;
+        state.serialize_field("metadata", &self.metadata)?;
+        state.end()
     }
 }
 
@@ -127,9 +130,23 @@ impl<'de> Deserialize<'de> for OptimizedSearchRecord {
     where
         D: serde::Deserializer<'de>,
     {
-        // Deserialize as InternalSearchResult then convert
-        let internal = InternalSearchResult::deserialize(deserializer)?;
-        Ok(OptimizedSearchRecord::from_internal(internal))
+        // Direct deserialization of OptimizedSearchRecord
+        #[derive(serde::Deserialize)]
+        struct OptimizedSearchRecordHelper {
+            id: String,
+            score: f32,
+            vector: Option<Arc<Vec<f32>>>,
+            metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        }
+        
+        let helper = OptimizedSearchRecordHelper::deserialize(deserializer)?;
+        Ok(OptimizedSearchRecord {
+            id: helper.id,
+            score: helper.score,
+            vector: helper.vector,
+            metadata: helper.metadata,
+            ..Default::default()
+        })
     }
 }
 
