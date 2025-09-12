@@ -77,7 +77,7 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 /// - **Compression**: Can differ between REST (JSON) and gRPC (Protobuf)
 /// - **Message Limits**: gRPC typically needs larger limits for batch ops
 /// - **TLS**: Shared or separate certificates supported
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MultiServerConfig {
     /// HTTP server configuration (REST/Dashboard/Metrics)
     /// Handles JSON payloads, web UI, and monitoring endpoints
@@ -97,7 +97,7 @@ pub struct MultiServerConfig {
 }
 
 /// Global TLS configuration for all protocols
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TLSConfig {
     /// TLS certificate file path
     pub cert_file: Option<String>,
@@ -143,7 +143,7 @@ impl Default for TLSConfig {
 /// - CPU overhead often exceeds network savings
 /// - Most deployments use fast local/datacenter networks
 /// - Can be enabled for WAN deployments
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RestHttpServerConfig {
     /// HTTP bind port (default: 5678)
     /// Standard port for ProximaDB REST API
@@ -216,7 +216,7 @@ impl RestHttpServerConfig {
 /// - 8K vectors of 1536 dimensions (OpenAI)
 ///
 /// Increase for larger batches or use streaming.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GrpcHttpServerConfig {
     /// gRPC bind port (default: 5679)
     /// Standard port for ProximaDB gRPC API
@@ -1044,7 +1044,7 @@ impl MultiServer {
 }
 
 /// Server status information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ServerStatus {
     pub http_running: bool,
     pub grpc_running: bool,

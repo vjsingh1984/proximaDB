@@ -295,7 +295,7 @@ where
 }
 
 /// Access information for cache analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessInfo {
     pub timestamp: Instant,
     pub last_accessed: Instant,

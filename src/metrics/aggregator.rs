@@ -35,7 +35,7 @@ impl AggregationWindow {
 }
 
 /// Aggregated metrics over a time window
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AggregatedMetrics {
     pub window: AggregationWindow,
     pub start_time: i64,
@@ -218,7 +218,7 @@ impl MetricsAggregationEngine {
 }
 
 /// Trend direction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Trend {
     Increasing,
     Decreasing,
@@ -226,7 +226,7 @@ pub enum Trend {
 }
 
 /// Trend analysis result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TrendAnalysis {
     pub metric_name: String,
     pub trend: Trend,

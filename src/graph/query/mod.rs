@@ -69,7 +69,7 @@ use std::collections::HashMap;
 pub type QueryResult<T> = std::result::Result<T, ProximaDBError>;
 
 /// Query execution statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryStats {
     /// Planning time in microseconds
     pub planning_time_us: u64,

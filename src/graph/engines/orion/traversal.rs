@@ -38,7 +38,7 @@ use tokio::sync::Mutex;
 use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
 
 /// Traversal results containing nodes, paths, and statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TraversalResult {
     /// Nodes visited during traversal (in visit order)
     pub nodes: Vec<Arc<Node>>,

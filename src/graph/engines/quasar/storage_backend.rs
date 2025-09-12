@@ -46,7 +46,7 @@ pub struct ColdStorageBackend {
 }
 
 /// Storage location information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageLocation {
     /// File path relative to storage root
     pub file_path: PathBuf,
@@ -577,6 +577,7 @@ impl ColdStorageBackend {
     ) -> Result<StorablePropertyValue> {
         // PropertyValue is now a struct, not enum - use direct field access;
 
+        use crate::proto::proximadb_v1::property_value::Value;
         match &value.value {
             Some(Value::StringValue(s)) => Ok(StorablePropertyValue::String(s.clone())),
             Some(Value::IntValue(i)) => Ok(StorablePropertyValue::Int(*i)),
@@ -655,6 +656,7 @@ impl ColdStorageBackend {
     ) -> Result<crate::graph::PropertyValue> {
         // PropertyValue is now a struct, not enum - use direct field access;
 
+        use crate::proto::proximadb_v1::property_value::Value;
         let value = match storable {
             StorablePropertyValue::String(s) => Some(Value::StringValue(s)),
             StorablePropertyValue::Int(i) => Some(Value::IntValue(i)),

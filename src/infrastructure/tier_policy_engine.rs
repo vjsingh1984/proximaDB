@@ -81,7 +81,7 @@ impl WorkloadMetrics {
 }
 
 /// Access pattern metrics for tier management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessPatternMetrics {
     /// Hot data access rate
     pub hot_access_rate: f64,
@@ -96,7 +96,7 @@ pub struct AccessPatternMetrics {
 }
 
 /// Cost metrics for tier optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CostMetrics {
     /// Storage cost per GB per month
     pub storage_cost_per_gb: f64,
@@ -232,7 +232,7 @@ pub enum GcsStorageClass {
 }
 
 /// Collection storage configuration from metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionStorageConfig {
     /// Collection ID
     pub collection_id: String,
@@ -250,7 +250,7 @@ pub struct CollectionStorageConfig {
     pub storage_limits: CollectionStorageLimits,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionStorageLimits {
     /// Maximum memory allocation for this collection (bytes)
     pub max_memory_bytes: Option<usize>,
@@ -421,7 +421,7 @@ impl CollectionStorageConfig {
 }
 
 /// Smart policy engine with collection-aware constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SmartTierPolicy {
     /// Workload type determines default behavior
     workload_type: WorkloadType,
@@ -487,7 +487,7 @@ pub enum DurabilityPreference {
     CostOptimized,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TierConfig {
     /// Maximum capacity for this tier (bytes)
     max_capacity_bytes: Option<usize>,
@@ -505,7 +505,7 @@ pub struct TierConfig {
     min_storage_duration: Option<Duration>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PlacementRule {
     /// Condition to match
     condition: PlacementCondition,
@@ -517,7 +517,7 @@ pub struct PlacementRule {
     priority: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PlacementCondition {
     /// Size-based placement
     SizeRange {
@@ -555,7 +555,7 @@ pub enum PlacementCondition {
     Or(Vec<PlacementCondition>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryThresholds {
     /// Start promoting data to next tier (0.0-1.0)
     promotion_threshold: f64,
@@ -567,7 +567,7 @@ pub struct MemoryThresholds {
     target_utilization: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CostOptimization {
     /// Maximum total monthly cost (USD)
     max_monthly_cost: Option<f64>,
@@ -584,7 +584,7 @@ pub struct CostOptimization {
 
 /// Rule-based tier policy for scalable tier management
 /// Uses default rules instead of per-collection policies to avoid scaling issues
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RuleBasedTierPolicy {
     /// Default disk partition path (configurable via server config)
     default_disk_path: String,
@@ -603,7 +603,7 @@ pub struct RuleBasedTierPolicy {
 }
 
 /// Default placement rules that apply to all collections
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DefaultPlacementRule {
     /// Rule name for debugging
     name: String,
@@ -622,7 +622,7 @@ pub struct DefaultPlacementRule {
 }
 
 /// Memory pressure thresholds for tier decisions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryPressureThresholds {
     /// Promote to faster tier threshold (0.0-1.0)
     promote_threshold: f64,
@@ -635,7 +635,7 @@ pub struct MemoryPressureThresholds {
 }
 
 /// Age-based automatic demotion rules
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AgingRules {
     /// Demote to HDD after this many days of no access
     hdd_demotion_days: u32,
@@ -648,7 +648,7 @@ pub struct AgingRules {
 }
 
 /// Server configuration for tier management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ServerTierConfig {
     /// Base path for disk storage (/tmp by default, configurable via server config.toml)
     base_disk_path: String,
@@ -879,7 +879,7 @@ pub struct GlobalMetricsCollector {
     collection_metrics: HashMap<String, CollectionTierMetrics>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TierUsageStats {
     /// Total capacity across all collections
     pub total_capacity_bytes: usize,
@@ -891,7 +891,7 @@ pub struct TierUsageStats {
     pub avg_access_latency_ms: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionTierMetrics {
     pub collection_id: String,
     pub tier_distribution: HashMap<InfrastructureTier, usize>, // bytes per tier

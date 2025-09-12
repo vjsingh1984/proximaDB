@@ -65,7 +65,7 @@ pub struct TieringStats {
 }
 
 /// Data movement operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DataMovement {
     /// Move node from hot to cold
     DemoteNode(NodeId),
@@ -78,7 +78,7 @@ pub enum DataMovement {
 }
 
 /// Migration candidate with priority score
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationCandidate {
     pub item_id: String,
     pub item_type: ItemType,

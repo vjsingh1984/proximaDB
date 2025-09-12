@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Rate limiting configuration - consolidated from network module
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RateLimitConfig {
     /// Enable rate limiting (if false, all requests pass through)
     pub enabled: bool,
@@ -89,7 +89,7 @@ impl RateLimitConfig {
 }
 
 /// Internal rate limiting configuration used by middleware logic
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MiddlewareRateLimitConfig {
     pub enabled: bool,
     pub max_requests: u32,
@@ -99,7 +99,7 @@ pub struct MiddlewareRateLimitConfig {
 }
 
 /// Rate limit bucket for tracking requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct RateLimitBucket {
     count: u32,
     window_start: Instant,

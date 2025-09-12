@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 // --- Data Models ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Tenant {
     pub tenant_id: String,
     pub organization_id: String,
@@ -15,13 +15,13 @@ pub struct Tenant {
     pub status: String, // e.g., "active", "suspended"
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Organization {
     pub organization_id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionOwnership {
     pub collection_id: String,
     pub owner_tenant_id: String,
@@ -34,7 +34,7 @@ pub enum Permission {
     Admin,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionSharing {
     pub collection_id: String,
     pub shared_with_tenant_id: String,

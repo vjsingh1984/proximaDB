@@ -427,6 +427,7 @@ fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
 
 fn convert_json_to_property_value(value: serde_json::Value) -> PropertyValue {
     // PropertyValue is now a struct, not enum - use direct field access;
+    use crate::proto::proximadb_v1::property_value::Value;
     let prop_value = match value {
         serde_json::Value::String(s) => Some(Value::StringValue(s)),
         serde_json::Value::Number(n) => {

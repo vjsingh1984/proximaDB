@@ -76,7 +76,7 @@ pub struct GraphMonitor {
 }
 
 /// Configuration for monitoring system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MonitoringConfig {
     /// Enable/disable monitoring
     pub enabled: bool,
@@ -207,7 +207,7 @@ pub struct CacheMetrics {
 }
 
 /// Record of a slow query
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SlowQueryRecord {
     /// Query ID
     pub query_id: String,
@@ -249,7 +249,7 @@ pub struct ProfileSession {
 }
 
 /// Resource usage sample during profiling
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceSample {
     /// Timestamp relative to session start
     pub timestamp: Duration,
@@ -262,7 +262,7 @@ pub struct ResourceSample {
 }
 
 /// Summary of a completed profile
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProfileSummary {
     /// Session ID
     pub session_id: String,
@@ -287,7 +287,7 @@ pub struct ProfileSummary {
 }
 
 /// Metric event for async processing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetricEvent {
     /// Operation completed
     OperationCompleted {
@@ -305,7 +305,7 @@ pub enum MetricEvent {
 }
 
 /// Health check result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HealthCheck {
     /// Overall health status
     pub status: HealthStatus,
@@ -329,7 +329,7 @@ pub enum HealthStatus {
 }
 
 /// Individual component health
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ComponentHealth {
     /// Component status
     pub status: HealthStatus,
@@ -842,7 +842,7 @@ impl GraphMonitor {
 }
 
 /// Snapshot of all metrics at a point in time
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetricsSnapshot {
     pub timestamp: SystemTime,
     pub operation_counts: HashMap<String, u64>,

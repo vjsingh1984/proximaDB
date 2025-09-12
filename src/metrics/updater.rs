@@ -76,7 +76,7 @@ pub enum OperationType {
 }
 
 /// Metrics update from flush operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushMetricsUpdate {
     pub vectors_flushed: i64,
     pub bytes_written: i64,
@@ -87,7 +87,7 @@ pub struct FlushMetricsUpdate {
 }
 
 /// Metrics update from compaction operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionMetricsUpdate {
     pub files_before: i32,
     pub files_after: i32,
@@ -98,7 +98,7 @@ pub struct CompactionMetricsUpdate {
 }
 
 /// Metrics update from search operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchMetricsUpdate {
     pub query_latency_us: f64,
     pub results_count: i32,
@@ -109,7 +109,7 @@ pub struct SearchMetricsUpdate {
 }
 
 /// Metrics update from general operations (insert/update/delete)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OperationMetricsUpdate {
     pub operation_type: String,
     pub latency_us: f64,
@@ -119,7 +119,7 @@ pub struct OperationMetricsUpdate {
 }
 
 /// Storage layer metrics update
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageMetricsUpdate {
     pub parquet_file_count: Option<i32>,
     pub sstable_file_count: Option<i32>,
@@ -130,7 +130,7 @@ pub struct StorageMetricsUpdate {
 }
 
 /// Data characteristics update for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataCharacteristicsUpdate {
     pub sparsity_ratio: Option<f32>,
     pub avg_vector_magnitude: Option<f32>,
@@ -139,7 +139,7 @@ pub struct DataCharacteristicsUpdate {
 }
 
 /// Generic metrics update message
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetricsUpdate {
     Operation {
         collection_id: String,

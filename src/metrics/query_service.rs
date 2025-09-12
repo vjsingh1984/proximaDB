@@ -59,7 +59,7 @@ struct CachedGlobalMetrics {
 }
 
 /// Options for querying metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetricsQueryOptions {
     /// Include query optimization hints
     pub include_hints: bool,

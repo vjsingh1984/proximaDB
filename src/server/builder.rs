@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::storage::builder::{StorageSystem, StorageSystemBuilder};
 
 /// Server network configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NetworkConfig {
     /// Server host/interface (e.g., "0.0.0.0", "127.0.0.1", "localhost")
     pub host: String,
@@ -76,7 +76,7 @@ impl Default for NetworkConfig {
 }
 
 /// Hardware acceleration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum HardwareAcceleration {
     /// CPU-only with SIMD optimizations
     SIMD,
@@ -99,7 +99,7 @@ impl Default for HardwareAcceleration {
 }
 
 /// Compute system configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ComputeConfig {
     /// Hardware acceleration method
     pub acceleration: HardwareAcceleration,
@@ -141,7 +141,7 @@ impl Default for ComputeConfig {
 pub use crate::compute::distance_computation::DistanceMetric;
 
 /// Indexing algorithm configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World (default for most cases)
     HNSW,
@@ -164,7 +164,7 @@ impl Default for IndexingAlgorithm {
 }
 
 /// Indexing system configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexingConfig {
     /// Default vector indexing algorithm
     pub default_algorithm: IndexingAlgorithm,
@@ -219,7 +219,7 @@ impl Default for IndexingConfig {
 }
 
 /// Monitoring and observability configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MonitoringConfig {
     /// Enable detailed metrics collection
     pub enable_metrics: bool,
@@ -262,7 +262,7 @@ impl Default for MonitoringConfig {
 }
 
 /// Complete server configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ServerConfig {
     /// Network configuration
     pub network: NetworkConfig,

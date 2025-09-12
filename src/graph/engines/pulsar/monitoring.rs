@@ -45,7 +45,7 @@ pub struct PulsarMonitor {
 }
 
 /// Simplified PULSAR metrics (detailed metrics come from unified framework)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PulsarMetrics {
     /// Engine uptime in seconds
     pub uptime_seconds: u64,
@@ -58,7 +58,7 @@ pub struct PulsarMetrics {
 }
 
 /// Overall health status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HealthStatus {
     /// Overall status
     pub status: ComponentStatus,
@@ -71,7 +71,7 @@ pub struct HealthStatus {
 }
 
 /// Component status levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ComponentStatus {
     Healthy,
     Degraded,
@@ -80,7 +80,7 @@ pub enum ComponentStatus {
 }
 
 /// Health issue description
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HealthIssue {
     pub severity: IssueSeverity,
     pub component: String,
@@ -89,7 +89,7 @@ pub struct HealthIssue {
     pub suggestion: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IssueSeverity {
     Info,
     Warning,

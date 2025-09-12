@@ -37,7 +37,7 @@ pub struct EventLogWAL {
 }
 
 /// Serializable event for persistence
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct PersistentEvent {
     /// Event from EventLog
     event: IndexEvent,

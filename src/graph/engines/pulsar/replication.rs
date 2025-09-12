@@ -433,7 +433,7 @@ impl ReplicationManager {
 }
 
 /// Replication operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ReplicationOperation {
     InsertNode(Node),
     InsertEdge(Edge),

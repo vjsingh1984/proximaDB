@@ -68,7 +68,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// PULSAR distributed graph engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PulsarConfig {
     /// Number of shards for data distribution
     pub shard_count: usize,

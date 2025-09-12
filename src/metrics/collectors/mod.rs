@@ -38,7 +38,7 @@ pub trait MetricsCollector: Send + Sync {
 }
 
 /// A single metrics sample from a collector
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetricsSample {
     pub timestamp: Instant,
     pub collector: String,

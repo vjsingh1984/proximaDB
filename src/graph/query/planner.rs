@@ -46,7 +46,7 @@ pub struct QueryPlanner {
 }
 
 /// Configuration for query planning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PlannerConfig {
     /// Maximum number of cached plans
     pub max_cached_plans: usize,
@@ -59,7 +59,7 @@ pub struct PlannerConfig {
 }
 
 /// Cost model parameters for estimation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CostModel {
     /// Cost per node access (base cost)
     pub node_access_cost: f64,
@@ -78,7 +78,7 @@ pub struct CostModel {
 }
 
 /// Optimization flags
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationFlags {
     /// Enable index selection optimization
     pub use_indexes: bool,
@@ -110,7 +110,7 @@ pub struct GraphStatistics {
 }
 
 /// Statistics for a specific index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStats {
     /// Number of entries in index
     pub cardinality: u64,
@@ -123,7 +123,7 @@ pub struct IndexStats {
 }
 
 /// Query execution plan
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryPlan {
     /// Unique plan ID
     pub id: String,
@@ -138,7 +138,7 @@ pub struct QueryPlan {
 }
 
 /// Individual plan step
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PlanStep {
     /// Step type
     pub step_type: PlanStepType,
@@ -151,7 +151,7 @@ pub struct PlanStep {
 }
 
 /// Types of plan steps
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PlanStepType {
     /// Scan all nodes with optional filter
     NodeScan {
@@ -192,7 +192,7 @@ pub enum PlanStepType {
 }
 
 /// Property filter for node selection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PropertyFilter {
     pub property_name: String,
     pub operator: FilterOperator,
@@ -200,14 +200,14 @@ pub struct PropertyFilter {
 }
 
 /// Edge filter for traversal
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EdgeFilter {
     pub edge_type: Option<String>,
     pub property_filters: Vec<PropertyFilter>,
 }
 
 /// Filter operators
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterOperator {
     Equal,
     NotEqual,
@@ -224,7 +224,7 @@ pub enum FilterOperator {
 }
 
 /// Join types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum JoinType {
     Inner,
     LeftOuter,
@@ -233,7 +233,7 @@ pub enum JoinType {
 }
 
 /// Filter conditions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterCondition {
     Simple(PropertyFilter),
     And(Vec<FilterCondition>),
@@ -242,7 +242,7 @@ pub enum FilterCondition {
 }
 
 /// Traversal algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TraversalAlgorithm {
     BFS,
     DFS,
@@ -251,14 +251,14 @@ pub enum TraversalAlgorithm {
 }
 
 /// Sort field specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SortField {
     pub field_name: String,
     pub ascending: bool,
 }
 
 /// Cost estimation breakdown
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CostEstimate {
     /// CPU cost (arbitrary units)
     pub cpu_cost: f64,
@@ -271,7 +271,7 @@ pub struct CostEstimate {
 }
 
 /// Cached query plan with metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CachedPlan {
     plan: QueryPlan,
     access_count: u64,

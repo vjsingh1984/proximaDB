@@ -257,7 +257,7 @@ pub struct TierRebalanceResult {
 }
 
 /// Configuration for adaptive store creation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdaptiveStoreConfig {
     /// Collection ID this store belongs to
     pub collection_id: String,
@@ -269,7 +269,7 @@ pub struct AdaptiveStoreConfig {
     pub metrics_config: MetricsConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TierConfig {
     /// Enable tier management
     pub enable_tiering: bool,
@@ -281,7 +281,7 @@ pub struct TierConfig {
     pub max_concurrent_operations: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetricsConfig {
     /// Enable detailed workload metrics
     pub enable_workload_metrics: bool,

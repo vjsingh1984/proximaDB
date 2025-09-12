@@ -77,7 +77,7 @@ use crate::storage::traits::InternalCollectionProvider;
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
 
 // Local types to replace assignment service
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum StorageComponentType {
     Wal,
     Storage,
@@ -1316,7 +1316,7 @@ impl std::fmt::Debug for CollectionService {
 }
 
 /// Response for collection operations - includes the full collection data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionServiceResponse {
     pub success: bool,
     pub collection: Option<Collection>, // Proto-first architecture

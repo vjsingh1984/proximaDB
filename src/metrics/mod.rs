@@ -215,7 +215,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for the metrics system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetricsConfig {
     /// Enable or disable the entire metrics system
     pub enabled: bool,

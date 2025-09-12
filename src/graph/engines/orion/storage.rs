@@ -52,7 +52,7 @@ use crate::graph::EdgeId;
 use std::collections::HashMap;
 
 /// CSR storage for efficient edge representation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CsrStorage {
     /// Offset array: offsets[i] = start index for node i's edges
     /// Node i's edges are in targets[offsets[i]..offsets[i+1]]
@@ -367,7 +367,7 @@ impl Default for CsrStorage {
 }
 
 /// Memory usage statistics for CSR storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CsrMemoryStats {
     pub offsets_bytes: usize,
     pub targets_bytes: usize,

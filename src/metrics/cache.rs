@@ -11,7 +11,7 @@ use crate::storage::cache::backend::CacheTier;
 use crate::storage::cache::metrics::CacheMetrics as BaseCacheMetrics;
 
 /// Cache metrics snapshot that work with the broader metrics framework
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheMetricsSnapshot {
     /// Cache hit rate across all tiers
     pub overall_hit_rate: f64,
@@ -35,7 +35,7 @@ pub struct CacheMetricsSnapshot {
 }
 
 /// Per-tier cache metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TierMetrics {
     pub hits: u64,
     pub misses: u64,
@@ -47,7 +47,7 @@ pub struct TierMetrics {
 }
 
 /// Memory usage metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryMetrics {
     pub total_allocated_bytes: usize,
     pub used_bytes: usize,
@@ -56,7 +56,7 @@ pub struct MemoryMetrics {
 }
 
 /// Eviction metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EvictionMetrics {
     pub total_evictions: u64,
     pub lru_evictions: u64,
@@ -67,7 +67,7 @@ pub struct EvictionMetrics {
 }
 
 /// Cache coordination metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CoordinationMetrics {
     pub cross_cache_hits: u64,
     pub prefetch_success_rate: f64,
@@ -311,7 +311,7 @@ impl CacheMetricsCollector {
 }
 
 /// Cache optimization hints based on metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheOptimizationHints {
     pub should_increase_l1_size: bool,
     pub should_enable_l2: bool,

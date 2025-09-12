@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 /// Alert for threshold violations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Alert {
     pub id: String,
     pub level: AlertLevel,
@@ -23,7 +23,7 @@ pub struct Alert {
 }
 
 /// Alert severity level
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AlertLevel {
     Info,
     Warning,
@@ -31,7 +31,7 @@ pub enum AlertLevel {
 }
 
 /// Comprehensive metrics for a single collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CollectionMetrics {
     // === Basic Statistics ===
     pub collection_id: String,
@@ -91,7 +91,7 @@ pub struct CollectionMetrics {
 }
 
 /// Statistics for a filterable column
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilterableColumnStats {
     pub column_name: String,
     pub data_type: String, // Data type of the column
@@ -105,7 +105,7 @@ pub struct FilterableColumnStats {
 }
 
 /// Information about an available index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexInfo {
     pub index_name: String,
     pub algorithm: String, // "HNSW", "IVF", "FLAT", etc.
@@ -117,7 +117,7 @@ pub struct IndexInfo {
 }
 
 /// Index build status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IndexBuildStatus {
     NotStarted,
     Building { progress_percent: f32 },
@@ -126,7 +126,7 @@ pub enum IndexBuildStatus {
 }
 
 /// Global metrics across all collections
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct GlobalMetrics {
     pub total_collections: i64,
     pub total_vectors: i64,
@@ -146,7 +146,7 @@ pub struct GlobalMetrics {
 }
 
 /// Query optimization hints based on metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryOptimizationHints {
     pub collection_id: String,
     pub hints: Vec<OptimizationHint>,
@@ -154,7 +154,7 @@ pub struct QueryOptimizationHints {
 }
 
 /// Individual optimization hint
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationHint {
     pub hint_type: HintType,
     pub priority: HintPriority,
@@ -165,7 +165,7 @@ pub struct OptimizationHint {
 }
 
 /// Type of optimization hint
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum HintType {
     IndexSelection,
     ParallelScan,
@@ -179,7 +179,7 @@ pub enum HintType {
 }
 
 /// Priority level for hints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum HintPriority {
     Critical, // Severely impacting performance
     High,     // Significant improvement possible
@@ -189,7 +189,7 @@ pub enum HintPriority {
 }
 
 /// Estimated improvement from applying the hint
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ImprovementEstimate {
     pub latency_reduction_percent: Option<f32>,
     pub throughput_increase_percent: Option<f32>,

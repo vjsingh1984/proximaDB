@@ -43,7 +43,7 @@ pub struct AppState {
 pub async fn vector_search(
     State(state): State<AppState>,
     Json(request): Json<V1VectorSearchRequest>,
-) -> ApiResult<JsonResponse<JsonVectorOperationResponse>> {
+) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
     info!(
         "Vector search request for collection: {}, top_k: {}",
         request.collection_id, request.top_k
@@ -81,7 +81,7 @@ pub async fn vector_search(
 pub async fn vector_batch(
     State(state): State<AppState>,
     Json(request): Json<V1VectorBatchRequest>,
-) -> ApiResult<JsonResponse<JsonVectorOperationResponse>> {
+) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
     info!(
         "Vector batch operation for collection: {}, {} records",
         request.collection_id,

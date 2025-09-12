@@ -22,7 +22,7 @@ use crate::errors::ApiError;
 /// This struct provides automatic JSON serialization/deserialization for protobuf
 /// messages, allowing REST handlers to work directly with protobuf types while
 /// maintaining JSON input/output.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProtoJson<T>(pub T);
 
 impl<T> ProtoJson<T> {

@@ -44,7 +44,7 @@ mod tests {
     // use crate::storage::engines::impls::viper::readers::unified_parquet_reader::UnifiedParquetReader;
 
     /// Test data structure for comprehensive testing
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct TestVector {
         id: String,
         vector: Vec<f32>,
@@ -53,7 +53,7 @@ mod tests {
     }
 
     /// Test configuration for search scenarios
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct SearchTestCase {
         name: String,
         query_vector: Vec<f32>,

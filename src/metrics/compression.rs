@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Compression metrics for a single collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionMetrics {
     pub collection_id: String,
     pub engine_type: String, // "sst" or "viper"
@@ -73,7 +73,7 @@ pub struct CompressionMetrics {
 }
 
 /// Distribution of block sizes for analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockSizeDistribution {
     pub min_bytes: u64,
     pub max_bytes: u64,
@@ -84,7 +84,7 @@ pub struct BlockSizeDistribution {
 }
 
 /// Compression operation result for metrics tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionResult {
     pub uncompressed_size: u64,
     pub compressed_size: u64,
@@ -95,7 +95,7 @@ pub struct CompressionResult {
 }
 
 /// Decompression operation result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DecompressionResult {
     pub compressed_size: u64,
     pub uncompressed_size: u64,
@@ -103,7 +103,7 @@ pub struct DecompressionResult {
 }
 
 /// Type of data being compressed
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionData {
     Vector,
     Metadata,
@@ -453,7 +453,7 @@ impl CompressionMetricsTracker {
 }
 
 /// Compression recommendation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionRecommendation {
     pub recommendation_type: RecommendationType,
     pub description: String,
@@ -461,7 +461,7 @@ pub struct CompressionRecommendation {
     pub priority: RecommendationPriority,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RecommendationType {
     EnableQuantization,
     OptimizeQuantization,
@@ -472,7 +472,7 @@ pub enum RecommendationType {
     AdjustBlockSize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RecommendationPriority {
     High,
     Medium,

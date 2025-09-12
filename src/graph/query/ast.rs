@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A compiled pattern ready for execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompiledPattern {
     /// Pattern nodes
     pub nodes: Vec<NodePattern>,
@@ -43,7 +43,7 @@ pub struct CompiledPattern {
 }
 
 /// Node pattern specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NodePattern {
     /// Variable name (e.g., 'n' in (n:Person))
     pub variable: String,
@@ -56,7 +56,7 @@ pub struct NodePattern {
 }
 
 /// Edge pattern specification  
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EdgePattern {
     /// Variable name (e.g., 'r' in -[r:KNOWS]->)
     pub variable: Option<String>,
@@ -75,7 +75,7 @@ pub struct EdgePattern {
 }
 
 /// Path pattern for variable-length paths
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PathPattern {
     /// Variable name for the path
     pub variable: String,
@@ -94,7 +94,7 @@ pub struct PathPattern {
 }
 
 /// Property constraint in patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PropertyConstraint {
     /// Exact value match
     Equals(serde_json::Value),
@@ -138,7 +138,7 @@ pub enum EdgeDirection {
 }
 
 /// Where clause for additional filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WhereClause {
     /// Variable name
     pub variable: String,
@@ -158,7 +158,7 @@ pub enum LogicalOperator {
 }
 
 /// Return specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ReturnSpec {
     /// Variables to return
     pub variables: Vec<String>,
@@ -175,7 +175,7 @@ pub struct ReturnSpec {
 }
 
 /// Property projection in RETURN clause
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PropertyProjection {
     /// Variable name
     pub variable: String,
@@ -186,7 +186,7 @@ pub struct PropertyProjection {
 }
 
 /// Order by specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OrderBy {
     /// Variable name
     pub variable: String,
@@ -197,7 +197,7 @@ pub struct OrderBy {
 }
 
 /// Variable binding during pattern matching
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VariableBinding {
     /// Bound to a specific node
     Node(Arc<Node>),
@@ -208,14 +208,14 @@ pub enum VariableBinding {
 }
 
 /// Element in a path
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PathElement {
     Node(Arc<Node>),
     Edge(Arc<Edge>),
 }
 
 /// Pattern matching result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MatchResult {
     /// Variable bindings for this match
     pub bindings: HashMap<String, VariableBinding>,
@@ -224,7 +224,7 @@ pub struct MatchResult {
 }
 
 /// Helper struct for path finding
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FoundPath {
     pub elements: Vec<PathElement>,
     pub length: u32,

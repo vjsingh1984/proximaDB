@@ -71,7 +71,7 @@ pub struct EngineMetricsCollector {
     accumulated_metrics: Arc<RwLock<EngineMetricsAccumulator>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct EngineMetricsAccumulator {
     operations: HashMap<String, OperationMetrics>,
     last_reset: Instant,
@@ -326,7 +326,7 @@ pub struct EngineStatistics {
 }
 
 /// Engine comparison result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineComparison {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub engine_stats: HashMap<String, EngineStatistics>,

@@ -36,7 +36,7 @@ pub struct GraphMetricsCollector {
 }
 
 /// Graph-specific metrics sample
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct GraphMetricsSample {
     timestamp: Instant,
     total_nodes: u64,

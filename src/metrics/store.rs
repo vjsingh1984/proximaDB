@@ -39,7 +39,7 @@ pub struct MetricsPersistenceLayer {
 }
 
 /// A snapshot of metrics at a point in time
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetricsSnapshot {
     pub collection_id: String,
     pub metrics: CollectionMetrics,
@@ -48,7 +48,7 @@ pub struct MetricsSnapshot {
 }
 
 /// Global metrics snapshot
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GlobalMetricsSnapshot {
     pub metrics: GlobalMetrics,
     pub timestamp: i64,

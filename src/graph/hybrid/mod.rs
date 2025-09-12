@@ -1352,8 +1352,8 @@ impl HybridQueryEngine {
                                 .into_iter()
                                 .map(|(k, v)| (k, serde_json::Value::String(v)))
                                 .collect(),
-                            timestamp: node.created_at_ms.unwrap_or(0) as i64,
-                            updated_at: Some(node.updated_at_ms.unwrap_or(0) as i64),
+                            timestamp: node.created_at_ms,
+                            updated_at: Some(node.updated_at_ms),
                             expires_at: None,
                             version: None,
                         },

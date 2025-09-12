@@ -47,34 +47,34 @@ fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
 fn convert_proto_value_to_sql(value: sql_value::Value) -> proximadb_v1::SqlValue {
     match value {
         crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
         },
         crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
         },
         crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
         },
         crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
         },
         crate::proto::proximadb_v1::sql_value::Value::BytesValue(b) => proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)),
         },
         crate::proto::proximadb_v1::sql_value::Value::NullValue(n) => proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(n)),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(n)),
         },
         crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a) => proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a)),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a)),
         },
         crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o) => proximadb_v1::SqlValue {
-            value: Some(proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o)),
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o)),
         },
     }
 }
 
 /// Configuration for streaming search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StreamingSearchConfig {
     /// Maximum number of results to buffer in memory
     pub buffer_size: usize,
@@ -152,7 +152,7 @@ pub struct SearchResultStream {
 }
 
 /// Batch of search results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchResultBatch {
     /// Results in this batch
     pub results: Vec<OptimizedSearchRecord>,
@@ -168,7 +168,7 @@ pub struct SearchResultBatch {
 }
 
 /// Search metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchMetadata {
     /// Search request ID
     pub request_id: String,

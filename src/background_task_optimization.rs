@@ -23,7 +23,7 @@ use std::time::Duration;
 use serde::{Serialize, Deserialize};
 
 /// Background task optimization recommendations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TaskOptimization {
     pub task_name: String,
     pub component: String,
@@ -35,7 +35,7 @@ pub struct TaskOptimization {
 }
 
 /// Resource impact classification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ResourceImpact {
     Low,      // < 1ms CPU per operation
     Medium,   // 1-50ms CPU per operation
@@ -44,7 +44,7 @@ pub enum ResourceImpact {
 }
 
 /// Task urgency classification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum UrgencyLevel {
     RealTime,    // Must run frequently (< 1s)
     Interactive, // User-facing responsiveness (1-10s)
@@ -280,7 +280,7 @@ pub fn calculate_resource_savings() -> ResourceSavings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceSavings {
     pub old_cpu_seconds_per_hour: f64,
     pub new_cpu_seconds_per_hour: f64,

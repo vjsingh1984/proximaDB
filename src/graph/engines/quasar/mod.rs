@@ -72,7 +72,7 @@ use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, CrossCa
 use tokio::time::{Duration, Instant};
 
 /// QUASAR hybrid graph engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuasarConfig {
     /// Maximum size of hot tier (in number of nodes)
     pub hot_tier_max_nodes: usize,
