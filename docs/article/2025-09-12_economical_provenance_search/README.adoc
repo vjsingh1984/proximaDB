@@ -1,8 +1,11 @@
 = Build Trustworthy, Large-Scale AI on a Budget with ProximaDB
 
-image::article_cover.png[Article Cover Image,width=1024,align="center"]
-
 :imagesdir: images
+:toc: macro
+
+toc::[]
+
+image::article_cover.png[Article Cover Image,width=1024,align="center"]
 
 In the race to deploy AI, many businesses face a difficult choice: scale their applications at a massive hardware cost, or compromise on capability. High-performance vector search has become synonymous with expensive, in-memory indexes that don't scale economically to terabytes or petabytes of data. Furthermore, many AI systems act as "black boxes," making it impossible to trace where information comes from.
 
