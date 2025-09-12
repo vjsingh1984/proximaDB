@@ -138,6 +138,7 @@ pub mod compaction;
 pub mod decompression_cache;
 pub mod error;
 pub mod flush_eventlog_integration;
+pub mod filter_methods;
 // Quantization now handled by unified compute module
 pub mod compactor_impl;
 pub mod indexed_reader;
