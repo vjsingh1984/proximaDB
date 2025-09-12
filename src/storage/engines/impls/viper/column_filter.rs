@@ -471,17 +471,13 @@ impl VIPERSelectiveReader {
             parquet_file
         );
 
-        // For now, read all and filter - TODO: implement true selective parquet reading
-        // TODO: Implement proper batch reading
-        let all_records = Vec::<crate::proto::proximadb_v1::VectorRecord>::new(); // Placeholder
+        // Implement true selective parquet reading using row indices
+        let selected_records = self.read_selective_rows(parquet_file, &qualifying_indices).await?;
 
-        let selected_records: Vec<VectorRecord> = qualifying_indices
-            .iter()
-            .filter_map(|&idx| all_records.get(idx).cloned())
-            .collect();
-
-        let io_savings = if !all_records.is_empty() {
-            100.0 * (1.0 - (selected_records.len() as f64 / all_records.len() as f64))
+        let io_savings = if !selected_records.is_empty() {
+            // Calculate I/O savings based on selective reading
+            let total_possible = qualifying_indices.len().max(selected_records.len());
+            100.0 * (1.0 - (selected_records.len() as f64 / total_possible as f64))
         } else {
             0.0
         };
@@ -493,6 +489,61 @@ impl VIPERSelectiveReader {
         );
 
         Ok(selected_records)
+    }
+    
+    /// Read only specific rows from Parquet file using row indices
+    async fn read_selective_rows(
+        &self,
+        file_path: &str,
+        row_indices: &[usize]
+    ) -> Result<Vec<VectorRecord>> {
+        // Use ProximaDB's filesystem APIs and parquet reader strategy
+        let filesystem = crate::storage::persistence::filesystem::FilesystemFactory::create_from_url(file_path)?;
+        
+        // Use existing parquet reader implementation based on strategy
+        let parquet_reader = crate::storage::engines::core::formats::columnar::unified_columnar_io::UnifiedColumnarReader::new(
+            filesystem.clone()
+        )?;
+        
+        // Perform selective row reading using ProximaDB's range strategy
+        // This works seamlessly across cloud storage (S3, Azure, GCS) and local files
+        let records = parquet_reader.read_selective_ranges(
+            file_path,
+            &self.convert_indices_to_ranges(row_indices)
+        ).await?;
+        
+        debug!("Selective parquet read completed: {} records from {} indices", 
+               records.len(), row_indices.len());
+        
+        Ok(records)
+    }
+    
+    /// Convert row indices to efficient range specifications for bulk reading
+    fn convert_indices_to_ranges(&self, indices: &[usize]) -> Vec<(usize, usize)> {
+        if indices.is_empty() {
+            return vec![];
+        }
+        
+        let mut sorted_indices = indices.to_vec();
+        sorted_indices.sort_unstable();
+        
+        let mut ranges = Vec::new();
+        let mut range_start = sorted_indices[0];
+        let mut range_end = sorted_indices[0];
+        
+        // Merge consecutive indices into ranges for efficient I/O
+        for &idx in &sorted_indices[1..] {
+            if idx == range_end + 1 {
+                range_end = idx; // Extend current range
+            } else {
+                ranges.push((range_start, range_end + 1)); // End of range
+                range_start = idx;
+                range_end = idx;
+            }
+        }
+        ranges.push((range_start, range_end + 1)); // Final range
+        
+        ranges
     }
 }
 

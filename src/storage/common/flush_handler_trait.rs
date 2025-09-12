@@ -91,8 +91,17 @@ impl FlushHandler for SstFlushHandlerAdapter {
         _files: &[String],
         _output_path: &str,
     ) -> Result<()> {
-        // TODO: Implement actual compaction
-        Ok(())
+        // Implement actual compaction using existing infrastructure
+        match self.engine.compact_files(input_files, output_path).await {
+            Ok(_) => {
+                info!("Compaction completed: {} files -> {}", input_files.len(), output_path);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Compaction failed: {}", e);
+                Err(e)
+            }
+        }
     }
 
     fn engine_name(&self) -> &'static str {
@@ -126,8 +135,17 @@ impl FlushHandler for ViperFlushHandlerAdapter {
         _files: &[String],
         _output_path: &str,
     ) -> Result<()> {
-        // TODO: Implement actual compaction
-        Ok(())
+        // Implement actual compaction using existing infrastructure
+        match self.engine.compact_files(input_files, output_path).await {
+            Ok(_) => {
+                info!("Compaction completed: {} files -> {}", input_files.len(), output_path);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Compaction failed: {}", e);
+                Err(e)
+            }
+        }
     }
 
     fn engine_name(&self) -> &'static str {
