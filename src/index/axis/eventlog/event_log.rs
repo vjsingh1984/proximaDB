@@ -409,7 +409,7 @@ impl EventLogQueue {
 }
 
 /// Vector extraction mode for AXIS
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExtractionMode {
     Fp32Only,
     QuantizedOnly,

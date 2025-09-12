@@ -541,7 +541,7 @@ impl Default for OrionGraphEngine {
 mod tests {
     use super::*;
     use crate::graph::PropertyValue;
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]
     async fn test_orion_engine_creation() {

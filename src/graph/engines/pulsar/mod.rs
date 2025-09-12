@@ -68,7 +68,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// PULSAR distributed graph engine configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PulsarConfig {
     /// Number of shards for data distribution
     pub shard_count: usize,
@@ -600,7 +600,7 @@ impl Default for PulsarGraphEngine {
 mod tests {
     use super::*;
     use crate::graph::PropertyValue;
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]
     async fn test_pulsar_engine_creation() {

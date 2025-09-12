@@ -45,7 +45,7 @@ use crate::index::axis::zero_overhead_vector::{
 };
 
 /// Memory usage statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryUsage {
     pub total_bytes: usize,
     pub index_size_bytes: usize,

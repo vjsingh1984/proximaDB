@@ -433,7 +433,7 @@ impl ReplicationManager {
 }
 
 /// Replication operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReplicationOperation {
     InsertNode(Node),
     InsertEdge(Edge),
@@ -456,7 +456,7 @@ mod tests {
     use super::*;
     use crate::graph::GraphMemoryPool;
     use crate::graph::PropertyValue;
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
 
     fn create_test_shards(count: u32) -> Arc<DashMap<u32, Arc<OrionGraphEngine>>> {
         let shards = Arc::new(DashMap::new());

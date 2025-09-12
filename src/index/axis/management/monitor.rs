@@ -102,7 +102,7 @@ struct HealthChecker {
 }
 
 /// Collection-specific metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionMetrics {
     pub collection_id: String,
     pub query_latency_ms: LatencyMetrics,
@@ -114,7 +114,7 @@ pub struct CollectionMetrics {
 }
 
 /// Latency metrics with percentiles
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LatencyMetrics {
     pub p50: f64,
     pub p90: f64,
@@ -126,7 +126,7 @@ pub struct LatencyMetrics {
 }
 
 /// Index performance metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexPerformanceMetrics {
     pub index_build_time_ms: f64,
     pub index_size_mb: f64,
@@ -136,7 +136,7 @@ pub struct IndexPerformanceMetrics {
 }
 
 /// Resource usage metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceUsageMetrics {
     pub cpu_usage_percent: f64,
     pub memory_usage_mb: f64,
@@ -157,7 +157,7 @@ pub struct SystemMetrics {
 }
 
 /// Historical metric entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct HistoricalMetric {
     pub timestamp: DateTime<Utc>,
     pub collection_id: Option<String>,
@@ -166,7 +166,7 @@ struct HistoricalMetric {
 }
 
 /// Types of metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetricType {
     QueryLatency,
     Throughput,
@@ -177,7 +177,7 @@ pub enum MetricType {
 }
 
 /// Alert definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
     pub alert_id: String,
     pub alert_type: AlertType,
@@ -191,7 +191,7 @@ pub struct Alert {
 }
 
 /// Types of alerts
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertType {
     HighLatency,
     LowThroughput,
@@ -212,7 +212,7 @@ pub enum AlertSeverity {
 }
 
 /// Alert history entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AlertHistory {
     pub alert: Alert,
     pub resolved_at: Option<DateTime<Utc>>,
@@ -227,7 +227,7 @@ pub trait AlertSubscriber {
 }
 
 /// Performance trend analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceTrend {
     pub collection_id: String,
     pub latency_trend: TrendDirection,
@@ -247,7 +247,7 @@ enum TrendDirection {
 }
 
 /// Baseline performance metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BaselineMetrics {
     pub collection_id: String,
     pub baseline_latency_ms: f64,
@@ -264,7 +264,7 @@ struct AnomalyDetector {
 }
 
 /// Anomaly detection model
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AnomalyModel {
     pub collection_id: String,
     pub model_type: AnomalyModelType,
@@ -274,7 +274,7 @@ struct AnomalyModel {
 }
 
 /// Types of anomaly detection models
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum AnomalyModelType {
     StatisticalThreshold,
     MovingAverage,
@@ -283,7 +283,7 @@ enum AnomalyModelType {
 }
 
 /// Component health status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ComponentHealth {
     pub component_name: String,
     pub status: HealthStatus,
@@ -301,7 +301,7 @@ enum HealthStatus {
 }
 
 /// Monitoring events
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MonitoringEvent {
     MetricsUpdated {
         collection_id: String,

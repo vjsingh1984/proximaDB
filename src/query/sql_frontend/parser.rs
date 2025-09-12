@@ -11,7 +11,7 @@ use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
 use crate::query::ast::{
-    BinaryOp, Cte, Expr, Join, JoinKind, Literal, OrderByExpr, ProjectionItem, Query, Select,
+    BinaryOp, Cte, Expr, Join, JoinType, Literal, OrderByExpr, ProjectionItem, Query, Select,
     SetOp, TableRef, UnaryOp,
 };
 
@@ -287,8 +287,8 @@ impl SqlFrontendParser {
 
     fn convert_join(&self, join: &SqlJoin) -> Result<Join> {
         let kind = match join.join_operator {
-            JoinOperator::Inner(_) => JoinKind::Inner,
-            JoinOperator::LeftOuter(_) => JoinKind::Left,
+            JoinOperator::Inner(_) => JoinType::Inner,
+            JoinOperator::LeftOuter(_) => JoinType::LeftOuter,
             _ => return Err(anyhow!("Unsupported join type: {:?}", join.join_operator)),
         };
 

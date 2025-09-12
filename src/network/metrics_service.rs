@@ -31,7 +31,7 @@ use crate::metrics::exporters::PrometheusExporter;
 use crate::monitoring::MetricsCollector;
 
 /// Metrics Service configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricsServiceConfig {
     pub enable_prometheus: bool,
     pub enable_json: bool,

@@ -57,7 +57,7 @@ impl fmt::Display for BitmapError {
 impl std::error::Error for BitmapError {}
 
 /// Container types for different density patterns
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum Container {
     /// Array container for sparse data (< 4096 elements)
     Array(ArrayContainer),
@@ -204,7 +204,7 @@ impl Container {
 }
 
 /// Array container for sparse data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ArrayContainer {
     values: Vec<u16>,
 }
@@ -294,7 +294,7 @@ impl ArrayContainer {
 }
 
 /// Bitmap container for dense data
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct BitmapContainer {
     bits: [u64; 1024], // 64K bits = 1024 * 64 bits
 }
@@ -354,7 +354,7 @@ impl BitmapContainer {
 }
 
 /// Run container for consecutive ranges (simplified implementation)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RunContainer {
     runs: Vec<(u16, u16)>, // (start, length) pairs
 }
@@ -543,7 +543,7 @@ impl<'a> Iterator for BitmapIterator<'a> {
 }
 
 /// Main Roaring bitmap structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoaringBitmap {
     /// Map from high 16 bits to container
     containers: BTreeMap<u16, Container>,

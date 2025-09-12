@@ -55,7 +55,7 @@ pub struct RefactoredIvfIndex {
     algorithm: IndexAlgorithm,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct IvfConfig {
     pub n_clusters: usize,
     pub n_probe: usize,
@@ -187,7 +187,7 @@ pub struct RefactoredHnswIndex {
     algorithm: IndexAlgorithm,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct HnswConfig {
     pub m: usize,
     pub ef_construction: usize,

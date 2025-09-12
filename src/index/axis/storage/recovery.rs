@@ -35,7 +35,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 /// Recovery manager configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecoveryConfig {
     /// Enable automatic recovery on startup
     pub auto_recovery_enabled: bool,
@@ -74,7 +74,7 @@ pub type RecoveryResult = Result<RecoveryStats, SerializationError>;
 pub type RecoveryStrategy = RecoveryConfig;
 
 /// Recovery status for a collection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecoveryStatus {
     NotStarted,
     InProgress {

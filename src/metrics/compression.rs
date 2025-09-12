@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Compression metrics for a single collection
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionMetrics {
     pub collection_id: String,
     pub engine_type: String, // "sst" or "viper"
@@ -73,7 +73,7 @@ pub struct CompressionMetrics {
 }
 
 /// Distribution of block sizes for analysis
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockSizeDistribution {
     pub min_bytes: u64,
     pub max_bytes: u64,
@@ -84,7 +84,7 @@ pub struct BlockSizeDistribution {
 }
 
 /// Compression operation result for metrics tracking
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionResult {
     pub uncompressed_size: u64,
     pub compressed_size: u64,
@@ -95,7 +95,7 @@ pub struct CompressionResult {
 }
 
 /// Decompression operation result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecompressionResult {
     pub compressed_size: u64,
     pub uncompressed_size: u64,

@@ -33,23 +33,18 @@ use tokio::sync::RwLock;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RateLimitConfig {
     /// Enable rate limiting (if false, all requests pass through)
-    #[serde(default)]
     pub enabled: bool,
 
     /// Maximum requests per minute (TOML-friendly)
-    #[serde(default = "default_requests_per_minute")]
     pub requests_per_minute: u32,
 
     /// Burst allowance for sudden spikes
-    #[serde(default = "default_burst_size")]
     pub burst_size: u32,
 
     /// Apply rate limiting per IP address
-    #[serde(default = "default_true")]
     pub by_ip: bool,
 
     /// Whether to apply rate limiting to health endpoints
-    #[serde(default)]
     pub limit_health_endpoints: bool,
 
     /// Global rate limit (applies to all IPs combined, optional)
@@ -94,7 +89,7 @@ impl RateLimitConfig {
 }
 
 /// Internal rate limiting configuration used by middleware logic
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiddlewareRateLimitConfig {
     pub enabled: bool,
     pub max_requests: u32,
@@ -104,7 +99,7 @@ pub struct MiddlewareRateLimitConfig {
 }
 
 /// Rate limit bucket for tracking requests
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct RateLimitBucket {
     count: u32,
     window_start: Instant,

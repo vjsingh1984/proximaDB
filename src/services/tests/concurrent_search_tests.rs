@@ -283,7 +283,7 @@ mod tests {
         // 2. Index queries
         // 3. Storage scans
 
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         struct FilterPropagationTracker {
             wal_filters: Arc<RwLock<Vec<String>>>,
             index_filters: Arc<RwLock<Vec<String>>>,

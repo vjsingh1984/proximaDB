@@ -65,7 +65,7 @@ pub struct TieringStats {
 }
 
 /// Data movement operation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DataMovement {
     /// Move node from hot to cold
     DemoteNode(NodeId),
@@ -78,7 +78,7 @@ pub enum DataMovement {
 }
 
 /// Migration candidate with priority score
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationCandidate {
     pub item_id: String,
     pub item_type: ItemType,
@@ -457,7 +457,7 @@ mod tests {
     use crate::graph::GraphMemoryPool;
     use crate::graph::PropertyValue;
     use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
     use tempfile::TempDir;
 
     async fn create_test_setup() -> (TieringManager, Arc<OrionGraphEngine>) {

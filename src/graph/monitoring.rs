@@ -76,7 +76,7 @@ pub struct GraphMonitor {
 }
 
 /// Configuration for monitoring system
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {
     /// Enable/disable monitoring
     pub enabled: bool,
@@ -249,7 +249,7 @@ pub struct ProfileSession {
 }
 
 /// Resource usage sample during profiling
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceSample {
     /// Timestamp relative to session start
     pub timestamp: Duration,
@@ -287,7 +287,7 @@ pub struct ProfileSummary {
 }
 
 /// Metric event for async processing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetricEvent {
     /// Operation completed
     OperationCompleted {

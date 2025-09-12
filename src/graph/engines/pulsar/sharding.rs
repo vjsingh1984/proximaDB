@@ -167,7 +167,7 @@ impl ConsistentHashRing {
 }
 
 /// Statistics about shard distribution in the hash ring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardDistributionStats {
     pub total_shards: u32,
     pub total_virtual_nodes: u32,
@@ -187,7 +187,7 @@ pub struct ShardLoadBalancer {
 }
 
 /// Load statistics for a single shard
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardLoadStats {
     pub requests_per_second: f64,
     pub average_response_time_ms: f64,

@@ -16,7 +16,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 /// Tracks memory status of indexes for each collection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexMemoryTracker {
     /// Collection ID -> Index memory status
     collection_status: Arc<DashMap<String, IndexMemoryStatus>>,
@@ -32,7 +32,7 @@ pub struct IndexMemoryTracker {
 }
 
 /// Memory status for a collection's indexes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexMemoryStatus {
     pub collection_id: String,
     pub index_type: Index,
@@ -302,7 +302,7 @@ impl IndexMemoryTracker {
 }
 
 /// Memory usage statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryStats {
     pub total_memory_bytes: usize,
     pub max_memory_bytes: usize,

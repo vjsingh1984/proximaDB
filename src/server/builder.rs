@@ -76,7 +76,7 @@ impl Default for NetworkConfig {
 }
 
 /// Hardware acceleration configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HardwareAcceleration {
     /// CPU-only with SIMD optimizations
     SIMD,
@@ -141,7 +141,7 @@ impl Default for ComputeConfig {
 pub use crate::compute::distance_computation::DistanceMetric;
 
 /// Indexing algorithm configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World (default for most cases)
     HNSW,

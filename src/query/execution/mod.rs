@@ -180,7 +180,7 @@ pub enum ExecutionStrategy {
 }
 
 /// Query execution plan generated from internal AST
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionPlan {
     pub execution_strategy: ExecutionStrategy,
     pub operations: Vec<ExecutionOperation>,
@@ -193,7 +193,7 @@ pub struct ExecutionPlan {
 }
 
 /// Individual operation in the execution plan
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ExecutionOperation {
     /// Vector search operation with HashMap metadata filtering
     VectorSearch {
@@ -313,7 +313,7 @@ pub enum FusionStrategy {
 }
 
 /// Projection transformations for result formatting
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ProjectionTransform {
     /// Extract metadata field with HashMap optimization
     ExtractMetadata { field: String },
@@ -324,14 +324,14 @@ pub enum ProjectionTransform {
 }
 
 /// Aggregate specification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateSpec {
     pub alias: String,
     pub func: AggregateFunc,
     pub field: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AggregateFunc {
     Count,
     Sum,
@@ -340,14 +340,14 @@ pub enum AggregateFunc {
     Max,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JoinKind {
     Inner,
     Left,
 }
 
 /// Query execution result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
     pub rows: Vec<QueryRow>,
     pub total_found: usize,
@@ -358,7 +358,7 @@ pub struct QueryResult {
 }
 
 /// Individual result row
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryRow {
     pub fields: std::collections::HashMap<String, serde_json::Value>,
     pub similarity_score: Option<f64>,
@@ -377,7 +377,7 @@ pub struct QueryPerformanceMetrics {
 }
 
 /// EXPLAIN result for query optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExplainResult {
     pub query_type: ExecutionStrategy,
     pub estimated_cost: f64,

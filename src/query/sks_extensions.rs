@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 /// Temporary context structure for ASSEMBLE operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AssembledContext {
     metadata: HashMap<String, serde_json::Value>,
     relevance_score: Option<f64>,
@@ -310,28 +310,28 @@ impl SksExecutor {
             .iter()
             .filter_map(|(key, sql_value)| {
                 let json_value = match &sql_value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                         serde_json::Value::String(s.clone())
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::json!(n)
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                         serde_json::Value::Number(serde_json::Number::from(*i))
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
                         serde_json::Value::String(crate::utils::encoding::base64_encode(b))
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         serde_json::Value::Null
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
                         serde_json::Value::String("[Array]".to_string())
                     }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
+                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
                         serde_json::Value::String("[Object]".to_string())
                     }
                     None => return None,
@@ -343,7 +343,7 @@ impl SksExecutor {
 }
 
 /// Enhanced SKS function types for execution engine integration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SksFunction {
     /// SIMILAR(field, vector, metric) → semantic similarity search
     Similar {
@@ -681,7 +681,7 @@ impl SksQueryPlanner {
 }
 
 /// Query execution plan for SKS operators
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SksQueryPlan {
     /// The operator to execute
     pub operator: SksOperator,
@@ -697,7 +697,7 @@ pub struct SksQueryPlan {
 }
 
 /// Query execution stages
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueryStage {
     /// Generate candidates for similarity search
     CandidateGeneration { k: usize },
@@ -886,7 +886,7 @@ mod sks_integration_tests {
             metadata.insert(
                 format!("field_{}", i),
                 crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
                         format!("value_{}", i),
                     )),
                 },

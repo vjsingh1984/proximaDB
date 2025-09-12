@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Params(pub HashMap<String, serde_json::Value>);
 
 impl Params {

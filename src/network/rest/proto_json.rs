@@ -22,7 +22,7 @@ use crate::errors::ApiError;
 /// This struct provides automatic JSON serialization/deserialization for protobuf
 /// messages, allowing REST handlers to work directly with protobuf types while
 /// maintaining JSON input/output.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtoJson<T>(pub T);
 
 impl<T> ProtoJson<T> {
@@ -139,15 +139,12 @@ pub struct ProtoApiResponse<T> {
     pub success: bool,
 
     /// The actual data (protobuf message serialized as JSON)
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
 
     /// Error information if the operation failed
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ErrorInfo>,
 
     /// Additional metadata about the response
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<ResponseMetadata>,
 }
 
@@ -155,7 +152,6 @@ pub struct ProtoApiResponse<T> {
 pub struct ErrorInfo {
     pub code: String,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
 }
 
@@ -163,7 +159,6 @@ pub struct ErrorInfo {
 pub struct ResponseMetadata {
     pub request_id: String,
     pub processing_time_ms: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub server_version: Option<String>,
 }
 

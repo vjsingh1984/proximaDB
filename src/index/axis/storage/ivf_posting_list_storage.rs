@@ -171,7 +171,7 @@ impl PostingListStorage {
                     metadata.insert(
                         "cluster_id".to_string(),
                         crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                 cluster_id.to_string(),
                             )),
                         },
@@ -179,7 +179,7 @@ impl PostingListStorage {
                     metadata.insert(
                         "vector_id".to_string(), 
                         crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                 entry.vector_id.clone(),
                             )),
                         },

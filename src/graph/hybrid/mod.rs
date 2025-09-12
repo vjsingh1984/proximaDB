@@ -74,7 +74,7 @@ pub struct HybridQueryEngine {
 }
 
 /// Configuration for hybrid queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HybridConfig {
     /// Default similarity threshold for vector operations
     pub default_similarity_threshold: f32,
@@ -107,7 +107,7 @@ pub enum FusionStrategy {
 }
 
 /// Optimization flags for hybrid queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HybridOptimizations {
     /// Use progressive search for vector component
     pub use_progressive_search: bool,
@@ -269,7 +269,6 @@ pub struct HybridQueryResult {
     /// Matching nodes with scores
     pub nodes: Vec<HybridNodeResult>,
     /// Execution statistics
-    #[serde(skip)]
     pub stats: QueryStats,
     /// Debug information (if requested)
     pub debug_info: Option<HybridDebugInfo>,
@@ -357,7 +356,7 @@ pub struct HybridPerformanceMetrics {
 }
 
 /// Node in semantic traversal priority queue
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SemanticTraversalNode {
     node_id: NodeId,
     depth: u32,
@@ -387,7 +386,7 @@ impl Ord for SemanticTraversalNode {
 }
 
 /// Semantic neighbor with similarity score
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SemanticNeighbor {
     node_id: NodeId,
     similarity_score: f32,
@@ -1353,8 +1352,8 @@ impl HybridQueryEngine {
                                 .into_iter()
                                 .map(|(k, v)| (k, serde_json::Value::String(v)))
                                 .collect(),
-                            timestamp: node.created_at.as_ref().map(|t| t.seconds).unwrap_or(0) as i64,
-                            updated_at: Some(node.updated_at.as_ref().map(|t| t.seconds).unwrap_or(0) as i64),
+                            timestamp: node.created_at_ms_ms.unwrap_or(0) as i64,
+                            updated_at: Some(node.updated_at_ms_ms.unwrap_or(0) as i64),
                             expires_at: None,
                             version: None,
                         },

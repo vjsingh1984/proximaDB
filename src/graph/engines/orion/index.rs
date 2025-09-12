@@ -544,7 +544,7 @@ fn property_value_to_string(value: &PropertyValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
 
     #[test]
     fn test_property_index() {

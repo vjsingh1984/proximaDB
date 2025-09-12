@@ -33,7 +33,7 @@ pub type VectorSearchResult = crate::core::service_types::VectorSearchResult;
 pub type SearchParameters = SearchConfig;
 
 // Search query structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchQuery {
     pub vector: Vec<f32>,
     pub top_k: usize,
@@ -41,14 +41,14 @@ pub struct SearchQuery {
 }
 
 // Search configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
     pub algorithm: SearchAlgorithm,
     pub timeout_ms: Option<u64>,
 }
 
 /// Vector search algorithm types (AXIS-based)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SearchAlgorithm {
     /// Brute force search (exact)
     BruteForce,

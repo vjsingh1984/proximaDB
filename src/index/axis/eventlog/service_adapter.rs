@@ -20,7 +20,7 @@ use super::{
 };
 
 /// Event log statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventLogStats {
     pub total_events: u64,
     pub total_pending_events: u64,

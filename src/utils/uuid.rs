@@ -154,7 +154,7 @@ impl Default for UuidGenerator {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UuidError {
     InvalidLength,
     InvalidHex,

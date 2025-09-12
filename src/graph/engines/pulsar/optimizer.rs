@@ -32,7 +32,7 @@ use crate::graph::{Edge, EdgeId, Node, NodeId};
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Query optimization strategies for PULSAR engine
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OptimizationStrategy {
     /// Minimize cross-shard operations (MVP: single shard)
     MinimizeCrossShard,
@@ -45,7 +45,7 @@ pub enum OptimizationStrategy {
 }
 
 /// Query execution plan for PULSAR
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PulsarQueryPlan {
     /// Execution steps
     pub steps: Vec<QueryStep>,
@@ -60,7 +60,7 @@ pub struct PulsarQueryPlan {
 }
 
 /// Individual query execution step
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryStep {
     /// Step type
     pub step_type: StepType,
@@ -73,7 +73,7 @@ pub struct QueryStep {
 }
 
 /// Types of query execution steps
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StepType {
     /// Node lookup by ID
     NodeLookup { node_ids: Vec<NodeId> },
@@ -417,14 +417,14 @@ pub struct QueryExecutionResult {
 }
 
 /// Optimization recommendation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationRecommendation {
     pub recommendation_type: RecommendationType,
     pub description: String,
     pub impact: RecommendationImpact,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecommendationType {
     SlowQuery,
     CacheOptimization,
@@ -432,7 +432,7 @@ pub enum RecommendationType {
     ShardRebalancing, // For future distributed version
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecommendationImpact {
     Low,
     Medium,

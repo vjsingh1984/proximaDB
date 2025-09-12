@@ -257,7 +257,7 @@ pub struct AxisTieringManager {
 }
 
 /// A tier operation in progress
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TierOperation {
     collection_id: String,
     from_tier: InfrastructureTier,

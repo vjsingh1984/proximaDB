@@ -56,7 +56,7 @@ struct QueryPatternTracker {
 }
 
 /// Individual query event
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct QueryEvent {
     pub query_type: QueryType,
     pub timestamp: DateTime<Utc>,
@@ -102,7 +102,7 @@ struct PerformanceMetricsCollector {
 }
 
 /// Timestamped performance metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct TimestampedMetrics {
     pub metrics: PerformanceMetrics,
     pub timestamp: DateTime<Utc>,
@@ -115,7 +115,7 @@ struct VectorCharacteristicsAnalyzer {
 }
 
 /// Vector characteristics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct VectorCharacteristics {
     pub vector_count: u64,
     pub dimension: usize,
@@ -139,7 +139,7 @@ struct TemporalPatternDetector {
 }
 
 /// Access pattern information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AccessPattern {
     pub hourly_distribution: [f32; 24],
     pub daily_distribution: [f32; 7],
@@ -149,7 +149,7 @@ struct AccessPattern {
 }
 
 /// Activity burst detection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ActivityBurst {
     pub start_time: DateTime<Utc>,
     pub duration: ChronoDuration,

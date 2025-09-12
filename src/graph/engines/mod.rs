@@ -163,7 +163,7 @@ pub struct GraphEngineConfig {
 }
 
 /// Engine capabilities description
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineCapabilities {
     pub name: String,
     pub description: String,

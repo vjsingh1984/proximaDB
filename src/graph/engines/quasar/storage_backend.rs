@@ -46,7 +46,7 @@ pub struct ColdStorageBackend {
 }
 
 /// Storage location information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageLocation {
     /// File path relative to storage root
     pub file_path: PathBuf,
@@ -546,8 +546,8 @@ impl ColdStorageBackend {
                 .embedding
                 .as_ref()
                 .and_then(|e: &crate::proto::proximadb_v1::EmbeddingVersion| Some(e.vector.clone())),
-            created_at: node.created_at.as_ref().map(|t| t.seconds as u64),
-            updated_at: node.updated_at.as_ref().map(|t| t.seconds as u64),
+            created_at: node.created_at_ms.as_ref().map(|t| t.seconds as u64),
+            updated_at: node.updated_at_ms.as_ref().map(|t| t.seconds as u64),
         })
     }
 
@@ -575,7 +575,7 @@ impl ColdStorageBackend {
         &self,
         value: &crate::graph::PropertyValue,
     ) -> Result<StorablePropertyValue> {
-        use crate::proto::proximadb_v1::property_value::Value;
+        // PropertyValue is now a struct, not enum - use direct field access;
 
         match &value.value {
             Some(Value::StringValue(s)) => Ok(StorablePropertyValue::String(s.clone())),
@@ -653,7 +653,7 @@ impl ColdStorageBackend {
         &self,
         storable: StorablePropertyValue,
     ) -> Result<crate::graph::PropertyValue> {
-        use crate::proto::proximadb_v1::property_value::Value;
+        // PropertyValue is now a struct, not enum - use direct field access;
 
         let value = match storable {
             StorablePropertyValue::String(s) => Some(Value::StringValue(s)),
@@ -700,7 +700,7 @@ impl ColdStorageBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
     use std::collections::HashMap;
     use tempfile::TempDir;
 

@@ -15,7 +15,7 @@ use sqlparser::ast::{
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::query::ast::{BinaryOp, Expr, Literal, OrderByExpr, Query, Select, TableRef, UnaryOp};
+use crate::query::ast::{BinaryOp, Expr, Join, Literal, OrderByExpr, Query, Select, TableRef, UnaryOp};
 use crate::services::collection::manager::CollectionService;
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ pub struct QueryLowering {
 }
 
 /// Collection metadata cached for query validation and optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CollectionMetadata {
     id: String,
     name: String,
@@ -40,7 +40,7 @@ struct CollectionMetadata {
 }
 
 /// Collection schema for field validation and optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CollectionSchema {
     embedding_fields: Vec<String>,
     metadata_fields: Vec<String>,
@@ -99,7 +99,7 @@ impl QueryLowering {
         let projection = self.lower_projection(&select.projection).await?;
 
         // 2. Process FROM clause with collection resolution
-        let from = self.lower_from_clause(&select.from).await?;
+        let (from, joins) = self.lower_from_clause(&select.from).await?;
 
         // 3. Process WHERE clause with HashMap optimization for metadata filtering
         let selection = if let Some(where_expr) = &select.selection {
@@ -124,7 +124,7 @@ impl QueryLowering {
         Ok(Select {
             projection,
             from,
-            joins: self.lower_joins(&joins).await?,
+            joins,
             selection,
             group_by: vec![], // TODO: Implement GROUP BY support
             having: None,     // TODO: Implement HAVING support
@@ -154,8 +154,9 @@ impl QueryLowering {
     }
 
     /// Lower FROM clause with collection name resolution and validation
-    async fn lower_from_clause(&self, from: &[TableWithJoins]) -> Result<Vec<TableRef>> {
+    async fn lower_from_clause(&self, from: &[TableWithJoins]) -> Result<(Vec<TableRef>, Vec<Join>)> {
         let mut tables = Vec::new();
+        let mut joins = Vec::new();
 
         for table_with_joins in from {
             let table = self.lower_table_factor(&table_with_joins.relation).await?;
@@ -167,7 +168,7 @@ impl QueryLowering {
             }
         }
 
-        Ok(tables)
+        Ok((tables, joins))
     }
 
     /// Lower table reference with collection resolution

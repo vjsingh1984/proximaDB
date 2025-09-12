@@ -26,7 +26,7 @@ pub enum MigrationComplexity {
     High,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MigrationDecision {
     Migrate {
         from: IndexSelectionStrategy,
@@ -65,7 +65,7 @@ impl std::fmt::Debug for IndexMigrationEngine {
 }
 
 /// Migration plan for transitioning between index strategies
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationPlan {
     pub migration_id: crate::utils::uuid::Uuid,
     pub collection_id: String,
@@ -78,7 +78,7 @@ pub struct MigrationPlan {
 }
 
 /// Individual migration step
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationStep {
     pub step_id: String,
     pub step_type: MigrationStepType,
@@ -88,7 +88,7 @@ pub struct MigrationStep {
 }
 
 /// Types of migration steps
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MigrationStepType {
     /// Create new index structure
     CreateNewIndex { index_spec: IndexSpecification },
@@ -125,7 +125,7 @@ pub enum MigrationStepType {
 }
 
 /// Index build parameters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexBuildParams {
     pub parallel_threads: usize,
     pub memory_limit_mb: usize,
@@ -149,7 +149,7 @@ pub enum VerificationType {
 }
 
 /// Resource requirements for migration steps
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceRequirements {
     pub cpu_cores: f32,
     pub memory_mb: usize,
@@ -158,7 +158,7 @@ pub struct ResourceRequirements {
 }
 
 /// Rollback point in migration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RollbackPoint {
     pub point_id: String,
     pub step_id: String,
@@ -167,7 +167,7 @@ pub struct RollbackPoint {
 }
 
 /// State snapshot for rollback
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateSnapshot {
     pub index_states: Vec<IndexState>,
     pub traffic_distribution: TrafficDistribution,
@@ -175,7 +175,7 @@ pub struct StateSnapshot {
 }
 
 /// Index state information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexState {
     pub index_spec: IndexSpecification,
     pub vector_count: u64,
@@ -184,14 +184,14 @@ pub struct IndexState {
 }
 
 /// Traffic distribution between indexes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrafficDistribution {
     pub read_distribution: Vec<(Data, f32)>,
     pub write_distribution: Vec<(Data, f32)>,
 }
 
 /// Migration result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationResult {
     pub migration_id: crate::utils::uuid::Uuid,
     pub success: bool,
@@ -203,7 +203,7 @@ pub struct MigrationResult {
 }
 
 /// Migration errors
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationError {
     pub step_id: String,
     pub error_type: MigrationErrorType,
@@ -212,7 +212,7 @@ pub struct MigrationError {
 }
 
 /// Types of migration errors
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MigrationErrorType {
     ResourceExhausted,
     DataCorruption,
@@ -253,7 +253,7 @@ pub struct StepResult {
 }
 
 /// Step metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepMetrics {
     pub cpu_usage: f32,
     pub memory_usage_mb: usize,
@@ -282,7 +282,7 @@ pub struct MigrationProgressTracker {
 }
 
 /// Migration progress
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationProgress {
     pub migration_id: crate::utils::uuid::Uuid,
     pub current_step: usize,
@@ -309,7 +309,7 @@ pub enum MigrationPhase {
 }
 
 /// Migration history entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MigrationHistory {
     pub migration_id: crate::utils::uuid::Uuid,
     pub collection_id: String,

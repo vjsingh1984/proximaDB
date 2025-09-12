@@ -40,7 +40,7 @@ pub struct AccessPatternCache {
 }
 
 /// Access information for a single item
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessInfo {
     /// When this item was last accessed
     pub last_access: Instant,
@@ -383,7 +383,7 @@ impl CacheStatsProvider for QuasarAccessCacheStatsProvider {
 }
 
 /// Summary of access patterns for an item
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessSummary {
     pub item_id: String,
     pub total_accesses: u32,
@@ -402,7 +402,7 @@ pub enum TierRecommendation {
 }
 
 /// Access pattern heatmap for visualization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessHeatmap {
     pub buckets: Vec<u32>,
     pub bucket_duration_seconds: u64,

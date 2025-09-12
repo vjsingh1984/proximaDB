@@ -34,7 +34,7 @@ pub fn base64_decode_url_safe(encoded: &str) -> Result<Vec<u8>, Base64Error> {
 }
 
 /// Base64 configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Base64Config {
     alphabet: &'static [u8; 64],
     padding: bool,

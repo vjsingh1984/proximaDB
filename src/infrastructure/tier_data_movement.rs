@@ -36,7 +36,7 @@ use crate::storage::engines::impls::sst::writer::SstableWriter;
 // use crate::storage::engines::impls::viper::flush::ViperFlushOperation; // TODO: Import correct flush module
 
 /// Data format used by each tier
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TierDataFormat {
     /// Memory tier uses bincode for speed
     Bincode,
@@ -52,7 +52,7 @@ pub struct TierDataMovement {
     storage_engine: StorageEngineType,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageEngineType {
     SST,
     VIPER,

@@ -13,7 +13,7 @@ use crate::proto::proximadb_v1 as proximadb;
 use crate::index::axis::types::{IndexSelectionStrategy, IndexSpecification, Data, IndexAlgorithm};
 
 /// Mock collection service for testing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MockCollectionService {
     pub should_fail: Arc<std::sync::Mutex<bool>>,
     pub index_configs: Arc<std::sync::Mutex<HashMap<String, crate::index::config::IndexConfig>>>,

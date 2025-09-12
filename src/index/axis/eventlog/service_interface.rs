@@ -16,7 +16,7 @@ use std::sync::Arc;
 use super::{ExtractionMode, FileIndexingStatus, IndexEvent, StorageEngineType};
 
 /// Event log service mode
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServiceMode {
     /// Embedded mode - runs within the main process
     Embedded,

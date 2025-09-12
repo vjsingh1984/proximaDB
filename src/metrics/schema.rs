@@ -31,7 +31,7 @@ pub enum AlertLevel {
 }
 
 /// Comprehensive metrics for a single collection
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionMetrics {
     // === Basic Statistics ===
     pub collection_id: String,
@@ -126,7 +126,7 @@ pub enum IndexBuildStatus {
 }
 
 /// Global metrics across all collections
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalMetrics {
     pub total_collections: i64,
     pub total_vectors: i64,
@@ -165,7 +165,7 @@ pub struct OptimizationHint {
 }
 
 /// Type of optimization hint
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HintType {
     IndexSelection,
     ParallelScan,

@@ -79,7 +79,7 @@ use crate::network::multi_server::{GrpcHttpServerConfig, MultiServerConfig, Rest
 /// - Same port used (5678)
 /// - Automatic HTTP → HTTPS redirect
 /// - Support for custom certificates or self-signed
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RestHttpServerBuilder {
     /// Socket address to bind (default: 0.0.0.0:5678)
     bind_address: SocketAddr,
@@ -288,7 +288,7 @@ impl RestHttpServerBuilder {
 /// - Small vectors (<1KB): No limit concerns
 /// - Large batches (1M vectors): May need 256MB+
 /// - Streaming recommended for huge datasets
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrpcHttpServerBuilder {
     /// Socket address to bind (default: 0.0.0.0:5679)
     bind_address: SocketAddr,

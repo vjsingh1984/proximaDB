@@ -24,7 +24,7 @@ use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// AXIS EventLog consumer configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConsumerConfig {
     /// How often to poll for new events (milliseconds)
     pub poll_interval_ms: u64,

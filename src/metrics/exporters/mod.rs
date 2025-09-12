@@ -72,13 +72,13 @@ impl Default for SystemMetrics {
 }
 
 /// Server-specific metrics
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerMetrics {
     pub uptime_seconds: f64,
 }
 
 /// Storage-specific metrics
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageMetrics {
     pub total_vectors: u64,
     pub total_collections: u64,
@@ -86,14 +86,14 @@ pub struct StorageMetrics {
 }
 
 /// Query-specific metrics
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryMetrics {
     pub total_queries: u64,
     pub failed_queries: u64,
 }
 
 /// Index-specific metrics
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexMetrics {
     pub total_indexes: u64,
     pub index_memory_usage_bytes: u64,

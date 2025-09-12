@@ -77,7 +77,7 @@ fn quantization_strategy_to_level(strategy: &QuantizationStrategy) -> UnifiedQua
 }
 
 /// Unified search configuration that works for SQL, REST, and gRPC
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedSearchConfig {
     /// Optimization goal (speed vs accuracy)
     pub optimization_goal: OptimizationGoal,

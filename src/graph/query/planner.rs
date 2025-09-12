@@ -46,7 +46,7 @@ pub struct QueryPlanner {
 }
 
 /// Configuration for query planning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlannerConfig {
     /// Maximum number of cached plans
     pub max_cached_plans: usize,
@@ -59,7 +59,7 @@ pub struct PlannerConfig {
 }
 
 /// Cost model parameters for estimation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostModel {
     /// Cost per node access (base cost)
     pub node_access_cost: f64,
@@ -78,7 +78,7 @@ pub struct CostModel {
 }
 
 /// Optimization flags
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationFlags {
     /// Enable index selection optimization
     pub use_indexes: bool,
@@ -110,7 +110,7 @@ pub struct GraphStatistics {
 }
 
 /// Statistics for a specific index
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexStats {
     /// Number of entries in index
     pub cardinality: u64,
@@ -271,7 +271,7 @@ pub struct CostEstimate {
 }
 
 /// Cached query plan with metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedPlan {
     plan: QueryPlan,
     access_count: u64,

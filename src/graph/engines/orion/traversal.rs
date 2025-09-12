@@ -38,7 +38,7 @@ use tokio::sync::Mutex;
 use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
 
 /// Traversal results containing nodes, paths, and statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraversalResult {
     /// Nodes visited during traversal (in visit order)
     pub nodes: Vec<Arc<Node>>,
@@ -1175,7 +1175,7 @@ mod tests {
     use super::*;
     use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::{Edge, Node, PropertyValue};
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]
     async fn test_bfs_basic() {

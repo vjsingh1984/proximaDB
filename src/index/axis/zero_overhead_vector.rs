@@ -85,7 +85,7 @@ use std::sync::Arc;
 ///
 /// Layout: [vector_data][id_string]
 /// No headers. No metadata. Just data.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZeroOverheadVector {
     data: Vec<u8>,
 }
@@ -158,7 +158,7 @@ impl ZeroOverheadVector {
 }
 
 /// Configuration for a zero-overhead collection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionConfig {
     pub dimension: usize,
     pub is_quantized: bool,

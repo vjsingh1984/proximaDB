@@ -1230,7 +1230,7 @@ impl CacheStatsProvider for SimpleCounterProvider {
 }
 
 fn extract_number_from_value(value: &crate::graph::PropertyValue) -> Option<f64> {
-    use crate::proto::proximadb_v1::property_value::Value as V;
+    // PropertyValue is now a struct, not enum - use direct field access as V;
     match &value.value {
         Some(V::IntValue(i)) => Some(*i as f64),
         Some(V::DoubleValue(d)) => Some(*d),
@@ -1240,7 +1240,7 @@ fn extract_number_from_value(value: &crate::graph::PropertyValue) -> Option<f64>
 }
 
 fn extract_string_from_value(value: &crate::graph::PropertyValue) -> Option<&str> {
-    use crate::proto::proximadb_v1::property_value::Value as V;
+    // PropertyValue is now a struct, not enum - use direct field access as V;
     match &value.value {
         Some(V::StringValue(s)) => Some(s.as_str()),
         _ => None,
@@ -1521,7 +1521,7 @@ impl Default for GraphService {
 mod tests {
     use super::*;
     use crate::graph::PropertyValue;
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]
     async fn test_service_creation() {

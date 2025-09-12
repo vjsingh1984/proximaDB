@@ -32,7 +32,7 @@ mod tests {
     use tracing::{debug, error, info};
 
     /// Mock storage engine for integration testing
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct MockStorageEngineWithMetrics {
         engine_name: String,
         operation_calls: Arc<Mutex<Vec<String>>>,

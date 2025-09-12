@@ -42,7 +42,7 @@ pub struct AppState {
 pub async fn vector_search(
     State(state): State<AppState>,
     Json(request): Json<V1VectorSearchRequest>,
-) -> ApiResult<JsonResponse<V1VectorOperationResponse>> {
+) -> ApiResult<JsonResponse<JsonVectorOperationResponse>> {
     info!(
         "Vector search request for collection: {}, top_k: {}",
         request.collection_id, request.top_k
@@ -71,14 +71,16 @@ pub async fn vector_search(
             ApiError::Internal(e.to_string())
         })?;
 
-    Ok(JsonResponse(v1_resp))
+    // Convert proto response to JSON wrapper
+    let json_response = v1_resp;
+    Ok(JsonResponse(json_response))
 }
 
 /// Aligned vector batch operation handler
 pub async fn vector_batch(
     State(state): State<AppState>,
     Json(request): Json<V1VectorBatchRequest>,
-) -> ApiResult<JsonResponse<V1VectorOperationResponse>> {
+) -> ApiResult<JsonResponse<JsonVectorOperationResponse>> {
     info!(
         "Vector batch operation for collection: {}, {} records",
         request.collection_id,
@@ -108,7 +110,9 @@ pub async fn vector_batch(
             ApiError::Internal(e.to_string())
         })?;
 
-    Ok(JsonResponse(v1_resp))
+    // Convert proto response to JSON wrapper
+    let json_response = v1_resp;
+    Ok(JsonResponse(json_response))
 }
 
 /// Aligned collection operation handler
@@ -270,11 +274,11 @@ pub async fn delete_collection(
     Ok(JsonResponse(response))
 }
 
-/// Example using ProtoApiResponse for consistent structure
+/// Example using JSON wrapper types for consistent structure
 pub async fn vector_search_with_metadata(
     State(state): State<AppState>,
     Json(request): Json<V1VectorSearchRequest>,
-) -> ApiResult<JsonResponse<ProtoApiResponse<V1VectorOperationResponse>>> {
+) -> ApiResult<JsonResponse<crate::api::json_types::JsonSuccessResponse<JsonVectorOperationResponse>>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
 
@@ -291,21 +295,20 @@ pub async fn vector_search_with_metadata(
     {
         Ok(response) => {
             let elapsed = start_time.elapsed();
-
-            let api_response = ProtoApiResponse::success(response).with_metadata(
-                crate::network::rest::proto_json::ResponseMetadata {
-                    request_id,
-                    processing_time_ms: elapsed.as_millis() as u64,
-                    server_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-                },
+            info!(
+                "Vector search {} completed in {}ms",
+                request_id, elapsed.as_millis()
             );
 
-            Ok(JsonResponse(api_response))
+            // Convert proto response to JSON wrapper
+            let json_response = response;
+            let success_response = Ok(axum::Json(json_response));
+
+            Ok(JsonResponse(success_response))
         }
         Err(e) => {
-            error!("Vector search failed: {}", e);
-            let api_response = ProtoApiResponse::error(ApiError::Internal(e.to_string()));
-            Ok(JsonResponse(api_response))
+            error!("Vector search {} failed: {}", request_id, e);
+            Err(ApiError::Internal(e.to_string()))
         }
     }
 }
@@ -350,7 +353,7 @@ pub struct SqlColumnInfo {
 pub async fn execute_sql(
     State(state): State<AppState>,
     Json(request): Json<SqlQueryRequest>,
-) -> ApiResult<JsonResponse<ProtoApiResponse<proximadb_v1::ExecuteSqlResponse>>> {
+) -> ApiResult<JsonResponse<crate::api::json_types::JsonSuccessResponse<serde_json::Value>>> {
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
 
@@ -387,28 +390,33 @@ pub async fn execute_sql(
         )
         .await
     {
-        Ok(mut v1_resp) => {
+        Ok(v1_resp) => {
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
-            v1_resp.execution_time_ms = execution_time_ms as u64;
 
-            let meta = crate::network::rest::proto_json::ResponseMetadata {
-                request_id: request_id.clone(),
-                processing_time_ms: execution_time_ms,
-                server_version: None,
-            };
-            let api_response = ProtoApiResponse::success(v1_resp).with_metadata(meta);
+            // Convert SQL response to JSON value for now
+            // TODO: Create proper JsonExecuteSqlResponse wrapper if needed
+            let json_data = serde_json::json!({
+                "rows": v1_resp.rows.iter().map(|row| {
+                    row.fields.iter().map(sql_value_to_json).collect::<Vec<_>>()
+                }).collect::<Vec<_>>(),
+                "column_names": v1_resp.column_names,
+                "execution_time_ms": execution_time_ms,
+                "affected_rows": v1_resp.affected_rows,
+                "request_id": request_id
+            });
+
+            let success_response = Ok(axum::Json(json_data));
 
             info!(
                 "SQL query {} completed in {}ms",
                 request_id, execution_time_ms
             );
 
-            Ok(JsonResponse(api_response))
+            Ok(JsonResponse(success_response))
         }
         Err(e) => {
             error!("SQL query {} failed: {}", request_id, e);
-            let api_response = ProtoApiResponse::error(ApiError::Internal(e.to_string()));
-            Ok(JsonResponse(api_response))
+            Err(ApiError::Internal(e.to_string()))
         }
     }
 }
@@ -470,7 +478,7 @@ pub struct ExplainQueryResponse {
 pub async fn explain_sql(
     State(state): State<AppState>,
     Json(request): Json<ExplainQueryRequest>,
-) -> ApiResult<JsonResponse<ProtoApiResponse<ExplainQueryResponse>>> {
+) -> ApiResult<JsonResponse<crate::api::json_types::JsonSuccessResponse<ExplainQueryResponse>>> {
     let request_id = Uuid::new_v4().to_string();
 
     info!(
@@ -500,15 +508,10 @@ pub async fn explain_sql(
         request_id: request_id.clone(),
     };
 
-    let meta = crate::network::rest::proto_json::ResponseMetadata {
-        request_id: request_id.clone(),
-        processing_time_ms: 0,
-        server_version: None,
-    };
-    let api_response = ProtoApiResponse::success(response).with_metadata(meta);
+    let success_response = Ok(axum::Json(response));
 
     info!("EXPLAIN query {} completed", request_id);
-    Ok(JsonResponse(api_response))
+    Ok(JsonResponse(success_response))
 }
 
 // Note: EXPLAIN now uses QueryEngine::explain_sql() for real plans/hints.

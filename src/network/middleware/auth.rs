@@ -26,7 +26,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 /// Authentication configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
@@ -47,7 +47,7 @@ impl Default for AuthConfig {
 }
 
 /// User information associated with an API key
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserInfo {
     pub user_id: String,
     pub tenant_id: Option<String>,

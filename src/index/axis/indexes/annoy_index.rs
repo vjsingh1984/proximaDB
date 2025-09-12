@@ -700,7 +700,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
 }
 
 /// Annoy-specific statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnoyStats {
     pub vector_count: usize,
     pub tree_count: usize,

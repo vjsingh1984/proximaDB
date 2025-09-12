@@ -27,7 +27,7 @@ pub enum FileOperation {
 }
 
 /// Stats for a specific storage engine
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineFileStats {
     pub files_read: u64,
     pub files_written: u64,

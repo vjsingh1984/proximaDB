@@ -111,11 +111,12 @@ impl ExecutionPlanner {
                 .and_then(|t| t.alias.clone())
                 .unwrap_or_else(|| "l".to_string());
             for j in &select.joins {
-                let kind = match j.kind {
-                    crate::query::ast::JoinKind::Inner => crate::query::execution::JoinKind::Inner,
-                    crate::query::ast::JoinKind::Left => crate::query::execution::JoinKind::Left,
+                let kind = match j.join_type {
+                    crate::query::ast::JoinType::Inner => crate::query::execution::JoinKind::Inner,
+                    crate::query::ast::JoinType::LeftOuter => crate::query::execution::JoinKind::Left,
+                    _ => continue, // Skip unsupported join types for now
                 };
-                let (lks, rks) = if let Some(on) = &j.on {
+                let (lks, rks) = if let Some(on) = &j.on_condition {
                     let pairs = Self::extract_join_key_pairs_static(on);
                     if pairs.is_empty() { (vec!["".into()], vec!["".into()]) } else {
                         let (ls, rs): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
@@ -124,7 +125,7 @@ impl ExecutionPlanner {
                 } else {
                     (vec!["".into()], vec!["".into()])
                 };
-                let right_alias = j.right.alias.clone().unwrap_or_else(|| "r".to_string());
+                let right_alias = j.right_table.alias.clone().unwrap_or_else(|| "r".to_string());
                 operations.push(ExecutionOperation::Join {
                     kind,
                     left_keys: lks,
@@ -906,14 +907,14 @@ struct QueryAnalysis {
 }
 
 /// Extracted args for SKS functions
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SksSimilarArgs {
     pub query: Expr,
     pub metric: Option<String>,
     pub threshold: Option<f64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct SksFollowArgs {
     pub start: Expr,
     pub edge: String,

@@ -1,6 +1,6 @@
 //! Internal AST nodes for query representation.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Query {
     Select(Select),
     /// WITH ctes AS (...) SELECT ...
@@ -17,7 +17,7 @@ pub enum Query {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Select {
     pub projection: Vec<ProjectionItem>,
     pub from: Vec<TableRef>,
@@ -30,40 +30,40 @@ pub struct Select {
     pub offset: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionItem {
     pub expr: Expr,
     pub alias: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cte {
     pub name: String,
     pub query: Box<Query>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SetOp {
     Union,
     Intersect,
     Except,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableRef {
     pub name: Option<String>,
     pub subquery: Option<Box<Query>>,
     pub alias: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Join {
     pub join_type: JoinType,
     pub right_table: TableRef,
     pub on_condition: Option<Expr>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JoinType {
     Inner,
     LeftOuter,
@@ -72,13 +72,13 @@ pub enum JoinType {
     Cross,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderByExpr {
     pub expr: Expr,
     pub asc: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
     // Generic
     Identifier(String),
@@ -117,7 +117,7 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Literal {
     String(String),
     Number(f64),
@@ -125,13 +125,13 @@ pub enum Literal {
     Null,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnaryOp {
     Not,
     Neg,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BinaryOp {
     Eq,
     Ne,

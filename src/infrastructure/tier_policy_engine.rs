@@ -421,7 +421,7 @@ impl CollectionStorageConfig {
 }
 
 /// Smart policy engine with collection-aware constraints
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartTierPolicy {
     /// Workload type determines default behavior
     workload_type: WorkloadType,
@@ -487,7 +487,7 @@ pub enum DurabilityPreference {
     CostOptimized,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TierConfig {
     /// Maximum capacity for this tier (bytes)
     max_capacity_bytes: Option<usize>,
@@ -505,7 +505,7 @@ pub struct TierConfig {
     min_storage_duration: Option<Duration>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlacementRule {
     /// Condition to match
     condition: PlacementCondition,
@@ -555,7 +555,7 @@ pub enum PlacementCondition {
     Or(Vec<PlacementCondition>),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryThresholds {
     /// Start promoting data to next tier (0.0-1.0)
     promotion_threshold: f64,
@@ -567,7 +567,7 @@ pub struct MemoryThresholds {
     target_utilization: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostOptimization {
     /// Maximum total monthly cost (USD)
     max_monthly_cost: Option<f64>,
@@ -879,7 +879,7 @@ pub struct GlobalMetricsCollector {
     collection_metrics: HashMap<String, CollectionTierMetrics>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TierUsageStats {
     /// Total capacity across all collections
     pub total_capacity_bytes: usize,
@@ -891,7 +891,7 @@ pub struct TierUsageStats {
     pub avg_access_latency_ms: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionTierMetrics {
     pub collection_id: String,
     pub tier_distribution: HashMap<InfrastructureTier, usize>, // bytes per tier

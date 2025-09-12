@@ -72,7 +72,7 @@ use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, CrossCa
 use tokio::time::{Duration, Instant};
 
 /// QUASAR hybrid graph engine configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuasarConfig {
     /// Maximum size of hot tier (in number of nodes)
     pub hot_tier_max_nodes: usize,
@@ -634,7 +634,7 @@ impl GraphEngine for QuasarGraphEngine {
 mod tests {
     use super::*;
     use crate::graph::PropertyValue;
-    use crate::proto::proximadb_v1::property_value::Value;
+    // PropertyValue is now a struct, not enum - use direct field access;
     use tempfile::TempDir;
 
     #[tokio::test]

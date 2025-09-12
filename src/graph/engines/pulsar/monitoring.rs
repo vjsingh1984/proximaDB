@@ -71,7 +71,7 @@ pub struct HealthStatus {
 }
 
 /// Component status levels
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ComponentStatus {
     Healthy,
     Degraded,

@@ -251,7 +251,7 @@ impl IndexStrategyBuilder {
 }
 
 /// Runtime index strategy that can adapt based on performance
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdaptiveIndexStrategy {
     pub base_strategy: IndexSelectionStrategy,
     pub performance_history: Vec<QueryPerformance>,

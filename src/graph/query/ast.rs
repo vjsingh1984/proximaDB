@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// A compiled pattern ready for execution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledPattern {
     /// Pattern nodes
     pub nodes: Vec<NodePattern>,
@@ -197,7 +197,7 @@ pub struct OrderBy {
 }
 
 /// Variable binding during pattern matching
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VariableBinding {
     /// Bound to a specific node
     Node(Arc<Node>),
@@ -208,14 +208,14 @@ pub enum VariableBinding {
 }
 
 /// Element in a path
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PathElement {
     Node(Arc<Node>),
     Edge(Arc<Edge>),
 }
 
 /// Pattern matching result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchResult {
     /// Variable bindings for this match
     pub bindings: HashMap<String, VariableBinding>,
@@ -224,7 +224,7 @@ pub struct MatchResult {
 }
 
 /// Helper struct for path finding
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FoundPath {
     pub elements: Vec<PathElement>,
     pub length: u32,
