@@ -119,7 +119,7 @@ pub struct SstCompactor {
 
 impl SstCompactor {
     /// Notify AXIS indexes of changes during compaction
-    async fn notify_axis_of_changes(&self, stats: &ZeroCopyCompactionStats) {
+    async fn notify_axis_of_changes(&self, stats: &ZeroCopyCompactionStats, collection_id: &str, output_file: &str) -> Result<()> {
         // This would integrate with AXIS similar to how EnhancedCompactionStats does it
         // For now, just log the notification
         if stats.recommend_index_rebuild {
@@ -159,6 +159,7 @@ impl SstCompactor {
                 }
             }
         }
+        Ok(())
     }
 
     /// Check if a record is append-only (no meaningful ID)

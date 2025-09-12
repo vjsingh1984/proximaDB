@@ -11,6 +11,7 @@ use crate::query::execution::{
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 

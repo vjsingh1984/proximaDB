@@ -59,7 +59,7 @@ use crate::core::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, NodeId, NodeQuery, OperationMode,
     TraversalRequest, TraversalResponse,
-    engines::{GraphEngine, orion::OrionGraphEngine},
+    engines::{GraphEngine, orion::{OrionGraphEngine, traversal::TraversalConfig}},
 };
 use crate::metrics::updater::OperationMetricsUpdate;
 use dashmap::DashMap;
@@ -1282,12 +1282,18 @@ impl GraphService {
         _override_prefetch_budget: Option<usize>,
     ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
         // Construct TraversalConfig using overrides when provided
-        let traversal_config = crate::graph::TraversalConfig {
+        let traversal_config = TraversalConfig {
             enable_prefetch: _override_enable_prefetch.unwrap_or(true),
             prefetch_budget: _override_prefetch_budget.unwrap_or(1000),
-            max_depth: request.max_depth.unwrap_or(5),
-            include_properties: request.include_properties,
-            filter_edges: request.edge_filters.clone(),
+            max_depth: request.max_depth.map(|d| d as u32),
+            max_nodes: None,
+            edge_types: None,
+            node_filter: None,
+            early_stop: None,
+            track_paths: false,
+            parallel_processing: true,
+            timeout_ms: None,
+            max_frontier: None,
         };
         
         // Execute traversal with configuration
@@ -1298,7 +1304,7 @@ impl GraphService {
     async fn traverse_with_config(
         &self,
         request: crate::proto::proximadb_v1::TraversalRequest, 
-        config: crate::graph::TraversalConfig
+        config: TraversalConfig
     ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
         // Use the configuration to optimize traversal execution
         let mut response = self.traverse(request).await?;

@@ -103,16 +103,18 @@ impl OptimizedNovaOperations {
 
             // Phase 1: Row group pruning using statistics
             // Pass parquet metadata from file system
+            // TODO: file_path should be derived from nova_file when properly integrated
+            let file_path = "placeholder.parquet"; // Temporary placeholder
             let parquet_metadata = self.load_parquet_metadata(&file_path).await?;
-            let candidate_row_groups = self.prune_row_groups_with_metadata(&parquet_metadata, &query_vector)?;
+            let candidate_row_groups = self.prune_row_groups_with_metadata(&parquet_metadata, &query)?;
             debug!("Pruned to {} row groups using actual metadata", candidate_row_groups.len());
             
             // Phase 2: Columnar filtering with SIMD using actual Parquet metadata
             return Ok(self.execute_columnar_search_with_metadata(
                 &parquet_metadata,
                 &candidate_row_groups,
-                &query_vector,
-                k
+                &query,
+                top_k
             ).await?);
         }
     }

@@ -16,7 +16,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::Provenance;
 use crate::storage::engines::UnifiedStorageEngine;

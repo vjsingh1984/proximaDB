@@ -1,0 +1,57 @@
+
+= Duplication Report
+
+This report details significant code and feature duplications found in the ProximaDB codebase.
+
+== Distance and Similarity Score Calculation
+
+There is a significant overlap in data structures and logic for distance and similarity score calculation.
+
+*Duplication*:
+
+* The `SimilarityResult` struct in `src/compute/distance_computation/engine.rs` is largely redundant with the `InternalSearchResult` and `OptimizedSearchRecord` structs in `src/core/search/results.rs`. All three structs store a score or similarity value.
+* Distance calculation logic is scattered across the codebase. For example, both `UnifiedDistanceCompute` and `quantized.rs` contain distance calculation logic.
+
+*Recommendation*:
+
+* Consolidate the `SimilarityResult` struct into `InternalSearchResult` and `OptimizedSearchRecord`. This will simplify the code and eliminate redundant data structures.
+* Centralize all distance calculation logic into the `UnifiedDistanceCompute` struct. This will improve code maintainability and reduce the chance of inconsistencies.
+
+== Command-Line Interface
+
+There are multiple, almost identical, `Cli` and `Commands` structs for command-line parsing.
+
+*Duplication*:
+
+* `src/bin/archived/proximadb-bench-simple.rs`, `src/bin/archived/proximadb-bench.rs`, and `src/bin/proximadb-bench-consolidated.rs` each define their own `Cli` and `Commands` structs. These structs are nearly identical.
+
+*Recommendation*:
+
+* Create a single, shared `cli` module that defines the `Cli` and `Commands` structs.
+* Have all the benchmark binaries use this shared module. This will reduce code duplication and make it easier to maintain the command-line interface.
+
+== Bloom Filter
+
+There is a lot of duplicated code related to Bloom filters.
+
+*Duplication*:
+
+* The `SstableBloomFilter`, `BloomFilterBuilder`, and `SerializedSstableBloomFilter` structs all contain similar configuration and methods for creating and managing bloom filters.
+
+*Recommendation*:
+
+* Create a generic `BloomFilter` struct that implements the `BloomFilterStrategy` trait. This struct would hold the bloom filter data and configuration.
+* Refactor `SstableBloomFilter` and `BloomFilterBuilder` to use this new generic `BloomFilter` struct, removing the duplicated code.
+* The `BloomFilter` struct should handle its own serialization, making the `SerializedSstableBloomFilter` struct redundant.
+
+== Generic Wrappers
+
+There is a lot of duplicated code in the generic wrapper structs.
+
+*Duplication*:
+
+* The `GenericConfig`, `GenericMetadata`, `GenericStats`, and `GenericResult` structs in `src/core/foundation/generic_types.rs` are all generic wrappers that implement similar `new` and `with_*` methods.
+
+*Recommendation*:
+
+* Use macros to generate the `new` and `with_*` methods for these structs. This will reduce code duplication and make the code easier to maintain.

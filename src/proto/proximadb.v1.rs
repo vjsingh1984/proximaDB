@@ -2364,6 +2364,7 @@ pub struct VectorOperationResponse {
     pub error_code: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Quantization configuration
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QuantizationConfig {
@@ -6225,6 +6226,7 @@ pub struct Collection {
     pub storage_assignment: ::core::option::Option<StorageAssignment>,
 }
 /// Index configuration
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IndexConfig {

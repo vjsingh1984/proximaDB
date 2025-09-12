@@ -88,21 +88,12 @@ impl FlushHandler for SstFlushHandlerAdapter {
 
     async fn compact_files(
         &self,
-        _collection_id: &str,
-        _files: &[String],
-        _output_path: &str,
+        collection_id: &str,
+        files: &[String],
+        output_path: &str,
     ) -> Result<()> {
-        // Implement actual compaction using existing infrastructure
-        match self.engine.compact_files(input_files, output_path).await {
-            Ok(_) => {
-                info!("Compaction completed: {} files -> {}", input_files.len(), output_path);
-                Ok(())
-            }
-            Err(e) => {
-                warn!("Compaction failed: {}", e);
-                Err(e)
-            }
-        }
+        // Delegate to the inner SST flush handler
+        self.inner.compact_files(collection_id, files, output_path).await.map_err(|e| e.into())
     }
 
     fn engine_name(&self) -> &'static str {
@@ -132,21 +123,12 @@ impl FlushHandler for ViperFlushHandlerAdapter {
 
     async fn compact_files(
         &self,
-        _collection_id: &str,
-        _files: &[String],
-        _output_path: &str,
+        collection_id: &str,
+        files: &[String],
+        output_path: &str,
     ) -> Result<()> {
-        // Implement actual compaction using existing infrastructure
-        match self.engine.compact_files(input_files, output_path).await {
-            Ok(_) => {
-                info!("Compaction completed: {} files -> {}", input_files.len(), output_path);
-                Ok(())
-            }
-            Err(e) => {
-                warn!("Compaction failed: {}", e);
-                Err(e)
-            }
-        }
+        // Delegate to the inner VIPER flush handler
+        self.inner.compact_files(collection_id, files, output_path).await.map_err(|e| e.into())
     }
 
     fn engine_name(&self) -> &'static str {

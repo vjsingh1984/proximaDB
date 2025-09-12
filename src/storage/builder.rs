@@ -661,13 +661,13 @@ impl StorageSystemBuilder {
         match self.config.data_storage.layout_strategy {
             StorageLayoutStrategy::Viper => {
                 // Initialize VIPER engine
-                if let Ok(viper_engine) = crate::storage::engines::factory::EngineFactory::create_viper_engine(&self.config).await {
+                if let Ok(viper_engine) = crate::storage::engines::factory::StorageEngineFactory::create_viper_engine(&self.config).await {
                     engines.push(viper_engine);
                 }
             }
             StorageLayoutStrategy::Sst => {
                 // Initialize SST engine  
-                if let Ok(sst_engine) = crate::storage::engines::factory::EngineFactory::create_sst_engine(&self.config).await {
+                if let Ok(sst_engine) = crate::storage::engines::factory::StorageEngineFactory::create_sst_engine(&self.config).await {
                     engines.push(sst_engine);
                 }
             }
@@ -696,12 +696,12 @@ impl StorageSystemBuilder {
         let mut engines = Vec::new();
         
         // Add VIPER for analytics workloads
-        if let Ok(viper) = crate::storage::engines::factory::EngineFactory::create_viper_engine(&self.config).await {
+        if let Ok(viper) = crate::storage::engines::factory::StorageEngineFactory::create_viper_engine(&self.config).await {
             engines.push(viper);
         }
         
         // Add SST for high-throughput writes
-        if let Ok(sst) = crate::storage::engines::factory::EngineFactory::create_sst_engine(&self.config).await {
+        if let Ok(sst) = crate::storage::engines::factory::StorageEngineFactory::create_sst_engine(&self.config).await {
             engines.push(sst);
         }
         

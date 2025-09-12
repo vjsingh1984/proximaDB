@@ -340,7 +340,7 @@ impl From<Vec<crate::core::search::results::OptimizedSearchRecord>> for ProtoSea
 
 /// Convert a vector of native search results directly to proto SearchVectorRecord
 pub fn convert_search_results(
-    native_results: Vec<InternalSearchResult>,
+    native_results: Vec<OptimizedSearchRecord>,
     include_vectors: bool,
     include_metadata: bool,
 ) -> Vec<SearchVectorRecord> {

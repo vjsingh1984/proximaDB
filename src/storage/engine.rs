@@ -1014,7 +1014,7 @@ impl StorageEngine {
         }
 
         // Clear metadata store by deleting all collections
-        for _collection in collections {
+        for collection in collections {
             // Use SharedServices for metadata operations
             if let Some(ref services) = self.shared_services {
                 if let Err(e) = services.collection_service.delete_collection(&collection.id).await {
@@ -1054,7 +1054,7 @@ impl StorageEngine {
         // Get vectors from SST storage (if available)
         if let Some(sst_storage) = self.sst_storages.get(collection_id) {
             // Implement SST iteration for get_all_vectors
-            match sst_storage.scan_all_vectors(collection_id, offset, limit).await {
+            match sst_storage.scan_all_vectors(collection_id, 0, None).await {
                 Ok(sst_vectors) => {
                     debug!("Retrieved {} vectors from SST storage for collection {}", 
                            sst_vectors.len(), collection_id);
