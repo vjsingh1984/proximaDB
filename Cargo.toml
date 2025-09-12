@@ -160,7 +160,7 @@ thiserror = "1.0"
 # # uuid = { version = "1.0", features = ["v4", "serde"] }  # Replaced with internal implementation  # Replaced with internal implementation
 # # blake3 = "1.5"  # Replaced with internal hash implementation - replaced with internal implementation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
-# # base64 = "0.21"  # Replaced with internal encoding implementation - replaced with internal implementation
+# base64 = "0.21"  # Using internal implementation in utils::encoding
 crossbeam = "0.8"
 parking_lot = "0.12"
 async-trait = "0.1"

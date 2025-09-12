@@ -2,6 +2,7 @@
 // This allows memory-efficient oneof while maintaining JSON compatibility
 
 use serde::{Serialize, Deserialize, Serializer, Deserializer};
+use crate::utils::encoding::{base64_encode, base64_decode};
 use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlValueVariant};
 use crate::proto::proximadb_v1::{PropertyValue, property_value::Value as PropertyValueVariant};
 
@@ -28,7 +29,7 @@ impl Serialize for SqlValue {
                 map.serialize_entry("int64_value", v)?;
             }
             Some(SqlValueVariant::BytesValue(v)) => {
-                map.serialize_entry("bytes_value", &base64::encode(v))?;
+                map.serialize_entry("bytes_value", &base64_encode(v))?;
             }
             Some(SqlValueVariant::NullValue(_)) => {
                 map.serialize_entry("null_value", &serde_json::Value::Null)?;
@@ -76,7 +77,7 @@ impl<'de> Deserialize<'de> for SqlValue {
         } else if let Some(v) = helper.int64_value {
             Some(SqlValueVariant::Int64Value(v))
         } else if let Some(v) = helper.bytes_value {
-            let bytes = base64::decode(v).map_err(serde::de::Error::custom)?;
+            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
             Some(SqlValueVariant::BytesValue(bytes))
         } else if helper.null_value.is_some() {
             Some(SqlValueVariant::NullValue(0)) // prost_types::NullValue
@@ -115,7 +116,7 @@ impl Serialize for PropertyValue {
                 map.serialize_entry("bool_value", v)?;
             }
             Some(PropertyValueVariant::BytesValue(v)) => {
-                map.serialize_entry("bytes_value", &base64::encode(v))?;
+                map.serialize_entry("bytes_value", &base64_encode(v))?;
             }
             Some(PropertyValueVariant::ArrayValue(v)) => {
                 map.serialize_entry("array_value", v)?;
@@ -124,7 +125,7 @@ impl Serialize for PropertyValue {
                 map.serialize_entry("object_value", v)?;
             }
             Some(PropertyValueVariant::VectorValue(v)) => {
-                map.serialize_entry("vector_value", &v.elements)?;
+                map.serialize_entry("vector_value", &v.values)?;
             }
             None => {
                 map.serialize_entry("null_value", &serde_json::Value::Null)?;
@@ -164,7 +165,7 @@ impl<'de> Deserialize<'de> for PropertyValue {
         } else if let Some(v) = helper.bool_value {
             Some(PropertyValueVariant::BoolValue(v))
         } else if let Some(v) = helper.bytes_value {
-            let bytes = base64::decode(v).map_err(serde::de::Error::custom)?;
+            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
             Some(PropertyValueVariant::BytesValue(bytes))
         } else if let Some(v) = helper.array_value {
             Some(PropertyValueVariant::ArrayValue(v))
@@ -172,7 +173,7 @@ impl<'de> Deserialize<'de> for PropertyValue {
             Some(PropertyValueVariant::ObjectValue(v))
         } else if let Some(v) = helper.vector_value {
             Some(PropertyValueVariant::VectorValue(crate::proto::proximadb_v1::VectorData {
-                elements: v,
+                values: v,
             }))
         } else {
             None
@@ -199,7 +200,7 @@ impl Serialize for crate::proto::proximadb_v1::SourceContent {
         
         match &self.data {
             Some(Data::TextContent(v)) => map.serialize_entry("text_content", v)?,
-            Some(Data::BinaryContent(v)) => map.serialize_entry("binary_content", &base64::encode(v))?,
+            Some(Data::BinaryContent(v)) => map.serialize_entry("binary_content", &base64_encode(v))?,
             Some(Data::ExternalReference(v)) => map.serialize_entry("external_reference", v)?,
             None => map.serialize_entry("null_content", &serde_json::Value::Null)?,
         }
