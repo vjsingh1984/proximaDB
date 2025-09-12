@@ -70,7 +70,7 @@ pub trait RelationsStore: Send + Sync {
 }
 
 /// Represents a path through the relationship graph
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GraphPath {
     /// Sequence of entity IDs in the path
     pub entities: Vec<String>,
@@ -98,7 +98,7 @@ pub struct InMemoryRelationsStore {
     storage_engine: Arc<dyn UnifiedStorageEngine>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct RelationEdge {
     entity_id: String,
     weight: f32,
@@ -136,14 +136,90 @@ impl InMemoryRelationsStore {
 
     /// Load relationships from storage on startup
     pub async fn load_from_storage(&self, collection_id: &str) -> Result<()> {
-        // TODO: Implement loading from persistent storage
-        // This would scan the storage engine for all relationship records
-        // and rebuild the in-memory adjacency lists
+        // Use ORION graph engine to load relationships from persistent storage
+        // This leverages the existing graph storage infrastructure
+        
+        if let Some(ref graph_engine) = self.graph_engine {
+            // Query ORION engine for all edges in this collection
+            match graph_engine.get_all_edges(Some(collection_id)) {
+                Ok(edges) => {
+                    let mut forward_map = self.forward_index.write().await;
+                    let mut reverse_map = self.reverse_index.write().await;
+                    
+                    // Rebuild adjacency lists from ORION storage
+                    for edge in edges {
+                        let relation = self.convert_edge_to_relation(&edge)?;
+                        
+                        forward_map.entry(edge.from_node_id.clone())
+                            .or_insert_with(Vec::new)
+                            .push(relation.clone());
+                        
+                        reverse_map.entry(edge.to_node_id.clone())
+                            .or_insert_with(Vec::new)
+                            .push(relation);
+                    }
+                    
+                    info!("Loaded {} relationships from ORION engine for collection {}", 
+                          forward_map.len(), collection_id);
+                }
+                Err(e) => {
+                    debug!("No existing relationships found in ORION for collection {}: {}", 
+                           collection_id, e);
+                }
+            }
+        }
+        
         Ok(())
     }
 
-    /// Persist a relationship to storage
+    /// Convert ORION Edge to SKS Relation
+    fn convert_edge_to_relation(&self, edge: &crate::proto::proximadb_v1::Edge) -> Result<Relation> {
+        // Convert proto Edge to proto Relation
+        Ok(Relation {
+            source_entity_id: edge.from_node_id.clone(),
+            target_entity_id: edge.to_node_id.clone(),
+            relation_type: edge.edge_type.clone(),
+            properties: edge.properties.clone(),
+            weight: edge.weight,
+            created_at_ms: edge.created_at_ms,
+        })
+    }
+    
+    /// Persist a relationship to storage using ORION engine
     async fn persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
+        // Use ORION graph engine for persistence instead of direct file I/O
+        if let Some(ref graph_engine) = self.graph_engine {
+            let edge = crate::proto::proximadb_v1::Edge {
+                id: format!("{}:{}:{}", relation.source_entity_id, relation.relation_type, relation.target_entity_id),
+                from_node_id: relation.source_entity_id.clone(),
+                to_node_id: relation.target_entity_id.clone(),
+                edge_type: relation.relation_type.clone(),
+                properties: relation.properties.clone(),
+                weight: relation.weight,
+                created_at_ms: relation.created_at_ms,
+                updated_at_ms: chrono::Utc::now().timestamp_millis(),
+            };
+            
+            graph_engine.insert_edge(Arc::new(edge))?;
+            debug!("Persisted relation to ORION: {} -> {}", 
+                   relation.source_entity_id, relation.target_entity_id);
+        }
+        
+        Ok(())
+    }
+    
+    /// Remove a relationship from storage using ORION engine  
+    async fn remove_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
+        if let Some(ref graph_engine) = self.graph_engine {
+            let edge_id = format!("{}:{}:{}", relation.source_entity_id, relation.relation_type, relation.target_entity_id);
+            graph_engine.delete_edge(&edge_id)?;
+            debug!("Removed relation from ORION: {}", edge_id);
+        }
+        Ok(())
+    }
+    
+    /// Legacy persist method - now delegates to ORION
+    async fn _legacy_persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         let key = Self::relation_key(
             collection_id,
             &relation.source_entity_id,

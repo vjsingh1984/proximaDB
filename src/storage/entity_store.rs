@@ -196,7 +196,7 @@ impl ProximaEntityStore {
                         model_version: "v1".to_string(),
                         vector: v.clone(),
                         dimension: v.len() as u32,
-                        created_at: None,
+                        created_at_ms: chrono::Utc::now().timestamp_millis(),
                         model_params: HashMap::new(),
                         modality: crate::proto::proximadb_v1::Modality::Text as i32,
                     });

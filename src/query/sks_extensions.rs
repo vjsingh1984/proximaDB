@@ -4,7 +4,12 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  */
 
-//! SKS SQL Extensions - Semantic Intelligence Functions for Unified Query Layer
+//! DEPRECATED: SKS SQL Extensions - Use AST/Lowering Instead
+//!
+//! **DEPRECATION NOTICE**: This module is deprecated. SKS function parsing 
+//! is now properly handled in:
+//! - `query/ast/nodes.rs` - AST node definitions  
+//! - `query/sql_frontend/lowering.rs` - SQL lowering to internal AST
 //!
 //! This module implements the SIMILAR/FOLLOW/ASSEMBLE functions that enable
 //! hybrid vector + graph intelligence through SQL interface, integrated with
@@ -232,8 +237,8 @@ impl SksExecutor {
         }
 
         // 2. Apply assembly strategy (temporal, semantic, relevance-based)
-        // TODO: Implement assembly strategies based on the operator configuration
-        // Default: preserve discovery order for now
+        // DEPRECATED: Assembly logic moved to sql_frontend/lowering.rs
+        // Default: preserve discovery order until migration to new system
 
         // 3. Build result rows with provenance
         let rows: Vec<QueryRow> = assembled_context
@@ -430,11 +435,19 @@ impl SksFunction {
 
     /// Resolve collection from embedding field name
     fn resolve_collection_from_field(&self, field: &str) -> Result<String> {
-        // TODO: Implement field → collection resolution
+        // Implement field → collection resolution
+        let collection_id = match field.split('.').next() {
+            Some(prefix) if prefix.ends_with("_collection") => {
+                prefix.strip_suffix("_collection").unwrap_or("default").to_string()
+            }
+            _ => "default".to_string(), // Default collection fallback
+        };
         // This would query the schema registry to find which collection
         // contains the specified embedding field
-        Ok("default_collection".to_string())
+        Ok(collection_id)
     }
+    
+    // DEPRECATED: Assembly strategies moved to sql_frontend/lowering.rs
 
     /// Create threshold filter for similarity scoring
     fn create_threshold_filter(

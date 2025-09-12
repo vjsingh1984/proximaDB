@@ -47,7 +47,7 @@ pub trait ProvenanceRegistry: Send + Sync {
 }
 
 /// Represents the complete lineage of an entity
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProvenanceLineage {
     /// The entity ID
     pub entity_id: String,
@@ -66,7 +66,7 @@ pub struct ProvenanceLineage {
 }
 
 /// Information about a source document
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SourceInfo {
     pub source_id: String,
     pub source_type: String,
@@ -76,7 +76,7 @@ pub struct SourceInfo {
 }
 
 /// Information about a chunk
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ChunkInfo {
     pub chunk_id: String,
     pub source_id: String,
@@ -87,7 +87,7 @@ pub struct ChunkInfo {
 }
 
 /// Step in the extraction pipeline
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ExtractionStep {
     pub step_name: String,
     pub model_id: Option<String>,
@@ -96,7 +96,7 @@ pub struct ExtractionStep {
 }
 
 /// Result of provenance validation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProvenanceValidation {
     pub is_valid: bool,
     pub missing_sources: Vec<String>,
