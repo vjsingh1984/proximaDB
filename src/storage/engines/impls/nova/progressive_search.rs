@@ -16,24 +16,24 @@ use tracing::{debug, info, instrument};
 // Import types from refactored quantized_columns module
 
 // Create compatibility types for progressive search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct BinarySketch {
     bits: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct Int8Vector {
     values: Vec<i8>,
     scale: f32,
     zero_point: i8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct PQCode {
     codes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct DistanceTable {
     table: Vec<Vec<f32>>,
 }
@@ -115,7 +115,7 @@ impl QuantizationAdapter {
     }
 }
 /// Configuration for progressive columnar search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveSearchConfig {
     /// Stage configurations
     pub binary_config: StageConfig,
@@ -166,7 +166,7 @@ pub struct ProgressiveSearchResult {
 }
 
 /// Metrics for a single search stage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StageMetrics {
     pub stage: ProcessingStage,
     pub duration_ms: u64,

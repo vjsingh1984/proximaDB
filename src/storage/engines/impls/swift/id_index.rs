@@ -24,7 +24,7 @@ pub struct IdIndex {
 }
 
 /// B+ tree node
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BPlusNode {
     Internal {
         keys: Vec<String>,
@@ -38,7 +38,7 @@ pub enum BPlusNode {
 }
 
 /// Location of a record within the SST file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockLocation {
     pub superblock_idx: u32,
     pub block_idx: u32,
@@ -248,7 +248,7 @@ impl IdIndex {
 }
 
 /// Statistics for the ID index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStats {
     pub total_ids: u64,
     pub unique_ids: u64,
@@ -268,7 +268,7 @@ pub struct TwoLevelIdIndex {
     sparse_factor: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockRange {
     pub start_id: String,
     pub end_id: String,

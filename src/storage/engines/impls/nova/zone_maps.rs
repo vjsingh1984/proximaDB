@@ -13,7 +13,7 @@ use super::hierarchical_stats::ZoneMap;
 pub type DistanceMetric = String;
 
 /// Advanced zone map with multiple optimization strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdvancedZoneMap {
     /// Basic zone map
     pub base_zone_map: ZoneMap,
@@ -32,7 +32,7 @@ pub struct AdvancedZoneMap {
 }
 
 /// Hierarchical zone for multi-resolution pruning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HierarchicalZone {
     /// Resolution level (0 = finest, higher = coarser)
     pub level: u32,
@@ -51,7 +51,7 @@ pub struct HierarchicalZone {
 }
 
 /// Probabilistic zone map using sketches
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProbabilisticZone {
     /// Count-Min Sketch for frequency estimation
     pub frequency_sketch: CountMinSketch,
@@ -67,7 +67,7 @@ pub struct ProbabilisticZone {
 }
 
 /// Adaptive zone map that learns from queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdaptiveZone {
     /// Query pattern history
     pub query_patterns: Vec<QueryPattern>,
@@ -86,7 +86,7 @@ pub struct AdaptiveZone {
 }
 
 /// Zone map scaled for specific distance metric
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ScaledZoneMap {
     /// Distance metric this zone is optimized for
     pub distance_metric: DistanceMetric,
@@ -102,7 +102,7 @@ pub struct ScaledZoneMap {
 }
 
 /// Transformed bounds for specific distance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TransformedBounds {
     /// Original min/max values
     pub original_min: Vec<f32>,
@@ -132,7 +132,7 @@ pub struct CostBasedOptimizer {
 }
 
 /// Cost model for estimating search costs
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CostModel {
     /// I/O cost parameters
     pub io_cost_params: IOCostParams,
@@ -148,7 +148,7 @@ pub struct CostModel {
 }
 
 /// I/O cost modeling
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IOCostParams {
     /// Sequential read throughput (MB/s)
     pub sequential_throughput: f32,
@@ -167,7 +167,7 @@ pub struct IOCostParams {
 }
 
 /// CPU cost modeling
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CPUCostParams {
     /// Distance computation rate (vectors/second)
     pub distance_computation_rate: f32,
@@ -183,7 +183,7 @@ pub struct CPUCostParams {
 }
 
 /// Memory cost modeling
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryCostParams {
     /// Memory bandwidth (GB/s)
     pub memory_bandwidth: f32,
@@ -196,7 +196,7 @@ pub struct MemoryCostParams {
 }
 
 /// Network cost modeling for distributed systems
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NetworkCostParams {
     /// Network bandwidth (Mbps)
     pub bandwidth: f32,
@@ -209,7 +209,7 @@ pub struct NetworkCostParams {
 }
 
 /// Query pattern for adaptive learning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryPattern {
     /// Query vector characteristics
     pub query_characteristics: QueryCharacteristics,
@@ -228,7 +228,7 @@ pub struct QueryPattern {
 }
 
 /// Query characteristics for pattern matching
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryCharacteristics {
     /// Query vector norm
     pub norm: f32,
@@ -247,7 +247,7 @@ pub struct QueryCharacteristics {
 }
 
 /// Learned selectivity model
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SelectivityModel {
     /// Model parameters
     pub parameters: Vec<f32>,
@@ -263,7 +263,7 @@ pub struct SelectivityModel {
 }
 
 /// Model types for selectivity prediction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ModelType {
     Linear,
     Polynomial { degree: u32 },
@@ -686,7 +686,7 @@ impl AdvancedZoneMap {
 }
 
 /// Configuration for zone map construction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ZoneMapConfig {
     pub enable_hierarchical: bool,
     pub hierarchical_levels: u32,
@@ -737,7 +737,7 @@ pub enum PruningStrategy {
 }
 
 /// Optimization strategies for zone map usage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum OptimizationStrategy {
     Hierarchical,
     Probabilistic,
@@ -747,7 +747,7 @@ pub enum OptimizationStrategy {
 }
 
 // Placeholder implementations for probabilistic data structures
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CountMinSketch {
     width: usize,
     depth: usize,
@@ -759,7 +759,7 @@ impl CountMinSketch {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HyperLogLog {
     precision: u8,
 }
@@ -770,7 +770,7 @@ impl HyperLogLog {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilter {
     expected_items: usize,
     false_positive_rate: f64,
@@ -840,7 +840,7 @@ impl SelectivityModel {
 // These are simplified for the scope of this implementation
 
 /// Workload statistics for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WorkloadStats {
     pub avg_query_selectivity: f32,
     pub avg_top_k: u32,
@@ -849,7 +849,7 @@ pub struct WorkloadStats {
 }
 
 /// Hardware profile for cost estimation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareProfile {
     pub cpu_cores: u32,
     pub memory_gb: u32,
@@ -857,7 +857,7 @@ pub struct HardwareProfile {
     pub network_bandwidth_mbps: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StorageType {
     HDD,
     SSD,
@@ -866,14 +866,14 @@ pub enum StorageType {
 }
 
 /// Performance history for learning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceHistory {
     pub recent_queries: Vec<QueryPerformance>,
     pub avg_latency_ms: f32,
     pub avg_throughput: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryPerformance {
     pub query_id: String,
     pub latency_ms: f32,

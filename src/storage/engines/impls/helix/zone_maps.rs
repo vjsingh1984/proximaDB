@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use crate::core::VectorRecord;
 
 /// Zone map for a block of vectors
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ZoneMap {
     /// Block identifier
     pub block_id: u32,
@@ -29,7 +29,7 @@ pub struct ZoneMap {
 }
 
 /// Detailed statistics per dimension
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DimensionStatistics {
     /// Mean value per dimension
     pub mean: Vec<f32>,

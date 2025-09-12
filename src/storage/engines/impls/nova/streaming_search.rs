@@ -42,7 +42,7 @@ pub struct StreamingSearchEngine {
 }
 
 /// Configuration for streaming search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StreamingSearchConfig {
     /// Progressive search configuration
     pub progressive_config: ProgressiveSearchConfig,
@@ -126,7 +126,7 @@ struct PerformanceTracker {
 }
 
 /// Individual query execution record
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct QueryExecution {
     query_id: String,
     start_time: Instant,
@@ -137,7 +137,7 @@ struct QueryExecution {
 }
 
 /// Query characteristics for performance prediction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct QueryCharacteristics {
     dimension: usize,
     top_k: usize,
@@ -148,7 +148,7 @@ struct QueryCharacteristics {
 }
 
 /// Actual performance measurements
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct ActualPerformance {
     latency_ms: u64,
     memory_peak: usize,
@@ -159,7 +159,7 @@ struct ActualPerformance {
 }
 
 /// Predicted performance estimates
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct PredictedPerformance {
     estimated_latency_ms: u64,
     estimated_memory: usize,

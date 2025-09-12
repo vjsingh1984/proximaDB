@@ -2021,7 +2021,7 @@ struct RowLocation {
 
 /// Minimal node in the HNSW graph - stores only ID and edges with distances
 /// Reduces memory by 96% compared to storing full vectors
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 /// Hybrid IVF+Graph node combining clustering with local connectivity
 /// Uses both IVF cluster assignment AND edges for navigation
 struct IvfNode {
@@ -2038,7 +2038,7 @@ struct IvfNode {
 }
 
 /// Edge with distance for intelligent row group clustering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct EdgeWithDistance {
     target_node_id: u32,
     target_vector_id: String,
@@ -2046,7 +2046,7 @@ struct EdgeWithDistance {
 }
 
 /// Enhanced edge with pre-computed boosted distance (serialized)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct BoostedEdge {
     target_node_id: u32,
     target_vector_id: String,
@@ -2056,7 +2056,7 @@ struct BoostedEdge {
 }
 
 /// Boost component breakdown for debugging/tuning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct BoostInfo {
     d1: f32, // Source to its centroid
     d2: f32, // Centroid to centroid
@@ -2561,14 +2561,14 @@ impl RaptorWriter {
             .iter()
             .map(|(key, value)| {
                 let value_bytes = match &value.value {
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.as_bytes().to_vec(),
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_le_bytes().to_vec(),
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => vec![if *b { 1 } else { 0 }],
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_le_bytes().to_vec(),
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => b.clone(),
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => Vec::new(),
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => Vec::new(), // TODO: serialize arrays
-                    Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => Vec::new(), // TODO: serialize objects
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.as_bytes().to_vec(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_le_bytes().to_vec(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => vec![if *b { 1 } else { 0 }],
+                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_le_bytes().to_vec(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => b.clone(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => Vec::new(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => Vec::new(), // TODO: serialize arrays
+                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => Vec::new(), // TODO: serialize objects
                     None => Vec::new(),
                 };
                 (key.clone(), value_bytes)

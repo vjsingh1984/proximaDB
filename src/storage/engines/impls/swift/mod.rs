@@ -136,7 +136,7 @@ pub struct SwiftFile {
 pub const SWIFT_MAGIC: [u8; 4] = *b"SWFT";
 
 /// SWIFT header - all metadata in one place
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SwiftHeader {
     // File identification
     pub magic: [u8; 4],
@@ -200,7 +200,7 @@ impl Default for SwiftHeader {
 
 /// DEPRECATED: Being replaced with unified config
 /// Use crate::core::unified_config::EngineQuantizationConfig instead
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationConfigOLD {
     // Binary quantization
     pub enable_binary: bool,
@@ -244,7 +244,7 @@ impl Default for QuantizationConfigOLD {
 pub use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// PQ Codebook
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Codebook {
     pub segment_id: u8,
     pub dimension: usize,
@@ -256,7 +256,7 @@ pub struct Codebook {
 // Additional SWIFT-specific fields can be added via composition if needed
 
 /// Column statistics for metadata filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStats {
     pub column_name: String,
     pub null_count: u32,
@@ -842,12 +842,12 @@ impl SwiftFile {
 }
 
 /// Metadata filter for queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataFilter {
     pub conditions: Vec<FilterCondition>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterCondition {
     Equals(String, serde_json::Value),
     Range(String, serde_json::Value, serde_json::Value),

@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// PRISM tree structure (stub implementation)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PrismTree {
     pub fanout: usize,
     pub max_depth: usize,

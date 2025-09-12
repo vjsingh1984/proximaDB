@@ -13,7 +13,7 @@ use tracing::{debug, info};
 use crate::core::search::results::OptimizedSearchRecord;
 
 /// Query pattern for tracking and prediction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryPattern {
     /// Query vector hash
     pub query_hash: u64,
@@ -158,7 +158,7 @@ pub struct SmartResultCache {
 }
 
 /// Cached query result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CachedResult {
     /// Search results
     results: Vec<OptimizedSearchRecord>,

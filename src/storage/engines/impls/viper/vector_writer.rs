@@ -21,7 +21,7 @@ use crate::core::serialization::{VectorSerializationConfig, CompressionAlgorithm
 use crate::core::VectorRecord;
 
 /// Configuration for optimized vector writing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizedVectorWriterConfig {
     /// Use BinaryArray with bytemuck for vector storage
     pub use_binary_array: bool,
@@ -426,7 +426,7 @@ impl OptimizedVectorWriter {
 }
 
 /// Statistics for optimization performance tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationStats {
     pub record_count: usize,
     pub vector_storage_bytes: usize,

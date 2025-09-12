@@ -5,7 +5,7 @@ use crate::core::VectorRecord;
 use anyhow::Result;
 
 /// Progressive refinement configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveRefinementConfig {
     pub binary_candidates: usize,
     pub int8_candidates: usize,

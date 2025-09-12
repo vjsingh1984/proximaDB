@@ -76,7 +76,7 @@ fn compare_json_values(
 }
 
 // Temporary local definition until unified quantization types are available
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct BinarySketch {
     bits: Vec<u8>,
     dimension: usize,
@@ -97,7 +97,7 @@ impl BinarySketch {
 type DistanceTable = Vec<Vec<f32>>;
 
 /// Configuration for progressive search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveSearchConfig {
     /// Expansion factor for each level
     pub binary_expansion: usize, // e.g., 10x top_k
@@ -132,7 +132,7 @@ impl Default for ProgressiveSearchConfig {
 }
 
 /// Candidate at various stages of refinement
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct Candidate {
     superblock_idx: u32,
     block_idx: u32,

@@ -56,7 +56,7 @@ pub trait PxKStorageImpl: Send + Sync {
 }
 
 /// Boundary information for a vector
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BoundaryInfo {
     pub vector_idx: u32,
     pub primary_cluster: u32,

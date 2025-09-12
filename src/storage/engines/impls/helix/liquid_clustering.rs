@@ -35,7 +35,7 @@ pub struct ClusterStatistics {
     pub last_recluster: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusterInfo {
     pub cluster_id: u32,
     pub hilbert_key: HilbertKey,
@@ -315,14 +315,14 @@ struct ClusterAssignment {
     hilbert_key: HilbertKey,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationSuggestion {
     pub suggestion_type: SuggestionType,
     pub reason: String,
     pub estimated_improvement: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SuggestionType {
     PcaRetrain,
     BlockSizeIncrease,

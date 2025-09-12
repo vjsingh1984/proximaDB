@@ -55,7 +55,7 @@ pub struct ViperUtilities {
 }
 
 /// Configuration for VIPER utilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ViperUtilitiesConfig {
     /// Statistics collection configuration
     pub stats_config: StatsConfig,
@@ -94,7 +94,7 @@ pub struct PerformanceStatsCollector {
 }
 
 /// Configuration for statistics collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StatsConfig {
     /// Enable detailed operation tracking
     pub enable_detailed_tracking: bool,
@@ -113,7 +113,7 @@ pub struct StatsConfig {
 }
 
 /// Metrics for individual operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OperationMetrics {
     pub operation_type: String,
     pub collection_id: String,
@@ -129,7 +129,7 @@ pub struct OperationMetrics {
 }
 
 /// Collection-level statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionStats {
     pub collection_id: String,
     pub total_operations: u64,
@@ -185,7 +185,7 @@ pub struct TTLCleanupService {
 }
 
 /// TTL configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TTLConfig {
     /// Enable TTL functionality
     pub enabled: bool,
@@ -250,7 +250,7 @@ pub struct StagingOperationsCoordinator {
 }
 
 /// Staging configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StagingConfig {
     /// Enable staging optimizations
     pub enable_optimizations: bool,
@@ -280,7 +280,7 @@ pub struct StagingOperation {
 }
 
 /// Staging operation type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TransactionStageType {
     Flush,
     Compaction,
@@ -288,7 +288,7 @@ pub enum TransactionStageType {
 }
 
 /// Staging operation status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StagingStatus {
     Preparing,
     Writing,
@@ -298,7 +298,7 @@ pub enum StagingStatus {
 }
 
 /// Parquet optimization configuration for staging
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ParquetOptimizationConfig {
     /// Rows per row group
     pub rows_per_rowgroup: usize,
@@ -323,7 +323,7 @@ pub struct ParquetOptimizationConfig {
 }
 
 /// Optimized Parquet records with metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizedParquetRecords {
     pub records: Vec<VectorRecord>,
     pub schema_version: u32,
@@ -349,7 +349,7 @@ pub struct DataPartitioner {
 }
 
 /// Partitioning configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PartitioningConfig {
     /// Enable ML-driven clustering
     pub enable_ml_clustering: bool,
@@ -374,7 +374,7 @@ pub struct PartitioningConfig {
 }
 
 /// Clustering algorithm options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ClusteringAlgorithm {
     KMeans,
     HDBSCAN,
@@ -396,7 +396,7 @@ pub enum ClusteringAlgorithm {
 // }
 
 /// Partition metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PartitionMetadata {
     pub partition_id: PartitionId,
     pub collection_id: String,
@@ -441,7 +441,7 @@ pub struct CompressionOptimizer {
 }
 
 /// Compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionConfig {
     /// Enable adaptive compression
     pub enable_adaptive_compression: bool,
@@ -475,7 +475,7 @@ pub struct CompressionModel {
 }
 
 /// Compression performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionPerformance {
     pub compression_ratio: f32,
     pub compression_speed_mb_sec: f32,
@@ -485,7 +485,7 @@ pub struct CompressionPerformance {
 }
 
 /// Algorithm performance tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AlgorithmPerformance {
     pub algorithm: CompressionAlgorithm,
     pub avg_compression_ratio: f32,

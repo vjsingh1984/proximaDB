@@ -57,7 +57,7 @@ use self::query_optimization::QueryOptimizer;
 use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata;
 
 /// HELIX engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HelixConfig {
     /// Number of L0 files to trigger compaction
     pub level0_file_num_compaction_trigger: usize,
@@ -113,7 +113,7 @@ impl Default for HelixConfig {
 }
 
 /// Metadata for a HELIX SSTable file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SStableMetadata {
     /// File path
     pub path: PathBuf,

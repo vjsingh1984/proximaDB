@@ -41,7 +41,7 @@ pub struct ZeroCopyCompactionStats {
 }
 
 /// Entry in the k-way merge heap
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct MergeEntry {
     record: VectorRecord, // OPTIMIZED: Direct VectorRecord usage
     file_index: usize,
@@ -437,7 +437,7 @@ impl SstCompactor {
                 }
 
                 // Update the level to match the target compaction level
-                // 0 /* TODO: VectorRecord no longer has level field */ should be set by the compaction task, not block_size!
+                // Use version field instead of deprecated level field
 
                 debug!("Selected version {} for ID '{}'", selected_version, id);
                 merged_records.push(record);
@@ -619,7 +619,7 @@ impl SstCompactor {
                 }
 
                 // Update the level to match the target compaction level
-                // 0 /* TODO: VectorRecord no longer has level field */ should be set by the compaction task, not block_size!
+                // Use version field instead of deprecated level field
 
                 debug!("Selected version {} for ID '{}'", selected_version, id);
                 merged_records.push(record);
@@ -715,7 +715,7 @@ impl SstCompactor {
                             .get(key)
                             .and_then(|sql_val| match &sql_val.value {
                                 Some(
-                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
                                 ) => Some(s.as_str()),
                                 _ => None,
                             });
@@ -725,7 +725,7 @@ impl SstCompactor {
                             .get(key)
                             .and_then(|sql_val| match &sql_val.value {
                                 Some(
-                                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
                                 ) => Some(s.as_str()),
                                 _ => None,
                             });
@@ -787,7 +787,7 @@ impl SstCompactor {
                 for &index in &sorted_indices {
                     if index < records.len() {
                         let record = records[index].clone();
-                        // TODO: VectorRecord no longer has level field, use version instead
+                        // Use version field - level field deprecated
                         sorted_records.push(record);
                     }
                 }
@@ -803,7 +803,7 @@ impl SstCompactor {
 
                     for (i, record) in records.into_iter().enumerate() {
                         if !used[i] {
-                            // TODO: VectorRecord no longer has level field, use version instead
+                            // Use version field - level field deprecated
                             sorted_records.push(record);
                         }
                     }

@@ -311,7 +311,7 @@ pub struct PerformanceMonitor {
     thresholds: PerformanceThresholds,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceThresholds {
     pub max_pruning_ratio: f32,
     pub min_clustering_quality: f32,

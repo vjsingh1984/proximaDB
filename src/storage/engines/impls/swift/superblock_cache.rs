@@ -50,7 +50,7 @@ pub struct SwiftSuperBlockCache {
 }
 
 /// SWIFT SuperBlock metadata focused on tree navigation and instant traversal
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CachedSuperBlockMetadata {
     /// SuperBlock identification
     pub superblock_id: u32,
@@ -92,7 +92,7 @@ pub struct CachedSuperBlockMetadata {
 }
 
 /// Tree navigation hints for instant traversal optimization  
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TreeNavigationHints {
     /// Optimal tree traversal paths
     pub frequent_paths: Vec<TreePath>,
@@ -111,7 +111,7 @@ pub struct TreeNavigationHints {
 }
 
 /// Tree path for optimized navigation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TreePath {
     pub path_id: String,
     pub nodes: Vec<String>,
@@ -121,7 +121,7 @@ pub struct TreePath {
 }
 
 /// Locality group for cache optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LocalityGroup {
     pub group_id: String,
     pub related_nodes: Vec<String>,
@@ -130,7 +130,7 @@ pub struct LocalityGroup {
 }
 
 /// Tree optimization hint
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TreeOptimizationHint {
     PreloadSubtree { root_node: String, depth: u8 },
     CacheNodeGroup { nodes: Vec<String> },
@@ -139,7 +139,7 @@ pub enum TreeOptimizationHint {
 }
 
 /// Optimal tree path for specific access patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimalTreePath {
     pub query_pattern: String,
     pub optimal_nodes: Vec<String>,
@@ -149,7 +149,7 @@ pub struct OptimalTreePath {
 }
 
 /// Cached DataBlock metadata for SWIFT's hierarchical structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CachedDataBlockMetadata {
     /// DataBlock identification
     pub datablock_id: u32,
@@ -180,7 +180,7 @@ pub struct CachedDataBlockMetadata {
 }
 
 /// Quantization level metadata for progressive search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationLevelMetadata {
     pub level_name: String,
     pub bits_per_dimension: u8,
@@ -191,7 +191,7 @@ pub struct QuantizationLevelMetadata {
 }
 
 /// Quantization summary for a DataBlock
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationSummary {
     pub binary_available: bool,
     pub int8_available: bool,
@@ -202,7 +202,7 @@ pub struct QuantizationSummary {
 }
 
 /// DataBlock access statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataBlockAccessStats {
     pub access_count: u64,
     pub last_access: Option<Instant>,
@@ -212,7 +212,7 @@ pub struct DataBlockAccessStats {
 }
 
 /// Bloom filter metadata for instant filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilterMetadata {
     pub filter_id: String,
     pub superblock_id: u32,
@@ -225,7 +225,7 @@ pub struct BloomFilterMetadata {
 }
 
 /// Types of bloom filters in SWIFT
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BloomFilter {
     KeyFilter,       // For ID lookups
     MetadataFilter,  // For metadata filtering
@@ -234,7 +234,7 @@ pub enum BloomFilter {
 }
 
 /// Progressive search metadata for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveSearchMetadata {
     pub search_pattern: String,
     pub optimal_stages: Vec<ProgressiveStage>,
@@ -245,7 +245,7 @@ pub struct ProgressiveSearchMetadata {
 }
 
 /// Progressive search stage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveStage {
     pub stage_name: String,
     pub quantization_level: String,
@@ -489,7 +489,7 @@ impl SwiftSuperBlockCache {
 }
 
 /// Cache statistics for monitoring SWIFT's performance
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SwiftCacheStats {
     pub superblock_hits: u64,
     pub tree_navigation_hits: u64,

@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 // ID index not available in NOVA yet
 // use super::id_index::BatchIdReader;
 /// Configuration for batch operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchConfig {
     /// Maximum concurrent row group reads
     pub max_concurrent_row_groups: usize,

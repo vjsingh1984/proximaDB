@@ -47,7 +47,7 @@ pub enum CompressionStrategy {
     BitPacked,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RaptorConfig {
     // Storage settings
     pub rowgroup_size: usize,
@@ -93,7 +93,7 @@ pub struct RaptorConfig {
     pub enable_prefetching: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionCodec {
     None,
     Lz4,
@@ -102,7 +102,7 @@ pub enum CompressionCodec {
     Gzip(u32), // compression level
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum EvictionPolicy {
     Lru,
     Lfu,
@@ -110,14 +110,14 @@ pub enum EvictionPolicy {
     Cost, // Cost-aware eviction based on I/O cost
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionConfig {
     pub max_level: usize,             // For RAPTOR: always 0 (single level)
     pub l0_trigger_file_count: usize, // For RAPTOR: 2 (compact when > 1 file)
     pub target_file_size: usize,      // For RAPTOR: usize::MAX (single file)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ClusteringConfig {
     pub num_clusters: usize,          // k value in p²+k×p
     pub rowgroup_size: usize,         // p value in p²+k×p

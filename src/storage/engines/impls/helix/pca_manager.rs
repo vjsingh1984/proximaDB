@@ -16,7 +16,7 @@ use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 /// Configuration for PCA model management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PCAManagerConfig {
     /// Maximum number of model versions to retain
     pub max_versions: usize,
@@ -46,7 +46,7 @@ impl Default for PCAManagerConfig {
 }
 
 /// Model version metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ModelVersion {
     /// Version identifier
     pub version: u32,
@@ -67,7 +67,7 @@ pub struct ModelVersion {
 }
 
 /// Drift detection metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DriftMetrics {
     /// Reconstruction error over time
     pub reconstruction_errors: VecDeque<f32>,

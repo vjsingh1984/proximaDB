@@ -330,7 +330,7 @@ fn extract_record(_batch: &RecordBatch, _offset: u32) -> Option<VectorRecord> {
 }
 
 /// Columnar operation statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnarStats {
     pub row_groups_scanned: usize,
     pub row_groups_pruned: usize,

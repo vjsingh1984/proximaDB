@@ -28,7 +28,7 @@ fn default_vector_count() -> usize {
 /// - Use u16 for id/centroid_id (supports 65,536 rowgroups = 67M+ vectors)
 /// - String for vector_id (supports UUIDs and custom IDs)
 /// - Removed GraphNode structures (obsolete with Matrix Trinity)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroup {
     // Core identifiers (u16 for 67M vectors per file)
     pub id: u16,                // Rowgroup ID == Centroid ID (1:1 mapping)
@@ -157,7 +157,7 @@ impl RowGroup {
 
 /// Columnar storage block within a rowgroup (dimension-major format)
 /// Migrated from HybridRowGroup for unified architecture
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnarBlock {
     /// Vector IDs (for mapping back to original)
     pub vector_ids: Vec<String>,
@@ -188,7 +188,7 @@ impl Default for ColumnarBlock {
 }
 
 /// Dimension-major vector storage for SIMD operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TransposedVectors {
     /// Each Vec<f32> represents one dimension across all vectors
     /// dimensions[d] = [v0[d], v1[d], v2[d], ...] for dimension d
@@ -200,7 +200,7 @@ pub struct TransposedVectors {
 }
 
 /// FastLanes encoded columnar data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FastLanesEncodedData {
     /// Encoded dimensions using FastLanes compression
     pub encoded_dimensions: Vec<Vec<u8>>,
@@ -211,7 +211,7 @@ pub struct FastLanesEncodedData {
 }
 
 /// Quantized columnar data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizedColumnarData {
     /// Binary quantized vectors (1 bit per dimension)
     pub binary: Option<Vec<Vec<u8>>>,
@@ -226,7 +226,7 @@ pub struct QuantizedColumnarData {
 }
 
 /// Quantization parameters for columnar data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationParams {
     pub scale: f32,
     pub offset: f32,
@@ -234,7 +234,7 @@ pub struct QuantizationParams {
 }
 
 /// Metadata stored in columnar format
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataColumns {
     /// String metadata columns
     pub string_columns: HashMap<String, Vec<Option<String>>>,
@@ -245,7 +245,7 @@ pub struct MetadataColumns {
 }
 
 /// Column page metadata for selective field access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnPageMetadata {
     pub column_type: ColumnType,
     pub offset: u64,            // File offset for this column
@@ -273,7 +273,7 @@ pub enum ColumnType {
 
 /// Compact metadata representation for serialization
 /// This is a lightweight version of RowGroup for storage in footer
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroupMetadata {
     pub id: u16,             // Rowgroup ID == Centroid ID
     pub vector_count: usize, // Number of vectors in this rowgroup
@@ -313,7 +313,7 @@ pub struct RowGroupMetadata {
 ///
 /// ENHANCED: Now includes all statistics needed for 5-component boosting formula
 /// These statistics are STORED at write-time and used for runtime boosting calculations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CentroidStats {
     pub cluster_id: u32,    // IVF cluster assignment
     pub mean_distance: f32, // Mean distance of vectors to centroid (d₂ component)
@@ -356,7 +356,7 @@ pub struct CentroidStats {
 /// Lightweight reference stored in each rowgroup's metadata
 /// Only stores INDICES, not distances - distances computed at query time
 /// Optimized with u16 IDs: supports 65,536 rowgroups = 67M vectors per file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroupNeighbor {
     pub rowgroup_id: u16, // Direct index into footer centroids array (67M vectors max)
     pub neighbor_cluster_id: u16, // Cluster assignment of neighbor (65k clusters max)
@@ -387,7 +387,7 @@ pub enum NeighborType {
 }
 
 /// Pre-computed distance bounds for fast pruning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DistanceBounds {
     pub min: f32, // Minimum possible distance to any vector in rowgroup
     pub max: f32, // Maximum possible distance to any vector in rowgroup
@@ -415,7 +415,7 @@ impl Default for RowGroupMetadata {
 }
 
 /// Row page metadata for detailed page-level tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowPageMetadata {
     pub page_id: u32,
     pub file_offset: i64,
@@ -470,7 +470,7 @@ impl Default for VectorEncoding {
 
 // ====== Column Statistics (unified from reader.rs and rowgroup.rs) ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStats {
     pub null_count: usize,
     pub distinct_count: Option<usize>,
@@ -481,7 +481,7 @@ pub struct ColumnStats {
     pub uncompressed_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ColumnEncoding {
     Dictionary { num_entries: usize },
     Integer { bits: usize },
@@ -493,7 +493,7 @@ pub enum ColumnEncoding {
 
 // ====== Metadata Column (unified from reader.rs and writer.rs) ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataColumn {
     pub name: String,
     pub data_type: MetadataData,
@@ -504,7 +504,7 @@ pub struct MetadataColumn {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetadataData {
     Boolean,
     Integer,
@@ -529,7 +529,7 @@ pub use crate::proto::proximadb_v1::SqlValue as MetadataValue;
 
 // ====== File Metadata (unified) ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 /// CONSOLIDATED RaptorFileMetadata - Single source of truth
 /// This combines all fields from the three duplicate definitions
 pub struct RaptorFileMetadata {
@@ -580,7 +580,7 @@ pub struct RaptorFileMetadata {
     pub locality_clusters: Vec<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SchemaDescriptor {
     pub vector_dimension: usize,
     pub metadata_fields: Vec<FieldDescriptor>,
@@ -597,13 +597,13 @@ impl Default for SchemaDescriptor {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct KeyValue {
     pub key: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LocalityClusterInfo {
     pub cluster_id: u32,
     pub start_offset: u64,
@@ -611,7 +611,7 @@ pub struct LocalityClusterInfo {
     pub vector_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FieldDescriptor {
     pub name: String,
     pub data_type: MetadataData,
@@ -619,7 +619,7 @@ pub struct FieldDescriptor {
     pub default_value: Option<MetadataValue>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilterMetadata {
     pub num_bits: usize,
     pub num_hashes: usize,
@@ -631,14 +631,14 @@ pub struct BloomFilterMetadata {
 
 // ====== I/O Strategy (for unified reader) ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IoStrategy {
     pub prefetch_size: usize,
     pub cache_policy: CachePolicy,
     pub read_pattern: ReadPattern,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CachePolicy {
     LRU,
     LFU,
@@ -646,7 +646,7 @@ pub enum CachePolicy {
     None,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ReadPattern {
     Sequential,
     Random,
@@ -656,7 +656,7 @@ pub enum ReadPattern {
 
 // ====== Search Results (unified) ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchResult {
     pub vector_id: String,
     pub distance: f32,
@@ -668,14 +668,14 @@ pub struct SearchResult {
 
 // ====== Predicates for filtering ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Predicate {
     pub field: String,
     pub op: PredicateOp,
     pub value: MetadataValue,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PredicateOp {
     Eq,
     Ne,
@@ -693,7 +693,7 @@ pub enum PredicateOp {
 
 /// Per-RowGroup bloom filter for fast membership testing
 /// Optimized for scattered ID access patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroupBloomFilter {
     /// Bloom filter bits (typically 10 bits per ID for 1% false positive)
     pub bits: Vec<u8>,
@@ -934,7 +934,7 @@ impl RowGroupBloomFilter {
 }
 
 /// Statistics for bloom filter performance tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilterStats {
     pub num_ids: usize,
     pub size_bytes: usize,
@@ -944,7 +944,7 @@ pub struct BloomFilterStats {
 }
 
 /// Columnar ID index within row group for SIMD scanning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnnarIdIndex {
     /// IDs stored columnar for SIMD scanning
     pub ids: Vec<String>,
@@ -961,7 +961,7 @@ pub struct ColumnnarIdIndex {
 
 // ====== Locality clustering for spatial organization ======
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LocalityCluster {
     pub id: u32,
     pub centroid: Vec<f32>,
@@ -991,7 +991,7 @@ pub struct LocalityCluster {
 /// - P×K matrices loaded on-demand per active rowgroup
 /// - Cached indefinitely (file doesn't change, footer doesn't change)
 /// - OS page cache or memory-mapped for zero-copy access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RaptorFooter {
     /// All centroids sorted by rowgroup_id for O(1) indexing
     /// Stored using FastLanes columnar encoding for compression
@@ -1031,7 +1031,7 @@ pub struct RaptorFooter {
 /// 2. Delta encode each dimension (values often similar across centroids)
 /// 3. Bit-pack based on range (many dimensions need only 8-16 bits)
 /// 4. SIMD-friendly layout for fast distance calculations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnarCentroids {
     /// Number of centroids (typically k < 1000)
     pub count: u32,
@@ -1159,7 +1159,7 @@ pub fn predict_search_latency(k: usize, dimension: usize) -> f64 {
 /// - Upper triangle: k×(k-1)/2×2 = 1000×999/2×2 = 999KB  
 /// - With FastLanes: ~500KB (estimated 50% additional compression)
 /// - **Total compression: 4MB → 500KB (87.5% space savings)**
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct InterCentroidMatrix {
     /// Number of centroids (k)
     pub num_centroids: u32,
@@ -1415,7 +1415,7 @@ pub enum CompressionType {
 }
 
 /// Compression metadata for inter-centroid matrix reconstruction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct InterCentroidCompressionMetadata {
     /// Minimum distance value (for delta encoding base)
     pub min_distance: f32,
@@ -1460,7 +1460,7 @@ impl InterCentroidCompressionMetadata {
 
 /// P×K Vector-to-centroid distance matrix for a specific rowgroup
 /// Contains distances from all P vectors in rowgroup to all K centroids
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorCentroidMatrix {
     /// Rowgroup this matrix belongs to
     pub rowgroup_id: u16,
@@ -1501,7 +1501,7 @@ pub enum VectorCentroidStorageStrategy {
 }
 
 /// Hierarchical storage data for mean + sparse deltas
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HierarchicalData {
     /// Mean distance per centroid (K values)
     pub mean_distances: Vec<f32>,
@@ -1511,7 +1511,7 @@ pub struct HierarchicalData {
 }
 
 /// Delta entry for hierarchical storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DeltaEntry {
     /// Vector index within rowgroup
     pub vector_index: u32,
@@ -1665,7 +1665,7 @@ impl VectorCentroidMatrix {
 /// - Matrix size: P×K×4 bytes (4MB for p=1000, k=1000)
 /// - Too large to keep all in memory → on-demand loading
 /// - Critical for d₁, d₄, d₅ components in 5-component boosting
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorCentroidMatrixRef {
     /// Rowgroup this matrix belongs to
     pub rowgroup_id: u16,
@@ -1694,7 +1694,7 @@ pub struct VectorCentroidMatrixRef {
 
 /// Compression metadata for vector-centroid matrices
 /// Uses sophisticated encoding since distances have different characteristics per centroid
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorCentroidCompressionMetadata {
     /// Per-centroid statistics for adaptive encoding
     /// Each centroid column may have different distance distribution
@@ -1710,7 +1710,7 @@ pub struct VectorCentroidCompressionMetadata {
 }
 
 /// Per-centroid distance statistics for adaptive compression
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CentroidDistanceStats {
     /// Centroid ID
     pub centroid_id: u16,
@@ -1727,7 +1727,7 @@ pub struct CentroidDistanceStats {
 }
 
 /// FastLanes encoding metadata for a dimension
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FastLanesMetadata {
     /// Min value in this dimension (for delta encoding)
     pub min_value: f32,
@@ -1745,7 +1745,7 @@ pub struct FastLanesMetadata {
 // FastLanesScheme now imported from common::fastlanes_encoding module for code reuse
 
 /// Sparse entry in P×K matrix for boundary vectors only
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SparseEntry {
     /// Vector index within rowgroup
     pub vector_idx: u32,
@@ -1758,7 +1758,7 @@ pub struct SparseEntry {
 }
 
 /// Sparse storage for P×K matrix with boundary detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SparseData {
     /// Number of top-k centroids stored per boundary vector
     pub top_k: u32,
@@ -1777,7 +1777,7 @@ pub struct SparseData {
 
 /// P² Matrix: Pre-computed distances between all vectors in a rowgroup
 /// Rowgroup range for a centroid (ensures spatial locality)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroupRange {
     /// Starting rowgroup ID for this centroid (inclusive)
     pub start_rowgroup: u16,
@@ -1788,7 +1788,7 @@ pub struct RowGroupRange {
 }
 
 /// Pre-computed P×(P-1)/2 distances for exact intra-rowgroup search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct P2Matrix {
     /// Number of vectors in this rowgroup
     pub num_vectors: u32,
@@ -1846,7 +1846,7 @@ impl P2Matrix {
 // ====== Boundary Detection and Self-Correction Structures ======
 
 /// Spillover information between clusters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SpilloverInfo {
     pub from_cluster: u32,
     pub to_cluster: u32,
@@ -1855,7 +1855,7 @@ pub struct SpilloverInfo {
 }
 
 /// Confidence assessment for search results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ConfidenceAssessment {
     pub overall: f32,
     pub signals: ConfidenceSignals,
@@ -1863,7 +1863,7 @@ pub struct ConfidenceAssessment {
 }
 
 /// Individual confidence signals
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ConfidenceSignals {
     pub distance_uniformity: f32,
     pub cluster_diversity: f32,
@@ -1872,7 +1872,7 @@ pub struct ConfidenceSignals {
 }
 
 /// Correction strategy for self-correction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CorrectionStrategy {
     GapFilling,
     Diversification,
@@ -1880,7 +1880,7 @@ pub enum CorrectionStrategy {
 }
 
 /// Boosting strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BoostingStrategy {
     pub spillover_strength: f32, // Default: 2.0
     pub ranking_strength: f32,   // Default: 0.1
@@ -1963,7 +1963,7 @@ impl RowGroupBloomFilter {
 
 /// K² matrix for inter-centroid navigation
 /// Stores pairwise distances between centroids (upper triangle only)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct K2Matrix {
     /// Number of centroids
     pub num_centroids: u32,
@@ -2011,7 +2011,7 @@ impl K2Matrix {
 
 /// Runtime result from Phase 1 boundary detection
 /// This is computed during search using K² matrix - NOT stored
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BoundaryDetectionResult {
     /// Primary centroids selected by distance ranking
     pub primary_centroids: Vec<u16>,
@@ -2030,7 +2030,7 @@ pub struct BoundaryDetectionResult {
 
 /// Runtime result from Phase 2 spillover detection  
 /// This is computed during search using P×K matrix - NOT stored
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SpilloverDetectionResult {
     /// Map of centroid_id -> list of spillover target centroids
     pub spillover_map: HashMap<u16, Vec<u16>>,
@@ -2051,7 +2051,7 @@ pub struct SpilloverDetectionResult {
 }
 
 /// Configuration for boundary detection (runtime)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BoundaryDetectionConfig {
     /// Boundary ratio threshold (default 0.8)
     /// If d(Q,C_i)/d(Q,C_j) > threshold, consider C_j as boundary neighbor
@@ -2079,7 +2079,7 @@ impl Default for BoundaryDetectionConfig {
 }
 
 /// Configuration for spillover detection (runtime)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SpilloverDetectionConfig {
     /// Spillover percentage threshold (default 0.15 = 15%)
     /// If >threshold% of vectors spill to another centroid, expand search

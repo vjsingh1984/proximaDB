@@ -67,7 +67,7 @@ use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 use super::MetadataFilter;
 
 /// Reading strategy for SWIFT files
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SwiftReadStrategy {
     /// Read all data without pruning (for compaction)
     StreamAll,
@@ -83,7 +83,7 @@ pub enum SwiftReadStrategy {
 }
 
 /// Configuration for optimizing I/O operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SwiftReaderConfig {
     /// Enable prefetching for sequential reads
     pub enable_prefetch: bool,
@@ -146,7 +146,7 @@ pub struct UnifiedSwiftReader {
 }
 
 /// Lightweight superblock metadata for caching
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct SuperBlockMetadata {
     pub id: u32,
     pub offset: u64,
@@ -159,14 +159,14 @@ struct SuperBlockMetadata {
 }
 
 /// Range read request for batching
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct RangeReadRequest {
     pub offset: u64,
     pub length: usize,
     pub purpose: ReadPurpose,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum ReadPurpose {
     Header,
     SuperBlockMetadata(u32),

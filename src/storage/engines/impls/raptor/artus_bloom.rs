@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Artus-style column statistics for intelligent bloom filter sizing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ArtusColumnStats {
     pub column_name: String,
     pub cardinality: usize,
@@ -20,7 +20,7 @@ pub struct ArtusColumnStats {
     pub bloom_benefit_score: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ColumnData {
     Integer,
     Float,
@@ -32,7 +32,7 @@ pub enum ColumnData {
 }
 
 /// Artus-inspired adaptive bloom filter configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ArtusBloomConfig {
     /// Target false positive rate
     pub false_positive_rate: f64,
@@ -307,7 +307,7 @@ impl ArtusBloomManager {
 }
 
 /// Bloom filter statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomStats {
     pub column: String,
     pub size_bytes: usize,

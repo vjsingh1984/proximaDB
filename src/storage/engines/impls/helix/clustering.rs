@@ -15,7 +15,7 @@ use crate::core::VectorRecord;
 pub type HilbertKey = u64;
 
 /// PCA model for dimensionality reduction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PCAModel {
     /// Principal components (eigenvectors)
     pub components: Vec<Vec<f32>>,
@@ -155,7 +155,7 @@ pub fn compute_hilbert_key_with_config(vector: &[f32], bits_per_dimension: usize
 }
 
 /// Liquid clustering configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LiquidClusteringConfig {
     /// Enable adaptive clustering
     pub enabled: bool,

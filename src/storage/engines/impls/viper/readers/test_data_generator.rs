@@ -21,7 +21,7 @@ pub struct ParquetTestDataGenerator {
 }
 
 /// Configuration for test data generation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TestDataConfig {
     pub num_rows: usize,
     pub vector_dim: usize,
@@ -33,7 +33,7 @@ pub struct TestDataConfig {
     pub null_percentage: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QuantizationType {
     PQ4,
     PQ8,
@@ -41,7 +41,7 @@ pub enum QuantizationType {
 }
 
 /// Generated test file information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TestFileInfo {
     pub file_path: String,
     pub schema: Arc<Schema>,
@@ -51,7 +51,7 @@ pub struct TestFileInfo {
     pub config: TestDataConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TestMetadata {
     pub category: String,
     pub year: i64,

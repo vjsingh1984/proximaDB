@@ -15,7 +15,7 @@ use tracing::debug;
 use crate::compute::quantization::unified::{Codebook, UnifiedQuantizationEngine};
 
 /// Metadata for quantized columns in Parquet
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizedColumnMetadata {
     /// Binary column info
     pub binary_column: Option<BinaryColumnInfo>,
@@ -33,20 +33,20 @@ pub struct QuantizedColumnMetadata {
     pub stats: QuantizationStats,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BinaryColumnInfo {
     pub column_name: String,
     pub bits_per_vector: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Int8ColumnInfo {
     pub column_name: String,
     pub global_scale: f32,
     pub global_zero_point: i8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PQColumnInfo {
     pub column_name: String,
     pub num_segments: usize,
@@ -54,7 +54,7 @@ pub struct PQColumnInfo {
     pub codebook_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationStats {
     pub num_vectors: usize,
     pub compression_ratio: f32,
@@ -80,7 +80,7 @@ pub struct QuantizedColumns {
 }
 
 /// INT8 quantized data container
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Int8QuantizedData {
     pub vectors: Vec<Vec<u8>>,
     pub scales: Vec<f32>,
@@ -88,7 +88,7 @@ pub struct Int8QuantizedData {
 }
 
 /// PQ quantized data container
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PQQuantizedData {
     pub codes: Vec<Vec<u8>>,
     pub codebook_id: String,
@@ -281,7 +281,7 @@ pub struct QuantizedColumnBuilder {
     quantization_engine: Arc<UnifiedQuantizationEngine>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationConfig {
     pub enable_binary: bool,
     pub enable_int8: bool,

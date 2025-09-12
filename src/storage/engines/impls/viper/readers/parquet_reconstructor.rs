@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 use crate::core::VectorRecord;
 
 /// File seek range for efficient data access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FileSeekRange {
     pub offset: usize,
     pub length: usize,
@@ -24,7 +24,7 @@ pub struct FileSeekRange {
 }
 
 /// Vector query for reconstruction
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorQuery {
     pub file_path: String,
     pub query_vector: Vec<f32>,
@@ -37,7 +37,7 @@ pub struct ParquetReconstructor {
     config: ReconstructorConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ReconstructorConfig {
     pub enable_schema_validation: bool,
     pub max_memory_usage_mb: f64,
@@ -65,7 +65,7 @@ pub struct ReconstructedParquetData {
 }
 
 /// Column chunk data from file seeks or HTTP ranges
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnChunkData {
     pub row_group_idx: usize,
     pub column_name: String,
@@ -76,7 +76,7 @@ pub struct ColumnChunkData {
     pub storage: Option<StorageInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionType {
     None,
     Snappy,
@@ -87,7 +87,7 @@ pub enum CompressionType {
     Zstd,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageInfo {
     pub compression: Option<CompressionType>,
 }
@@ -564,13 +564,13 @@ impl ParquetReconstructor {
 
 /// Input data structures
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SeekData {
     pub range: FileSeekRange,
     pub data: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RangeData {
     pub range: std::ops::Range<u64>,
     pub data: Vec<u8>,

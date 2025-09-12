@@ -63,7 +63,7 @@ impl Ord for OrdFloat {
 /// Result structures for similarity search
 
 /// Individual similarity search result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SimilarityResult {
     pub id: String,
     pub distance: f32,
@@ -126,7 +126,7 @@ impl Default for ScanStrategy {
 }
 
 /// Candidate result during search process
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CandidateResult {
     pub id: String,
     pub vector: Vec<f32>,
@@ -152,7 +152,7 @@ pub struct ClusterInfo {
 
 // Kept for reference only - not used in matrix-based search
 #[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct ClusterMetadata {
     centroids: Vec<Vec<f32>>,
     centroid_distances: Vec<Vec<f32>>,
@@ -160,7 +160,7 @@ struct ClusterMetadata {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct ClusterStats {
     mean_distance: f32,
     std_deviation: f32,
@@ -168,7 +168,7 @@ struct ClusterStats {
 }
 
 /// Boosting configuration for search navigation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BoostConfig {
     // Alpha weights for intra-cluster components
     pub alpha_own: f32,      // α₁: Vector-to-own-centroid distance
@@ -196,7 +196,7 @@ pub struct SearchStats {
 }
 
 /// Centroid selection result from K×K matrix phase
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CentroidSelection {
     pub centroid_id: usize,
     pub rowgroup_id: u16,
@@ -949,24 +949,24 @@ impl RaptorReader {
                             let sql_value = match value {
                                 serde_json::Value::String(s) => {
                                     crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
                                     }
                                 }
                                 serde_json::Value::Number(n) => {
                                     // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
                                     crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                             n.as_f64().unwrap_or(0.0),
                                         )),
                                     }
                                 }
                                 serde_json::Value::Bool(b) => {
                                     crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
+                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
                                     }
                                 }
                                 _ => crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                         value.to_string(),
                                     )),
                                 },

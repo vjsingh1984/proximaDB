@@ -133,7 +133,7 @@ pub struct PrismSketchFilter {
 // PRISM-specific optimization structures removed - now using universal module
 
 /// Configuration for PRISM engine
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub base_dir: String,
     pub storage_url: String,

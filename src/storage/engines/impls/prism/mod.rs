@@ -24,7 +24,7 @@ pub mod config {
     use serde::{Deserialize, Serialize};
 
     /// PRISM engine configuration
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     pub struct Config {
         /// Base directory for PRISM storage
         pub base_dir: String,

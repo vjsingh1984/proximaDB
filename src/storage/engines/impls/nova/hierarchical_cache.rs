@@ -14,7 +14,7 @@ use tracing::{debug, info};
 use crate::storage::persistence::filesystem::FileSystem;
 
 /// NOVA's 3-tier hierarchical statistics structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HierarchicalStats {
     /// SuperBlock level statistics (highest level)
     pub superblock_stats: SuperBlockStats,
@@ -26,7 +26,7 @@ pub struct HierarchicalStats {
     pub rowgroup_stats: Vec<RowGroupStats>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SuperBlockStats {
     pub id: u64,
     pub num_blocks: usize,
@@ -53,7 +53,7 @@ pub struct SuperBlockStats {
     pub creation_time: Instant,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockStats {
     pub block_id: u64,
     pub superblock_id: u64,
@@ -71,7 +71,7 @@ pub struct BlockStats {
     pub bloom_filter: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroupStats {
     pub rowgroup_id: u64,
     pub block_id: u64,
@@ -86,7 +86,7 @@ pub struct RowGroupStats {
     pub indexed_columns: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ZoneMap {
     /// Per-dimension min/max values for pruning
     pub dimension_ranges: Vec<DimensionRange>,
@@ -99,14 +99,14 @@ pub struct ZoneMap {
     pub metadata_ranges: HashMap<String, ValueRange>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DimensionRange {
     pub dim_index: usize,
     pub min_value: f32,
     pub max_value: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ValueRange {
     pub min: serde_json::Value,
     pub max: serde_json::Value,
@@ -114,7 +114,7 @@ pub struct ValueRange {
     pub distinct_count: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
@@ -148,7 +148,7 @@ pub struct NovaHierarchicalCache {
 }
 
 /// Global statistics maintained as sidecar for cross-collection optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GlobalStatistics {
     /// Collection-level statistics
     pub collection_stats: HashMap<String, CollectionStatistics>,
@@ -160,7 +160,7 @@ pub struct GlobalStatistics {
     pub query_patterns: QueryPatterns,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionStatistics {
     pub total_vectors: u64,
     pub avg_vector_size: usize,
@@ -170,7 +170,7 @@ pub struct CollectionStatistics {
     pub hot_zones: Vec<ZoneMap>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QueryPatterns {
     pub frequent_filters: HashMap<String, u64>,
     pub common_projections: Vec<Vec<String>>,
@@ -422,7 +422,7 @@ impl NovaHierarchicalCache {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationHints {
     pub hot_zones: Vec<ZoneMap>,
     pub common_projections: Vec<Vec<String>>,

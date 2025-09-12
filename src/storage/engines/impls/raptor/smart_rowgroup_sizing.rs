@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 // use std::collections::HashMap; // Unused import
 
 /// Cloud storage I/O characteristics for optimal row group sizing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CloudIOProfile {
     /// Optimal I/O size for this storage backend (1MB-4MB for S3/GCS/ADLS)
     pub optimal_io_size_bytes: usize,
@@ -18,7 +18,7 @@ pub struct CloudIOProfile {
     pub storage_tier: DataTemperatureTier,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DataTemperatureTier {
     Hot,  // S3 Standard, GCS Standard, ADLS Hot
     Warm, // S3 IA, GCS Nearline, ADLS Cool
@@ -80,7 +80,7 @@ impl CloudIOProfile {
 }
 
 /// Smart row group sizing calculator
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SmartRowGroupSizer {
     /// Cloud I/O profile for this deployment
     pub io_profile: CloudIOProfile,
@@ -100,14 +100,14 @@ pub struct SmartRowGroupSizer {
 use crate::compute::quantization::types::{QuantizationLevel, UnifiedQuantizationLevel};
 
 /// Internal quantization config for sizing calculations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct InternalQuantizationConfig {
     pub primary_level: UnifiedQuantizationLevel,
     pub store_fp32: bool,
     pub compression_ratio: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QueryPattern {
     /// k < 10, need very fast response
     HighSelectivity,
@@ -325,7 +325,7 @@ impl SmartRowGroupSizer {
 }
 
 /// Result of optimal row group size calculation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimalRowGroupSize {
     /// Number of vectors per row group
     pub vectors_per_rowgroup: usize,

@@ -22,7 +22,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use super::common::{CentroidStats, VectorCentroidCompressionMetadata};
 
 /// Cached RAPTOR metadata structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RaptorCachedMetadata {
     /// File size in bytes
     pub file_size: u64,
