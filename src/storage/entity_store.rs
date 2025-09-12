@@ -506,6 +506,44 @@ impl EntityStore for ProximaEntityStore {
         results.truncate(top_k);
         Ok(results)
     }
+
+    async fn list_entities(
+        &self,
+        collection_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Entity>> {
+        // Simple implementation: collect all entities with pagination
+        // In a production system, this would use more efficient indexing
+        let mut entities = Vec::new();
+        let mut count = 0;
+        let mut skipped = 0;
+
+        // Iterate through entity headers (this is a simplified implementation)
+        // In production, you'd use a proper index or iterator
+        let headers = self.headers.read().unwrap();
+        for key in headers.keys() {
+            if key.starts_with(&format!("{}:", collection_id)) {
+                if skipped < offset {
+                    skipped += 1;
+                    continue;
+                }
+                if count >= limit {
+                    break;
+                }
+
+                // Extract entity ID from key
+                if let Some(entity_id) = key.split(':').nth(1) {
+                    if let Ok(Some(entity)) = self.get_entity(collection_id, entity_id, true, true).await {
+                        entities.push(entity);
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(entities)
+    }
 }
 
 // Additional implementation methods for ProximaEntityStore
