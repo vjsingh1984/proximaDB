@@ -70,7 +70,7 @@ pub trait ProgressiveSearchEngine: Send + Sync {
 }
 
 /// Intermediate candidate result from quantized search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CandidateResult {
     pub id: String,
     pub similarity: f32,
@@ -78,14 +78,14 @@ pub struct CandidateResult {
 }
 
 /// Quantized vector for refinement stages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizedVector {
     pub id: String,
     pub data: QuantizedVectorData,
 }
 
 /// Quantized vector data variants
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QuantizedVectorData {
     Binary(Vec<u8>),
     Int8(Vec<i8>),

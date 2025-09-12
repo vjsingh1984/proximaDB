@@ -203,7 +203,7 @@ impl OperationMetrics {
 }
 
 /// Overall flush status for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushStatus {
     pub sst_active_flushes: usize,
     pub viper_active_flushes: usize,

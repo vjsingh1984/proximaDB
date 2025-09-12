@@ -451,7 +451,7 @@ pub struct FileLayoutOptimization {
 }
 
 /// File statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FileStatistics {
     pub file_path: String,
     pub total_vectors: usize,
@@ -524,7 +524,7 @@ pub struct FileIntegrityReport {
 }
 
 /// Valid file information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ValidFileInfo {
     pub file_path: String,
     pub size_bytes: u64,
@@ -551,7 +551,7 @@ pub struct OperationMetrics {
 }
 
 /// Performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceMetrics {
     pub operation: String,
     pub duration_ms: f64,

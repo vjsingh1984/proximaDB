@@ -23,7 +23,7 @@ use tokio::time::{Duration, Instant};
 use super::{FilesystemError, FsResult};
 
 /// AWS credentials
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AwsCredentials {
     pub access_key_id: String,
     pub secret_access_key: String,
@@ -32,7 +32,7 @@ pub struct AwsCredentials {
 }
 
 /// Azure credentials
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AzureCredentials {
     pub account_name: String,
     pub access_token: String,
@@ -40,7 +40,7 @@ pub struct AzureCredentials {
 }
 
 /// GCS credentials
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GcsCredentials {
     pub access_token: String,
     pub project_id: String,

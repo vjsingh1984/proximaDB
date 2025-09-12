@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Index node that can be cached
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexNode {
     pub id: String,
     pub level: u32,
@@ -65,7 +65,7 @@ impl IndexNodeCache {
 // ========================================================================================
 
 /// SSTable index entry with block metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstIndexEntry {
     pub key: String,
     pub block_offset: u64,
@@ -77,7 +77,7 @@ pub struct SstIndexEntry {
 }
 
 /// Complete SSTable index structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstableIndex {
     pub file_path: String,
     pub entries: Vec<SstIndexEntry>,
@@ -87,7 +87,7 @@ pub struct SstableIndex {
 }
 
 /// Metadata statistics for predicate pushdown
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,

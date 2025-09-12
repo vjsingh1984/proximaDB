@@ -40,7 +40,7 @@ use crate::storage::common::compaction_utils::{
 use crate::storage::common::*;
 
 /// Temporary compatibility structure for level-based compaction task
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LevelBasedCompactionTask {
     pub level: u32,
     pub input_files: Vec<String>,
@@ -57,7 +57,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 /// Compaction task to be processed by background workers
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionTask {
     pub level: u8,
     pub input_files: Vec<PathBuf>,

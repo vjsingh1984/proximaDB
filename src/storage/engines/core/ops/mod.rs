@@ -14,7 +14,7 @@ use crate::core::search::FilterExpression;
 use serde::{Deserialize, Serialize};
 
 /// Filterable metadata column configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilterableColumn {
     /// Column name
     pub name: String,
@@ -27,7 +27,7 @@ pub struct FilterableColumn {
 }
 
 /// Column data types for type-safe filtering
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ColumnData {
     String,
     Integer,
@@ -158,27 +158,27 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 // Temporary placeholder types until modules are created
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalPerformanceConfig {
     pub max_concurrent_operations: usize,
     pub enable_prefetching: bool,
     pub cache_size_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalValidationConfig {
     pub validate_on_insert: bool,
     pub strict_mode: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalBatchConfig {
     pub batch_size: usize,
     pub max_batch_memory_mb: usize,
 }
 
 /// Universal engine configuration that can be adapted for any storage engine
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalEngineConfig {
     /// Engine identification
     pub engine_name: String,
@@ -213,7 +213,7 @@ pub struct UniversalEngineConfig {
 }
 
 /// Engine type classification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum EngineType {
     /// Row-based storage (SST, SWIFT)
     RowBased,
@@ -228,7 +228,7 @@ pub enum EngineType {
 }
 
 /// Universal storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalStorageConfig {
     /// Data organization
     pub organization: StorageOrganization,
@@ -244,7 +244,7 @@ pub struct UniversalStorageConfig {
 }
 
 /// Storage organization patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StorageOrganization {
     /// Hierarchical blocks (SuperBlock → Block → Record)
     Hierarchical {
@@ -271,7 +271,7 @@ pub enum StorageOrganization {
 }
 
 /// Workload hints for adaptive storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum WorkloadHint {
     ReadHeavy,
     WriteHeavy,
@@ -282,7 +282,7 @@ pub enum WorkloadHint {
 }
 
 /// Universal block configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalBlockConfig {
     /// Block size settings
     pub target_block_size: u64,
@@ -301,7 +301,7 @@ pub struct UniversalBlockConfig {
 }
 
 /// Universal index configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalIndexConfig {
     /// Index types to enable
     pub index_types: Vec<Index>,
@@ -320,7 +320,7 @@ pub struct UniversalIndexConfig {
 }
 
 /// Supported index types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Index {
     /// Primary ID index
     PrimaryId,
@@ -339,14 +339,14 @@ pub enum Index {
 }
 
 /// ID index configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IdIndexConfig {
     pub compression: bool,
     pub enable_caching: bool,
     pub cache_size_mb: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IdIndexStrategy {
     HashMap,
     BTree,
@@ -356,7 +356,7 @@ pub enum IdIndexStrategy {
 }
 
 /// Secondary index configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SecondaryIndexConfig {
     pub column_name: String,
     pub index_type: Index,
@@ -366,7 +366,7 @@ pub struct SecondaryIndexConfig {
 }
 
 /// Bloom filter configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilterConfig {
     pub enabled: bool,
     pub false_positive_rate: f64,
@@ -375,7 +375,7 @@ pub struct BloomFilterConfig {
     pub filter_type: BloomFilter,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BloomFilter {
     Standard,
     Counting,
@@ -384,7 +384,7 @@ pub enum BloomFilter {
 }
 
 /// Index maintenance configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexMaintenanceConfig {
     pub auto_rebuild: bool,
     pub rebuild_threshold: f64,
@@ -393,7 +393,7 @@ pub struct IndexMaintenanceConfig {
 }
 
 /// Universal schema configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalSchemaConfig {
     /// Core vector schema
     pub vector_schema: VectorSchemaConfig,
@@ -406,14 +406,14 @@ pub struct UniversalSchemaConfig {
 }
 
 /// Vector schema configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorSchemaConfig {
     pub dimension: usize,
     pub normalization: Option<VectorNormalization>,
     pub validation: VectorValidationConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorData {
     Float32,
     Float16,
@@ -422,7 +422,7 @@ pub enum VectorData {
     Binary,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorNormalization {
     L2,
     L1,
@@ -431,7 +431,7 @@ pub enum VectorNormalization {
 }
 
 /// Vector validation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorValidationConfig {
     pub check_dimension: bool,
     pub check_nan: bool,
@@ -441,7 +441,7 @@ pub struct VectorValidationConfig {
 }
 
 /// Metadata schema configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataSchemaConfig {
     pub filterable_columns: Vec<FilterableColumn>,
     pub searchable_columns: Vec<String>,
@@ -450,7 +450,7 @@ pub struct MetadataSchemaConfig {
 }
 
 /// Schema evolution configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SchemaEvolutionConfig {
     pub allow_schema_changes: bool,
     pub backward_compatibility: bool,
@@ -458,7 +458,7 @@ pub struct SchemaEvolutionConfig {
     pub version_tracking: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SchemaMigrationStrategy {
     Strict,     // No changes allowed
     Compatible, // Only compatible changes
@@ -485,7 +485,7 @@ pub trait UniversalEngineCapabilities {
 }
 
 /// Engine capabilities description
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineCapabilities {
     /// Core capabilities
     pub supports_id_lookup: bool,
@@ -519,7 +519,7 @@ pub struct EngineCapabilities {
 }
 
 /// Performance profile for an engine
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceProfile {
     /// Throughput characteristics
     pub read_throughput_ops_per_sec: f64,
@@ -577,7 +577,7 @@ pub trait UniversalEngineOperations {
 }
 
 /// Engine health status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HealthStatus {
     pub is_healthy: bool,
     pub status: HealthLevel,
@@ -586,7 +586,7 @@ pub struct HealthStatus {
     pub resource_utilization: ResourceUtilization,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum HealthLevel {
     Excellent,
     Good,
@@ -595,7 +595,7 @@ pub enum HealthLevel {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HealthIssue {
     pub severity: IssueSeverity,
     pub category: IssueCategory,
@@ -603,7 +603,7 @@ pub struct HealthIssue {
     pub recommendation: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IssueSeverity {
     Info,
     Warning,
@@ -611,7 +611,7 @@ pub enum IssueSeverity {
     Critical,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IssueCategory {
     Performance,
     Resource,
@@ -621,7 +621,7 @@ pub enum IssueCategory {
 }
 
 /// Resource utilization tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceUtilization {
     pub memory_usage_percent: f32,
     pub storage_usage_percent: f32,
@@ -874,7 +874,7 @@ pub mod utils {
         Ok(())
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     pub enum WorkloadType {
         HighThroughput,
         LowLatency,

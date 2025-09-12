@@ -26,7 +26,7 @@ use tracing::debug;
 use super::{FileOptions, FileSystem, FilesystemError, FsResult};
 
 /// Atomic write strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AtomicWriteConfig {
     /// Strategy to use based on environment
     pub strategy: AtomicWriteStrategy,
@@ -42,7 +42,7 @@ pub struct AtomicWriteConfig {
 }
 
 /// Atomic write strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AtomicWriteStrategy {
     /// Direct write - fastest, suitable for R&D and local testing
     /// Risk: Power failure can corrupt files
@@ -71,7 +71,7 @@ pub enum AtomicWriteStrategy {
 }
 
 /// Temp directory configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TempDirectoryConfig {
     /// Enable cleanup of temp files on startup
     pub cleanup_on_startup: bool,
@@ -84,7 +84,7 @@ pub struct TempDirectoryConfig {
 }
 
 /// Cleanup configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CleanupConfig {
     /// Enable automatic cleanup of failed operations
     pub enable_auto_cleanup: bool,
@@ -97,7 +97,7 @@ pub struct CleanupConfig {
 }
 
 /// Retry configuration for atomic operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AtomicRetryConfig {
     pub max_retries: usize,
     pub initial_delay_ms: u64,

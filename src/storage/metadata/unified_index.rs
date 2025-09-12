@@ -26,7 +26,7 @@ use std::sync::Arc;
 use crate::proto::proximadb_v1::Collection;
 
 /// Performance metrics for monitoring and optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexPerformanceMetrics {
     pub total_collections: usize,
     pub memory_usage_bytes: usize,

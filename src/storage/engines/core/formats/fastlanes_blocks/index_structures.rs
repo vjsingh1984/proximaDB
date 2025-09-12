@@ -36,7 +36,7 @@ pub struct RowBasedIdIndex {
 }
 
 /// Index type selection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Index {
     /// B+ tree for range queries and sorted access
     BTree,
@@ -51,7 +51,7 @@ pub enum Index {
 }
 
 /// Dense index configuration for numeric IDs
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DenseIndexConfig {
     pub start_id: u64,
     pub max_capacity: u64,
@@ -60,7 +60,7 @@ pub struct DenseIndexConfig {
 }
 
 /// Hierarchical index configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HierarchicalConfig {
     pub levels: u8,
     pub fanout_per_level: Vec<usize>,
@@ -86,7 +86,7 @@ pub struct DenseIndex {
 }
 
 /// Sparse region in dense index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SparseRegion {
     pub start_id: u64,
     pub end_id: u64,
@@ -134,7 +134,7 @@ pub struct LeafIndex {
 }
 
 /// Index range for hierarchical indexing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexRange {
     pub start_key: String,
     pub end_key: String,
@@ -143,7 +143,7 @@ pub struct IndexRange {
 }
 
 /// Index statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStatistics {
     pub total_entries: u64,
     pub index_size_bytes: usize,
@@ -154,7 +154,7 @@ pub struct IndexStatistics {
 }
 
 /// Level-specific statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LevelStatistics {
     pub level: u8,
     pub entry_count: u64,
@@ -164,7 +164,7 @@ pub struct LevelStatistics {
 }
 
 /// Index configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexConfiguration {
     /// Basic settings
     pub index_type: Index,
@@ -186,7 +186,7 @@ pub struct IndexConfiguration {
 }
 
 /// Bloom filter configuration for row-based engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilterConfig {
     pub enabled: bool,
     pub false_positive_rate: f64,
@@ -196,7 +196,7 @@ pub struct BloomFilterConfig {
     pub filter_type: BloomFilter,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BloomFilter {
     Standard,
     Counting,
@@ -205,7 +205,7 @@ pub enum BloomFilter {
 }
 
 /// Index entry for lookups
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexEntry {
     pub key: String,
     pub location: BlockLocation,
@@ -213,7 +213,7 @@ pub struct IndexEntry {
 }
 
 /// Entry metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EntryMetadata {
     pub inserted_at: i64,
     pub access_count: u64,
@@ -258,7 +258,7 @@ pub struct MultiLevelIndex {
     access_patterns: HashMap<String, AccessPattern>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessPattern {
     pub pattern_type: AccessType,
     pub frequency: u64,
@@ -266,7 +266,7 @@ pub struct AccessPattern {
     pub average_response_time: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AccessType {
     PointLookup,
     RangeScan,

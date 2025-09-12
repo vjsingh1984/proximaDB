@@ -28,7 +28,7 @@ use crate::core::VectorRecord;
 use crate::storage::unified_scan_strategy::{ScanIterator, ScanStatistics};
 
 /// Configuration for Arrow IPC scanning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IpcScanConfig {
     /// Use streaming format vs file format
     pub use_streaming: bool,

@@ -227,7 +227,7 @@ pub enum FilesystemError {
 }
 
 /// File metadata information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FileMetadata {
     pub path: String,
     pub size: u64,
@@ -240,7 +240,7 @@ pub struct FileMetadata {
 }
 
 /// Directory listing entry (stateless design - contains full URL)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DirEntry {
     pub name: String,
     pub url: String, // Full URL instead of relative path
@@ -248,7 +248,7 @@ pub struct DirEntry {
 }
 
 /// Temporary directory strategy for atomic operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TempStrategy {
     /// Direct write (no temp files) - for local filesystem with atomic guarantees
     DirectWrite,
@@ -291,7 +291,7 @@ pub struct FileOptions {
 }
 
 /// Authentication configuration for cloud providers
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AuthConfig {
     /// AWS authentication method
     pub aws_auth: Option<AwsAuthMethod>,
@@ -309,7 +309,7 @@ pub struct AuthConfig {
     pub credential_refresh_interval_seconds: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AwsAuthMethod {
     /// Use AWS IAM roles (recommended for EC2/ECS)
     IamRole,
@@ -324,7 +324,7 @@ pub enum AwsAuthMethod {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AzureAuthMethod {
     /// Use Azure Managed Identity
     ManagedIdentity,
@@ -339,7 +339,7 @@ pub enum AzureAuthMethod {
     Environment,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum GcsAuthMethod {
     /// Use Application Default Credentials
     ApplicationDefault,
@@ -352,7 +352,7 @@ pub enum GcsAuthMethod {
 }
 
 /// Retry configuration for operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RetryConfig {
     /// Maximum number of retries
     pub max_retries: u32,
@@ -433,7 +433,7 @@ impl FileStorageTier {
 }
 
 /// Tier-specific storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TierConfig {
     /// Storage tier type
     pub tier: FileStorageTier,
@@ -455,7 +455,7 @@ pub struct TierConfig {
 }
 
 /// Filesystem performance configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilesystemPerformanceConfig {
     /// Connection pool size per backend
     pub connection_pool_size: usize,
@@ -748,7 +748,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
 }
 
 /// Filesystem factory configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilesystemConfig {
     /// Default filesystem URL for unqualified paths
     pub default_fs: Option<String>,

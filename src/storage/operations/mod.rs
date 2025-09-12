@@ -62,7 +62,7 @@ struct CoordinatorState {
 }
 
 /// Active operation tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct ActiveOperation {
     operation_id: String,
     operation_type: OperationType,
@@ -72,7 +72,7 @@ struct ActiveOperation {
 }
 
 /// Pending operation in queue
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct PendingOperation {
     operation_type: OperationType,
     collection_id: String,
@@ -473,7 +473,7 @@ impl UnifiedOperationCoordinator {
 }
 
 /// Flush operation result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushResult {
     pub collection_id: String,
     pub files_created: Vec<String>,
@@ -483,7 +483,7 @@ pub struct FlushResult {
 }
 
 /// Compaction operation result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionResult {
     pub collection_id: String,
     pub files_compacted: Vec<String>,
@@ -494,7 +494,7 @@ pub struct CompactionResult {
 }
 
 /// Re-quantization operation result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RequantizationResult {
     pub collection_id: String,
     pub codebooks_updated: Vec<String>,
@@ -503,7 +503,7 @@ pub struct RequantizationResult {
 }
 
 /// Current operation status for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OperationStatus {
     pub active_operations: usize,
     pub pending_operations: usize,

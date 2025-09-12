@@ -23,7 +23,7 @@ pub struct OptimizedWalPathResolver {
 }
 
 /// Complete path information for a collection across all components
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionPaths {
     pub collection_id: String,
     pub assigned_disk_id: String,
@@ -199,7 +199,7 @@ impl OptimizedWalPathResolver {
 }
 
 /// Disk utilization statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DiskStats {
     pub collection_id: String,
     pub disk_id: String,

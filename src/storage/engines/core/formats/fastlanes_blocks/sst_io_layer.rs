@@ -74,7 +74,7 @@ pub enum FileType {
 }
 
 /// SST file metadata for caching
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstFileMetadata {
     pub file_path: String,
     pub file_size: u64,

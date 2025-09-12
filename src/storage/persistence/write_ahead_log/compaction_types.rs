@@ -20,7 +20,7 @@
 use crate::core::VectorRecord;
 
 /// Enhanced engine compaction result with vector tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EnhancedEngineCompactionResult {
     /// Basic compaction metrics
     pub files_processed: u64,

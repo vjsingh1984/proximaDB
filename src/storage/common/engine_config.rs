@@ -20,7 +20,7 @@ use super::compaction_utils::StorageEngineType;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for engine-specific compaction behavior
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineCompactionConfig {
     /// Base compaction configuration
     pub base: crate::core::config::CompactionConfig,
@@ -30,7 +30,7 @@ pub struct EngineCompactionConfig {
 }
 
 /// Engine-specific compaction settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum EngineSpecificConfig {
     SST(SstCompactionConfig),
     VIPER(ViperCompactionConfig),
@@ -41,7 +41,7 @@ pub enum EngineSpecificConfig {
 }
 
 /// SST engine compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstCompactionConfig {
     /// Enable bloom filter merging during compaction
     pub merge_bloom_filters: bool,
@@ -68,7 +68,7 @@ impl Default for SstCompactionConfig {
 }
 
 /// VIPER engine compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ViperCompactionConfig {
     /// Use columnar optimization during compaction
     pub columnar_optimization: bool,
@@ -95,7 +95,7 @@ impl Default for ViperCompactionConfig {
 }
 
 /// NOVA engine compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NovaCompactionConfig {
     /// Enable hierarchical compaction
     pub hierarchical_compaction: bool,
@@ -122,7 +122,7 @@ impl Default for NovaCompactionConfig {
 }
 
 /// SWIFT engine compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SwiftCompactionConfig {
     /// Superblock size (in MB)
     pub superblock_size_mb: usize,
@@ -149,7 +149,7 @@ impl Default for SwiftCompactionConfig {
 }
 
 /// PRISM engine compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PrismCompactionConfig {
     /// Memory optimization level
     pub memory_optimization_level: String,
@@ -176,7 +176,7 @@ impl Default for PrismCompactionConfig {
 }
 
 /// RAPTOR engine compaction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RaptorCompactionConfig {
     /// Adaptive PxK configuration
     pub adaptive_pxk: bool,

@@ -60,7 +60,7 @@ use crate::storage::persistence::filesystem::{
 };
 
 /// Cache strategy for intelligent filesystem
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CacheStrategy {
     /// Adaptive caching based on access patterns
     Adaptive,
@@ -80,7 +80,7 @@ pub enum CacheStrategy {
 /// - **Write-heavy workloads**: Reduce cache sizes, disable prefetching
 /// - **Cloud storage**: Enable all features for maximum cost savings
 /// - **Local storage**: Disable disk cache, keep metadata cache
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheConfig {
     /// Maximum memory cache size in MB.
     /// Used for metadata, bloom filters, and hot data.
@@ -174,7 +174,7 @@ pub struct IntelligentFilesystem {
 }
 
 /// Cached metadata entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CachedMetadata {
     /// File metadata
     metadata: FileMetadata,
@@ -200,7 +200,7 @@ struct AccessPatternTracker {
 }
 
 /// Access event for pattern learning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct AccessEvent {
     file_path: String,
     timestamp: std::time::Instant,
@@ -209,7 +209,7 @@ struct AccessEvent {
 }
 
 /// Access operation type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum AccessOperation {
     Read,
     Write,

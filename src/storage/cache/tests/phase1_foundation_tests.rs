@@ -10,7 +10,7 @@ struct TestKey(String);
 
 impl CacheKey for TestKey {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct TestValue {
     data: Vec<u8>,
     size: usize,

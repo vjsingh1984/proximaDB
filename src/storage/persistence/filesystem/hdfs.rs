@@ -23,7 +23,7 @@ use tokio::time::Duration;
 use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// HDFS authentication types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum HdfsAuthType {
     /// No authentication
     Simple,
@@ -34,7 +34,7 @@ pub enum HdfsAuthType {
 }
 
 /// HDFS configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HdfsConfig {
     /// HDFS NameNode URL (e.g., "http://namenode:9870")
     pub namenode_url: String,

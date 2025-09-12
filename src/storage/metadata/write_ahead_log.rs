@@ -35,7 +35,7 @@ use crate::storage::persistence::write_ahead_log::{
 };
 
 /// Metadata-specific write buffer configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataWALConfig {
     /// Base write buffer configuration
     pub base_config: WALConfig,
@@ -94,7 +94,7 @@ impl Default for MetadataWALConfig {
 }
 
 /// Collection metadata with versioning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VersionedCollectionMetadata {
     pub id: String,
     pub name: String,
@@ -116,7 +116,7 @@ pub struct VersionedCollectionMetadata {
 }
 
 /// Access pattern hints for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AccessPattern {
     /// Frequently accessed, keep hot
     Hot,
@@ -129,7 +129,7 @@ pub enum AccessPattern {
 }
 
 /// Retention policy for collections
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RetentionPolicy {
     pub retain_days: u32,
     pub auto_archive: bool,
@@ -648,7 +648,7 @@ impl MetadataWriteAheadLog {
 }
 
 /// System metadata with write buffer backing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SystemMetadata {
     pub version: String,
     pub node_id: String,

@@ -26,7 +26,7 @@ pub struct DistanceTableKey {
 }
 
 /// Cached distance table
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CachedDistanceTable {
     /// Pre-computed distances
     pub distances: Vec<Vec<f32>>,

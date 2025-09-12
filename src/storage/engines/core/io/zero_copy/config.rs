@@ -29,7 +29,7 @@ pub enum WorkloadType {
 }
 
 /// Complete system configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ZeroCopyIOConfig {
     /// Metadata cache configuration
     pub metadata_cache: MetadataCacheConfig,
@@ -45,7 +45,7 @@ pub struct ZeroCopyIOConfig {
 }
 
 /// Metadata cache configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataCacheConfig {
     /// Cache directory path
     pub cache_dir: PathBuf,
@@ -73,7 +73,7 @@ pub struct MetadataCacheConfig {
 }
 
 /// Cache eviction policies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum EvictionPolicy {
     /// Least Recently Used
     LRU,
@@ -88,7 +88,7 @@ pub enum EvictionPolicy {
 }
 
 /// Download optimizer configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DownloadOptimizerConfig {
     /// Base threshold percentage for selective downloads
     pub base_threshold_percent: f32,
@@ -110,7 +110,7 @@ pub struct DownloadOptimizerConfig {
 }
 
 /// Size-based threshold configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SizeBasedThresholds {
     /// Small files threshold and download percentage
     pub small_file_threshold: u64,
@@ -129,7 +129,7 @@ pub struct SizeBasedThresholds {
 }
 
 /// Network condition adjustments
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NetworkAdjustments {
     /// High latency threshold (ms)
     pub high_latency_threshold: f32,
@@ -148,7 +148,7 @@ pub struct NetworkAdjustments {
 }
 
 /// Access prediction configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessPredictionConfig {
     /// Enable access pattern learning
     pub enable_learning: bool,
@@ -167,7 +167,7 @@ pub struct AccessPredictionConfig {
 }
 
 /// Cost optimization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CostOptimizationConfig {
     /// Minimum savings required for selective downloads (bytes)
     pub min_savings_for_selective: u64,
@@ -186,7 +186,7 @@ pub struct CostOptimizationConfig {
 }
 
 /// Range request optimization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RangeOptimizationConfig {
     /// Maximum gap to merge ranges (bytes)
     pub max_merge_gap: u64,
@@ -205,7 +205,7 @@ pub struct RangeOptimizationConfig {
 }
 
 /// Integration settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IntegrationConfig {
     /// Enable batch optimization across files
     pub enable_batch_optimization: bool,
@@ -224,7 +224,7 @@ pub struct IntegrationConfig {
 }
 
 /// Collection isolation levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CollectionIsolation {
     /// Complete isolation per collection
     Strict,
@@ -235,7 +235,7 @@ pub enum CollectionIsolation {
 }
 
 /// Performance tuning configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceConfig {
     /// Enable performance monitoring
     pub enable_monitoring: bool,
@@ -260,7 +260,7 @@ pub struct PerformanceConfig {
 }
 
 /// Background task configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BackgroundTaskConfig {
     /// Cache cleanup interval
     pub cache_cleanup_interval: Duration,

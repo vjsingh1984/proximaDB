@@ -36,7 +36,7 @@ pub struct RowBasedBatchOperations {
 }
 
 /// Batch operation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchConfig {
     /// Batch sizes
     pub default_batch_size: usize,
@@ -65,7 +65,7 @@ pub struct BatchConfig {
 }
 
 /// Batch processing strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BatchProcessingStrategy {
     /// Sequential processing
     Sequential,
@@ -78,14 +78,14 @@ pub enum BatchProcessingStrategy {
 }
 
 /// Concurrency configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ConcurrencyConfig {
     pub max_parallelism: usize,
     pub work_stealing: bool,
     pub load_balancing: LoadBalancingStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum LoadBalancingStrategy {
     RoundRobin,
     LeastLoaded,
@@ -94,7 +94,7 @@ pub enum LoadBalancingStrategy {
 }
 
 /// Batch operation result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchResult {
     /// Operation metadata
     pub operation_id: String,
@@ -118,7 +118,7 @@ pub struct BatchResult {
 }
 
 /// Partial result for batch operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PartialResult {
     pub index: usize,
     pub success: bool,
@@ -128,7 +128,7 @@ pub struct PartialResult {
 }
 
 /// Cached batch result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CachedBatchResult {
     pub result: BatchResult,
     pub timestamp: std::time::Instant,
@@ -137,7 +137,7 @@ pub struct CachedBatchResult {
 }
 
 /// Batch operation statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchOperationStats {
     pub total_batches_processed: u64,
     pub total_records_processed: u64,

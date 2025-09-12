@@ -58,7 +58,7 @@ pub struct RecoveryStats {
 pub type RecoveryProgressCallback = Box<dyn Fn(RecoveryProgress) + Send + Sync>;
 
 /// Recovery progress information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RecoveryProgress {
     pub current_file: usize,
     pub total_files: usize,

@@ -42,7 +42,7 @@ impl TryFrom<i32> for StorageEngineType {
 }
 
 /// Compression configuration for storage engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionConfig {
     pub enabled: bool,
     pub compression_type: String, // "zstd", "snappy", "lz4", "gzip"
@@ -60,7 +60,7 @@ impl Default for CompressionConfig {
 }
 
 /// Quantization configuration for vector compression
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationConfig {
     pub enabled: bool,
     pub quantization_type: String, // "product", "scalar", "binary"
@@ -87,7 +87,7 @@ impl Default for OperationPriority {
 ///
 /// This eliminates the need for background threads to make collection service calls,
 /// improving performance and reliability.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BackgroundFlushContext {
     // === Core Identification ===
     /// Collection ID being processed

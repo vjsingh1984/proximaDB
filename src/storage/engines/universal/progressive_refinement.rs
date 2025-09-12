@@ -49,7 +49,7 @@ pub enum RefinementStage {
 }
 
 /// Refinement strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RefinementStrategy {
     /// Execute all stages sequentially
     Sequential,
@@ -68,7 +68,7 @@ pub enum RefinementStrategy {
 }
 
 /// Configuration for progressive refinement
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveRefinementConfig {
     /// Refinement strategy
     pub search_strategy: RefinementStrategy,
@@ -93,7 +93,7 @@ pub struct ProgressiveRefinementConfig {
 }
 
 /// Result of progressive refinement execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveRefinementResult {
     /// Final similarity results
     pub similarity_results: Vec<SimilarityResult>,
@@ -133,7 +133,7 @@ pub struct ProgressiveRefinementResult {
 }
 
 /// Quality metrics for refinement results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityMetrics {
     /// Estimated recall (0.0-1.0)
     pub estimated_recall: f32,
@@ -754,7 +754,7 @@ impl ProgressiveRefinementPipeline {
 }
 
 /// Result of executing a single refinement stage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct StageResult {
     /// Refined candidates from this stage
     refined_candidates: Vec<CandidateVector>,

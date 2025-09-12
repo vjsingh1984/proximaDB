@@ -21,7 +21,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace, warn};
 
 /// Cached footer information with metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CachedFooter {
     /// Raw footer data (serialized ParquetMetaData)
     pub footer_data: Vec<u8>,
@@ -82,7 +82,7 @@ impl CachedFooter {
 }
 
 /// Footer cache configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FooterCacheConfig {
     /// Maximum cache size (number of entries)
     pub max_entries: u64,

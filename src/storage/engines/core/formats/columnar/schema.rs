@@ -16,7 +16,7 @@ use super::QuantizationConfig;
 use crate::core::compression::CompressionAlgorithm;
 
 /// Schema configuration with quantization awareness
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnarSchemaConfig {
     /// Vector dimension
     pub dimension: usize,
@@ -35,7 +35,7 @@ pub struct ColumnarSchemaConfig {
 }
 
 /// Filterable column specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilterableColumnSpec {
     pub name: String,
     pub data_type: FilterableData,
@@ -45,7 +45,7 @@ pub struct FilterableColumnSpec {
 }
 
 /// Supported filterable data types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterableData {
     String,
     Integer,
@@ -57,7 +57,7 @@ pub enum FilterableData {
 }
 
 /// Schema optimization settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SchemaOptimization {
     /// Enable dictionary encoding for low-cardinality strings
     pub enable_dictionary_encoding: bool,
@@ -76,7 +76,7 @@ pub struct SchemaOptimization {
 }
 
 /// Compression strategy per column type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionStrategy {
     /// Compression for FP32 vector columns
     pub fp32_vectors: CompressionAlgorithm,
@@ -140,7 +140,7 @@ pub struct ColumnarSchemaBuilder {
 }
 
 /// Cached schema with expiration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CachedSchema {
     schema: Arc<Schema>,
     compression_metadata: CompressionMetadata,
@@ -149,7 +149,7 @@ struct CachedSchema {
 }
 
 /// Compression metadata for schema
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionMetadata {
     /// Compression settings per column
     pub column_compression: HashMap<String, CompressionAlgorithm>,
@@ -162,7 +162,7 @@ pub struct CompressionMetadata {
 }
 
 /// Parquet writer properties configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WriterPropertiesConfig {
     pub row_group_size: usize,
     pub page_size: usize,

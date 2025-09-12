@@ -117,7 +117,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::CompressionAlgorithm;
 
 /// Common configuration for row-based storage engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowBasedConfig {
     /// Engine identification
     pub engine_name: String,
@@ -147,7 +147,7 @@ pub struct RowBasedConfig {
 }
 
 /// Index configuration shared between SST and SWIFT
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexConfiguration {
     /// Bloom filter settings
     pub bloom_filter_enabled: bool,
@@ -168,7 +168,7 @@ pub struct IndexConfiguration {
 }
 
 /// Type of ID indexing strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IdIndex {
     /// B+ tree for sorted access
     BTree,
@@ -181,7 +181,7 @@ pub enum IdIndex {
 }
 
 /// Performance configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceConfiguration {
     /// Memory management
     pub memory_pool_enabled: bool,
@@ -203,7 +203,7 @@ pub struct PerformanceConfiguration {
 }
 
 /// Search mode for row-based engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RowBasedSearchMode {
     /// AXIS returns IDs, lookup full vectors
     IndexDriven {
@@ -228,20 +228,20 @@ pub enum RowBasedSearchMode {
 }
 
 /// Metadata filter for queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub logic: FilterLogic,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterLogic {
     And,
     Or,
     Not,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterCondition {
     Equals(String, serde_json::Value),
     NotEquals(String, serde_json::Value),
@@ -256,7 +256,7 @@ pub enum FilterCondition {
 }
 
 /// Operation statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OperationStats {
     pub records_processed: u64,
     pub bytes_processed: u64,
@@ -433,7 +433,7 @@ pub mod utils {
         config
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     pub enum WorkloadType {
         HighThroughputWrite,
         LowLatencyRead,

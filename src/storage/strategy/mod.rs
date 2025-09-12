@@ -19,7 +19,7 @@ use crate::proto::proximadb_v1::{
 };
 
 /// Collection strategy configuration for persistence and lifecycle operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionStrategyConfig {
     /// Indexing algorithm configuration
     pub indexing_config: IndexingConfig,
@@ -35,7 +35,7 @@ pub struct CollectionStrategyConfig {
 }
 
 /// Indexing algorithm configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexingConfig {
     /// Primary algorithm
     pub algorithm: IndexingAlgorithm,
@@ -44,7 +44,7 @@ pub struct IndexingConfig {
 }
 
 /// Available indexing algorithms with configuration parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World
     HNSW {
@@ -95,7 +95,7 @@ impl IndexingAlgorithm {
 }
 
 /// Storage engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageConfig {
     /// Storage engine type
     pub engine_type: StorageEngineType,
@@ -107,7 +107,7 @@ pub struct StorageConfig {
 pub type StorageEngineType = ProtoStorageEngine;
 
 /// Search engine configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchConfig {
     /// Distance metric for similarity
     pub distance_metric: DistanceMetric,
@@ -121,7 +121,7 @@ pub struct SearchConfig {
 pub type DistanceMetric = ProtoDistanceMetric;
 
 /// Performance configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceConfig {
     /// Memory limit in MB
     pub memory_limit_mb: u32,
@@ -134,7 +134,7 @@ pub struct PerformanceConfig {
 }
 
 /// Batch processing configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchConfig {
     /// Batch size for operations
     pub batch_size: usize,

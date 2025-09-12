@@ -411,7 +411,7 @@ impl ColumnarBatchOperations {
 }
 
 /// Request to update a vector
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorUpdateRequest {
     pub vector_id: String,
     pub new_vector: Vec<f32>,
@@ -467,7 +467,7 @@ pub struct FailedDelete {
 }
 
 /// Cached batch operation result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CachedBatchResult {
     pub records: Vec<VectorRecord>,
     pub timestamp: chrono::DateTime<chrono::Utc>,

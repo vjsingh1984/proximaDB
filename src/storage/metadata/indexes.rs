@@ -28,7 +28,7 @@ use tokio::sync::RwLock;
 use crate::proto::proximadb_v1::Collection;
 
 /// Fast lookup result for metadata queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionLookupResult {
     pub uuid: String,
     pub name: String,
@@ -76,7 +76,7 @@ impl From<&Collection> for CollectionLookupResult {
 }
 
 /// Statistics for memory index performance monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStatistics {
     pub total_collections: usize,
     pub memory_usage_bytes: usize,

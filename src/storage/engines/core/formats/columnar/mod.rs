@@ -214,7 +214,7 @@ use crate::core::VectorRecord;
 /// - **Column Projection**: Read only needed columns (up to 90% savings)
 /// - **Row Group Pruning**: Skip irrelevant row groups using statistics
 /// - **Caching**: Reduce repeated reads by 70-90%
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnarConfig {
     /// Enable predicate pushdown optimization
     /// When true, filters are pushed to the storage layer to minimize data transfer
@@ -244,7 +244,7 @@ pub struct ColumnarConfig {
 pub use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// Optimization thresholds
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationThresholds {
     /// Row group pruning threshold (records)
     pub row_group_pruning_threshold: usize,
@@ -260,7 +260,7 @@ pub struct OptimizationThresholds {
 }
 
 /// File metadata common to both NOVA and VIPER
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnarFileMetadata {
     /// Collection ID
     pub collection_id: String,
@@ -291,7 +291,7 @@ pub struct ColumnarFileMetadata {
 }
 
 /// Column statistics for query optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStatistics {
     pub null_count: u64,
     pub distinct_count: u64,
@@ -302,7 +302,7 @@ pub struct ColumnStatistics {
 }
 
 /// Search mode for columnar engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ColumnarSearchMode {
     /// AXIS returns IDs, we lookup full vectors
     IndexDriven { ids: Vec<String> },
@@ -323,19 +323,19 @@ pub enum ColumnarSearchMode {
 }
 
 /// Metadata filter for queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub logic: FilterLogic,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterLogic {
     And,
     Or,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FilterCondition {
     Equals(String, serde_json::Value),
     Range(String, serde_json::Value, serde_json::Value),
@@ -345,7 +345,7 @@ pub enum FilterCondition {
 }
 
 /// Row group statistics for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroupStats {
     pub row_group_id: usize,
     pub num_rows: u64,
@@ -357,7 +357,7 @@ pub struct RowGroupStats {
 }
 
 /// Search candidate for progressive refinement
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchCandidate {
     pub row_group_id: usize,
     pub row_offset: u32,
@@ -389,7 +389,7 @@ pub trait ColumnarOperations {
 }
 
 /// Columnar optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnarOptimizations {
     /// Columnar projection - only load needed columns
     pub projection: Vec<String>,
@@ -568,7 +568,7 @@ pub struct OptimizationRecommendations {
     pub quantization_strategy: QuantizationStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QuantizationStrategy {
     None,
     BinaryOnly,
@@ -614,14 +614,14 @@ impl OptimizationRecommendations {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QueryPattern {
     IdLookupHeavy,
     SimilaritySearchHeavy,
     Mixed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StorageBudget {
     Performance, // Prioritize speed
     Balanced,    // Balance speed and storage

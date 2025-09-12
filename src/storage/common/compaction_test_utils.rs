@@ -14,7 +14,7 @@ use super::compaction_orchestrator::*;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Mock storage engine for testing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MockStorageEngine {
     pub file_extension: String,
     pub config: CompactionConfig,
@@ -50,7 +50,7 @@ impl MockStorageEngine {
 }
 
 /// Mock file metadata for testing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MockFileMetadata {
     pub path: String,
     pub size_bytes: u64,
@@ -78,7 +78,7 @@ impl FileMetadata for MockFileMetadata {
 }
 
 /// Mock compaction task for testing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MockCompactionTask {
     pub operation_id: String,
     pub collection_id: String,
@@ -110,7 +110,7 @@ impl CompactionTask for MockCompactionTask {
 }
 
 /// Mock compaction result for testing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MockCompactionResult {
     pub operation_id: String,
     pub files_created: Vec<String>,

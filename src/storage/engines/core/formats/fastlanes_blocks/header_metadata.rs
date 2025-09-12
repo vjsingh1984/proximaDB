@@ -9,7 +9,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::CompressionAlgorithm;
 
 /// Row-based file header structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowBasedHeader {
     /// File format identification
     pub magic: [u8; 8],
@@ -47,7 +47,7 @@ pub struct RowBasedHeader {
 }
 
 /// Engine-specific metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineMetadata {
     pub engine_name: String,
     pub engine_version: String,
@@ -58,7 +58,7 @@ pub struct EngineMetadata {
 }
 
 /// Optimization hints for engine behavior
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationHints {
     pub prefer_sequential_access: bool,
     pub prefer_random_access: bool,
@@ -68,7 +68,7 @@ pub struct OptimizationHints {
     pub io_pattern_hint: IOPatternHint,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MemoryUsageHint {
     Low,      // < 1GB
     Medium,   // 1-8GB
@@ -76,7 +76,7 @@ pub enum MemoryUsageHint {
     VeryHigh, // > 32GB
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IOPatternHint {
     Sequential,
     Random,
@@ -86,7 +86,7 @@ pub enum IOPatternHint {
 }
 
 /// Collection-specific metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionMetadata {
     pub collection_id: String,
     pub collection_name: Option<String>,
@@ -98,7 +98,7 @@ pub struct CollectionMetadata {
 }
 
 /// Filterable column definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FilterableColumn {
     pub name: String,
     pub indexed: bool,
@@ -106,7 +106,7 @@ pub struct FilterableColumn {
     pub statistics: ColumnStatistics,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ColumnData {
     String,
     Integer,
@@ -117,7 +117,7 @@ pub enum ColumnData {
 }
 
 /// Column statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStatistics {
     pub null_count: u64,
     pub distinct_count: u64,
@@ -127,7 +127,7 @@ pub struct ColumnStatistics {
     pub size_distribution: SizeDistribution,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SizeDistribution {
     pub p50: f64,
     pub p90: f64,
@@ -136,7 +136,7 @@ pub struct SizeDistribution {
 }
 
 /// Collection-level statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionStatistics {
     pub total_records: u64,
     pub total_size_bytes: u64,
@@ -146,7 +146,7 @@ pub struct CollectionStatistics {
     pub version_range: (i64, i64),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IdDistribution {
     pub id_type: IdType,
     pub min_id: String,
@@ -154,7 +154,7 @@ pub struct IdDistribution {
     pub id_length_distribution: SizeDistribution,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IdType {
     Numeric,
     Uuid,
@@ -163,7 +163,7 @@ pub enum IdType {
 }
 
 /// File layout metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LayoutMetadata {
     /// Hierarchical structure
     pub superblock_count: u32,
@@ -187,7 +187,7 @@ pub struct LayoutMetadata {
     pub padding_strategy: PaddingStrategy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockLayoutInfo {
     pub layout_strategy: LayoutStrategy,
     pub target_block_size: u64,
@@ -195,7 +195,7 @@ pub struct BlockLayoutInfo {
     pub compression_ratios: Vec<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum LayoutStrategy {
     FixedSize,
     VariableSize,
@@ -203,7 +203,7 @@ pub enum LayoutStrategy {
     Compressed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PaddingStrategy {
     None,
     BlockAlign,
@@ -212,7 +212,7 @@ pub enum PaddingStrategy {
 }
 
 /// Index metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexMetadata {
     /// ID index information
     pub id_index_offset: u64,
@@ -236,7 +236,7 @@ pub struct IndexMetadata {
     pub level_sizes: Vec<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Index {
     BTree,
     HashMap,
@@ -246,7 +246,7 @@ pub enum Index {
 }
 
 /// Bloom filter metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilterMetadata {
     pub filter_type: BloomFilter,
     pub false_positive_rate: f64,
@@ -256,7 +256,7 @@ pub struct BloomFilterMetadata {
     pub bit_array_size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BloomFilter {
     Standard,
     Counting,
@@ -265,7 +265,7 @@ pub enum BloomFilter {
 }
 
 /// Quantization metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationMetadata {
     pub quantization_enabled: bool,
     pub binary_quantization: Option<BinaryQuantizationMeta>,
@@ -275,14 +275,14 @@ pub struct QuantizationMetadata {
     pub reconstruction_error: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BinaryQuantizationMeta {
     pub threshold: f32,
     pub bit_count: u64,
     pub compression_ratio: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Int8QuantizationMeta {
     pub scale: f32,
     pub zero_point: i8,
@@ -290,7 +290,7 @@ pub struct Int8QuantizationMeta {
     pub per_channel: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PQQuantizationMeta {
     pub segments: u8,
     pub bits_per_segment: u8,
@@ -300,7 +300,7 @@ pub struct PQQuantizationMeta {
 }
 
 /// Compression metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionMetadata {
     /// Global compression settings
     pub compression_enabled: bool,
@@ -318,7 +318,7 @@ pub struct CompressionMetadata {
     pub decompression_time_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SectionCompressionInfo {
     pub algorithm: CompressionAlgorithm,
     pub level: u8,
@@ -328,7 +328,7 @@ pub struct SectionCompressionInfo {
 }
 
 /// File metadata (high-level file information)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FileMetadata {
     /// Basic file information
     pub file_path: String,
@@ -353,14 +353,14 @@ pub struct FileMetadata {
     pub replication_info: Option<ReplicationInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessControl {
     pub read_permissions: Vec<String>,
     pub write_permissions: Vec<String>,
     pub admin_permissions: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StorageLocation {
     Local(String),
     S3 {
@@ -379,7 +379,7 @@ pub enum StorageLocation {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BackupInfo {
     pub backup_location: StorageLocation,
     pub backup_frequency: BackupFrequency,
@@ -387,7 +387,7 @@ pub struct BackupInfo {
     pub backup_retention_days: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BackupFrequency {
     None,
     Hourly,
@@ -396,14 +396,14 @@ pub enum BackupFrequency {
     Monthly,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ReplicationInfo {
     pub replication_factor: u8,
     pub replica_locations: Vec<StorageLocation>,
     pub consistency_level: ConsistencyLevel,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ConsistencyLevel {
     Eventual,
     Strong,
@@ -411,7 +411,7 @@ pub enum ConsistencyLevel {
 }
 
 /// Version information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VersionInfo {
     pub format_version: String,
     pub schema_version: u32,
@@ -420,7 +420,7 @@ pub struct VersionInfo {
     pub deprecation_warnings: Vec<DeprecationWarning>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationPath {
     pub from_version: String,
     pub to_version: String,
@@ -428,7 +428,7 @@ pub struct MigrationPath {
     pub estimated_migration_time: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationStep {
     pub step_name: String,
     pub step_type: MigrationStepType,
@@ -436,7 +436,7 @@ pub struct MigrationStep {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MigrationStepType {
     SchemaUpdate,
     DataTransformation,
@@ -445,7 +445,7 @@ pub enum MigrationStepType {
     MetadataUpdate,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DeprecationWarning {
     pub feature: String,
     pub deprecated_in_version: String,
@@ -455,7 +455,7 @@ pub struct DeprecationWarning {
 }
 
 /// Checksum configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ChecksumConfig {
     pub header_checksum: u32,
     pub data_checksum: u64,
@@ -465,7 +465,7 @@ pub struct ChecksumConfig {
     pub verify_on_read: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ChecksumAlgorithm {
     CRC32,
     CRC64,

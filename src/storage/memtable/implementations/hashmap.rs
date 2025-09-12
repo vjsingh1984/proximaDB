@@ -296,7 +296,7 @@ where
 }
 
 /// Performance statistics for HashMap
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HashMapPerformanceStats {
     pub capacity: usize,
     pub len: usize,

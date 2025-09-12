@@ -9,7 +9,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::CompressionConfig as ProtoCompressionConfig;
 
 /// Row-based compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowBasedCompressionConfig {
     /// Global compression settings
     pub enabled: bool,
@@ -34,7 +34,7 @@ pub struct RowBasedCompressionConfig {
 }
 
 /// Vector compression strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorCompressionStrategy {
     /// Strategy type
 
@@ -49,7 +49,7 @@ pub struct VectorCompressionStrategy {
     pub quantization_first: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorCompressionType {
     /// No vector compression
     None,
@@ -66,7 +66,7 @@ pub enum VectorCompressionType {
 }
 
 /// Compression settings for specific configurations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionSettings {
     pub algorithm: CompressionAlgorithm,
     pub level: u8,
@@ -76,7 +76,7 @@ pub struct CompressionSettings {
 }
 
 /// Hardware-optimized compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareCompressionConfig {
     /// Use hardware acceleration when available
     pub use_hardware_acceleration: bool,
@@ -92,7 +92,7 @@ pub struct HardwareCompressionConfig {
 }
 
 /// Metadata compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataCompressionConfig {
     /// Enable metadata compression
     pub enabled: bool,
@@ -107,7 +107,7 @@ pub struct MetadataCompressionConfig {
     pub timestamp_compression: TimestampCompressionConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct JsonCompressionConfig {
     pub algorithm: CompressionAlgorithm,
     pub enable_schema_compression: bool,
@@ -115,7 +115,7 @@ pub struct JsonCompressionConfig {
     pub max_schema_cache_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StringCompressionConfig {
     pub algorithm: CompressionAlgorithm,
     pub enable_dictionary: bool,
@@ -123,14 +123,14 @@ pub struct StringCompressionConfig {
     pub min_string_length: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TimestampCompressionConfig {
     pub use_delta_encoding: bool,
     pub delta_precision: TimestampPrecision,
     pub enable_run_length_encoding: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TimestampPrecision {
     Seconds,
     Milliseconds,
@@ -139,7 +139,7 @@ pub enum TimestampPrecision {
 }
 
 /// Block-level compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlockLevelCompressionConfig {
     /// Compression per block
     pub per_block_compression: bool,
@@ -155,7 +155,7 @@ pub struct BlockLevelCompressionConfig {
     pub compression_stages: Vec<CompressionStage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionStage {
     pub stage_name: String,
     pub algorithm: CompressionAlgorithm,
@@ -163,7 +163,7 @@ pub struct CompressionStage {
     pub condition: CompressionCondition,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionCondition {
     Always,
     IfSizeAbove(usize),
@@ -172,7 +172,7 @@ pub enum CompressionCondition {
 }
 
 /// Adaptive compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdaptiveCompressionConfig {
     /// Enable adaptive compression
     pub enabled: bool,
@@ -191,7 +191,7 @@ pub struct AdaptiveCompressionConfig {
     pub max_level_decrease: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AdaptationTrigger {
     CompressionRatioBelow(f32),
     CompressionTimeAbove(f64),
@@ -200,7 +200,7 @@ pub enum AdaptationTrigger {
     MemoryUsageAbove(f32),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AdaptationFrequency {
     PerBlock,
     PerFlush,
@@ -209,7 +209,7 @@ pub enum AdaptationFrequency {
 }
 
 /// Compression performance thresholds
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionThresholds {
     /// Minimum size to enable compression
     pub min_compression_size: usize,
@@ -228,7 +228,7 @@ pub struct CompressionThresholds {
 }
 
 /// Compression parameters for operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionParameters {
     pub config: RowBasedCompressionConfig,
     pub context: CompressionContext,
@@ -237,7 +237,7 @@ pub struct CompressionParameters {
 }
 
 /// Compression statistics and results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionStats {
     /// Size information
     pub original_size: usize,

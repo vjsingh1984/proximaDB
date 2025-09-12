@@ -27,7 +27,7 @@ use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 // NOTE: Using unified CompactionConfig from unified_types.rs
 // This specific metadata checkpoint config extends the base config
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataCheckpointConfig {
     /// Base checkpoint configuration (reusing CompactionConfig for compatibility)
     pub base: crate::core::CompactionConfig,

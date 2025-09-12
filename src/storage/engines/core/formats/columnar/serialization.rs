@@ -24,7 +24,7 @@ use crate::core::compression::CompressionAlgorithm;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 
 /// Serialization configuration for columnar storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnarSerializationConfig {
     /// Target vector dimension
     pub dimension: usize,
@@ -43,7 +43,7 @@ pub struct ColumnarSerializationConfig {
 }
 
 /// Compression configuration for serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SerializationCompressionConfig {
     /// Compress FP32 vectors
     pub fp32_compression: Option<CompressionAlgorithm>,
@@ -59,7 +59,7 @@ pub struct SerializationCompressionConfig {
 }
 
 /// Memory optimization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryOptimizationConfig {
     /// Use memory pools for repeated allocations
     pub enable_memory_pools: bool,
@@ -78,7 +78,7 @@ pub struct MemoryOptimizationConfig {
 }
 
 /// SIMD acceleration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SIMDConfig {
     /// Enable hardware-specific SIMD optimizations
     pub enable_simd: bool,
@@ -91,7 +91,7 @@ pub struct SIMDConfig {
 }
 
 /// Vectorization strategies for different operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorizationStrategy {
     /// Auto-detect best strategy based on hardware
     Auto,
@@ -273,7 +273,7 @@ pub struct SerializationResult {
 }
 
 /// Metadata about serialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SerializationMetadata {
     pub record_count: usize,
     pub dimension: usize,
@@ -283,7 +283,7 @@ pub struct SerializationMetadata {
 }
 
 /// Statistics about quantization quality
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationStats {
     pub binary_hamming_accuracy: Option<f32>,
     pub int8_mse: Option<f32>,
@@ -293,7 +293,7 @@ pub struct QuantizationStats {
 }
 
 /// Statistics about compression
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionStats {
     pub fp32_compressed_size: usize,
     pub binary_compressed_size: usize,
@@ -305,7 +305,7 @@ pub struct CompressionStats {
 }
 
 /// Performance statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceStats {
     pub serialization_time_ms: f64,
     pub quantization_time_ms: f64,
@@ -1010,7 +1010,7 @@ impl ColumnarSerializer {
 }
 
 /// Format preference for deserialization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FormatPreference {
     /// Prefer highest quality (FP32 > INT8 > PQ > Binary)
     HighestQuality,

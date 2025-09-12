@@ -24,7 +24,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{TransactionCoordinator, StagingConfig, TransactionStageType};
 
 /// SSTable file metadata in the manifest
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SstableFileInfo {
     /// Unique identifier for this SSTable
     pub file_id: String,
@@ -56,7 +56,7 @@ pub struct SstableFileInfo {
 }
 
 /// Column statistics for metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ColumnStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
@@ -65,7 +65,7 @@ pub struct ColumnStats {
 }
 
 /// Manifest version information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ManifestVersion {
     pub version: u64,
     pub timestamp: i64,

@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 
 /// Migration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationConfig {
     /// Source engine type
     pub source_engine: ProtoStorageEngine,
@@ -46,7 +46,7 @@ pub struct MigrationConfig {
 }
 
 /// Migration strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MigrationStrategy {
     /// Copy all data, then switch (safest, requires 2x storage)
     CopyThenSwitch,
@@ -62,7 +62,7 @@ pub enum MigrationStrategy {
 }
 
 /// Validation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ValidationConfig {
     /// Validate data integrity
     pub validate_data_integrity: bool,
@@ -81,7 +81,7 @@ pub struct ValidationConfig {
 }
 
 /// Performance configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceConfig {
     /// Batch size for data migration
     pub batch_size: usize,
@@ -100,7 +100,7 @@ pub struct PerformanceConfig {
 }
 
 /// Rollback configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RollbackConfig {
     /// Enable automatic rollback on failure
     pub auto_rollback_on_failure: bool,
@@ -113,7 +113,7 @@ pub struct RollbackConfig {
 }
 
 /// Migration status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MigrationStatus {
     /// Migration is being planned
     Planning,
@@ -147,7 +147,7 @@ pub enum MigrationStatus {
 }
 
 /// Migration event for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationEvent {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub event_type: MigrationEventType,
@@ -156,7 +156,7 @@ pub struct MigrationEvent {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MigrationEventType {
     Started,
     Progress,

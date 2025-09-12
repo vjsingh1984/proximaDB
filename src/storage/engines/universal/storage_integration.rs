@@ -85,7 +85,7 @@ pub trait StorageEngineAdapter: Send + Sync + std::fmt::Debug {
 }
 
 /// Performance metrics for storage engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EnginePerformanceMetrics {
     /// Average read latency in microseconds
     pub avg_read_latency_us: u64,

@@ -46,7 +46,7 @@ pub struct AccessStats {
 }
 
 /// Timing pattern classification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TimingPattern {
     /// Random access times
     Random,
@@ -64,7 +64,7 @@ pub enum TimingPattern {
 }
 
 /// Collection-level access patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionAccessPattern {
     /// Collection ID
     pub collection_id: String,
@@ -81,7 +81,7 @@ pub struct CollectionAccessPattern {
 }
 
 /// Access pattern predictor
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessPrediction {
     /// Probability of access in next time window (0.0-1.0)
     pub access_probability: f64,
@@ -112,7 +112,7 @@ pub struct AccessPatternTracker {
 }
 
 /// Parameters for pattern learning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LearningParameters {
     /// Minimum accesses before making predictions
     pub min_accesses_for_prediction: u32,
@@ -651,7 +651,7 @@ impl AccessPatternTracker {
 }
 
 /// Pattern analysis results
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PatternAnalysis {
     pub total_files_tracked: usize,
     pub total_collections_tracked: usize,

@@ -46,7 +46,7 @@ const CF_STATS: &str = "statistics";
 const CF_TAGS: &str = "tags";
 
 /// RocksDB metadata backend configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RocksDbMetadataConfig {
     /// Database path
     pub db_path: PathBuf,
@@ -97,7 +97,7 @@ impl Default for RocksDbMetadataConfig {
 }
 
 /// RocksDB backup configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RocksDbBackupConfig {
     /// Backup directory path
     pub backup_path: PathBuf,

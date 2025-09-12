@@ -25,7 +25,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::core::compression::CompressionAlgorithm;
 
 /// Common configuration for VIPER and NOVA engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CommonColumnarConfig {
     /// Base columnar configuration
     pub base_config: ColumnarConfig,
@@ -47,7 +47,7 @@ pub struct CommonColumnarConfig {
 }
 
 /// Schema generation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SchemaGenerationConfig {
     /// Auto-detect quantization from collection metadata
     pub auto_detect_quantization: bool,
@@ -63,7 +63,7 @@ pub struct SchemaGenerationConfig {
 }
 
 /// Compression strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionStrategy {
     /// Compression algorithm selection
     pub algorithm_selection: CompressionAlgorithmSelection,
@@ -76,7 +76,7 @@ pub struct CompressionStrategy {
 }
 
 /// Algorithm selection strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionAlgorithmSelection {
     /// Fixed algorithm for all data
     Fixed(crate::core::compression::CompressionAlgorithm),
@@ -89,7 +89,7 @@ pub enum CompressionAlgorithmSelection {
 }
 
 /// Compression levels for different data types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionLevels {
     pub fp32_vectors: Option<i32>,
     pub quantized_vectors: Option<i32>,
@@ -98,7 +98,7 @@ pub struct CompressionLevels {
 }
 
 /// Serialization optimization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SerializationOptimizationConfig {
     /// Memory pool configuration
     pub memory_pools: MemoryPoolConfig,
@@ -114,7 +114,7 @@ pub struct SerializationOptimizationConfig {
 }
 
 /// Memory pool configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryPoolConfig {
     /// Enable memory pooling
     pub enable_pooling: bool,
@@ -130,7 +130,7 @@ pub struct MemoryPoolConfig {
 }
 
 /// Pool size limits for different data types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PoolSizeLimits {
     pub fp32_pool_max_vectors: usize,
     pub int8_pool_max_vectors: usize,
@@ -140,7 +140,7 @@ pub struct PoolSizeLimits {
 }
 
 /// SIMD optimization settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SIMDOptimizationSettings {
     /// Enable SIMD acceleration
     pub enable_simd: bool,
@@ -156,7 +156,7 @@ pub struct SIMDOptimizationSettings {
 }
 
 /// Batch processing configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchProcessingConfig {
     /// Optimal batch size for different operations
     pub optimal_batch_sizes: OptimalBatchSizes,
@@ -169,7 +169,7 @@ pub struct BatchProcessingConfig {
 }
 
 /// Optimal batch sizes for different operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimalBatchSizes {
     pub serialization_batch_size: usize,
     pub distance_computation_batch_size: usize,
@@ -178,7 +178,7 @@ pub struct OptimalBatchSizes {
 }
 
 /// Zero-copy optimization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ZeroCopyConfig {
     /// Enable zero-copy for fixed-size data
     pub enable_zero_copy_fixed_size: bool,
@@ -194,7 +194,7 @@ pub struct ZeroCopyConfig {
 }
 
 /// Distance computation configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DistanceComputationConfig {
     /// Default distance metric
     pub default_distance_metric: crate::compute::distance_computation::DistanceMetric,
@@ -210,7 +210,7 @@ pub struct DistanceComputationConfig {
 }
 
 /// Progressive search configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveSearchConfig {
     /// Enable progressive search
     pub enable_progressive: bool,
@@ -223,7 +223,7 @@ pub struct ProgressiveSearchConfig {
 }
 
 /// Quality thresholds for progressive search stages
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityThresholds {
     pub binary_threshold: f32,
     pub int8_threshold: f32,
@@ -232,7 +232,7 @@ pub struct QualityThresholds {
 }
 
 /// Early termination configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EarlyTerminationConfig {
     /// Enable early termination based on quality
     pub enable_quality_based: bool,
@@ -245,7 +245,7 @@ pub struct EarlyTerminationConfig {
 }
 
 /// Distance caching configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DistanceCachingConfig {
     /// Enable PQ distance table caching
     pub enable_pq_caching: bool,
@@ -261,7 +261,7 @@ pub struct DistanceCachingConfig {
 }
 
 /// Hardware acceleration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareAccelerationConfig {
     /// Prefer GPU for large computations
     pub prefer_gpu: bool,
@@ -277,7 +277,7 @@ pub struct HardwareAccelerationConfig {
 }
 
 /// Engine-specific optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineOptimizations {
     /// VIPER-specific optimizations
     pub viper_optimizations: ViperOptimizations,
@@ -290,7 +290,7 @@ pub struct EngineOptimizations {
 }
 
 /// VIPER-specific optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ViperOptimizations {
     /// Optimize for append-heavy workloads
     pub optimize_for_append: bool,
@@ -306,7 +306,7 @@ pub struct ViperOptimizations {
 }
 
 /// NOVA-specific optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NovaOptimizations {
     /// Enable hierarchical statistics
     pub enable_hierarchical_stats: bool,
@@ -322,7 +322,7 @@ pub struct NovaOptimizations {
 }
 
 /// Shared optimizations between engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SharedOptimizations {
     /// Enable bloom filters for ID lookups
     pub enable_bloom_filters: bool,
@@ -338,7 +338,7 @@ pub struct SharedOptimizations {
 }
 
 // Detailed configuration structs
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroupSizeOptimization {
     pub min_size: usize,
     pub max_size: usize,
@@ -346,7 +346,7 @@ pub struct RowGroupSizeOptimization {
     pub adaptive_sizing: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ZoneMapOptimization {
     pub enable_zone_maps: bool,
     pub zone_size: usize,
@@ -354,7 +354,7 @@ pub struct ZoneMapOptimization {
     pub max_zone_depth: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StreamingProcessingConfig {
     pub enable_streaming: bool,
     pub stream_buffer_size: usize,
@@ -362,7 +362,7 @@ pub struct StreamingProcessingConfig {
     pub stream_timeout_seconds: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdvancedCachingConfig {
     pub enable_adaptive_caching: bool,
     pub cache_size_mb: usize,
@@ -371,7 +371,7 @@ pub struct AdvancedCachingConfig {
 }
 
 /// Monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MonitoringConfig {
     /// Enable performance metrics collection
     pub enable_metrics: bool,
@@ -387,7 +387,7 @@ pub struct MonitoringConfig {
 }
 
 /// Resource monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceMonitoringConfig {
     /// Monitor memory usage
     pub monitor_memory: bool,
@@ -439,7 +439,7 @@ struct MetadataCache {
 }
 
 /// Cached file metadata with expiration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CachedFileMetadata {
     metadata: ColumnarFileMetadata,
     schema: Arc<Schema>,

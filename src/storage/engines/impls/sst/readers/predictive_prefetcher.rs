@@ -40,7 +40,7 @@ pub struct PredictivePrefetcher {
 }
 
 /// Configuration for predictive prefetching
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PrefetchConfig {
     /// Maximum number of blocks to prefetch
     pub max_prefetch_blocks: usize,
@@ -69,7 +69,7 @@ pub struct AccessPatternTracker {
 }
 
 /// Sequential access pattern
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SequentialPattern {
     pub file_path: String,
     pub last_block_id: u32,
@@ -79,7 +79,7 @@ pub struct SequentialPattern {
 }
 
 /// Random access pattern
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RandomPattern {
     pub file_path: String,
     pub hot_blocks: HashMap<u32, u32>, // block_id -> access_count
@@ -99,7 +99,7 @@ pub struct TemporalPattern {
 }
 
 /// Access record for pattern learning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessRecord {
     pub key: BlockCacheKey,
     pub timestamp: Instant,
@@ -116,7 +116,7 @@ pub enum AccessType {
 }
 
 /// Prefetch queue entry
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PrefetchEntry {
     pub key: BlockCacheKey,
     pub priority: f64,

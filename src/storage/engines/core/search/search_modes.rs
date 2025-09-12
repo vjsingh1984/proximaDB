@@ -6,13 +6,13 @@ use std::collections::HashMap;
 use crate::compute::distance_computation::DistanceMetric;
 
 /// Placeholder for metadata filtering - use crate::query::unified_query_optimizer::UnifiedMetadataFilter instead
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataFilter {
     pub placeholder: bool,
 }
 
 /// Universal search mode that works across all storage engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum UniversalSearchMode {
     /// Vector similarity search
     VectorSimilarity {
@@ -93,7 +93,7 @@ pub enum UniversalSearchMode {
 }
 
 /// Similarity search parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SimilaritySearchParams {
     /// Search quality vs speed trade-off
     pub quality_speed_balance: f32, // 0.0 = speed, 1.0 = quality
@@ -115,7 +115,7 @@ pub struct SimilaritySearchParams {
 }
 
 /// Search hints for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SearchHint {
     /// Expected result distribution
     ExpectedResultDistribution {
@@ -152,7 +152,7 @@ pub enum SearchHint {
 }
 
 /// Query complexity levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QueryComplexity {
     Simple,
     Moderate,
@@ -161,7 +161,7 @@ pub enum QueryComplexity {
 }
 
 /// Data distribution types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DataDistribution {
     Uniform,
     Clustered,
@@ -172,7 +172,7 @@ pub enum DataDistribution {
 }
 
 /// Dimensionality hints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DimensionalityHint {
     Low,      // < 100 dimensions
     Medium,   // 100-1000 dimensions
@@ -181,7 +181,7 @@ pub enum DimensionalityHint {
 }
 
 /// Result diversification parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DiversificationParams {
     /// Enable diversification
     pub enabled: bool,
@@ -196,7 +196,7 @@ pub struct DiversificationParams {
 }
 
 /// Diversification strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DiversificationStrategy {
     /// Maximum marginal relevance
     MaximalMarginalRelevance {
@@ -223,7 +223,7 @@ pub enum DiversificationStrategy {
 }
 
 /// Clustering methods for diversification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ClusteringMethod {
     KMeans,
     Hierarchical,
@@ -232,7 +232,7 @@ pub enum ClusteringMethod {
 }
 
 /// Parallelization parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ParallelizationParams {
     /// Enable parallel search
     pub enabled: bool,
@@ -248,7 +248,7 @@ pub struct ParallelizationParams {
 }
 
 /// Work distribution strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum WorkDistributionStrategy {
     /// Static partitioning
     Static { partition_size: usize },
@@ -264,7 +264,7 @@ pub enum WorkDistributionStrategy {
 }
 
 /// Result aggregation strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ResultAggregationStrategy {
     /// Merge and sort
     MergeSort,
@@ -280,7 +280,7 @@ pub enum ResultAggregationStrategy {
 }
 
 /// Hybrid fusion parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridFusionParams {
     /// Fusion strategy
 
@@ -295,7 +295,7 @@ pub struct HybridFusionParams {
 }
 
 /// Fusion strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FusionStrategy {
     /// Linear combination
     LinearCombination,
@@ -321,7 +321,7 @@ pub enum FusionStrategy {
 }
 
 /// Combination functions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CombinationFunction {
     Sum,
     Product,
@@ -333,7 +333,7 @@ pub enum CombinationFunction {
 }
 
 /// Fusion weights
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FusionWeights {
     /// Vector search weight
     pub vector_weight: f32,
@@ -349,7 +349,7 @@ pub struct FusionWeights {
 }
 
 /// Score normalization methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ScoreNormalization {
     /// No normalization
     None,
@@ -368,7 +368,7 @@ pub enum ScoreNormalization {
 }
 
 /// Post-processing parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PostProcessingParams {
     /// Re-ranking enabled
     pub reranking_enabled: bool,
@@ -384,7 +384,7 @@ pub struct PostProcessingParams {
 }
 
 /// Re-ranking strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RerankingStrategy {
     /// Machine learning based re-ranking
     MLReranking {
@@ -409,7 +409,7 @@ pub enum RerankingStrategy {
 }
 
 /// Re-ranking rule
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RerankingRule {
     /// Rule condition
     pub condition: String,
@@ -422,7 +422,7 @@ pub struct RerankingRule {
 }
 
 /// Re-ranking criterion
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RerankingCriterion {
     /// Criterion name
     pub name: String,
@@ -435,7 +435,7 @@ pub struct RerankingCriterion {
 }
 
 /// Criteria aggregation methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CriteriaAggregation {
     WeightedSum,
     WeightedProduct,
@@ -444,7 +444,7 @@ pub enum CriteriaAggregation {
 }
 
 /// Result filtering parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResultFilteringParams {
     /// Score threshold
     pub score_threshold: Option<f32>,
@@ -460,7 +460,7 @@ pub struct ResultFilteringParams {
 }
 
 /// Custom filter
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CustomFilter {
     /// Filter name
     pub name: String,
@@ -473,7 +473,7 @@ pub struct CustomFilter {
 }
 
 /// Score adjustment parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ScoreAdjustmentParams {
     /// Boost factors
     pub boost_factors: HashMap<String, f32>,
@@ -486,7 +486,7 @@ pub struct ScoreAdjustmentParams {
 }
 
 /// Score adjustment strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ScoreAdjustmentStrategy {
     Additive,
     Multiplicative,
@@ -496,7 +496,7 @@ pub enum ScoreAdjustmentStrategy {
 }
 
 /// Multi-vector combination strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MultiVectorStrategy {
     /// Average all query vectors
     Average,
@@ -518,7 +518,7 @@ pub enum MultiVectorStrategy {
 }
 
 /// Approximation parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ApproximationParams {
     /// Approximation quality
     pub quality: ApproximationQuality,
@@ -534,7 +534,7 @@ pub struct ApproximationParams {
 }
 
 /// Approximation quality levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ApproximationQuality {
     Fast,     // Low accuracy, high speed
     Balanced, // Balanced accuracy and speed
@@ -546,7 +546,7 @@ pub enum ApproximationQuality {
 }
 
 /// Approximation algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ApproximationAlgorithm {
     LSH, // Locality Sensitive Hashing
     RandomProjection,
@@ -560,7 +560,7 @@ pub enum ApproximationAlgorithm {
 }
 
 /// Approximation constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ApproximationConstraints {
     /// Maximum search time (ms)
     pub max_search_time_ms: Option<u64>,
@@ -576,7 +576,7 @@ pub struct ApproximationConstraints {
 }
 
 /// Refinement parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RefinementParams {
     /// Enable refinement
     pub enabled: bool,
@@ -588,7 +588,7 @@ pub struct RefinementParams {
 }
 
 /// Refinement strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RefinementStrategy {
     /// Re-ranking with exact distances
     ExactReranking { rerank_factor: f32 },
@@ -604,7 +604,7 @@ pub enum RefinementStrategy {
 }
 
 /// Refinement stage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RefinementStage {
     /// Stage name
     pub name: String,
@@ -620,7 +620,7 @@ pub struct RefinementStage {
 }
 
 /// Refinement budget
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RefinementBudget {
     /// Time-based budget
     Time { max_time_ms: u64 },
@@ -639,7 +639,7 @@ pub enum RefinementBudget {
 }
 
 /// Search query for batch operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchQuery {
     /// Query identifier
     pub query_id: String,
@@ -655,7 +655,7 @@ pub struct SearchQuery {
 }
 
 /// Query priority levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QueryPriority {
     Low,
     Normal,
@@ -664,7 +664,7 @@ pub enum QueryPriority {
 }
 
 /// Batch search parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchSearchParams {
     /// Batch processing strategy
     pub processing_strategy: BatchProcessingStrategy,
@@ -680,7 +680,7 @@ pub struct BatchSearchParams {
 }
 
 /// Batch processing strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BatchProcessingStrategy {
     /// Sequential processing
     Sequential,
@@ -696,7 +696,7 @@ pub enum BatchProcessingStrategy {
 }
 
 /// Result collection strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ResultCollectionStrategy {
     /// Collect all results at once
     Bulk,
@@ -712,7 +712,7 @@ pub enum ResultCollectionStrategy {
 }
 
 /// Batch error handling
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BatchErrorHandling {
     /// Fail fast on first error
     FailFast,
@@ -731,7 +731,7 @@ pub enum BatchErrorHandling {
 }
 
 /// Batch resource management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchResourceManagement {
     /// Memory management
     pub memory_management: BatchMemoryManagement,
@@ -744,7 +744,7 @@ pub struct BatchResourceManagement {
 }
 
 /// Batch memory management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchMemoryManagement {
     /// Maximum memory per batch
     pub max_memory_per_batch: Option<u64>,
@@ -757,7 +757,7 @@ pub struct BatchMemoryManagement {
 }
 
 /// Memory cleanup strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MemoryCleanupStrategy {
     Immediate,
     Deferred,
@@ -766,7 +766,7 @@ pub enum MemoryCleanupStrategy {
 }
 
 /// Batch CPU management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchCPUManagement {
     /// CPU quota per batch
     pub cpu_quota_percent: Option<f32>,
@@ -779,7 +779,7 @@ pub struct BatchCPUManagement {
 }
 
 /// Thread pool management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ThreadPoolManagement {
     Static { pool_size: usize },
     Dynamic { min_size: usize, max_size: usize },
@@ -787,7 +787,7 @@ pub enum ThreadPoolManagement {
 }
 
 /// Batch I/O management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchIOManagement {
     /// I/O bandwidth limit
     pub bandwidth_limit_mbps: Option<f64>,
@@ -800,7 +800,7 @@ pub struct BatchIOManagement {
 }
 
 /// I/O scheduling strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IOSchedulingStrategy {
     FIFO,
     Priority,
@@ -809,7 +809,7 @@ pub enum IOSchedulingStrategy {
 }
 
 /// Progressive search parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveSearchParams {
     /// Progressive stages
     pub stages: Vec<ProgressiveStage>,
@@ -825,7 +825,7 @@ pub struct ProgressiveSearchParams {
 }
 
 /// Progressive search stage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveStage {
     /// Stage name
     pub name: String,
@@ -844,7 +844,7 @@ pub struct ProgressiveStage {
 }
 
 /// Progressive algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ProgressiveAlgorithm {
     BinaryFilter,
     QuantizedSearch,
@@ -854,7 +854,7 @@ pub enum ProgressiveAlgorithm {
 }
 
 /// Stage transition criteria
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StageTransitionCriteria {
     /// Quality-based transition
     pub quality_based: Option<QualityTransition>,
@@ -867,7 +867,7 @@ pub struct StageTransitionCriteria {
 }
 
 /// Quality transition criteria
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityTransition {
     /// Quality improvement threshold
     pub improvement_threshold: f32,
@@ -880,7 +880,7 @@ pub struct QualityTransition {
 }
 
 /// Time transition criteria
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TimeTransition {
     /// Maximum time per stage
     pub max_time_per_stage_ms: u64,
@@ -893,7 +893,7 @@ pub struct TimeTransition {
 }
 
 /// Time allocation strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TimeAllocationStrategy {
     Equal,
     Weighted { weights: Vec<f32> },
@@ -902,7 +902,7 @@ pub enum TimeAllocationStrategy {
 }
 
 /// Result transition criteria
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResultTransition {
     /// Minimum results per stage
     pub min_results_per_stage: usize,
@@ -915,7 +915,7 @@ pub struct ResultTransition {
 }
 
 /// Early termination conditions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EarlyTerminationConditions {
     /// Quality satisfaction
     pub quality_satisfied: Option<f32>,
@@ -931,7 +931,7 @@ pub struct EarlyTerminationConditions {
 }
 
 /// Custom termination condition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CustomTerminationCondition {
     /// Condition name
     pub name: String,
@@ -944,7 +944,7 @@ pub struct CustomTerminationCondition {
 }
 
 /// Progressive result refinement
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveRefinement {
     /// Enable cross-stage refinement
     pub cross_stage_refinement: bool,
@@ -956,7 +956,7 @@ pub struct ProgressiveRefinement {
 }
 
 /// Progressive refinement strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ProgressiveRefinementStrategy {
     CumulativeRefinement,
     StagewiseRefinement,
@@ -965,7 +965,7 @@ pub enum ProgressiveRefinementStrategy {
 }
 
 /// Search capabilities description
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchCapabilities {
     /// Supported search modes
     pub supported_modes: Vec<String>,
@@ -996,7 +996,7 @@ pub struct SearchCapabilities {
 }
 
 /// Search optimizations available
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchOptimizations {
     /// Hardware optimizations
     pub hardware_optimizations: Vec<HardwareOptimization>,
@@ -1012,7 +1012,7 @@ pub struct SearchOptimizations {
 }
 
 /// Hardware optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum HardwareOptimization {
     SIMD,
     GPU,
@@ -1022,7 +1022,7 @@ pub enum HardwareOptimization {
 }
 
 /// Algorithm optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AlgorithmOptimization {
     EarlyTermination,
     PruningStrategies,
@@ -1032,7 +1032,7 @@ pub enum AlgorithmOptimization {
 }
 
 /// Index optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IndexOptimization {
     BloomFilters,
     InvertedIndexes,
@@ -1042,7 +1042,7 @@ pub enum IndexOptimization {
 }
 
 /// Cache optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CacheOptimization {
     ResultCaching,
     IndexCaching,
@@ -1052,7 +1052,7 @@ pub enum CacheOptimization {
 }
 
 /// Search candidate result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CandidateRecord {
     /// Record identifier
     pub id: String,
@@ -1079,7 +1079,7 @@ pub type SearchContext = SearchStageContext;
 
 /// Search stage context information - tracks which stage found a candidate
 /// This is NOT the overall search request context (that's UnifiedQueryContext)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchStageContext {
     /// Search stage that found this candidate (e.g., "binary", "int8", "pq", "fp32")
     pub search_stage: Option<String>,
@@ -1095,7 +1095,7 @@ pub struct SearchStageContext {
 }
 
 /// Search candidate for progressive refinement
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchCandidate {
     /// Candidate record
     pub record: CandidateRecord,
@@ -1108,7 +1108,7 @@ pub struct SearchCandidate {
 }
 
 /// Refinement step
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RefinementStep {
     /// Step name
     pub step_name: String,
@@ -1127,7 +1127,7 @@ pub struct RefinementStep {
 }
 
 /// Candidate state
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CandidateState {
     Initial,
     Refined,
@@ -1136,7 +1136,7 @@ pub enum CandidateState {
 }
 
 /// Progressive search result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveSearchResult {
     /// Final candidates
     pub candidates: Vec<CandidateRecord>,
@@ -1152,7 +1152,7 @@ pub struct ProgressiveSearchResult {
 }
 
 /// Progressive search statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveSearchStatistics {
     /// Total search time
     pub total_time_ms: u64,
@@ -1174,7 +1174,7 @@ pub struct ProgressiveSearchStatistics {
 }
 
 /// Stage result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StageResult {
     /// Stage name
     pub stage_name: String,
@@ -1193,7 +1193,7 @@ pub struct StageResult {
 }
 
 /// Quality metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityMetrics {
     /// Overall quality score
     pub overall_quality: f32,

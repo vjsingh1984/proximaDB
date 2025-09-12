@@ -31,7 +31,7 @@ pub struct HardwareAccelerationManager {
 }
 
 /// SIMD capabilities available on the system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SIMDCapabilities {
     /// SSE support
     pub sse_supported: bool,
@@ -67,7 +67,7 @@ pub struct SIMDCapabilities {
 }
 
 /// Hardware acceleration capabilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccelerationCapabilities {
     /// SIMD capabilities
     pub simd: SIMDCapabilities,
@@ -472,7 +472,7 @@ impl HardwareAccelerationManager {
 }
 
 /// Workload characteristics for optimization strategy selection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WorkloadCharacteristics {
     /// Vector dimension size
     pub vector_size: usize,

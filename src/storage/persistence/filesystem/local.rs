@@ -32,7 +32,7 @@ use super::{
 };
 
 /// Local filesystem configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LocalConfig {
     /// Root directory for relative paths
     pub root_dir: Option<PathBuf>,

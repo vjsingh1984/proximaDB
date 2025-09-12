@@ -88,7 +88,7 @@ pub struct MemtableMetrics {
 }
 
 /// Memtable configuration options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemtableConfig {
     pub max_size_bytes: usize,
     pub flush_threshold_bytes: usize,

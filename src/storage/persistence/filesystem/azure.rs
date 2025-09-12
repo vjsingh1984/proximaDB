@@ -24,7 +24,7 @@ use super::auth::{AzureCredentialProvider, AzureCredentials};
 use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// Azure blob tier options
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AzureBlobTier {
     Hot,
     Cool,
@@ -42,7 +42,7 @@ impl AzureBlobTier {
 }
 
 /// Azure ADLS configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AzureConfig {
     /// Azure storage account name
     pub account_name: String,
@@ -70,7 +70,7 @@ pub struct AzureConfig {
 }
 
 /// Azure credential configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AzureCredentialConfig {
     /// Credential provider type
     pub provider: AzureCredentialProviderType,
@@ -97,7 +97,7 @@ pub struct AzureCredentialConfig {
     pub refresh_interval: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AzureCredentialProviderType {
     /// Use storage account key
     AccountKey,

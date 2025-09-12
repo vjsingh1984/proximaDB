@@ -18,7 +18,7 @@ use crate::core::VectorRecord;
 use crate::proto::proximadb_v1::FilterableColumnSpec;
 
 /// Configuration for metadata-based sorting
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataSortConfig {
     /// Primary sort keys in order of priority
     pub primary_sort_keys: Vec<String>,
@@ -145,10 +145,10 @@ impl MetadataSorter {
         if let Some(sql_value) = record.metadata.get(key) {
             if let Some(value) = &sql_value.value {
                 match value {
-                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                         return SortableValue::from_string(s);
                     }
-                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
+                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
                         // Check if it's an integer
                         if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
                             return SortableValue::Number(*n as i64);
@@ -157,7 +157,7 @@ impl MetadataSorter {
                             return SortableValue::Float(n.to_string());
                         }
                     }
-                    crate::proto::proximadb_v1::crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                         // Convert bool to string for sorting
                         return SortableValue::String(b.to_string());
                     }

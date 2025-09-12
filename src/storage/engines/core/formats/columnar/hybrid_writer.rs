@@ -36,7 +36,7 @@ pub enum WriterMode {
 }
 
 /// Insertion pattern detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct InsertionPattern {
     /// Average records per second
     pub insert_rate: f64,
@@ -70,7 +70,7 @@ pub enum PatternType {
 }
 
 /// Hybrid writer configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridWriterConfig {
     /// Base Parquet writer config
     pub base_config: ParquetWriterConfig,
@@ -172,7 +172,7 @@ pub struct HybridParquetWriter {
 }
 
 /// Insertion event for pattern tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct InsertionEvent {
     timestamp: Instant,
     batch_size: usize,
@@ -679,7 +679,7 @@ impl HybridParquetWriter {
 }
 
 /// Statistics from hybrid writer
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HybridWriterStatistics {
     pub total_records: u64,
     pub streaming_writes: u64,

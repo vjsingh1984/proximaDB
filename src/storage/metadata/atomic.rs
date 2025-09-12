@@ -95,7 +95,7 @@ impl MetadataTransaction {
 }
 
 /// Version information for MVCC
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct VersionInfo {
     version: u64,
     transaction_id: TransactionId,
@@ -104,7 +104,7 @@ struct VersionInfo {
 }
 
 /// Lock information for concurrent access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct LockInfo {
     transaction_id: TransactionId,
     lock_type: LockType,

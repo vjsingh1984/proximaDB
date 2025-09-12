@@ -464,7 +464,7 @@ pub struct FilterableColumn {
 }
 
 /// Cached schema with TTL
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CachedSchema {
     pub schema: Arc<Schema>,
     pub timestamp: chrono::DateTime<chrono::Utc>,

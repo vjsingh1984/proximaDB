@@ -24,7 +24,7 @@ use super::auth::{GcsCredentialProvider, GcsCredentials};
 use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult};
 
 /// GCS storage classes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum GcsStorageClass {
     Standard,
     Nearline,
@@ -44,7 +44,7 @@ impl GcsStorageClass {
 }
 
 /// GCS configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GcsConfig {
     /// Google Cloud project ID
     pub project_id: String,
@@ -75,7 +75,7 @@ pub struct GcsConfig {
 }
 
 /// GCS credential configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GcsCredentialConfig {
     /// Credential provider type
     pub provider: GcsCredentialProviderType,
@@ -90,7 +90,7 @@ pub struct GcsCredentialConfig {
     pub refresh_interval: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum GcsCredentialProviderType {
     /// Use Application Default Credentials (ADC)
     ApplicationDefault,

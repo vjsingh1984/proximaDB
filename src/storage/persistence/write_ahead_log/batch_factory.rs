@@ -140,7 +140,7 @@ impl WALBatchFactory {
 }
 
 /// Strategy information for debugging and monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StrategyInfo {
     pub name: String,
     pub description: String,
@@ -152,7 +152,7 @@ pub struct StrategyInfo {
 }
 
 /// Strategy comparison for selection guidance
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StrategyComparison {
     pub avro_advantages: Vec<String>,
     pub bincode_advantages: Vec<String>,

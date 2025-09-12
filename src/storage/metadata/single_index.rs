@@ -27,7 +27,7 @@ use std::sync::Arc;
 use crate::proto::proximadb_v1::Collection;
 
 /// Collection index entry - contains both record and secondary keys
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionIndexEntry {
     /// The actual collection record
     pub record: Arc<Collection>,
@@ -66,7 +66,7 @@ impl CollectionIndexEntry {
 }
 
 /// Performance metrics for the single index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SingleIndexMetrics {
     pub total_collections: usize,
     pub memory_usage_bytes: usize,

@@ -36,7 +36,7 @@ pub struct DiskStats {
 }
 
 /// WAL file metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WriteBufferFileInfo {
     pub collection_id: String,
     pub batch_id: BatchId,

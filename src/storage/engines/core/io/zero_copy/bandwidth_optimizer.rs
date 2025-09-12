@@ -96,7 +96,7 @@ impl Ord for OptimizedRange {
 }
 
 /// Access prediction for future file access
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccessPrediction {
     /// Probability of accessing this file again (0.0 - 1.0)
     pub future_access_probability: f32,
@@ -109,7 +109,7 @@ pub struct AccessPrediction {
 }
 
 /// Historical access pattern classification
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AccessPattern {
     /// Never accessed before
     Unknown,
@@ -128,7 +128,7 @@ pub enum AccessPattern {
 }
 
 /// Decision factors and their weights
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DecisionFactors {
     /// Percentage of file data actually needed
     pub data_percentage: f32,
@@ -147,7 +147,7 @@ pub struct DecisionFactors {
 }
 
 /// Decision rationale with detailed reasoning
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DecisionRationale {
     /// Primary decision factor
     pub primary_factor: String,
@@ -686,7 +686,7 @@ pub struct AccessPatternPredictor {
     config: AccessPredictionConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct AccessEvent {
     timestamp: Instant,
     query_type: QueryType,

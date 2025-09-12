@@ -95,7 +95,7 @@ pub use write_ahead_log::{
 // No conversion implementations needed - StorageEngineType is now a type alias for proto enum
 
 /// Operations that can be performed on metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetadataOperation {
     CreateCollection(crate::proto::proximadb_v1::Collection),
     UpdateCollection {
@@ -258,7 +258,7 @@ pub trait MetadataStoreInterface: Send + Sync {
 }
 
 /// Storage statistics for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MetadataStorageStats {
     pub total_collections: u64,
     pub total_metadata_size_bytes: u64,

@@ -46,7 +46,7 @@ pub struct ProgressiveSearchExecutor {
 }
 
 /// Candidate tracking during progressive search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SearchCandidate {
     /// Vector ID
     pub id: String,
@@ -68,7 +68,7 @@ pub struct SearchCandidate {
 }
 
 /// Quantized representation at a specific level
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizedRepresentation {
     /// Level identifier
     pub level_id: String,

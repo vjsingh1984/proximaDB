@@ -18,7 +18,7 @@ use crate::core::serialization::{VectorSerializationConfig, CompressionAlgorithm
 use crate::core::VectorRecord;
 
 /// Optimal serialization strategy configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SerializationStrategyConfig {
     /// Vector dimension
     pub dimension: usize,
@@ -45,7 +45,7 @@ impl Default for SerializationStrategyConfig {
 }
 
 /// Quantization-specific serialization strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SerializationStrategy {
     /// FP32: Best compression and query performance
     FullPrecision {
@@ -81,7 +81,7 @@ pub enum SerializationStrategy {
 }
 
 /// Memory layout optimization strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MemoryLayout {
     /// Standard layout (no special alignment)
     Standard,
@@ -96,7 +96,7 @@ pub enum MemoryLayout {
 }
 
 /// SIMD vectorization strategies for INT8
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorizationStrategy {
     /// No vectorization
     Scalar,
@@ -109,7 +109,7 @@ pub enum VectorizationStrategy {
 }
 
 /// Bit packing strategies for binary quantization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BitPackingStrategy {
     /// Standard bit packing (8 bits per byte)
     Standard8Bit,
@@ -120,7 +120,7 @@ pub enum BitPackingStrategy {
 }
 
 /// Comprehensive performance metrics for serialization strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SerializationMetrics {
     /// Original size in bytes
     pub original_size: usize,
@@ -148,7 +148,7 @@ pub struct SerializationStrategyOptimizer {
 }
 
 /// Hardware capabilities detection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareCapabilities {
     pub has_sse: bool,
     pub has_avx: bool,

@@ -9,7 +9,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
 
 /// Universal compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalCompressionConfig {
     /// Enable compression
     pub enabled: bool,
@@ -40,7 +40,7 @@ pub struct UniversalCompressionConfig {
 }
 
 /// Adaptive compression settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdaptiveCompressionSettings {
     /// Enable adaptive compression
     pub enabled: bool,
@@ -59,7 +59,7 @@ pub struct AdaptiveCompressionSettings {
 }
 
 /// Adaptive compression strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AdaptiveStrategy {
     /// Data-driven selection based on content analysis
     DataDriven,
@@ -72,7 +72,7 @@ pub enum AdaptiveStrategy {
 }
 
 /// Compression strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionStrategy {
     /// Optimize for speed
     Speed {
@@ -124,7 +124,7 @@ pub enum CompressionStrategy {
 }
 
 /// Storage types for optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StorageType {
     SSD,
     HDD,
@@ -135,7 +135,7 @@ pub enum StorageType {
 }
 
 /// I/O patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IOPattern {
     Sequential,
     Random,
@@ -145,7 +145,7 @@ pub enum IOPattern {
 }
 
 /// Adaptation criteria
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdaptationCriteria {
     /// Data characteristics
     pub data_characteristics: DataCharacteristics,
@@ -161,7 +161,7 @@ pub struct AdaptationCriteria {
 }
 
 /// Data characteristics for adaptation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataCharacteristics {
     /// Data entropy thresholds
     pub entropy_thresholds: EntropyThresholds,
@@ -177,7 +177,7 @@ pub struct DataCharacteristics {
 }
 
 /// Entropy thresholds
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EntropyThresholds {
     /// Low entropy threshold (highly compressible)
     pub low_entropy: f64,
@@ -190,7 +190,7 @@ pub struct EntropyThresholds {
 }
 
 /// Entropy calculation methods
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum EntropyCalculationMethod {
     Shannon,
     Renyi { alpha: f64 },
@@ -199,7 +199,7 @@ pub enum EntropyCalculationMethod {
 }
 
 /// Size thresholds
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SizeThresholds {
     /// Small data threshold (bytes)
     pub small_data_threshold: u64,
@@ -212,7 +212,7 @@ pub struct SizeThresholds {
 }
 
 /// Pattern recognition configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PatternRecognitionConfig {
     /// Enable pattern recognition
     pub enabled: bool,
@@ -228,7 +228,7 @@ pub struct PatternRecognitionConfig {
 }
 
 /// Data patterns
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DataPattern {
     Repetitive,
     Sequential,
@@ -243,7 +243,7 @@ pub enum DataPattern {
 }
 
 /// Data type hints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DataHint {
     Vector,
     Metadata,
@@ -258,7 +258,7 @@ pub enum DataHint {
 }
 
 /// Performance thresholds
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceThresholds {
     /// Maximum compression latency (ms)
     pub max_compression_latency_ms: f64,
@@ -277,7 +277,7 @@ pub struct PerformanceThresholds {
 }
 
 /// Resource constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceConstraints {
     /// Memory constraints
     pub memory_constraints: MemoryConstraints,
@@ -293,7 +293,7 @@ pub struct ResourceConstraints {
 }
 
 /// Memory constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryConstraints {
     /// Maximum working memory (bytes)
     pub max_working_memory: u64,
@@ -309,7 +309,7 @@ pub struct MemoryConstraints {
 }
 
 /// CPU constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CPUConstraints {
     /// Maximum CPU cores to use
     pub max_cpu_cores: Option<usize>,
@@ -325,7 +325,7 @@ pub struct CPUConstraints {
 }
 
 /// Thread priority levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ThreadPriority {
     Low,
     Normal,
@@ -334,7 +334,7 @@ pub enum ThreadPriority {
 }
 
 /// I/O constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IOConstraints {
     /// Maximum I/O bandwidth (MB/s)
     pub max_io_bandwidth_mbps: f64,
@@ -350,7 +350,7 @@ pub struct IOConstraints {
 }
 
 /// I/O priority levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IOPriority {
     Low,
     Normal,
@@ -359,7 +359,7 @@ pub enum IOPriority {
 }
 
 /// Network constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NetworkConstraints {
     /// Maximum network bandwidth (Mbps)
     pub max_bandwidth_mbps: f64,
@@ -375,7 +375,7 @@ pub struct NetworkConstraints {
 }
 
 /// Quality requirements
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityRequirements {
     /// Minimum compression ratio
     pub min_compression_ratio: f32,
@@ -391,7 +391,7 @@ pub struct QualityRequirements {
 }
 
 /// Error tolerance levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ErrorTolerance {
     None,        // No errors allowed
     Low,         // Very low error rate
@@ -401,7 +401,7 @@ pub enum ErrorTolerance {
 }
 
 /// Context-aware compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ContextAwareCompressionConfig {
     /// Enable context-aware compression
     pub enabled: bool,
@@ -420,7 +420,7 @@ pub struct ContextAwareCompressionConfig {
 }
 
 /// Compression contexts
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionContext {
     /// Vector data compression
     VectorData {
@@ -458,7 +458,7 @@ pub enum CompressionContext {
 }
 
 /// Vector data types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorData {
     Float32,
     Float16,
@@ -468,7 +468,7 @@ pub enum VectorData {
 }
 
 /// Metadata schema types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetadataSchemaType {
     JSON,
     StructuredJSON,
@@ -479,7 +479,7 @@ pub enum MetadataSchemaType {
 }
 
 /// Metadata cardinality
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MetadataCardinality {
     Low,    // Few distinct values
     Medium, // Moderate distinct values
@@ -488,7 +488,7 @@ pub enum MetadataCardinality {
 }
 
 /// Index types for compression
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum Index {
     BTree,
     Hash,
@@ -499,7 +499,7 @@ pub enum Index {
 }
 
 /// Binary data formats
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BinaryDataFormat {
     Raw,
     Structured,
@@ -509,7 +509,7 @@ pub enum BinaryDataFormat {
 }
 
 /// Binary structure types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum BinaryStructure {
     FixedLength,
     VariableLength,
@@ -519,7 +519,7 @@ pub enum BinaryStructure {
 }
 
 /// Text encodings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TextEncoding {
     UTF8,
     UTF16,
@@ -529,7 +529,7 @@ pub enum TextEncoding {
 }
 
 /// Context switching strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ContextSwitchingStrategy {
     /// Automatic detection
     Automatic {
@@ -554,7 +554,7 @@ pub enum ContextSwitchingStrategy {
 }
 
 /// Context learning configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ContextLearningConfig {
     /// Enable learning
     pub enabled: bool,
@@ -570,7 +570,7 @@ pub struct ContextLearningConfig {
 }
 
 /// Learning algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum LearningAlgorithm {
     /// Decision tree learning
     DecisionTree { max_depth: u32, min_samples: u32 },
@@ -595,7 +595,7 @@ pub enum LearningAlgorithm {
 }
 
 /// Combination strategies for ensembles
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CombinationStrategy {
     Voting,
     Averaging,
@@ -604,7 +604,7 @@ pub enum CombinationStrategy {
 }
 
 /// Training requirements
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TrainingRequirements {
     /// Minimum training samples
     pub min_training_samples: u64,
@@ -620,7 +620,7 @@ pub struct TrainingRequirements {
 }
 
 /// Diversity requirements for training
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DiversityRequirements {
     /// Data type diversity
     pub data_types: Vec<String>,
@@ -636,7 +636,7 @@ pub struct DiversityRequirements {
 }
 
 /// Training frequency
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TrainingFrequency {
     Continuous,
     Periodic { interval_ms: u64 },
@@ -645,7 +645,7 @@ pub enum TrainingFrequency {
 }
 
 /// Validation requirements
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ValidationRequirements {
     /// Validation split ratio
     pub validation_split: f32,
@@ -661,7 +661,7 @@ pub struct ValidationRequirements {
 }
 
 /// Model persistence configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ModelPersistenceConfig {
     /// Enable model persistence
     pub enabled: bool,
@@ -677,7 +677,7 @@ pub struct ModelPersistenceConfig {
 }
 
 /// Model versioning configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ModelVersioningConfig {
     /// Enable versioning
     pub enabled: bool,
@@ -690,7 +690,7 @@ pub struct ModelVersioningConfig {
 }
 
 /// Version naming strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VersionNamingStrategy {
     Timestamp,
     Sequential,
@@ -699,7 +699,7 @@ pub enum VersionNamingStrategy {
 }
 
 /// Compression hardware configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionHardwareConfig {
     /// CPU optimizations
     pub cpu_optimizations: CPUOptimizations,
@@ -715,7 +715,7 @@ pub struct CompressionHardwareConfig {
 }
 
 /// CPU optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CPUOptimizations {
     /// Enable multithreading
     pub enable_multithreading: bool,
@@ -731,7 +731,7 @@ pub struct CPUOptimizations {
 }
 
 /// CPU instructions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CPUInstruction {
     SSE2,
     SSE3,
@@ -747,7 +747,7 @@ pub enum CPUInstruction {
 }
 
 /// Cache optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheOptimization {
     /// Enable cache-friendly algorithms
     pub cache_friendly_algorithms: bool,
@@ -763,7 +763,7 @@ pub struct CacheOptimization {
 }
 
 /// GPU optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GPUOptimizations {
     /// Enable GPU acceleration
     pub enabled: bool,
@@ -779,7 +779,7 @@ pub struct GPUOptimizations {
 }
 
 /// GPU compute libraries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum GPUComputeLibrary {
     CUDA,
     OpenCL,
@@ -790,7 +790,7 @@ pub enum GPUComputeLibrary {
 }
 
 /// GPU memory management
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GPUMemoryManagement {
     /// Memory allocation strategy
     pub allocation_strategy: GPUAllocationStrategy,
@@ -803,7 +803,7 @@ pub struct GPUMemoryManagement {
 }
 
 /// GPU allocation strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum GPUAllocationStrategy {
     Preallocated,
     OnDemand,
@@ -812,7 +812,7 @@ pub enum GPUAllocationStrategy {
 }
 
 /// GPU kernel optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GPUKernelOptimization {
     /// Occupancy optimization
     pub occupancy_optimization: bool,
@@ -828,7 +828,7 @@ pub struct GPUKernelOptimization {
 }
 
 /// SIMD optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SIMDOptimizations {
     /// Enable SIMD
     pub enabled: bool,
@@ -844,7 +844,7 @@ pub struct SIMDOptimizations {
 }
 
 /// SIMD instruction sets
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SIMDInstructionSet {
     SSE,
     SSE2,
@@ -862,7 +862,7 @@ pub enum SIMDInstructionSet {
 }
 
 /// Alignment requirements
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AlignmentRequirements {
     /// Data alignment (bytes)
     pub data_alignment: usize,
@@ -875,7 +875,7 @@ pub struct AlignmentRequirements {
 }
 
 /// Hardware acceleration libraries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AccelerationLibraries {
     /// Intel libraries
     pub intel_libraries: Vec<IntelLibrary>,
@@ -891,7 +891,7 @@ pub struct AccelerationLibraries {
 }
 
 /// Intel acceleration libraries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum IntelLibrary {
     IPP,  // Intel Performance Primitives
     MKL,  // Math Kernel Library
@@ -900,7 +900,7 @@ pub enum IntelLibrary {
 }
 
 /// AMD acceleration libraries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AMDLibrary {
     BLIS, // BLAS-like Library Instantiation Software
     FFTW, // Fastest Fourier Transform in the West
@@ -908,7 +908,7 @@ pub enum AMDLibrary {
 }
 
 /// NVIDIA acceleration libraries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum NVIDIALibrary {
     CuBlas,
     CuFft,
@@ -918,7 +918,7 @@ pub enum NVIDIALibrary {
 }
 
 /// ARM acceleration libraries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ARMLibrary {
     NEON,
     ComputeLibrary,
@@ -926,7 +926,7 @@ pub enum ARMLibrary {
 }
 
 /// Compression performance configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionPerformanceConfig {
     /// Performance targets
     pub targets: PerformanceTargets,
@@ -942,7 +942,7 @@ pub struct CompressionPerformanceConfig {
 }
 
 /// Performance targets
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceTargets {
     /// Target compression speed (MB/s)
     pub target_compression_speed: f64,
@@ -961,7 +961,7 @@ pub struct PerformanceTargets {
 }
 
 /// Performance monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceMonitoring {
     /// Enable monitoring
     pub enabled: bool,
@@ -977,7 +977,7 @@ pub struct PerformanceMonitoring {
 }
 
 /// Monitoring frequency
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MonitoringFrequency {
     Continuous,
     Periodic { interval_ms: u64 },
@@ -986,7 +986,7 @@ pub enum MonitoringFrequency {
 }
 
 /// Performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum PerformanceMetric {
     CompressionSpeed,
     DecompressionSpeed,
@@ -1001,7 +1001,7 @@ pub enum PerformanceMetric {
 }
 
 /// Alert configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AlertConfiguration {
     /// Enable alerting
     pub enabled: bool,
@@ -1017,7 +1017,7 @@ pub struct AlertConfiguration {
 }
 
 /// Alert destinations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AlertDestination {
     Log,
     Email { address: String },
@@ -1027,7 +1027,7 @@ pub enum AlertDestination {
 }
 
 /// Performance optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceOptimization {
     /// Enable automatic optimization
     pub auto_optimization: bool,
@@ -1043,7 +1043,7 @@ pub struct PerformanceOptimization {
 }
 
 /// Optimization strategies
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum OptimizationStrategy {
     AlgorithmSelection,
     ParameterTuning,
@@ -1054,7 +1054,7 @@ pub enum OptimizationStrategy {
 }
 
 /// Optimization frequency
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum OptimizationFrequency {
     Never,
     OnStartup,
@@ -1065,7 +1065,7 @@ pub enum OptimizationFrequency {
 }
 
 /// Optimization constraints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizationConstraints {
     /// Maximum optimization time (ms)
     pub max_optimization_time_ms: u64,
@@ -1081,7 +1081,7 @@ pub struct OptimizationConstraints {
 }
 
 /// Resource limits
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceLimits {
     /// Maximum CPU usage during optimization (%)
     pub max_cpu_usage_percent: f32,
@@ -1094,7 +1094,7 @@ pub struct ResourceLimits {
 }
 
 /// Profiling configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProfilingConfig {
     /// Enable profiling
     pub enabled: bool,
@@ -1110,7 +1110,7 @@ pub struct ProfilingConfig {
 }
 
 /// Profiling modes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ProfilingMode {
     Sampling { interval_ms: u64 },
     Instrumentation,
@@ -1119,7 +1119,7 @@ pub enum ProfilingMode {
 }
 
 /// Profiling metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ProfilingMetric {
     CPUCycles,
     Instructions,
@@ -1132,7 +1132,7 @@ pub enum ProfilingMetric {
 }
 
 /// Profiling output
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProfilingOutput {
     /// Output format
     pub format: ProfilingFormat,
@@ -1145,7 +1145,7 @@ pub struct ProfilingOutput {
 }
 
 /// Profiling formats
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ProfilingFormat {
     JSON,
     CSV,
@@ -1156,7 +1156,7 @@ pub enum ProfilingFormat {
 }
 
 /// Profiling destinations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ProfilingDestination {
     File { path: String },
     Memory,
@@ -1165,7 +1165,7 @@ pub enum ProfilingDestination {
 }
 
 /// Profiling frequency
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ProfilingFrequency {
     OnDemand,
     Periodic { interval_ms: u64 },
@@ -1174,7 +1174,7 @@ pub enum ProfilingFrequency {
 }
 
 /// Compression quality settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionQualitySettings {
     /// Quality vs speed trade-off
     pub quality_speed_balance: f32, // 0.0 = speed, 1.0 = quality
@@ -1190,7 +1190,7 @@ pub struct CompressionQualitySettings {
 }
 
 /// Quality metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QualityMetric {
     CompressionRatio,
     PSNR, // Peak Signal-to-Noise Ratio
@@ -1203,7 +1203,7 @@ pub enum QualityMetric {
 }
 
 /// Quality assurance
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityAssurance {
     /// Enable quality assurance
     pub enabled: bool,
@@ -1219,7 +1219,7 @@ pub struct QualityAssurance {
 }
 
 /// Quality testing
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityTesting {
     /// Enable testing
     pub enabled: bool,
@@ -1235,7 +1235,7 @@ pub struct QualityTesting {
 }
 
 /// Test data configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TestDataConfiguration {
     /// Use synthetic test data
     pub use_synthetic: bool,
@@ -1251,7 +1251,7 @@ pub struct TestDataConfiguration {
 }
 
 /// Data sources
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DataSource {
     File { path: String },
     Database { connection: String, query: String },
@@ -1261,7 +1261,7 @@ pub enum DataSource {
 }
 
 /// Testing frequency
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TestingFrequency {
     OnStartup,
     Periodic { interval_ms: u64 },
@@ -1271,7 +1271,7 @@ pub enum TestingFrequency {
 }
 
 /// Test criterion
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TestCriterion {
     /// Metric name
     pub metric: String,
@@ -1287,7 +1287,7 @@ pub struct TestCriterion {
 }
 
 /// Test severity levels
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum TestSeverity {
     Info,
     Warning,
@@ -1296,7 +1296,7 @@ pub enum TestSeverity {
 }
 
 /// Quality validation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityValidation {
     /// Enable validation
     pub enabled: bool,
@@ -1312,7 +1312,7 @@ pub struct QualityValidation {
 }
 
 /// Validation rule
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ValidationRule {
     /// Rule name
     pub name: String,
@@ -1325,7 +1325,7 @@ pub struct ValidationRule {
 }
 
 /// Validation condition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ValidationCondition {
     MetricThreshold {
         metric: String,
@@ -1347,7 +1347,7 @@ pub enum ValidationCondition {
 }
 
 /// Comparison operators
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ComparisonOperator {
     GreaterThan,
     GreaterThanOrEqual,
@@ -1358,7 +1358,7 @@ pub enum ComparisonOperator {
 }
 
 /// Validation frequency
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ValidationFrequency {
     Always,
     Periodic { interval_ms: u64 },
@@ -1368,7 +1368,7 @@ pub enum ValidationFrequency {
 }
 
 /// Validation actions
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ValidationActions {
     /// Action on validation failure
     pub on_failure: ValidationAction,
@@ -1381,7 +1381,7 @@ pub struct ValidationActions {
 }
 
 /// Validation action
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum ValidationAction {
     Continue,
     Warn,
@@ -1396,7 +1396,7 @@ pub enum ValidationAction {
 }
 
 /// Quality monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityMonitoring {
     /// Enable monitoring
     pub enabled: bool,
@@ -1412,7 +1412,7 @@ pub struct QualityMonitoring {
 }
 
 /// Compression capabilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionCapabilities {
     /// Supported algorithms
     pub supported_algorithms: Vec<CompressionAlgorithm>,
@@ -1428,7 +1428,7 @@ pub struct CompressionCapabilities {
 }
 
 /// Performance characteristics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceCharacteristics {
     /// Compression speed (MB/s)
     pub compression_speed: f64,
@@ -1447,7 +1447,7 @@ pub struct PerformanceCharacteristics {
 }
 
 /// Quality characteristics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityCharacteristics {
     /// Typical compression ratio
     pub typical_compression_ratio: f32,
@@ -1463,7 +1463,7 @@ pub struct QualityCharacteristics {
 }
 
 /// Compression statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionStats {
     /// Overall statistics
     pub overall: OverallCompressionStats,
@@ -1482,7 +1482,7 @@ pub struct CompressionStats {
 }
 
 /// Overall compression statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OverallCompressionStats {
     /// Total bytes compressed
     pub total_bytes_compressed: u64,
@@ -1504,7 +1504,7 @@ pub struct OverallCompressionStats {
 }
 
 /// Algorithm compression statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AlgorithmCompressionStats {
     /// Bytes processed
     pub bytes_processed: u64,
@@ -1526,7 +1526,7 @@ pub struct AlgorithmCompressionStats {
 }
 
 /// Hardware utilization statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareUtilizationStats {
     /// CPU utilization (%)
     pub cpu_utilization: f32,
@@ -1542,7 +1542,7 @@ pub struct HardwareUtilizationStats {
 }
 
 /// Quality statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QualityStats {
     /// Average quality retention
     pub avg_quality_retention: f32,
@@ -1558,7 +1558,7 @@ pub struct QualityStats {
 }
 
 /// Performance statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceStats {
     /// Average compression speed (MB/s)
     pub avg_compression_speed: f64,

@@ -22,7 +22,7 @@ pub type OperationId = String;
 pub type CollectionId = String;
 
 /// Queue status for compaction coordination
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QueueStatus {
     /// Queue is empty, safe to proceed with compaction
     Empty,
@@ -97,7 +97,7 @@ pub trait StorageEngine: Send + Sync {
 }
 
 /// Configuration for compaction behavior
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionConfig {
     /// Threshold for Level 0 compaction (number of files)
     pub level0_threshold: usize,
@@ -196,7 +196,7 @@ impl OperationType {
 }
 
 /// Active operation tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ActiveOperation {
     pub operation_id: OperationId,
     pub operation_type: OperationType,
@@ -239,7 +239,7 @@ pub struct GlobalCompactionState {
 }
 
 /// Tracks compactions that are deferred due to AXIS queue
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DeferredCompaction {
     pub operation_type: OperationType,
     pub deferred_at: Instant,
@@ -963,7 +963,7 @@ impl CompactionOrchestrator {
 }
 
 /// Generic file metadata implementation for testing and fallback
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GenericFileMetadata {
     pub path: String,
     pub size_bytes: u64,

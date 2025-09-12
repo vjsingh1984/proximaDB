@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Configuration for memory-mapped vector storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MmapConfig {
     /// Enable memory-mapped files for vectors
     pub enabled: bool,
@@ -235,7 +235,7 @@ impl MmapVectorStorage {
 }
 
 /// Statistics for memory-mapped storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MmapStats {
     pub total_files: usize,
     pub total_size: usize,

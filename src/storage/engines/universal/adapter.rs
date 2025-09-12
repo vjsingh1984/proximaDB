@@ -62,7 +62,7 @@ pub struct UniversalDistanceAdapter {
 }
 
 /// Request for distance computation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DistanceComputationRequest {
     /// Query vector
     pub query_vector: Vec<f32>,
@@ -96,7 +96,7 @@ pub struct DistanceComputationRequest {
 }
 
 /// Candidate vector with metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CandidateVector {
     /// Vector ID
     pub id: Uuid,
@@ -115,7 +115,7 @@ pub struct CandidateVector {
 }
 
 /// Result of distance computation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DistanceComputationResult {
     /// Computed similarity results
     pub results: Vec<SimilarityResult>,
@@ -143,7 +143,7 @@ pub struct DistanceComputationResult {
 }
 
 /// Performance metrics for distance computation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceMetrics {
     /// Total computation time in microseconds
     pub total_time_us: u64,
@@ -662,7 +662,7 @@ impl UniversalDistanceAdapter {
 }
 
 /// Statistics for the universal adapter
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AdapterStatistics {
     /// Cache hit rate (0.0-1.0)
     pub cache_hit_rate: f32,

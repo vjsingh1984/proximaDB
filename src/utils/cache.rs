@@ -85,7 +85,7 @@ impl<K, V> Node<K, V> {
 }
 
 /// Cache entry metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheEntry<V> {
     /// The cached value
     pub value: V,

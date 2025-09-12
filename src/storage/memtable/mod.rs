@@ -493,7 +493,7 @@ where
 }
 
 /// Benchmark result for a specific operation and implementation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BenchmarkResult {
     pub memtable_type: MemtableType,
     pub operation: String,
@@ -506,7 +506,7 @@ pub struct BenchmarkResult {
 }
 
 /// Comprehensive benchmark report
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BenchmarkReport {
     pub config: MemtableConfig,
     pub insert_results: Vec<BenchmarkResult>,
@@ -628,7 +628,7 @@ impl BenchmarkReport {
 }
 
 /// Performance winners for each operation type
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceWinners {
     pub best_insert: Option<MemtableType>,
     pub best_lookup: Option<MemtableType>,

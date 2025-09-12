@@ -36,7 +36,7 @@ pub struct EngineMigrator {
 }
 
 /// Migration progress tracking
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationProgress {
     pub total_collections: usize,
     pub completed_collections: usize,
@@ -49,7 +49,7 @@ pub struct MigrationProgress {
 }
 
 /// Migration result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationResult {
     pub success: bool,
     pub migrated_collections: Vec<String>,
@@ -64,7 +64,7 @@ pub struct MigrationResult {
 }
 
 /// Migration plan
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MigrationPlan {
     pub migration_id: String,
     pub source_engine: ProtoStorageEngine,
@@ -76,7 +76,7 @@ pub struct MigrationPlan {
 }
 
 /// Collection-specific migration plan
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionMigrationPlan {
     pub collection_id: String,
     pub record_count: u64,
@@ -88,7 +88,7 @@ pub struct CollectionMigrationPlan {
 }
 
 /// Resource requirements for migration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ResourceRequirements {
     pub min_memory_gb: f64,
     pub recommended_memory_gb: f64,
@@ -99,7 +99,7 @@ pub struct ResourceRequirements {
 }
 
 /// Risk assessment for migration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RiskAssessment {
     pub overall_risk: RiskLevel,
     pub data_loss_risk: RiskLevel,
@@ -109,7 +109,7 @@ pub struct RiskAssessment {
     pub mitigation_strategies: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum RiskLevel {
     Low,
     Medium,

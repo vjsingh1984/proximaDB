@@ -27,7 +27,7 @@ mod tests {
     };
 
     /// Mock storage engine for testing
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone)]
     struct MockStorageEngine {
         engine_name: String,
         flush_calls: Arc<Mutex<Vec<String>>>, // Track flush calls

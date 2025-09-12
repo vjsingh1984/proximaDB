@@ -15,7 +15,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
 
 /// Compression adapter that bridges Universal config with Unified implementation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalCompressionAdapter {
     /// Unified compression provider (the actual implementation)
     provider: StandardCompression,
@@ -440,7 +440,7 @@ impl UniversalCompressionAdapter {
 }
 
 /// Data resulting from universal compression
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressedData {
     pub data: Vec<u8>,
     pub algorithm: CompressionAlgorithm,
@@ -452,7 +452,7 @@ pub struct CompressedData {
 }
 
 /// Compression metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionMetadata {
     pub universal_config: UniversalCompressionConfig,
     pub compression_time_ms: u64,
@@ -461,7 +461,7 @@ pub struct CompressionMetadata {
 }
 
 /// Data characteristics for adaptive compression
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct DataCharacteristics {
     size: usize,
     entropy: f64,

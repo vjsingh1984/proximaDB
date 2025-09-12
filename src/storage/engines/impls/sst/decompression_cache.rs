@@ -26,7 +26,7 @@ pub struct BlockCacheKey {
 }
 
 /// Cached block data
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CachedBlock {
     /// Decompressed block data
     pub data: FastLanesDataBlock,
@@ -692,50 +692,4 @@ mod tests {
 
 // Duplicate removed - using earlier definition
 
-impl CacheStatsProvider for DecompressionCacheStatsProvider {
-    fn snapshot(&self) -> UsageStats {
-        // Since we can't await in a sync trait method, we'll use try_lock 
-        // or provide default stats if cache is busy
-        let stats = if let Ok(stats) = self.cache.stats.try_read() {
-            let hit_rate = if stats.hits + stats.misses > 0 {
-                stats.hits as f64 / (stats.hits + stats.misses) as f64
-            } else {
-                0.0
-            };
-            
-            let access_frequency = if stats.hits + stats.misses > 0 {
-                (stats.hits + stats.misses) as f64 / 60.0  // requests per minute approximation
-            } else {
-                0.0
-            };
-            
-            // Estimate average entry size from peak usage
-            let avg_entry_size = if let Ok(cache) = self.cache.block_cache.try_read() {
-                if cache.len() > 0 {
-                    stats.peak_size_bytes / cache.len()
-                } else {
-                    8192  // Default 8KB per entry
-                }
-            } else {
-                8192
-            };
-            
-            UsageStats {
-                hit_rate,
-                avg_entry_size,
-                access_frequency,
-                last_rebalance: std::time::SystemTime::now(),
-            }
-        } else {
-            // Fallback stats if cache is busy
-            UsageStats {
-                hit_rate: 0.5,  // Assume moderate hit rate
-                avg_entry_size: 8192,  // 8KB default
-                access_frequency: 1.0,  // Moderate frequency
-                last_rebalance: std::time::SystemTime::now(),
-            }
-        };
-        
-        stats
-    }
-}
+// Duplicate CacheStatsProvider implementation removed - using the complete one above

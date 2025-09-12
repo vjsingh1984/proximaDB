@@ -86,7 +86,7 @@ impl UnifiedFilterEvaluator {
 }
 
 /// Compiled filter for efficient evaluation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum CompiledFilter {
     /// Always returns true (no filter)
     All,

@@ -19,7 +19,7 @@ use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Storage layout strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StorageLayoutStrategy {
     /// Traditional LSM-tree based storage
     Regular,
@@ -41,7 +41,7 @@ impl Default for StorageLayoutStrategy {
 // This builder now focuses solely on storage concerns.
 
 /// Data storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataStorageConfig {
     /// Storage URLs for data files
     pub data_urls: Vec<String>,
@@ -65,7 +65,7 @@ pub struct DataStorageConfig {
     pub compaction_config: crate::core::CompactionConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DataCompressionConfig {
     /// Enable compression for vector data
     pub compress_vectors: bool,
@@ -83,7 +83,7 @@ pub struct DataCompressionConfig {
     pub compression_level: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum VectorCompressionAlgorithm {
     /// No compression (fastest)
     None,
@@ -101,7 +101,7 @@ pub enum VectorCompressionAlgorithm {
     INT8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CompressionLevel {
     /// No compression
     None,
@@ -115,7 +115,7 @@ pub enum CompressionLevel {
 pub use crate::core::{CompactionConfig, CompactionStrategy};
 
 /// Storage-focused system configuration (storage, WAL, filesystem only)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageSystemConfig {
     /// Data storage configuration
     pub data_storage: DataStorageConfig,
@@ -133,7 +133,7 @@ pub struct StorageSystemConfig {
     pub storage_performance: StoragePerformanceConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StoragePerformanceConfig {
     /// Number of I/O threads for storage operations
     pub io_threads: usize,
@@ -151,7 +151,7 @@ pub struct StoragePerformanceConfig {
     pub buffer_config: StorageBufferConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageBufferConfig {
     /// Read buffer size (bytes)
     pub read_buffer_size: usize,
@@ -163,7 +163,7 @@ pub struct StorageBufferConfig {
     pub compaction_buffer_size: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchConfig {
     /// Default batch size for operations
     pub default_batch_size: usize,

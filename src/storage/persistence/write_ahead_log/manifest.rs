@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use super::{BatchId, disk_manager::WriteBufferDiskManager};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WalManifestEntry {
     pub lsn: u64,
     pub batch_id: String,

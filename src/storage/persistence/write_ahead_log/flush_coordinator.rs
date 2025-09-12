@@ -25,7 +25,7 @@ use crate::storage::background_flush_context::BackgroundFlushContext;
 use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
 
 /// Flush state tracking for coordinated WAL cleanup
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushState {
     /// Pending flushes waiting for storage acknowledgment
     pub pending_flushes: HashMap<u64, PendingFlush>,
@@ -46,7 +46,7 @@ impl Default for FlushState {
 }
 
 /// Information about a pending flush operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PendingFlush {
     /// Unique flush identifier
     pub flush_id: u64,
@@ -59,7 +59,7 @@ pub struct PendingFlush {
 }
 
 /// Where flush data comes from (memory vs disk WAL files)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum FlushDataSource {
     /// Flush from memory structures (memory-only durability mode)
     Memory,
@@ -662,7 +662,7 @@ impl WALFlushCoordinator {
 }
 
 /// Instructions for cleaning up WAL data after successful flush
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CleanupInstructions {
     /// Whether to cleanup memory structures (ArtMap, HashMap, etc.)
     pub cleanup_memory: bool,

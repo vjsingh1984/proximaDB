@@ -53,7 +53,7 @@ impl fmt::Display for GlobError {
 impl std::error::Error for GlobError {}
 
 /// Internal representation of a compiled glob pattern
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum PatternElement {
     /// Literal character match
     Literal(char),
@@ -67,7 +67,7 @@ enum PatternElement {
     Alternatives(Vec<CompiledPattern>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum CharacterClass {
     /// Explicit set of characters
     Set(HashSet<char>),
@@ -88,13 +88,13 @@ impl CharacterClass {
 }
 
 /// Compiled glob pattern for efficient matching
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct CompiledPattern {
     elements: Vec<PatternElement>,
 }
 
 /// High-level glob pattern that can be compiled for matching
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct GlobPattern {
     pattern: String,
     compiled: CompiledPattern,

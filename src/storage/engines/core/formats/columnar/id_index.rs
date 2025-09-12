@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 /// Location of a record within a columnar file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ParquetLocation {
     pub file_path: String,
     pub row_group_id: usize,
@@ -39,7 +39,7 @@ pub struct ColumnarIdIndex {
 }
 
 /// Index for a single row group
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RowGroupIdIndex {
     /// Row group ID
     pub row_group_id: usize,
@@ -59,7 +59,7 @@ pub struct RowGroupIdIndex {
 }
 
 /// Index for a single page within a row group
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PageIdIndex {
     /// Page number within the row group
     pub page_num: u32,
@@ -78,7 +78,7 @@ pub struct PageIdIndex {
 }
 
 /// Bloom filter for fast existence checks
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BloomFilter {
     bits: Vec<u64>,
     size: usize,
@@ -418,7 +418,7 @@ impl ColumnarIdIndex {
 }
 
 /// Statistics for the index
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct IndexStats {
     pub total_ids: u64,
     pub unique_ids: u64,

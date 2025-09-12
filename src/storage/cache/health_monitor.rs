@@ -39,7 +39,7 @@ struct MetricsHistory {
 }
 
 /// Point-in-time metrics snapshot
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct MetricsSnapshot {
     timestamp: SystemTime,
     cache_metrics: CacheMetricsSnapshot,
@@ -61,7 +61,7 @@ pub struct AlertManager {
 }
 
 /// Individual alert
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct Alert {
     pub id: String,
     pub severity: AlertSeverity,
@@ -72,7 +72,7 @@ pub struct Alert {
     pub threshold: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum AlertSeverity {
     Info,
     Warning,
@@ -80,7 +80,7 @@ pub enum AlertSeverity {
 }
 
 /// Alert thresholds configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct AlertThresholds {
     min_hit_rate: f64,
     max_memory_usage: f64,
@@ -106,7 +106,7 @@ pub struct PerformanceProfiler {
     output_path: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct PerformanceProfile {
     timestamp: SystemTime,
     operation: String,
@@ -429,7 +429,7 @@ impl CacheMonitoringDashboard {
 }
 
 /// Dashboard state for API responses
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DashboardState {
     pub current_metrics: CacheMetricsSnapshot,
     pub active_alerts: Vec<Alert>,
@@ -439,7 +439,7 @@ pub struct DashboardState {
 }
 
 /// Individual cache status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheStatus {
     pub enabled: bool,
     pub memory_allocated_mb: usize,

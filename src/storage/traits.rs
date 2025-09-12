@@ -1416,7 +1416,7 @@ pub enum OperationPriority {
 /// - Zero-copy: Uses Arc for shared ownership without cloning
 /// - Cache-friendly: Collection comes directly from cache as Arc
 /// - Extensible: Additional context can be added as needed
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageQueryContext {
     /// Original search parameters (immutable reference)
     pub search_params: Arc<crate::core::search::SearchParams>,
@@ -1431,7 +1431,7 @@ pub struct StorageQueryContext {
 }
 
 /// Parsed quantization configuration for efficient progressive search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ParsedQuantizationConfig {
     /// Strategy being used (SmartDefaults, CustomLevels, etc.)
     pub strategy: crate::proto::proximadb_v1::quantization_config::Strategy,
@@ -1456,7 +1456,7 @@ pub struct ParsedQuantizationConfig {
 }
 
 /// Individual quantization level for progressive search
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct QuantizationLevel {
     /// Level identifier (e.g., "binary", "int8", "pq8")
     pub level_id: String,
@@ -1478,7 +1478,7 @@ pub struct QuantizationLevel {
 }
 
 /// Quantization type enumeration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum QuantizationType {
     Binary,
     Scalar,
@@ -1803,7 +1803,7 @@ impl StorageQueryContext {
 /// This allows distinguishing between:
 /// - Uninitialized: u64::MAX (default)
 /// - Successful operation with zero results: 0
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct FlushResult {
     /// Operation completed successfully
     pub success: bool,
@@ -1842,7 +1842,7 @@ pub struct FlushResult {
 /// This allows distinguishing between:
 /// - Uninitialized: u64::MAX (default)
 /// - Successful operation with zero results: 0
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionResult {
     /// Operation completed successfully
     pub success: bool,
@@ -1879,7 +1879,7 @@ pub struct CompactionResult {
 }
 
 /// Engine statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineStatistics {
     /// Engine name and version
     pub engine_name: String,
@@ -1909,7 +1909,7 @@ pub struct EngineStatistics {
 }
 
 /// Engine health status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct EngineHealth {
     /// Overall health status
     pub healthy: bool,

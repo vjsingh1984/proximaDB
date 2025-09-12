@@ -44,7 +44,7 @@ impl QueryKey {
 impl CacheKey for QueryKey {}
 
 /// Cached query result with metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CachedQueryResult {
     pub results: Vec<SearchResult>,
     pub cached_at: SystemTime,

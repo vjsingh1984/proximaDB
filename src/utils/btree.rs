@@ -58,7 +58,7 @@ impl fmt::Display for BTreeError {
 impl std::error::Error for BTreeError {}
 
 /// B+ tree node types
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum Node {
     /// Internal node containing keys and child pointers
     Internal(InternalNode),
@@ -108,7 +108,7 @@ impl Node {
 }
 
 /// Internal node structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct InternalNode {
     /// Keys for navigation (one less than children)
     keys: Vec<Vec<u8>>,
@@ -173,7 +173,7 @@ impl InternalNode {
 }
 
 /// Leaf node structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct LeafNode {
     /// Key-value pairs stored in sorted order
     entries: Vec<(Vec<u8>, Vec<u8>)>,
@@ -281,7 +281,7 @@ impl LeafNode {
 }
 
 /// Node reference type for managing nodes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 enum NodeRef {
     /// In-memory node reference
     InMemory(Arc<RwLock<Node>>),

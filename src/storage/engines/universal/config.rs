@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use super::progressive_refinement::RefinementStage;
 
 /// Cache eviction policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CacheEvictionPolicy {
     /// Least Recently Used
     LRU,
@@ -23,7 +23,7 @@ pub enum CacheEvictionPolicy {
 }
 
 /// Main configuration for the universal adapter
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct UniversalAdapterConfig {
     /// Enable progressive refinement pipeline
     pub enable_progressive_refinement: bool,
@@ -57,7 +57,7 @@ pub struct UniversalAdapterConfig {
 }
 
 /// Progressive refinement configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProgressiveRefinementConfig {
     /// Refinement strategy
 
@@ -106,7 +106,7 @@ impl Default for ProgressiveRefinementConfig {
 }
 
 /// Hardware acceleration configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HardwareAccelerationConfig {
     /// Enable SIMD instructions
     pub enable_simd: bool,
@@ -137,7 +137,7 @@ pub struct HardwareAccelerationConfig {
 }
 
 /// Cache configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheConfig {
     /// Maximum number of entries in cache
     pub max_entries: usize,
@@ -159,7 +159,7 @@ pub struct CacheConfig {
 }
 
 /// Storage engine specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct StorageEngineConfig {
     /// Engine type
     pub engine_type: super::storage_integration::EngineType,
@@ -181,7 +181,7 @@ pub struct StorageEngineConfig {
 }
 
 /// Performance preferences for storage engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformancePreferences {
     /// Prefer speed over accuracy
     pub prefer_speed: bool,
@@ -200,7 +200,7 @@ pub struct PerformancePreferences {
 }
 
 /// Memory limits for storage engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemoryLimits {
     /// Maximum memory usage per operation in MB
     pub max_memory_per_operation_mb: usize,

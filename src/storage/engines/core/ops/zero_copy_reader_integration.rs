@@ -324,7 +324,7 @@ impl EnhancedReader for EnhancedSwiftReader {
 }
 
 /// Reader performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ReaderMetrics {
     pub reads: u64,
     pub cache_hits: u64,

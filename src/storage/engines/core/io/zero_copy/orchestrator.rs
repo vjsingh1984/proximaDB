@@ -22,7 +22,7 @@ use crate::storage::cache::specialized::filesystem_metadata_store::{
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Result of I/O optimization analysis
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct OptimizedIOResult {
     /// Chosen I/O strategy
     pub strategy: IOStrategy,
@@ -83,7 +83,7 @@ pub struct IOSavings {
 }
 
 /// Detailed execution plan for the chosen strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ExecutionPlan {
     /// Ordered list of operations to execute
     pub operations: Vec<ExecutionOperation>,
@@ -96,7 +96,7 @@ pub struct ExecutionPlan {
 }
 
 /// Individual execution operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ExecutionOperation {
     /// Operation type
     pub operation_type: OperationType,
@@ -145,7 +145,7 @@ pub struct ResourceRequirements {
 }
 
 /// Batch optimization result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BatchOptimizationResult {
     /// Individual optimization results
     pub individual_results: Vec<OptimizedIOResult>,
@@ -158,7 +158,7 @@ pub struct BatchOptimizationResult {
 }
 
 /// Cross-file optimization opportunities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CrossFileOptimization {
     /// Files involved in the optimization
     pub file_paths: Vec<String>,
@@ -171,7 +171,7 @@ pub struct CrossFileOptimization {
 }
 
 /// Types of cross-file optimizations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CrossFileOptimizationType {
     /// Batch range requests to the same storage location
     BatchedRangeRequests,

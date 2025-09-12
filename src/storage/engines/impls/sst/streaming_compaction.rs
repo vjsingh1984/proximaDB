@@ -33,7 +33,7 @@ pub struct StreamingCompactor {
 }
 
 /// Record with merge priority for K-way merge
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct MergeRecord {
     record: VectorRecord,
     file_index: usize,
@@ -403,7 +403,7 @@ impl StreamingCompactor {
 }
 
 /// Fast compaction statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompactionStats {
     pub records_written: u64,
     pub records_deduped: u64,

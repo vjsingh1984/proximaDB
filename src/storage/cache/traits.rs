@@ -125,7 +125,7 @@ pub trait BaseCache: Send + Sync {
 }
 
 /// Cache entry with metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CacheEntry<V: CacheValue> {
     pub value: V,
     pub inserted_at: SystemTime,

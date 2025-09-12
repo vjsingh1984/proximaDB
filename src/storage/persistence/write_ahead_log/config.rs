@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 pub use crate::core::CompressionAlgorithm;
 
 /// Compression configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CompressionConfig {
     /// Algorithm to use
     pub algorithm: crate::core::CompressionAlgorithm,
@@ -39,7 +39,7 @@ impl Default for CompressionConfig {
 }
 
 /// Performance configuration with smart defaults - size-based flush only
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct PerformanceConfig {
     /// Memory table flush threshold (bytes) - ONLY size-based trigger
     pub memory_flush_size_bytes: usize,
@@ -112,7 +112,7 @@ impl Default for PerformanceConfig {
 }
 
 /// Disk sync mode for durability vs performance trade-off
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum SyncMode {
     /// Never sync (fastest, least durable)
     Never,
@@ -127,7 +127,7 @@ pub enum SyncMode {
 }
 
 /// Durability level for WAL writes (more granular than SyncMode)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DurabilityLevel {
     /// No sync - fastest, but risk of data loss (development only)
     NoSync,
@@ -151,7 +151,7 @@ pub enum DurabilityLevel {
 }
 
 /// WAL strategy type selection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum WriteBufferStrategyType {
     /// Modern Avro batch strategy with zero-copy optimization
     AvroBatch,
@@ -184,7 +184,7 @@ impl std::fmt::Display for WriteBufferStrategyType {
 }
 
 /// Multi-disk configuration for WAL distribution
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MultiDiskConfig {
     /// WAL directory URLs supporting multiple filesystem types
     /// Examples:
@@ -202,7 +202,7 @@ pub struct MultiDiskConfig {
 }
 
 /// Strategy for distributing collections across disks
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum DiskDistributionStrategy {
     /// Round-robin distribution
     RoundRobin,
@@ -223,7 +223,7 @@ impl Default for MultiDiskConfig {
 }
 
 /// Memtable configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MemTableConfig {
     /// Memtable strategy type
     pub memtable_type: MemTableType,
@@ -239,7 +239,7 @@ pub struct MemTableConfig {
 }
 
 /// Memtable strategy type selection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum MemTableType {
     /// Skip List - High write throughput, ordered data (RocksDB/LevelDB default)
     SkipList,
@@ -270,7 +270,7 @@ impl Default for MemTableConfig {
 }
 
 /// Comprehensive WAL configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct WALConfig {
     /// Strategy type to use
     pub strategy_type: WriteBufferStrategyType,
@@ -337,7 +337,7 @@ impl Default for WALConfig {
 }
 
 /// Collection-specific WAL configuration overrides
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionWalConfig {
     /// Override memory flush size threshold for this collection (bytes)
     pub memory_flush_size_bytes: Option<usize>,
@@ -507,7 +507,7 @@ impl WALConfig {
 }
 
 /// Effective configuration for a specific collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CollectionEffectiveConfig {
     pub disk_segment_size: usize,
     pub compression: CompressionConfig,
@@ -517,7 +517,7 @@ pub struct CollectionEffectiveConfig {
 }
 
 /// Cloud backup configuration for WAL
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CloudBackupConfig {
     /// Enable cloud backup for WAL batches
     pub enabled: bool,
@@ -555,7 +555,7 @@ impl Default for CloudBackupConfig {
 }
 
 /// Cloud backup strategy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CloudBackupStrategy {
     /// Real-time backup on every write
     RealTime,
@@ -574,7 +574,7 @@ impl Default for CloudBackupStrategy {
 }
 
 /// Backup frequency configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BackupFrequency {
     /// Backup every N operations
     pub operations_threshold: Option<u64>,
@@ -595,7 +595,7 @@ impl Default for BackupFrequency {
 }
 
 /// Cloud cleanup policy
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CloudCleanupPolicy {
     /// Retain backups for N days
     pub retention_days: u32,
@@ -616,7 +616,7 @@ impl Default for CloudCleanupPolicy {
 }
 
 /// Cloud retry configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CloudRetryConfig {
     /// Maximum retry attempts
     pub max_retries: u32,

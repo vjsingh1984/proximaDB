@@ -25,7 +25,7 @@ use super::{DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, Fi
 use md5::{Digest, Md5};
 
 /// S3 storage classes
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum S3StorageClass {
     Standard,
     StandardIa,
@@ -53,7 +53,7 @@ impl S3StorageClass {
 }
 
 /// S3 configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct S3Config {
     /// AWS region
     pub region: String,
@@ -90,13 +90,13 @@ pub struct S3Config {
 }
 
 /// S3 encryption configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct S3Encryption {
     pub method: S3EncryptionMethod,
     pub kms_key_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum S3EncryptionMethod {
     None,
     Aes256,
@@ -105,7 +105,7 @@ pub enum S3EncryptionMethod {
 }
 
 /// AWS credential configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct CredentialConfig {
     /// Credential provider type
     pub provider: CredentialProviderType,
@@ -129,7 +129,7 @@ pub struct CredentialConfig {
     pub refresh_interval: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum CredentialProviderType {
     /// Use static access keys
     Static,

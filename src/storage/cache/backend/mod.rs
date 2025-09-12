@@ -71,7 +71,7 @@ pub trait StorageBackend: Send + Sync + Debug {
 }
 
 /// Errors that can occur in storage backends
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum StorageError {
     IoError(String),
     SerializationError(String),
@@ -95,7 +95,7 @@ impl std::fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 /// Configuration for tiered storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct TieredStorageConfig {
     /// L1 memory cache size in MB
     pub l1_memory_mb: usize,
@@ -109,7 +109,7 @@ pub struct TieredStorageConfig {
     pub demotion_threshold_secs: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct NetworkCacheConfig {
     pub endpoint: String,
     pub timeout_ms: u64,
