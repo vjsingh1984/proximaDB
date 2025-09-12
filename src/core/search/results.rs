@@ -158,6 +158,7 @@ pub struct EngineStats {
 
 impl InternalSearchResult {
     /// Create a basic search result
+    #[deprecated(since = "1.0.0", note = "Use OptimizedSearchRecord::new() instead")]
     pub fn new(id: String, similarity: f32) -> Self {
         Self {
             id,
@@ -580,6 +581,35 @@ impl InternalSearchResult {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
+        }
+    }
+    
+    /// Convert to OptimizedSearchRecord (MIGRATION METHOD)
+    /// 
+    /// This method enables migration from InternalSearchResult to OptimizedSearchRecord
+    /// for better performance and proto v1 compatibility.
+    #[deprecated(since = "1.0.0", note = "Migrate to using OptimizedSearchRecord directly")]
+    pub fn to_optimized_record(self) -> OptimizedSearchRecord {
+        OptimizedSearchRecord {
+            id: self.id,
+            vector_id: self.vector_id,
+            score: self.score,
+            similarity: self.similarity,
+            vector: self.vector.map(Arc::new),
+            // Convert serde_json::Value metadata to SqlValue metadata (critical for proto v1)
+            metadata: crate::core::conversions::json_map_to_sql_values(self.metadata),
+            debug_info: self.debug_info,
+            version: self.version.map(|v| v as i64), // Convert u32 to i64
+            timestamp: self.timestamp.map(|t| t as i64), // Convert u32 to i64 for proto compatibility
+            updated_at: self.updated_at.map(|t| t as i64),
+            expires_at: self.expires_at.map(|t| t as i64),
+            source: self.source,
+            expanded_context: self.expanded_context,
+            // New fields in OptimizedSearchRecord for comprehensive vector processing
+            semantic_similarity: None, // Will be populated by advanced similarity engines
+            quantization_info: None,   // Will be populated by quantization engines
+            engine_stats: None,        // Will be populated by storage engines
+            index_path: None,          // Will be populated by indexing system
         }
     }
 }

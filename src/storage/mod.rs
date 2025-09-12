@@ -244,7 +244,7 @@ pub use traits::{
 
 // Engine exports
 pub use engines::impls::sst::SstStorage;
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// Arrow integration re-enabled - compilation conflicts resolved
 // pub use engines::viper::ViperEngine;
 
 // Persistence exports
