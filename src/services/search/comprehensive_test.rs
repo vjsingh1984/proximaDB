@@ -31,7 +31,7 @@ mod tests {
     use crate::core::search::{
         CollectionConfig, ColumnData, ComparisonOperator, FilterExpression, FilterableColumn,
         SearchParams, SearchPlan, SearchResultSet, StorageInfo, UnifiedSearchEngine,
-        results::InternalSearchResult,
+        results::OptimizedSearchRecord,
     };
     use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
     use crate::services::operations::vectors::VectorOperationsService;

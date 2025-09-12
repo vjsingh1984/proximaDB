@@ -614,6 +614,11 @@ impl InternalSearchResult {
     }
 }
 
+// Type alias for backwards compatibility during migration
+// This allows existing code to compile while we complete the migration
+#[deprecated(since = "1.0.0", note = "Use OptimizedSearchRecord directly for better performance")]
+pub type LegacyInternalSearchResult = InternalSearchResult;
+
 /// Optimized search record structure with performance improvements
 /// This variant uses Arc for vectors and TypedMetadata for better performance
 #[derive(Debug, Clone, Default, PartialEq)]

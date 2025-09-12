@@ -229,7 +229,9 @@ pub use multi_tier_deduplication::{
 // Filter types are already defined above, no need to re-export
 pub use results::{
     EngineStats, OptimizedSearchRecord, QuantizationInfo, SearchDebugInfo,
-    // InternalSearchResult deprecated - use OptimizedSearchRecord
+    // Type alias for backwards compatibility during migration
+    #[deprecated(since = "1.0.0", note = "Use OptimizedSearchRecord directly")]
+    InternalSearchResult,
     SearchResultSet,
 };
 // NOTE: Proto types (SearchResult, SearchVectorRecord) should NOT be re-exported here.

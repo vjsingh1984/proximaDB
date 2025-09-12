@@ -5,7 +5,7 @@ mod tests {
     use crate::core::hardware_capabilities::HardwareCapabilities;
     use crate::core::search::metadata_filter_pushdown::{ColumnStatistics, MetadataFilterPushdown};
     use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
-    use crate::core::search::results::InternalSearchResult;
+    use crate::core::search::results::OptimizedSearchRecord;
     use crate::core::search::unified_progressive_pipeline::{
         PipelineConfig, UnifiedProgressiveSearchPipeline,
     };
@@ -262,7 +262,7 @@ mod tests {
         1.0 - (dot / (norm_a * norm_b))
     }
 
-    fn calculate_recall(baseline: &[f32], optimized: &[InternalSearchResult]) -> f32 {
+    fn calculate_recall(baseline: &[f32], optimized: &[OptimizedSearchRecord]) -> f32 {
         let baseline_set: std::collections::HashSet<_> = baseline.iter().collect();
         let optimized_set: std::collections::HashSet<_> =
             optimized.iter().map(|r| &r.score).collect();
