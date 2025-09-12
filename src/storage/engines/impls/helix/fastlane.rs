@@ -22,7 +22,7 @@ use crate::storage::persistence::filesystem::FileSystem;
 pub use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesMetadata as FastLaneMetadata;
 
 /// HELIX-specific SSTable metadata with clustering information
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HelixBlockMetadata {
     /// Base FastLanes metadata
     pub fastlanes_metadata: FastLanesBlockMetadata,
