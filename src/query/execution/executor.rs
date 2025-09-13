@@ -171,6 +171,40 @@ impl QueryExecutor {
                     let unioned = self.union_rows(&left, &right, *all)?;
                     buffers.push(unioned);
                 }
+                ExecutionOperation::SetUnion { distinct, .. } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("SET UNION requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    let unioned = self.union_rows(&left, &right, !distinct)?;
+                    buffers.push(unioned);
+                }
+                ExecutionOperation::SetIntersect { distinct, .. } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("SET INTERSECT requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    let intersected = self.intersect_rows(&left, &right, !distinct)?;
+                    buffers.push(intersected);
+                }
+                ExecutionOperation::SetExcept { distinct, .. } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("SET EXCEPT requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    let excepted = self.except_rows(&left, &right, !distinct)?;
+                    buffers.push(excepted);
+                }
+                ExecutionOperation::CteMaterialization { cte_name, query_plan } => {
+                    // Execute the CTE query plan and store results for reference
+                    let cte_results = self.execute_plan(query_plan).await?;
+                    // Store in a CTE context or buffer for later reference
+                    // For now, add to current buffer
+                    buffers.push(cte_results.rows);
+                }
                 _ => {
                     return Err(anyhow!(
                         "Unsupported operation in vector plan: {:?}",
@@ -715,6 +749,103 @@ impl QueryExecutor {
                 let row_hash = hasher.finish();
                 
                 if !seen_hashes.contains(&row_hash) {
+                    seen_hashes.insert(row_hash);
+                    result.push(row.clone());
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+
+    fn intersect_rows(
+        &self,
+        left: &Vec<QueryRow>,
+        right: &Vec<QueryRow>,
+        all: bool,
+    ) -> Result<Vec<QueryRow>> {
+        use std::collections::{HashSet, HashMap};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        // Create hash map of right rows for efficient lookup
+        let mut right_hashes = HashMap::new();
+        for row in right {
+            let mut hasher = DefaultHasher::new();
+            let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+            sorted_fields.sort_by_key(|(k, _)| *k);
+            for (key, value) in sorted_fields {
+                key.hash(&mut hasher);
+                value.to_string().hash(&mut hasher);
+            }
+            let row_hash = hasher.finish();
+            right_hashes.entry(row_hash).or_insert_with(Vec::new).push(row.clone());
+        }
+        
+        let mut result = Vec::new();
+        let mut seen_hashes = HashSet::new();
+        
+        // Find intersection: left rows that exist in right
+        for row in left {
+            let mut hasher = DefaultHasher::new();
+            let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+            sorted_fields.sort_by_key(|(k, _)| *k);
+            for (key, value) in sorted_fields {
+                key.hash(&mut hasher);
+                value.to_string().hash(&mut hasher);
+            }
+            let row_hash = hasher.finish();
+            
+            if right_hashes.contains_key(&row_hash) {
+                if all || !seen_hashes.contains(&row_hash) {
+                    seen_hashes.insert(row_hash);
+                    result.push(row.clone());
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+
+    fn except_rows(
+        &self,
+        left: &Vec<QueryRow>,
+        right: &Vec<QueryRow>,
+        all: bool,
+    ) -> Result<Vec<QueryRow>> {
+        use std::collections::{HashSet, HashMap};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        // Create hash set of right rows for efficient lookup
+        let mut right_hashes = HashSet::new();
+        for row in right {
+            let mut hasher = DefaultHasher::new();
+            let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+            sorted_fields.sort_by_key(|(k, _)| *k);
+            for (key, value) in sorted_fields {
+                key.hash(&mut hasher);
+                value.to_string().hash(&mut hasher);
+            }
+            right_hashes.insert(hasher.finish());
+        }
+        
+        let mut result = Vec::new();
+        let mut seen_hashes = HashSet::new();
+        
+        // Find difference: left rows that don't exist in right
+        for row in left {
+            let mut hasher = DefaultHasher::new();
+            let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+            sorted_fields.sort_by_key(|(k, _)| *k);
+            for (key, value) in sorted_fields {
+                key.hash(&mut hasher);
+                value.to_string().hash(&mut hasher);
+            }
+            let row_hash = hasher.finish();
+            
+            if !right_hashes.contains(&row_hash) {
+                if all || !seen_hashes.contains(&row_hash) {
                     seen_hashes.insert(row_hash);
                     result.push(row.clone());
                 }

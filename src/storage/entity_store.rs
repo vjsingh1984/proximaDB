@@ -574,9 +574,10 @@ impl ProximaEntityStore {
             let mut candidate_ids = Vec::new();
             for (key, header) in headers.iter() {
                 if let Some(entity_id) = key.strip_prefix(&prefix) {
-                    // TODO: Apply header-level filtering when header deserialization is implemented
-                    // For now, add all candidates (conservative approach)
-                    candidate_ids.push(entity_id.to_string());
+                    // Apply header-level filtering for performance optimization
+                    if self.header_matches_filter(header, filter) {
+                        candidate_ids.push(entity_id.to_string());
+                    }
                     
                     if candidate_ids.len() >= limit * 2 {
                         break; // Get more candidates than needed for better filtering
@@ -602,20 +603,103 @@ impl ProximaEntityStore {
         Ok(results)
     }
     
-    /// Fast header-level filtering
+    /// Fast header-level filtering with metadata optimization
     fn header_matches_filter(&self, header: &EntityHeader, filter: &MetadataFilter) -> bool {
-        // Implement basic header-level filtering
-        // For now, pass all entities through (conservative approach)
-        // Future: Add header-level metadata indexing
+        // Optimized header-level filtering using indexed metadata
+        
+        // If no filter specified, match all
+        if filter.fields.is_empty() && filter.advanced_filter.is_none() {
+            return true;
+        }
+        
+        // Check basic field filters against header metadata
+        for (field_name, filter_value) in &filter.fields {
+            if let Some(header_value) = header.metadata.get(field_name) {
+                if !self.values_match(header_value, filter_value) {
+                    return false;
+                }
+            } else {
+                // Field not present in header, conservative approach: include entity
+                continue;
+            }
+        }
+        
+        // For complex filters, conservatively pass through to full entity filtering
+        if filter.advanced_filter.is_some() {
+            return true;
+        }
+        
         true
     }
+
+    /// Check if metadata values match for header-level filtering
+    fn values_match(&self, header_value: &serde_json::Value, filter_value: &SqlValue) -> bool {
+        match (header_value, filter_value) {
+            (serde_json::Value::String(h), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(f)) }) => {
+                h == f
+            }
+            (serde_json::Value::Number(h), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) }) => {
+                h.as_f64().map_or(false, |h_val| (h_val - f).abs() < f64::EPSILON)
+            }
+            (serde_json::Value::Bool(h), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(f)) }) => {
+                h == f
+            }
+            // For other types or mismatched types, conservatively return true
+            _ => true,
+        }
+    }
     
-    /// Detailed entity metadata filtering
+    /// Detailed entity metadata filtering with optimized comparison
     fn entity_matches_metadata_filter(&self, entity: &Entity, filter: &MetadataFilter) -> bool {
         // Apply filter to entity's typed_metadata
-        // This would implement the actual filter evaluation logic
-        // For now, implement basic string matching
-        true // Conservative approach - refine with actual filter logic
+        if filter.fields.is_empty() && filter.advanced_filter.is_none() {
+            return true;
+        }
+        
+        // Check basic field filters
+        for (field_name, filter_value) in &filter.fields {
+            let mut field_found = false;
+            
+            // Search in typed metadata
+            for metadata in &entity.typed_metadata {
+                if metadata.key == *field_name {
+                    field_found = true;
+                    if !self.typed_metadata_matches(metadata, filter_value) {
+                        return false;
+                    }
+                    break;
+                }
+            }
+            
+            // If field not found in typed metadata, check legacy metadata
+            if !field_found && !entity.metadata.is_empty() {
+                // Convert legacy metadata and check
+                if let Some(legacy_value) = entity.metadata.get(field_name) {
+                    let json_value = serde_json::Value::String(legacy_value.clone());
+                    if !self.values_match(&json_value, filter_value) {
+                        return false;
+                    }
+                }
+            }
+        }
+        
+        // For advanced filters, would need more complex evaluation
+        // For now, pass through (conservative approach)
+        true
+    }
+
+    /// Check if typed metadata matches filter value
+    fn typed_metadata_matches(&self, metadata: &TypedMetadata, filter_value: &SqlValue) -> bool {
+        match (&metadata.value, filter_value) {
+            (Some(crate::proto::proximadb_v1::typed_metadata::Value::StringValue(m)), 
+             SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(f)) }) => m == f,
+            (Some(crate::proto::proximadb_v1::typed_metadata::Value::NumberValue(m)), 
+             SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) }) => (m - f).abs() < f64::EPSILON,
+            (Some(crate::proto::proximadb_v1::typed_metadata::Value::BoolValue(m)), 
+             SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(f)) }) => m == f,
+            // For mismatched types, conservatively return false
+            _ => false,
+        }
     }
 
     async fn list_entities(
