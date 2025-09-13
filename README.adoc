@@ -513,23 +513,13 @@ graph LR
 
 [source,mermaid]
 ----
-timeline
-    title Enterprise Deployment Timeline
+flowchart LR
+    A[Minutes 1-2<br/>📦 Download & Configure<br/>Enterprise Container<br/>Security Settings] --> B[Minutes 3-4<br/>🚀 Deploy & Validate<br/>One-click Deployment<br/>Health Verification]
+    B --> C[Minute 5<br/>📊 Access Dashboard<br/>Enterprise Monitoring<br/>Production Ready]
     
-    section Minute 1-2
-        Download & Configure : Enterprise Container
-                             : Security Settings
-                             : Production Config
-    
-    section Minute 3-4
-        Deploy & Validate   : One-click Deployment
-                           : Health Verification
-                           : Performance Test
-    
-    section Minute 5
-        Access Dashboard   : Enterprise Monitoring
-                          : Real-time Analytics
-                          : Production Ready
+    style A fill:#4CAF50
+    style B fill:#2196F3
+    style C fill:#FF9800
 ----
 
 **Quick Start Commands**:
@@ -664,14 +654,38 @@ curl -X POST https://proximadb.company.com:5678/v1/unified_search \
 [source,mermaid]
 ----
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
-xychart-beta
-    title "3-Year ROI Analysis: ProximaDB vs Traditional Approach"
-    x-axis [Year 1, Year 2, Year 3]
-    y-axis "Cost (Thousands USD)" 0 --> 800
-    "Traditional Multi-System" [250, 275, 300]
-    "ProximaDB Enterprise" [25, 27, 30]
-    "Cumulative Savings" [225, 473, 743]
+pie title 3-Year ROI Analysis (Cumulative Savings)
+    "Year 1 Savings: $225K" : 225
+    "Year 2 Additional: $248K" : 248
+    "Year 3 Additional: $270K" : 270
 ----
+
+**Enterprise ROI Breakdown**:
+
+[cols="2,2,2,2", options="header"]
+|===
+| Year | Traditional Cost | ProximaDB Cost | Annual Savings
+
+| **Year 1**
+| $250K
+| $25K
+| **$225K (90%)**
+
+| **Year 2**
+| $275K
+| $27K
+| **$248K (90%)**
+
+| **Year 3**
+| $300K
+| $30K
+| **$270K (90%)**
+
+| **Total 3-Year**
+| $825K
+| $82K
+| **$743K (90%)**
+|===
 
 **3-Year Financial Impact**:
 - **Year 1 Savings**: $225K (90% cost reduction)
