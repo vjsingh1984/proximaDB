@@ -97,20 +97,20 @@ gantt
 | **Task 1.3: Enhanced RBAC Framework**
 | P0
 | 📋 **Planned**
-| Multi-level hierarchical permissions with field-level control
-| Complete permission matrix validation
+| Multi-level hierarchical permissions with field-level control + Collection RBAC enhancement
+| Complete permission matrix validation + Collection audit
 
-| **Task 1.4: SSO Integration Foundation**
+| **Task 1.4: Federated Identity Delegation**
 | P0
 | 📋 **Planned**
-| AWS IAM, Azure AD, GCP, Okta integration framework
-| Enterprise SSO authentication working
+| AWS/Azure/GCP/Okta delegation with Kerberos-style chain tracking
+| Enterprise delegation working with complete audit
 
-| **Task 1.5: Audit Infrastructure**
+| **Task 1.5: Comprehensive Audit Infrastructure**
 | P0
 | 📋 **Planned**
-| Comprehensive audit logging with SSO user tracking
-| Complete audit trail for all operations
+| Cross-provider audit correlation with delegation chain preservation
+| Complete audit trail meeting compliance requirements
 |===
 
 ==== Task 1.1: TenantKnowledgeGraph Core Implementation
