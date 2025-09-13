@@ -22,7 +22,8 @@ use crate::proto::proximadb_v1::{
 };
 use crate::storage::engines::UnifiedStorageEngine;
 use crate::services::operations::vectors::VectorOperationsService;
-use prost_types::Struct as FlexibleMetadata;
+use std::collections::HashMap;
+use crate::proto::proximadb_v1::SqlValue;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -76,7 +77,7 @@ pub trait EntityStore: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct EntityHeader {
     pub typed_metadata: Option<TypedMetadata>,
-    pub flexible_metadata: Option<FlexibleMetadata>,
+    pub flexible_metadata: HashMap<String, SqlValue>,
     pub provenance: Option<Provenance>,
     pub temporal: Option<TemporalInfo>,
 }
@@ -463,6 +464,7 @@ impl EntityStore for ProximaEntityStore {
                 let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
                     optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
                     progressive_search: true,
+                    progressive_recalls: None, // Use default recalls
                     include_vectors: false,
                     include_metadata: true,
                     scenario: Some("sks_entity_search".to_string()),
@@ -500,7 +502,9 @@ impl EntityStore for ProximaEntityStore {
             }
         } else if let Some(filter) = core_filter {
             // Implement efficient pure metadata filter path using entity headers
-            results = self.filter_entities_by_metadata(collection_id, &filter, top_k).await?;
+            if let Some(ref metadata_filter) = metadata_filter {
+                results = self.filter_entities_by_metadata(collection_id, metadata_filter, top_k).await?;
+            }
         }
 
         results.truncate(top_k);
@@ -561,7 +565,7 @@ impl ProximaEntityStore {
         collection_id: &str,
         filter: &MetadataFilter,
         limit: usize,
-    ) -> Result<Vec<(Entity, f64)>> {
+    ) -> Result<Vec<(Entity, f32)>> {
         let mut results = Vec::new();
         let prefix = format!("{}::", collection_id);
         
@@ -571,10 +575,9 @@ impl ProximaEntityStore {
             let mut candidate_ids = Vec::new();
             for (key, header) in headers.iter() {
                 if let Some(entity_id) = key.strip_prefix(&prefix) {
-                    // Apply header-level filtering if possible
-                    if self.header_matches_filter(header, filter) {
-                        candidate_ids.push(entity_id.to_string());
-                    }
+                    // TODO: Apply header-level filtering when header deserialization is implemented
+                    // For now, add all candidates (conservative approach)
+                    candidate_ids.push(entity_id.to_string());
                     
                     if candidate_ids.len() >= limit * 2 {
                         break; // Get more candidates than needed for better filtering
@@ -586,9 +589,9 @@ impl ProximaEntityStore {
         
         // Second pass: Load entities and apply detailed metadata filtering
         for entity_id in candidate_ids.into_iter().take(limit * 2) {
-            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id).await {
+            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await {
                 if self.entity_matches_metadata_filter(&entity, filter) {
-                    results.push((entity, 0.0)); // 0.0 since no similarity scoring
+                    results.push((entity, 0.0f32)); // 0.0 since no similarity scoring
                     
                     if results.len() >= limit {
                         break;

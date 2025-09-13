@@ -362,14 +362,17 @@ impl From<RestNodeInput> for Node {
             id: input.id,
             labels: input.labels,
             properties: convert_json_to_properties(input.properties),
-            embedding: input.embedding.map(|e| EmbeddingVersion {
-                vector: e.vector,
-                model_version: e.version,
-                model_id: String::new(), // Set default empty string
-                dimension: e.vector.len() as u32,
-                created_at_ms: 0,
-                model_params: std::collections::HashMap::new(),
-                modality: 0, // Default to first modality value
+            embedding: input.embedding.map(|e| {
+                let dimension = e.vector.len() as u32;
+                EmbeddingVersion {
+                    vector: e.vector,
+                    model_version: e.version,
+                    model_id: String::new(), // Set default empty string
+                    dimension,
+                    created_at_ms: 0,
+                    model_params: std::collections::HashMap::new(),
+                    modality: 0, // Default to first modality value
+                }
             }),
             created_at_ms: 0, // Set by service
             updated_at_ms: 0, // Set by service
@@ -409,7 +412,7 @@ fn convert_properties_to_json(props: &HashMap<String, PropertyValue>) -> HashMap
                 serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
             },
             Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
-                serde_json::Value::Array(vec.vector.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
+                serde_json::Value::Array(vec.values.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
             },
             None => serde_json::Value::Null,
         };
@@ -440,7 +443,7 @@ fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
             serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
         },
         Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
-            serde_json::Value::Array(vec.vector.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
+            serde_json::Value::Array(vec.values.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
         },
         None => serde_json::Value::Null,
     }
@@ -470,9 +473,9 @@ fn convert_json_to_property_value(value: serde_json::Value) -> PropertyValue {
     PropertyValue { value: prop_value }
 }
 
-fn format_timestamp(ts: &prost_types::Timestamp) -> String {
-    // Convert protobuf timestamp to ISO 8601 string
-    chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
+fn format_timestamp(ts_ms: &i64) -> String {
+    // Convert Unix epoch milliseconds to ISO 8601 string
+    chrono::DateTime::from_timestamp_millis(*ts_ms)
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
         .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string())
 }
@@ -1080,7 +1083,6 @@ pub async fn delete_edge(
 /// Perform graph traversal
 pub async fn traverse_graph(
     State(app_state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<TraversalRequest>,
 ) -> impl IntoResponse {
     debug!(
@@ -1088,15 +1090,9 @@ pub async fn traverse_graph(
         request.start_node_id
     );
 
-    // Read per-call overrides from headers (if present)
-    let override_enable_prefetch = headers
-        .get("x-graph-prefetch-enabled")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.eq_ignore_ascii_case("true") || s == "1");
-    let override_prefetch_budget = headers
-        .get("x-graph-prefetch-budget")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok());
+    // TODO: Read per-call overrides from headers (temporarily disabled)
+    let override_enable_prefetch = None;
+    let override_prefetch_budget = None;
 
     match app_state
         .unified_handlers

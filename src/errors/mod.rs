@@ -139,6 +139,19 @@ impl IntoApiError for serde_json::Error {
     }
 }
 
+/// Implement IntoResponse for Result<T, ApiError> where T: IntoResponse
+impl<T> IntoResponse for Result<T, ApiError>
+where
+    T: IntoResponse,
+{
+    fn into_response(self) -> Response {
+        match self {
+            Ok(value) => value.into_response(),
+            Err(error) => error.into_response(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
