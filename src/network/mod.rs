@@ -180,6 +180,7 @@ pub mod middleware;
 pub mod multi_server;
 pub mod rest;
 pub mod server_builder;
+pub mod tls;
 
 // Unit tests
 #[cfg(test)]
