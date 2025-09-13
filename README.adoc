@@ -3,7 +3,13 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: highlight.js
-:imagesdir: .
+:imagesdir: assets
+
+[.text-center]
+image::cover/proximadb_enterprise_cover.svg[ProximaDB Enterprise Cover, width=100%, align="center"]
+
+[.text-center]
+image::logo/proximadb_enterprise_logo.svg[ProximaDB Enterprise Logo, width=400, align="center"]
 
 [.lead.text-center]
 **🚀 Enterprise Vector Database - 100% Production Certified** +

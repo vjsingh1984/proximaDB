@@ -59,12 +59,12 @@ flowchart TB
 |System design, performance, implementation details
 |✅ Enhanced
 
-|**link:graph_api_reference.adoc[Graph API Reference]**
+|**link:reference/graph_api_reference.adoc[Graph API Reference]**
 |Developers
 |Complete graph database API documentation
 |✅ Professional
 
-|**link:sks_technical_reference.adoc[SKS Technical Reference]**
+|**link:reference/sks_technical_reference.adoc[SKS Technical Reference]**
 |Developers
 |Semantic Knowledge Store implementation guide
 |✅ Comprehensive
@@ -167,16 +167,16 @@ xychart-beta
 == 🔗 Quick Start Paths
 
 === "I want to understand the business value"
-→ link:consolidated/overview_and_business_value.adoc[Business Overview]
+→ link:proximadb_enterprise_guide.adoc[Business Overview]
 
 === "I need technical architecture details"
-→ link:consolidated/architecture_and_design.adoc[Architecture] → link:consolidated/storage_engines.adoc[Storage Engines]
+→ link:proximadb_enterprise_guide.adoc[Architecture] → link:09-roadmap/analysis/class_diagram.mmd[System Design]
 
 === "I want to start using ProximaDB"
-→ link:consolidated/getting_started_and_user_guide.adoc[Getting Started] → link:consolidated/api_reference.adoc[API Reference]
+→ link:guides/getting_started.adoc[Getting Started] → link:reference/graph_api_reference.adoc[API Reference]
 
 === "I need to deploy in production"
-→ link:consolidated/operations_and_administration.adoc[Operations Guide]
+→ link:operations/production_runbook.adoc[Operations Guide]
 
 == 📋 Key Innovations
 
@@ -298,7 +298,7 @@ flowchart LR
 
 == 🤝 Contributing to Documentation
 
-See link:consolidated/development_and_contribution.adoc[Development Guide] for:
+See link:guides/getting_started.adoc[Development Guide] for:
 
 * Documentation standards and style guides
 * Review process and quality assurance

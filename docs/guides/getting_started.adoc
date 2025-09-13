@@ -3,8 +3,10 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: highlight.js
+:imagesdir: ../assets
 
-Quick start guide for developers and users to get ProximaDB running in minutes.
+[.lead]
+**Quick start guide for developers and users** - Get ProximaDB Enterprise running in production in minutes.
 
 toc::[]
 

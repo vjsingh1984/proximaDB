@@ -1,12 +1,12 @@
 = ProximaDB Security Architecture
 :toc: macro
 :toclevels: 3
-:imagesdir: ./assets
+:icons: font
+:source-highlighter: highlight.js
+:imagesdir: assets
 
 [.lead]
-**Enterprise-grade security for unified intelligence platforms**
-
-ProximaDB provides comprehensive security features designed for production AI workloads, from development to enterprise deployment.
+**Enterprise-grade security for unified intelligence platforms** - Comprehensive security features for production AI workloads and enterprise deployment.
 
 toc::[]
 

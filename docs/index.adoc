@@ -3,6 +3,7 @@
 :toclevels: 4
 :icons: font
 :source-highlighter: highlight.js
+:imagesdir: assets
 
 [.lead]
 **Complete enterprise documentation for ProximaDB v1.0.4** - 100% production ready with comprehensive monitoring and enterprise capabilities.
@@ -60,19 +61,19 @@ graph TB
 |===
 | Document | Purpose | Description | Status
 
-| **Business Overview**
-| link:business_overview.adoc[business_overview.adoc]
-| Value proposition and business benefits
+| **Enterprise Guide**
+| link:proximadb_enterprise_guide.adoc[proximadb_enterprise_guide.adoc]
+| Complete enterprise documentation with all capabilities
 | ✅ **Complete**
 
-| **Technical Architecture**
-| link:technical_architecture.adoc[technical_architecture.adoc]
-| System design and component overview
+| **Getting Started**
+| link:guides/getting_started.adoc[guides/getting_started.adoc]
+| Quick start guide for developers and users
 | ✅ **Complete**
 
-| **Operations Guide**
-| link:operations_guide.adoc[operations_guide.adoc]
-| Deployment and monitoring procedures
+| **Security Architecture**
+| link:security.adoc[security.adoc]
+| Enterprise security framework and compliance
 | ✅ **Complete**
 
 | **Production Runbook**
@@ -87,14 +88,19 @@ graph TB
 |===
 | Document | Purpose | Description | Status
 
+| **API Reference**
+| link:reference/graph_api_reference.adoc[reference/graph_api_reference.adoc]
+| Complete API documentation
+| ✅ **Complete**
+
+| **Technical Reference**
+| link:reference/sks_technical_reference.adoc[reference/sks_technical_reference.adoc]
+| SKS implementation guide
+| ✅ **Complete**
+
 | **Architecture Diagram**
 | link:09-roadmap/analysis/class_diagram.mmd[09-roadmap/analysis/class_diagram.mmd]
 | Complete system class diagram
-| ✅ **Complete**
-
-| **Production Status**
-| link:comprehensive_production_status.adoc[comprehensive_production_status.adoc]
-| Detailed production certification
 | ✅ **Complete**
 
 | **Enterprise Guide**
@@ -128,18 +134,18 @@ graph TB
 == 🎯 Quick Navigation
 
 === For Business Stakeholders
-1. **Start Here**: link:business_overview.adoc[Business Overview] - Value proposition and benefits
-2. **Production Status**: link:comprehensive_production_status.adoc[Production Certification] - Complete readiness verification
+1. **Enterprise Guide**: link:proximadb_enterprise_guide.adoc[Enterprise Guide] - Complete business and technical overview
+2. **Production Status**: link:09-roadmap/README.adoc[Roadmap Status] - 100% production certification verification
 
-=== For Technical Teams
-1. **Architecture**: link:technical_architecture.adoc[Technical Architecture] - System design overview
-2. **Class Diagram**: link:09-roadmap/analysis/class_diagram.mmd[Architecture Diagram] - Complete component relationships
-3. **Operations**: link:operations_guide.adoc[Operations Guide] - Deployment procedures
+=== For Developers
+1. **Getting Started**: link:guides/getting_started.adoc[Getting Started] - Quick start guide for developers
+2. **API Reference**: link:reference/graph_api_reference.adoc[API Reference] - Complete API documentation
+3. **Technical Reference**: link:reference/sks_technical_reference.adoc[SKS Reference] - Implementation guide
 
 === For DevOps/SRE Teams
 1. **Production Runbook**: link:operations/production_runbook.adoc[Production Runbook] - Daily operations
-2. **Monitoring**: Dashboard at http://localhost:5678/dashboard - Real-time monitoring
-3. **Deployment**: link:../scripts/enterprise_deploy.sh[Deployment Scripts] - Automated deployment
+2. **Security Guide**: link:security.adoc[Security Guide] - Enterprise security framework
+3. **Architecture Diagram**: link:09-roadmap/analysis/class_diagram.mmd[Class Diagram] - System visualization
 
 == 🏗️ Documentation Architecture Philosophy
 
