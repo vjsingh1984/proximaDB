@@ -137,6 +137,20 @@ pub enum CacheType {
     MetricsSnapshot,
 }
 
+/// Batch operation for cache efficiency
+#[derive(Debug, Clone)]
+pub struct BatchCacheOperation {
+    pub cache_type: CacheType,
+    pub operations: Vec<CacheOperation>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CacheOperation {
+    Get(String),
+    Put(String, Vec<u8>, Option<Duration>),
+    Remove(String),
+}
+
 static GLOBAL_ORCHESTRATOR: std::sync::OnceLock<Arc<CrossCacheOrchestrator>> = std::sync::OnceLock::new();
 
 impl CrossCacheOrchestrator {
@@ -954,6 +968,90 @@ impl CrossCacheOrchestrator {
     /// Get metrics
     pub fn metrics(&self) -> Arc<CacheMetrics> {
         self.metrics.clone()
+    }
+
+    /// Execute batch cache operations for improved performance
+    pub async fn execute_batch(&self, batch: BatchCacheOperation) -> Result<Vec<Option<Vec<u8>>>, anyhow::Error> {
+        let mut results = Vec::with_capacity(batch.operations.len());
+        
+        // Group operations by type for optimization
+        let mut gets = Vec::new();
+        let mut puts = Vec::new();
+        let mut removes = Vec::new();
+        
+        for (idx, op) in batch.operations.iter().enumerate() {
+            match op {
+                CacheOperation::Get(key) => gets.push((idx, key)),
+                CacheOperation::Put(key, value, ttl) => puts.push((idx, key, value, ttl)),
+                CacheOperation::Remove(key) => removes.push((idx, key)),
+            }
+        }
+        
+        // Initialize results vector
+        results.resize(batch.operations.len(), None);
+        
+        // Execute gets in batch
+        for (idx, key) in gets {
+            if let Ok(value) = self.get(&batch.cache_type, key).await {
+                results[idx] = value;
+            }
+        }
+        
+        // Execute puts in batch
+        for (idx, key, value, ttl) in puts {
+            let _ = self.put(batch.cache_type.clone(), key.clone(), value.clone(), ttl.clone()).await;
+            results[idx] = Some(Vec::new()); // Indicate success
+        }
+        
+        // Execute removes in batch  
+        for (idx, key) in removes {
+            let _ = self.remove(&batch.cache_type, key).await;
+            results[idx] = Some(Vec::new()); // Indicate success
+        }
+        
+        Ok(results)
+    }
+
+    /// Create batch operation for multiple cache operations
+    pub fn create_batch(cache_type: CacheType) -> BatchCacheOperationBuilder {
+        BatchCacheOperationBuilder::new(cache_type)
+    }
+}
+
+/// Builder for batch cache operations
+pub struct BatchCacheOperationBuilder {
+    cache_type: CacheType,
+    operations: Vec<CacheOperation>,
+}
+
+impl BatchCacheOperationBuilder {
+    pub fn new(cache_type: CacheType) -> Self {
+        Self {
+            cache_type,
+            operations: Vec::new(),
+        }
+    }
+
+    pub fn get(mut self, key: String) -> Self {
+        self.operations.push(CacheOperation::Get(key));
+        self
+    }
+
+    pub fn put(mut self, key: String, value: Vec<u8>, ttl: Option<Duration>) -> Self {
+        self.operations.push(CacheOperation::Put(key, value, ttl));
+        self
+    }
+
+    pub fn remove(mut self, key: String) -> Self {
+        self.operations.push(CacheOperation::Remove(key));
+        self
+    }
+
+    pub fn build(self) -> BatchCacheOperation {
+        BatchCacheOperation {
+            cache_type: self.cache_type,
+            operations: self.operations,
+        }
     }
 }
 

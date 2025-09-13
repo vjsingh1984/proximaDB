@@ -745,6 +745,54 @@ impl ProximaEntityStore {
         Ok(results)
     }
 
+    /// Streaming entity iterator for large result sets to reduce memory usage
+    pub async fn stream_entities<'a>(&'a self, 
+        collection_id: &'a str, 
+        filters: &'a [MetadataFilter],
+        batch_size: usize
+    ) -> impl futures::Stream<Item = Result<Vec<Entity>>> + 'a {
+        use futures::stream::{self, StreamExt};
+        
+        let total_count = self.entities.len();
+        let num_batches = (total_count + batch_size - 1) / batch_size;
+        
+        stream::iter(0..num_batches).then(move |batch_idx| async move {
+            let start_idx = batch_idx * batch_size;
+            let end_idx = std::cmp::min(start_idx + batch_size, total_count);
+            
+            let mut results = Vec::with_capacity(batch_size);
+            let mut count = 0;
+            
+            // Stream through entities in batches to avoid loading everything into memory
+            for (entity_id, header) in self.entity_headers.iter().skip(start_idx) {
+                if count >= batch_size {
+                    break;
+                }
+                
+                if entity_id.starts_with(&format!("{}_", collection_id)) {
+                    let mut all_match = true;
+                    
+                    // Early exit on first non-matching filter
+                    for filter in filters {
+                        if !self.header_matches_filter(header.value(), filter) {
+                            all_match = false;
+                            break;
+                        }
+                    }
+
+                    if all_match {
+                        if let Some(entity) = self.entities.get(entity_id) {
+                            results.push(entity.value().clone());
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            
+            Ok(results)
+        })
+    }
+
     async fn list_entities(
         &self,
         collection_id: &str,

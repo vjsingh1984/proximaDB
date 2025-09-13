@@ -12,7 +12,7 @@ use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[cfg(test)]
@@ -22,13 +22,83 @@ static TEST_VECTOR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<
 #[cfg(test)]
 static TEST_SIMILAR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
 
+/// Memory pool for reusing vectors to reduce allocations
+pub struct VectorPool {
+    query_row_pool: Arc<Mutex<Vec<Vec<QueryRow>>>>,
+    field_map_pool: Arc<Mutex<Vec<HashMap<String, serde_json::Value>>>>,
+}
+
+impl VectorPool {
+    pub fn new() -> Self {
+        Self {
+            query_row_pool: Arc::new(Mutex::new(Vec::new())),
+            field_map_pool: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Get a reusable vector for QueryRow, or create new if pool is empty
+    pub fn get_query_row_vec(&self) -> Vec<QueryRow> {
+        if let Ok(mut pool) = self.query_row_pool.lock() {
+            pool.pop().unwrap_or_else(|| Vec::with_capacity(1000))
+        } else {
+            Vec::with_capacity(1000)
+        }
+    }
+
+    /// Return a vector to the pool for reuse (clears it first)
+    pub fn return_query_row_vec(&self, mut vec: Vec<QueryRow>) {
+        vec.clear();
+        if vec.capacity() > 0 && vec.capacity() < 10000 { // Prevent memory bloat
+            if let Ok(mut pool) = self.query_row_pool.lock() {
+                if pool.len() < 10 { // Limit pool size
+                    pool.push(vec);
+                }
+            }
+        }
+    }
+
+    /// Get a reusable HashMap for field maps
+    pub fn get_field_map(&self) -> HashMap<String, serde_json::Value> {
+        if let Ok(mut pool) = self.field_map_pool.lock() {
+            pool.pop().unwrap_or_else(|| HashMap::with_capacity(20))
+        } else {
+            HashMap::with_capacity(20)
+        }
+    }
+
+    /// Return a HashMap to the pool for reuse
+    pub fn return_field_map(&self, mut map: HashMap<String, serde_json::Value>) {
+        map.clear();
+        if map.capacity() > 0 && map.capacity() < 100 {
+            if let Ok(mut pool) = self.field_map_pool.lock() {
+                if pool.len() < 10 {
+                    pool.push(map);
+                }
+            }
+        }
+    }
+}
+
 /// High-performance query executor with multi-modal support
 pub struct QueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
     graph_service: Arc<GraphService>,
+    memory_pool: VectorPool,
 }
 
 impl QueryExecutor {
+    /// Create new query executor with memory pool optimization
+    pub fn new(
+        vector_service: Option<Arc<VectorOperationsService>>,
+        graph_service: Arc<GraphService>,
+    ) -> Self {
+        Self {
+            vector_service,
+            graph_service,
+            memory_pool: VectorPool::new(),
+        }
+    }
+
     /// Derive vector-side rows from graph seeds using the SKS embedding catalog (no engine I/O)
     pub(crate) fn derive_vector_rows_from_graph_seeds(graph_rows: &Vec<QueryRow>) -> Vec<QueryRow> {
         if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
