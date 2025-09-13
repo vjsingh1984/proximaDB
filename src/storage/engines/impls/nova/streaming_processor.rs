@@ -326,7 +326,7 @@ impl StreamingRowGroupProcessor {
                     if let Some(stats) = enhanced_stats {
                         let intersects = stats.vector_zone_map.intersects_query(
                             &context.query_vector,
-                            crate::compute::distance_computation::DistanceMetric::Euclidean,
+                            "euclidean".to_string(),
                             context.distance_threshold.unwrap_or(f32::MAX),
                         );
                         if !intersects {

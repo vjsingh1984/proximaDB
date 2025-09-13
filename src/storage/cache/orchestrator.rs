@@ -425,6 +425,30 @@ impl AccessPatternTracker {
     pub fn metrics_collector(&self) -> Option<Arc<AccessPatternMetricsCollector>> {
         self.metrics_collector.clone()
     }
+
+    /// Get summary statistics for access patterns
+    pub async fn get_summary_stats(&self) -> serde_json::Value {
+        let history = self.access_history.lock().await;
+        let correlation_count = self.correlation_matrix.len();
+        
+        // Calculate basic statistics
+        let total_accesses = history.len();
+        let unique_keys = history.iter().map(|r| &r.key).collect::<std::collections::HashSet<_>>().len();
+        
+        // Calculate cache type distribution
+        let mut cache_type_counts = std::collections::HashMap::new();
+        for record in history.iter() {
+            *cache_type_counts.entry(&record.cache_type).or_insert(0) += 1;
+        }
+        
+        serde_json::json!({
+            "total_accesses": total_accesses,
+            "unique_keys": unique_keys,
+            "correlation_entries": correlation_count,
+            "cache_type_distribution": cache_type_counts,
+            "avg_correlations_per_key": if unique_keys > 0 { correlation_count as f64 / unique_keys as f64 } else { 0.0 }
+        })
+    }
 }
 
 /// Dynamic memory allocator for cache tier resizing
@@ -528,6 +552,20 @@ impl DynamicMemoryAllocator {
     /// Update allocation for a specific cache type
     pub async fn update_allocation(&self, cache_type: CacheType, new_allocation: usize) {
         self.allocations.insert(cache_type, new_allocation);
+    }
+
+    /// Get current allocations for all cache types
+    pub async fn get_allocations(&self) -> serde_json::Value {
+        let mut allocations = serde_json::Map::new();
+        
+        for entry in self.allocations.iter() {
+            let cache_type_name = format!("{:?}", entry.key());
+            allocations.insert(cache_type_name, serde_json::Value::Number((*entry.value()).into()));
+        }
+        
+        allocations.insert("total_budget".to_string(), serde_json::Value::Number(self.total_budget.into()));
+        
+        serde_json::Value::Object(allocations)
     }
 }
 
@@ -1015,6 +1053,162 @@ impl CrossCacheOrchestrator {
     /// Create batch operation for multiple cache operations
     pub fn create_batch(cache_type: CacheType) -> BatchCacheOperationBuilder {
         BatchCacheOperationBuilder::new(cache_type)
+    }
+
+    /// Get value from cache by type and key
+    pub async fn get(&self, cache_type: &CacheType, key: &str) -> Result<Option<Vec<u8>>> {
+        // Track access for pattern learning
+        self.pattern_tracker.track_access_async(key.to_string(), cache_type.clone());
+
+        // Route to appropriate cache based on type
+        match cache_type {
+            CacheType::QueryResult => {
+                if let Some(cache) = &self.query_cache {
+                    cache.get(key).await
+                } else {
+                    Ok(None)
+                }
+            },
+            CacheType::FilterBitmap => {
+                if let Some(cache) = &self.filter_cache {
+                    cache.get(key).await
+                } else {
+                    Ok(None)
+                }
+            },
+            CacheType::IndexStructure => {
+                if let Some(cache) = &self.index_cache {
+                    cache.get(key).await
+                } else {
+                    Ok(None)
+                }
+            },
+            CacheType::Metadata => {
+                if let Some(cache) = &self.metadata_cache {
+                    cache.get(key).await
+                } else {
+                    Ok(None)
+                }
+            },
+            _ => {
+                // For other cache types, return None for now
+                // Could be extended to support additional cache types
+                Ok(None)
+            }
+        }
+    }
+
+    /// Put value into cache by type and key
+    pub async fn put(&self, cache_type: CacheType, key: String, value: Vec<u8>, ttl: Option<Duration>) -> Result<()> {
+        // Track access for pattern learning
+        self.pattern_tracker.track_access_async(key.clone(), cache_type.clone());
+
+        // Route to appropriate cache based on type
+        match cache_type {
+            CacheType::QueryResult => {
+                if let Some(cache) = &self.query_cache {
+                    cache.put(&key, value, ttl).await
+                } else {
+                    Ok(())
+                }
+            },
+            CacheType::FilterBitmap => {
+                if let Some(cache) = &self.filter_cache {
+                    cache.put(&key, value, ttl).await
+                } else {
+                    Ok(())
+                }
+            },
+            CacheType::IndexStructure => {
+                if let Some(cache) = &self.index_cache {
+                    cache.put(&key, value, ttl).await
+                } else {
+                    Ok(())
+                }
+            },
+            CacheType::Metadata => {
+                if let Some(cache) = &self.metadata_cache {
+                    cache.put(&key, value, ttl).await
+                } else {
+                    Ok(())
+                }
+            },
+            _ => {
+                // For other cache types, do nothing for now
+                // Could be extended to support additional cache types
+                Ok(())
+            }
+        }
+    }
+
+    /// Remove value from cache by type and key
+    pub async fn remove(&self, cache_type: &CacheType, key: &str) -> Result<()> {
+        // Route to appropriate cache based on type
+        match cache_type {
+            CacheType::QueryResult => {
+                if let Some(cache) = &self.query_cache {
+                    cache.invalidate(key).await;
+                }
+            },
+            CacheType::FilterBitmap => {
+                if let Some(cache) = &self.filter_cache {
+                    cache.invalidate(key).await;
+                }
+            },
+            CacheType::IndexStructure => {
+                if let Some(cache) = &self.index_cache {
+                    cache.invalidate(key).await;
+                }
+            },
+            CacheType::Metadata => {
+                if let Some(cache) = &self.metadata_cache {
+                    cache.invalidate(key).await;
+                }
+            },
+            _ => {
+                // For other cache types, do nothing for now
+            }
+        }
+        Ok(())
+    }
+
+    /// Get cache metrics
+    pub async fn get_metrics(&self) -> Result<serde_json::Value> {
+        // Collect metrics from all caches and the orchestrator itself
+        let mut metrics = serde_json::Map::new();
+
+        // Add orchestrator-level metrics
+        metrics.insert("orchestrator_metrics".to_string(), serde_json::json!({
+            "memory_allocations": self.memory_allocator.get_allocations().await,
+            "access_patterns": self.pattern_tracker.get_summary_stats().await,
+        }));
+
+        // Add cache-specific metrics
+        if let Some(cache) = &self.query_cache {
+            if let Ok(cache_metrics) = cache.get_metrics().await {
+                metrics.insert("query_cache".to_string(), cache_metrics);
+            }
+        }
+
+        if let Some(cache) = &self.filter_cache {
+            if let Ok(cache_metrics) = cache.get_metrics().await {
+                metrics.insert("filter_cache".to_string(), cache_metrics);
+            }
+        }
+
+        if let Some(cache) = &self.index_cache {
+            if let Ok(cache_metrics) = cache.get_metrics().await {
+                metrics.insert("index_cache".to_string(), cache_metrics);
+            }
+        }
+
+        if let Some(cache) = &self.metadata_cache {
+            if let Ok(cache_metrics) = cache.get_metrics().await {
+                metrics.insert("metadata_cache".to_string(), cache_metrics);
+            }
+        }
+
+        Ok(serde_json::Value::Object(metrics))
     }
 }
 

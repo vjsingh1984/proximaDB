@@ -270,7 +270,7 @@ impl QueryExecutor {
                 }
                 ExecutionOperation::CteMaterialization { cte_name, query_plan } => {
                     // Execute the CTE query plan and store results for reference
-                    let cte_results = self.execute_plan(query_plan).await?;
+                    let cte_results = self.execute_hybrid_plan(*query_plan.clone()).await?;
                     // Store in a CTE context or buffer for later reference
                     // For now, add to current buffer
                     buffers.push(cte_results.rows);

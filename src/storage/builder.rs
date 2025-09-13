@@ -631,10 +631,21 @@ impl StorageSystemBuilder {
         );
 
         // Initialize compaction strategies using existing orchestrator
+        let compaction_config = crate::storage::common::compaction_orchestrator::CompactionConfig {
+            level0_threshold: 4,
+            level_threshold: 10,
+            max_level: 7,
+            max_concurrent_per_collection: self.config.data_storage.compaction_config.compaction_threads as usize,
+            global_max_concurrent: (self.config.data_storage.compaction_config.compaction_threads * 2) as usize,
+            operation_timeout: std::time::Duration::from_secs(3600), // 1 hour
+            queue_aware_compaction: true,
+            max_queue_wait: std::time::Duration::from_secs(300), // 5 minutes
+            urgency_threshold: 0.8,
+        };
         let compaction_orchestrator = Arc::new(
             crate::storage::common::compaction_orchestrator::CompactionOrchestrator::new(
                 filesystem.clone(),
-                self.config.data_storage.compaction_config.clone()
+                compaction_config
             )
         );
         

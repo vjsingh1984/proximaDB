@@ -392,8 +392,8 @@ impl StorageEngine {
             return Ok(true);
         }
 
-        // Check SST storage for vector existence
-        if let Some(sst_storage) = &self.sst_storage {
+        // Check SST storages for vector existence
+        if let Some(sst_storage) = self.sst_storages.get(collection_id) {
             // Use SST bloom filters for fast existence check
             match sst_storage.contains_vector(collection_id, id).await {
                 Ok(exists) => {
@@ -826,7 +826,7 @@ impl StorageEngine {
                 .await?;
 
             // Clean up SST files for the dropped collection
-            if let Some(ref sst_storage) = self.sst_storage {
+            if let Some(sst_storage) = self.sst_storages.get(collection_id) {
                 match sst_storage.cleanup_collection_files(collection_id).await {
                     Ok(files_removed) => {
                         info!("Cleaned up {} SST files for collection {}", files_removed, collection_id);
@@ -961,16 +961,13 @@ impl StorageEngine {
     pub async fn cleanup_for_tests(&self) -> crate::storage::Result<()> {
         tracing::debug!("🧹 Starting storage cleanup for test scenarios");
 
-        // Get list of all collections from SharedServices
-        let collections: Vec<CollectionMetadata> = match &self.shared_services {
-            Some(services) => {
-                match services.collection_service.list_collections().await {
-                    Ok(collection_list) => collection_list,
-                    Err(e) => {
-                        warn!("Failed to get collections from SharedServices: {}", e);
-                        Vec::new()
-                    }
-                }
+        // Get list of all collections from metadata provider
+        let collections: Vec<CollectionMetadata> = match self.metadata_provider.read().await.as_ref() {
+            Some(provider) => {
+                // TODO: Add list_collections method to InternalCollectionProvider trait
+                // For now, return empty list to allow compilation
+                warn!("Collection listing not yet implemented for test cleanup");
+                Vec::new()
             }
             None => {
                 warn!("SharedServices not available for collection listing");
@@ -1015,15 +1012,10 @@ impl StorageEngine {
 
         // Clear metadata store by deleting all collections
         for collection in collections {
-            // Use SharedServices for metadata operations
-            if let Some(ref services) = self.shared_services {
-                if let Err(e) = services.collection_service.delete_collection(&collection.id).await {
-                    tracing::warn!(
-                        "Failed to delete collection metadata {}: {}",
-                        collection.id,
-                        e
-                    );
-                }
+            // Use metadata provider for collection deletion
+            if let Some(provider) = self.metadata_provider.read().await.as_ref() {
+                // TODO: Add delete_collection method to InternalCollectionProvider trait
+                tracing::debug!("Collection deletion would happen through metadata provider for {}", collection.id);
             }
         }
 

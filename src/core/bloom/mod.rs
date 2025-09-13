@@ -338,7 +338,7 @@ impl Default for HashAlgorithm {
 }
 
 /// Enhanced bloom filter configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BloomFilterConfig {
     /// Strategy to use
     pub strategy: BloomStrategy,

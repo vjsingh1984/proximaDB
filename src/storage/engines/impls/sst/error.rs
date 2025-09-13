@@ -45,6 +45,14 @@ pub enum SstError {
     /// An internal error occurred.
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Anyhow error conversion
+    #[error("Anyhow error: {0}")]
+    Anyhow(#[from] anyhow::Error),
+
+    /// Filesystem error
+    #[error("Filesystem error: {0}")]
+    Filesystem(#[from] crate::storage::persistence::filesystem::FilesystemError),
 }
 
 /// A specialized `Result` type for SST operations.

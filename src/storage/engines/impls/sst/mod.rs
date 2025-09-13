@@ -179,7 +179,7 @@ use crate::proto::proximadb_v1::Collection;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 use crate::storage::optimization::SortingStats;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
 };
@@ -4584,11 +4584,18 @@ impl SstStorage {
         use crate::proto::proximadb_v1::Collection;
         
         // Get collection metadata from the metadata store
-        let storage_url = self.get_collection_storage_url(collection_id)?;
+        let storage_url = self.get_collection_storage_url(collection_id).await?;
         let metadata_path = format!("{}/metadata.json", storage_url);
         
+        // Get IntelligentFilesystem for this collection
+        let intelligent_fs = self.filesystem.get_intelligent_filesystem(
+            &storage_url,
+            collection_id.to_string(),
+            "sst".to_string(),
+        )?;
+        
         // Try to load existing metadata, or create default if not found
-        match self.filesystem.read_file(&metadata_path).await {
+        match intelligent_fs.read("metadata.json").await {
             Ok(metadata_bytes) => {
                 // Parse existing metadata
                 let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)
@@ -4596,9 +4603,19 @@ impl SstStorage {
                 
                 Ok(Collection {
                     id: collection_id.to_string(),
-                    name: metadata.get("name").and_then(|v| v.as_str()).unwrap_or(collection_id).to_string(),
-                    dimension: metadata.get("dimension").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                    distance_metric: metadata.get("distance_metric").and_then(|v| v.as_str()).unwrap_or("cosine").to_string(),
+                    config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                        name: metadata.get("name").and_then(|v| v.as_str()).unwrap_or(collection_id).to_string(),
+                        dimension: metadata.get("dimension").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                        distance_metric: metadata.get("distance_metric").and_then(|v| v.as_str()).map(|s| {
+                            match s {
+                                "cosine" => crate::proto::proximadb_v1::DistanceMetric::Cosine,
+                                "euclidean" => crate::proto::proximadb_v1::DistanceMetric::Euclidean,
+                                "dot" => crate::proto::proximadb_v1::DistanceMetric::DotProduct,
+                                _ => crate::proto::proximadb_v1::DistanceMetric::Cosine,
+                            }
+                        }).unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine) as i32,
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 })
             }
@@ -4606,9 +4623,12 @@ impl SstStorage {
                 // Return minimal collection info if metadata not found
                 Ok(Collection {
                     id: collection_id.to_string(),
-                    name: collection_id.to_string(),
-                    dimension: 0, // Will be determined from first vector
-                    distance_metric: "cosine".to_string(),
+                    config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                        name: collection_id.to_string(),
+                        dimension: 0, // Will be determined from first vector
+                        distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 })
             }
@@ -4617,7 +4637,7 @@ impl SstStorage {
 
     async fn list_collection_files(&self, collection_id: &str) -> Result<Vec<String>> {
         // List all SST files for the collection
-        let collection_path = format!("{}/{}", self.data_path, collection_id);
+        let collection_path = self.get_collection_storage_url(collection_id).await?;
         let mut files = Vec::new();
         
         if let Ok(entries) = std::fs::read_dir(&collection_path) {

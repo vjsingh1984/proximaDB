@@ -119,15 +119,21 @@ impl DistanceTableCache {
     pub async fn get_statistics(&self) -> CacheStats {
         // Get statistics from unified cache orchestrator
         if let Ok(metrics) = self.cache_orchestrator.get_metrics().await {
+            // Extract metrics from the JSON structure
+            let hits = metrics.get("total_hits").and_then(|v| v.as_u64()).unwrap_or(0);
+            let misses = metrics.get("total_misses").and_then(|v| v.as_u64()).unwrap_or(0);
+            let evictions = metrics.get("total_evictions").and_then(|v| v.as_u64()).unwrap_or(0);
+            let memory_bytes = metrics.get("total_memory_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+            
             // Convert unified cache metrics to our local format
             CacheStats {
-                hits: metrics.total_hits,
-                misses: metrics.total_misses,
-                evictions: metrics.total_evictions,
-                total_requests: metrics.total_hits + metrics.total_misses,
-                size_mb: (metrics.total_memory_bytes / (1024 * 1024)) as usize,
-                hit_rate_percent: if metrics.total_hits + metrics.total_misses > 0 {
-                    (metrics.total_hits as f32 / (metrics.total_hits + metrics.total_misses) as f32) * 100.0
+                hits,
+                misses,
+                evictions,
+                total_requests: hits + misses,
+                size_mb: (memory_bytes / (1024 * 1024)) as usize,
+                hit_rate_percent: if hits + misses > 0 {
+                    (hits as f32 / (hits + misses) as f32) * 100.0
                 } else {
                     0.0
                 },

@@ -2222,6 +2222,7 @@ pub struct SearchOptimization {
     #[prost(map = "string, message", tag = "3")]
     pub filters: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorSearchRequest {
@@ -2263,6 +2264,7 @@ pub struct VectorRecord {
     #[prost(string, optional, tag = "9")]
     pub source: ::core::option::Option<::prost::alloc::string::String>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorBatchRequest {
@@ -2345,6 +2347,7 @@ pub struct SearchResult {
     #[prost(string, optional, tag = "3")]
     pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorOperationResponse {
@@ -6356,6 +6359,7 @@ pub struct DeleteCollectionResponse {
     pub success: bool,
 }
 /// Unified collection request message
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionRequest {
@@ -6379,6 +6383,7 @@ pub struct CollectionRequest {
     >,
 }
 /// Unified collection response message
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionResponse {

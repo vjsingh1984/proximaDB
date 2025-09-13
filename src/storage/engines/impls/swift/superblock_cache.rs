@@ -50,7 +50,7 @@ pub struct SwiftSuperBlockCache {
 }
 
 /// SWIFT SuperBlock metadata focused on tree navigation and instant traversal
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CachedSuperBlockMetadata {
     /// SuperBlock identification
     pub superblock_id: u32,
@@ -77,6 +77,7 @@ pub struct CachedSuperBlockMetadata {
 
     /// Access patterns for tree optimization
     pub access_frequency: u64,
+    #[serde(skip)]
     pub last_access: Option<Instant>,
     pub hot_datablocks: Vec<u32>,
 
@@ -92,7 +93,7 @@ pub struct CachedSuperBlockMetadata {
 }
 
 /// Tree navigation hints for instant traversal optimization  
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TreeNavigationHints {
     /// Optimal tree traversal paths
     pub frequent_paths: Vec<TreePath>,
@@ -180,7 +181,7 @@ pub struct CachedDataBlockMetadata {
 }
 
 /// Quantization level metadata for progressive search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QuantizationLevelMetadata {
     pub level_name: String,
     pub bits_per_dimension: u8,
@@ -202,9 +203,10 @@ pub struct QuantizationSummary {
 }
 
 /// DataBlock access statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DataBlockAccessStats {
     pub access_count: u64,
+    #[serde(skip)]
     pub last_access: Option<Instant>,
     pub avg_response_time_us: u64,
     pub cache_hit_rate: f32,
@@ -212,7 +214,7 @@ pub struct DataBlockAccessStats {
 }
 
 /// Bloom filter metadata for instant filtering
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BloomFilterMetadata {
     pub filter_id: String,
     pub superblock_id: u32,

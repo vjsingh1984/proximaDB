@@ -292,12 +292,6 @@ impl SqlFrontendParser {
             _ => return Err(anyhow!("Unsupported join type: {:?}", join.join_operator)),
         };
 
-        let left = TableRef {
-            name: Some("__left__".to_string()), // Placeholder - joins handled differently in execution
-            subquery: None,
-            alias: None,
-        };
-
         let right = self.convert_table_factor(&join.relation)?;
 
         let on = match &join.join_operator {
@@ -313,10 +307,9 @@ impl SqlFrontendParser {
         };
 
         Ok(Join {
-            kind,
-            left,
-            right,
-            on,
+            join_type: kind,
+            right_table: right,
+            on_condition: on,
         })
     }
 

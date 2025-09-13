@@ -437,13 +437,13 @@ impl MemoryOptimizedStorage {
             
             // Check each filter condition
             for (key, expected_value) in filter {
-                if let Some(actual_value) = metadata_entry.get(key) {
+                if let Some(actual_value) = metadata_entry.inverted_index.get(key) {
                     // Support different comparison modes based on value format
                     let matches = if expected_value.starts_with(">=") {
                         // Numeric greater-than-or-equal comparison
                         if let (Ok(expected), Ok(actual)) = (
                             expected_value[2..].parse::<f64>(),
-                            actual_value.parse::<f64>()
+                            actual_value.first().unwrap_or(&String::new()).parse::<f64>()
                         ) {
                             actual >= expected
                         } else {
@@ -453,7 +453,7 @@ impl MemoryOptimizedStorage {
                         // Numeric less-than-or-equal comparison
                         if let (Ok(expected), Ok(actual)) = (
                             expected_value[2..].parse::<f64>(),
-                            actual_value.parse::<f64>()
+                            actual_value.first().unwrap_or(&String::new()).parse::<f64>()
                         ) {
                             actual <= expected
                         } else {
@@ -470,12 +470,12 @@ impl MemoryOptimizedStorage {
                             let suffix = &expected_value[1..];
                             actual_value.ends_with(suffix)
                         } else {
-                            // More complex patterns - fall back to exact match
-                            actual_value == expected_value
+                            // More complex patterns - fall back to contains check
+                            actual_value.contains(expected_value)
                         }
                     } else {
-                        // Exact string matching
-                        actual_value == expected_value
+                        // Exact string matching - check if vector contains the value
+                        actual_value.contains(expected_value)
                     };
                     
                     if !matches {

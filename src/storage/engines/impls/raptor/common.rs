@@ -387,7 +387,7 @@ pub enum NeighborType {
 }
 
 /// Pre-computed distance bounds for fast pruning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DistanceBounds {
     pub min: f32, // Minimum possible distance to any vector in rowgroup
     pub max: f32, // Maximum possible distance to any vector in rowgroup
