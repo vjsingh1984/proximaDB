@@ -216,6 +216,7 @@
 
 pub mod adaptive_structures;
 pub mod concurrent_structures;
+pub mod deployment_automation;
 pub mod tier_data_movement;
 pub mod tier_policy_engine;
 
@@ -231,4 +232,9 @@ pub use tier_policy_engine::{
 pub use adaptive_structures::{
     AdaptiveStore, AdaptiveStoreConfig, AdaptiveStoreFactory, BackendType, TierRebalanceResult,
     UniversalTier,
+};
+
+pub use deployment_automation::{
+    DeploymentConfig, DeploymentManager, DeploymentStatus, Environment,
+    ServiceConfig, InfrastructureConfig, HealthCheckConfig,
 };

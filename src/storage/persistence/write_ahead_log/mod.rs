@@ -74,7 +74,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::bloom::BloomFilterStrategy;
 
@@ -165,7 +165,7 @@ pub use recovery_thread_pool::{
 pub use serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer};
 
 /// Modern WAL operation - binary payload for batch operations (Proto-first architecture)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WALOperation {
     /// Operation type: "upsert_batch", "delete_batch", "flush", "checkpoint"
     pub operation_type: String,
@@ -1806,7 +1806,7 @@ impl WriteAheadLogManager {
                 let search_result = crate::core::search::results::OptimizedSearchRecord {
                     id: vector_record.id.clone(),
                     vector_id: Some(vector_record.id.clone()),
-                    score: similarity_result.final_score,
+                    score: similarity_result.distance,
                     similarity: Some(similarity_result.raw_value),
                     vector: if include_vectors {
                         Some(Arc::new(vector_record.vector.clone()))
@@ -1824,7 +1824,9 @@ impl WriteAheadLogManager {
                     timestamp: Some(vector_record.timestamp),
                     updated_at: vector_record.updated_at,
                     expires_at: vector_record.expires_at,
-                    source: vector_record.source.clone(),
+                    source: vector_record.source.map(|s| crate::proto::proximadb_v1::SourceContent {
+                        data: Some(crate::proto::proximadb_v1::source_content::Data::TextContent(s))
+                    }),
                     expanded_context: Vec::new(),
                     semantic_similarity: Some(similarity_result.clone()),
                     quantization_info: None, // TODO: Add quantization info if available
@@ -2218,8 +2220,9 @@ impl WriteAheadLogManager {
             .await?;
 
         // 4. Implement proper atomic disk sync for durability
-        self.force_disk_sync(&result.collections_affected).await?;
-        debug!("Completed atomic disk sync for {} collections", result.collections_affected.len());
+        let collections_affected = vec![collection_id.clone()];
+        self.force_disk_sync(&collections_affected).await?;
+        debug!("Completed atomic disk sync for {} collections", collections_affected.len());
 
         let duration = start_time.elapsed();
         debug!(

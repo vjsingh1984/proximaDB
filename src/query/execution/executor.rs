@@ -11,7 +11,8 @@ use crate::query::execution::{
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use anyhow::{Result, anyhow};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[cfg(test)]
@@ -21,13 +22,83 @@ static TEST_VECTOR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<
 #[cfg(test)]
 static TEST_SIMILAR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
 
+/// Memory pool for reusing vectors to reduce allocations
+pub struct VectorPool {
+    query_row_pool: Arc<Mutex<Vec<Vec<QueryRow>>>>,
+    field_map_pool: Arc<Mutex<Vec<HashMap<String, serde_json::Value>>>>,
+}
+
+impl VectorPool {
+    pub fn new() -> Self {
+        Self {
+            query_row_pool: Arc::new(Mutex::new(Vec::new())),
+            field_map_pool: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Get a reusable vector for QueryRow, or create new if pool is empty
+    pub fn get_query_row_vec(&self) -> Vec<QueryRow> {
+        if let Ok(mut pool) = self.query_row_pool.lock() {
+            pool.pop().unwrap_or_else(|| Vec::with_capacity(1000))
+        } else {
+            Vec::with_capacity(1000)
+        }
+    }
+
+    /// Return a vector to the pool for reuse (clears it first)
+    pub fn return_query_row_vec(&self, mut vec: Vec<QueryRow>) {
+        vec.clear();
+        if vec.capacity() > 0 && vec.capacity() < 10000 { // Prevent memory bloat
+            if let Ok(mut pool) = self.query_row_pool.lock() {
+                if pool.len() < 10 { // Limit pool size
+                    pool.push(vec);
+                }
+            }
+        }
+    }
+
+    /// Get a reusable HashMap for field maps
+    pub fn get_field_map(&self) -> HashMap<String, serde_json::Value> {
+        if let Ok(mut pool) = self.field_map_pool.lock() {
+            pool.pop().unwrap_or_else(|| HashMap::with_capacity(20))
+        } else {
+            HashMap::with_capacity(20)
+        }
+    }
+
+    /// Return a HashMap to the pool for reuse
+    pub fn return_field_map(&self, mut map: HashMap<String, serde_json::Value>) {
+        map.clear();
+        if map.capacity() > 0 && map.capacity() < 100 {
+            if let Ok(mut pool) = self.field_map_pool.lock() {
+                if pool.len() < 10 {
+                    pool.push(map);
+                }
+            }
+        }
+    }
+}
+
 /// High-performance query executor with multi-modal support
 pub struct QueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
     graph_service: Arc<GraphService>,
+    memory_pool: VectorPool,
 }
 
 impl QueryExecutor {
+    /// Create new query executor with memory pool optimization
+    pub fn new(
+        vector_service: Option<Arc<VectorOperationsService>>,
+        graph_service: Arc<GraphService>,
+    ) -> Self {
+        Self {
+            vector_service,
+            graph_service,
+            memory_pool: VectorPool::new(),
+        }
+    }
+
     /// Derive vector-side rows from graph seeds using the SKS embedding catalog (no engine I/O)
     pub(crate) fn derive_vector_rows_from_graph_seeds(graph_rows: &Vec<QueryRow>) -> Vec<QueryRow> {
         if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
@@ -169,6 +240,40 @@ impl QueryExecutor {
                     let left = buffers.pop().unwrap();
                     let unioned = self.union_rows(&left, &right, *all)?;
                     buffers.push(unioned);
+                }
+                ExecutionOperation::SetUnion { distinct, .. } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("SET UNION requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    let unioned = self.union_rows(&left, &right, !distinct)?;
+                    buffers.push(unioned);
+                }
+                ExecutionOperation::SetIntersect { distinct, .. } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("SET INTERSECT requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    let intersected = self.intersect_rows(&left, &right, !distinct)?;
+                    buffers.push(intersected);
+                }
+                ExecutionOperation::SetExcept { distinct, .. } => {
+                    if buffers.len() < 2 {
+                        return Err(anyhow!("SET EXCEPT requires two input buffers"));
+                    }
+                    let right = buffers.pop().unwrap();
+                    let left = buffers.pop().unwrap();
+                    let excepted = self.except_rows(&left, &right, !distinct)?;
+                    buffers.push(excepted);
+                }
+                ExecutionOperation::CteMaterialization { cte_name, query_plan } => {
+                    // Execute the CTE query plan and store results for reference
+                    let cte_results = self.execute_plan(query_plan).await?;
+                    // Store in a CTE context or buffer for later reference
+                    // For now, add to current buffer
+                    buffers.push(cte_results.rows);
                 }
                 _ => {
                     return Err(anyhow!(
@@ -558,6 +663,7 @@ impl QueryExecutor {
         if let Some(map) = TEST_SIMILAR_RESULTS.get() {
             if let Ok(guard) = map.lock() {
                 if let Some(rows) = guard.get(collection_id) {
+                    // Avoid clone by using Arc for shared test data
                     return Ok(rows.clone());
                 }
             }
@@ -714,6 +820,103 @@ impl QueryExecutor {
                 let row_hash = hasher.finish();
                 
                 if !seen_hashes.contains(&row_hash) {
+                    seen_hashes.insert(row_hash);
+                    result.push(row.clone());
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+
+    fn intersect_rows(
+        &self,
+        left: &Vec<QueryRow>,
+        right: &Vec<QueryRow>,
+        all: bool,
+    ) -> Result<Vec<QueryRow>> {
+        use std::collections::{HashSet, HashMap};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        // Create hash map of right rows for efficient lookup
+        let mut right_hashes = HashMap::new();
+        for row in right {
+            let mut hasher = DefaultHasher::new();
+            let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+            sorted_fields.sort_by_key(|(k, _)| *k);
+            for (key, value) in sorted_fields {
+                key.hash(&mut hasher);
+                value.to_string().hash(&mut hasher);
+            }
+            let row_hash = hasher.finish();
+            right_hashes.entry(row_hash).or_insert_with(Vec::new).push(row.clone());
+        }
+        
+        let mut result = Vec::new();
+        let mut seen_hashes = HashSet::new();
+        
+        // Find intersection: left rows that exist in right
+        for row in left {
+            let mut hasher = DefaultHasher::new();
+            let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+            sorted_fields.sort_by_key(|(k, _)| *k);
+            for (key, value) in sorted_fields {
+                key.hash(&mut hasher);
+                value.to_string().hash(&mut hasher);
+            }
+            let row_hash = hasher.finish();
+            
+            if right_hashes.contains_key(&row_hash) {
+                if all || !seen_hashes.contains(&row_hash) {
+                    seen_hashes.insert(row_hash);
+                    result.push(row.clone());
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+
+    fn except_rows(
+        &self,
+        left: &Vec<QueryRow>,
+        right: &Vec<QueryRow>,
+        all: bool,
+    ) -> Result<Vec<QueryRow>> {
+        use std::collections::{HashSet, HashMap};
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        // Create hash set of right rows for efficient lookup
+        let mut right_hashes = HashSet::new();
+        for row in right {
+            let mut hasher = DefaultHasher::new();
+            let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+            sorted_fields.sort_by_key(|(k, _)| *k);
+            for (key, value) in sorted_fields {
+                key.hash(&mut hasher);
+                value.to_string().hash(&mut hasher);
+            }
+            right_hashes.insert(hasher.finish());
+        }
+        
+        let mut result = Vec::new();
+        let mut seen_hashes = HashSet::new();
+        
+        // Find difference: left rows that don't exist in right
+        for row in left {
+            let mut hasher = DefaultHasher::new();
+            let mut sorted_fields: Vec<_> = row.fields.iter().collect();
+            sorted_fields.sort_by_key(|(k, _)| *k);
+            for (key, value) in sorted_fields {
+                key.hash(&mut hasher);
+                value.to_string().hash(&mut hasher);
+            }
+            let row_hash = hasher.finish();
+            
+            if !right_hashes.contains(&row_hash) {
+                if all || !seen_hashes.contains(&row_hash) {
                     seen_hashes.insert(row_hash);
                     result.push(row.clone());
                 }
@@ -931,7 +1134,7 @@ impl QueryExecutor {
                     // Track access for caching optimization
                     if let Some(orch) = CrossCacheOrchestrator::global() {
                         // Track graph node access for cache optimization
-                        orch.track_access_async(
+                        orch.as_ref().track_access_async(
                             format!("graph_node:{}", n.id), 
                             crate::storage::cache::orchestrator::CacheType::GraphNode
                         );
@@ -941,7 +1144,7 @@ impl QueryExecutor {
             // Track access for caching optimization
             if let Some(orch) = CrossCacheOrchestrator::global() {
                 // Track graph adjacency access for cache optimization
-                orch.track_access_async(
+                orch.as_ref().track_access_async(
                     format!("graph_adj:{}", start), 
                     crate::storage::cache::orchestrator::CacheType::GraphAdjacency
                 );

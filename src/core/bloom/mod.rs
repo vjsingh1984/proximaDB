@@ -581,7 +581,7 @@ mod tests {
 // ============================================================================
 
 /// Stats for bloom filter usage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BloomFilterStats {
     pub key_count: u64,
     pub metadata_columns: u64,
@@ -592,7 +592,7 @@ pub struct BloomFilterStats {
 
 /// Combined bloom filter for SSTable (keys + metadata)
 /// Memory target: ~8MB per collection (down from ~40MB)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstableBloomFilter {
     /// Key filter configuration
     pub key_filter_config: BloomFilterConfig,

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+// Removed std::time::Instant - using chrono instead
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -26,7 +26,7 @@ pub struct HierarchicalStats {
     pub rowgroup_stats: Vec<RowGroupStats>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SuperBlockStats {
     pub id: u64,
     pub num_blocks: usize,
@@ -49,11 +49,11 @@ pub struct SuperBlockStats {
 
     /// Access patterns for caching decisions
     pub access_count: u64,
-    pub last_access: Instant,
-    pub creation_time: Instant,
+    pub last_access: chrono::DateTime<chrono::Utc>,
+    pub creation_time: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockStats {
     pub block_id: u64,
     pub superblock_id: u64,
@@ -71,7 +71,7 @@ pub struct BlockStats {
     pub bloom_filter: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RowGroupStats {
     pub rowgroup_id: u64,
     pub block_id: u64,
@@ -86,7 +86,7 @@ pub struct RowGroupStats {
     pub indexed_columns: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoneMap {
     /// Per-dimension min/max values for pruning
     pub dimension_ranges: Vec<DimensionRange>,
@@ -99,14 +99,14 @@ pub struct ZoneMap {
     pub metadata_ranges: HashMap<String, ValueRange>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DimensionRange {
     pub dim_index: usize,
     pub min_value: f32,
     pub max_value: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValueRange {
     pub min: serde_json::Value,
     pub max: serde_json::Value,
@@ -114,7 +114,7 @@ pub struct ValueRange {
     pub distinct_count: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
@@ -131,7 +131,7 @@ pub struct NovaHierarchicalCache {
     block_cache: Arc<RwLock<crate::utils::cache::LruCache<String, Arc<BlockStats>>>>,
 
     /// RowGroup stats - on-demand loading with TTL
-    rowgroup_cache: Arc<RwLock<HashMap<String, (Arc<RowGroupStats>, Instant)>>>,
+    rowgroup_cache: Arc<RwLock<HashMap<String, (Arc<RowGroupStats>, chrono::DateTime<chrono::Utc>)>>>,
     rowgroup_ttl_sec: u64,
 
     /// Zone maps - always cached for fast pruning
@@ -148,7 +148,7 @@ pub struct NovaHierarchicalCache {
 }
 
 /// Global statistics maintained as sidecar for cross-collection optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalStatistics {
     /// Collection-level statistics
     pub collection_stats: HashMap<String, CollectionStatistics>,
@@ -160,22 +160,22 @@ pub struct GlobalStatistics {
     pub query_patterns: QueryPatterns,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionStatistics {
     pub total_vectors: u64,
     pub avg_vector_size: usize,
     pub total_size_bytes: u64,
     pub compression_ratio: f32,
-    pub last_compaction: Instant,
+    pub last_compaction: chrono::DateTime<chrono::Utc>,
     pub hot_zones: Vec<ZoneMap>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryPatterns {
     pub frequent_filters: HashMap<String, u64>,
     pub common_projections: Vec<Vec<String>>,
     pub avg_k_value: f32,
-    pub peak_qps_times: Vec<Instant>,
+    pub peak_qps_times: Vec<chrono::DateTime<chrono::Utc>>,
 }
 
 struct CacheStatistics {
@@ -276,7 +276,8 @@ impl NovaHierarchicalCache {
         {
             let cache = self.rowgroup_cache.read().await;
             if let Some((stats, timestamp)) = cache.get(rowgroup_id) {
-                if timestamp.elapsed().as_secs() < self.rowgroup_ttl_sec {
+                let elapsed_secs = chrono::Utc::now().signed_duration_since(*timestamp).num_seconds();
+                if elapsed_secs >= 0 && (elapsed_secs as u64) < self.rowgroup_ttl_sec {
                     self.cache_stats
                         .rowgroup_hits
                         .fetch_add(1, Ordering::Relaxed);
@@ -292,10 +293,13 @@ impl NovaHierarchicalCache {
         // Update cache
         {
             let mut cache = self.rowgroup_cache.write().await;
-            cache.insert(rowgroup_id.to_string(), (stats_arc.clone(), Instant::now()));
+            cache.insert(rowgroup_id.to_string(), (stats_arc.clone(), chrono::Utc::now()));
 
             // Clean expired entries
-            cache.retain(|_, (_, timestamp)| timestamp.elapsed().as_secs() < self.rowgroup_ttl_sec);
+            let now = chrono::Utc::now();
+            cache.retain(|_, (_, timestamp)| {
+                now.signed_duration_since(*timestamp).num_seconds() < self.rowgroup_ttl_sec as i64
+            });
         }
 
         Ok(stats_arc)

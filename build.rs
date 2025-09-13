@@ -22,6 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("CompressionAlgorithm", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("CollectionOperation", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("PropertyFilterOperator", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("QuantizationLevel", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add serde to array/object types needed by custom serde implementations
         .type_attribute("SqlArray", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("SqlObject", "#[derive(serde::Serialize, serde::Deserialize)]")
@@ -30,6 +31,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add serde to config types needed for JSON serialization
         .type_attribute("IndexConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("QuantizationConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to graph types needed for JSON serialization
+        .type_attribute("Node", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Edge", "#[derive(serde::Serialize, serde::Deserialize)]")
         // oneof types (SqlValue, PropertyValue) get custom serde from serde_impls.rs but PartialEq works fine
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(

@@ -768,9 +768,9 @@ impl SharedServices {
         // Implement comprehensive vector recovery from WAL to VectorOperationsService
         let mut total_vectors_recovered = 0u64;
         
-        for collection_id in &recovered_collections {
+        for (collection_id, _collection) in &recovered_collections {
             // 1. Check if write buffer has unflushed data for this collection
-            let unflushed_batches = match write_buffer_manager
+            let unflushed_batches = match storage_ref.write_ahead_log_manager()
                 .read_all_batches(collection_id, None)
                 .await
             {
@@ -797,8 +797,8 @@ impl SharedServices {
                 
                 // Insert each vector into the VectorOperationsService memtable
                 for vector_record in batch.vector_records.iter() {
-                    match vector_operations_service
-                        .insert_vector(collection_id, vector_record.clone())
+                    match self.vector_operations_service
+                        .insert_vectors_direct(collection_id, Arc::new(vec![vector_record.clone()]))
                         .await
                     {
                         Ok(_) => {
@@ -807,7 +807,7 @@ impl SharedServices {
                         Err(e) => {
                             warn!(
                                 "Failed to recover vector {} for collection {}: {}",
-                                vector_record.id.as_ref().unwrap_or(&"<no_id>".to_string()),
+                                &vector_record.id,
                                 collection_id,
                                 e
                             );

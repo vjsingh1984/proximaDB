@@ -565,8 +565,8 @@ impl ColdStorageBackend {
             edge_type: edge.edge_type.clone(),
             properties,
             weight: edge.weight.map(|w| w as f32),
-            created_at: edge.created_at.as_ref().map(|t| t.seconds as u64),
-            updated_at: edge.updated_at.as_ref().map(|t| t.seconds as u64),
+            created_at: Some(edge.created_at_ms as u64),
+            updated_at: Some(edge.updated_at_ms as u64),
         })
     }
 
@@ -613,14 +613,8 @@ impl ColdStorageBackend {
                     modality: crate::proto::proximadb_v1::Modality::Text.into(),
                 }
             }),
-            created_at: storable.created_at.map(|t| ::prost_types::Timestamp {
-                seconds: t as i64,
-                nanos: 0,
-            }),
-            updated_at: storable.updated_at.map(|t| ::prost_types::Timestamp {
-                seconds: t as i64,
-                nanos: 0,
-            }),
+            created_at_ms: storable.created_at.unwrap_or(0) as i64,
+            updated_at_ms: storable.updated_at.unwrap_or(0) as i64,
         })
     }
 
@@ -638,14 +632,8 @@ impl ColdStorageBackend {
             edge_type: storable.edge_type,
             properties,
             weight: storable.weight.map(|w| w as f64),
-            created_at: storable.created_at.map(|t| ::prost_types::Timestamp {
-                seconds: t as i64,
-                nanos: 0,
-            }),
-            updated_at: storable.updated_at.map(|t| ::prost_types::Timestamp {
-                seconds: t as i64,
-                nanos: 0,
-            }),
+            created_at_ms: storable.created_at.unwrap_or(0) as i64,
+            updated_at_ms: storable.updated_at.unwrap_or(0) as i64,
         })
     }
 

@@ -413,7 +413,7 @@ impl IndexMigrationEngine {
             new_strategy: to.clone(),
             duration_ms: total_duration.as_millis() as u64,
             vectors_migrated,
-            performance_improvement: 0.0, // TODO: Calculate actual improvement
+            performance_improvement: self.calculate_performance_improvement(&from, &to, total_duration).await,
             errors,
         };
 
@@ -591,6 +591,81 @@ impl IndexMigrationEngine {
             MigrationStepType::SwitchReadTraffic { .. } => MigrationPhase::SwitchingTraffic,
             MigrationStepType::SwitchWriteTraffic { .. } => MigrationPhase::SwitchingTraffic,
             MigrationStepType::DeleteOldIndex { .. } => MigrationPhase::Cleanup,
+        }
+    }
+
+    /// Calculate performance improvement from migration
+    async fn calculate_performance_improvement(
+        &self,
+        from: &IndexSelectionStrategy,
+        to: &IndexSelectionStrategy,
+        migration_duration: Duration,
+    ) -> f64 {
+        // Performance improvement calculation based on index algorithm characteristics
+        let mut improvement_score = 0.0;
+
+        // Compare primary indexes
+        if let (Some(from_primary), Some(to_primary)) = 
+            (from.indexes.first(), to.indexes.first()) {
+            
+            // Algorithm-based performance scoring
+            let from_score = self.algorithm_performance_score(&from_primary.algorithm);
+            let to_score = self.algorithm_performance_score(&to_primary.algorithm);
+            
+            // Base improvement from algorithm change
+            improvement_score = (to_score - from_score) / from_score * 100.0;
+            
+            // Adjust based on data characteristics
+            improvement_score *= self.data_type_multiplier(&to_primary.data_type);
+            
+            // Factor in migration cost (longer migrations reduce effective improvement)
+            let migration_cost_factor = if migration_duration.as_secs() > 300 { // 5 minutes
+                0.9 // 10% penalty for long migrations
+            } else {
+                1.0
+            };
+            
+            improvement_score *= migration_cost_factor;
+        }
+        
+        // Additional improvement from having more specialized indexes
+        let index_count_improvement = if to.indexes.len() > from.indexes.len() {
+            (to.indexes.len() - from.indexes.len()) as f64 * 5.0 // 5% per additional index
+        } else {
+            0.0
+        };
+        
+        improvement_score += index_count_improvement;
+        
+        // Ensure reasonable bounds
+        improvement_score.max(-50.0).min(200.0)
+    }
+
+    /// Get performance score for different algorithms (higher is better)
+    fn algorithm_performance_score(&self, algorithm: &crate::index::axis::types::IndexAlgorithm) -> f64 {
+        use crate::index::axis::types::IndexAlgorithm;
+        match algorithm {
+            IndexAlgorithm::HNSW { .. } => 95.0,          // Excellent for high-dimensional data
+            IndexAlgorithm::IVF { .. } => 85.0,           // Good for large datasets  
+            IndexAlgorithm::PQ { .. } => 75.0,            // Good for memory-constrained scenarios
+            IndexAlgorithm::LSH { .. } => 65.0,           // Good for approximate similarity
+            IndexAlgorithm::BTree { .. } => 80.0,         // Excellent for exact metadata indexing
+            IndexAlgorithm::InvertedIndex { .. } => 90.0, // Excellent for full-text search
+            IndexAlgorithm::SkipList { .. } => 70.0,      // Good for sorted data
+            IndexAlgorithm::BloomFilter { .. } => 50.0,   // Good for membership testing
+        }
+    }
+
+    /// Get multiplier based on data type characteristics
+    fn data_type_multiplier(&self, data_type: &Data) -> f64 {
+        match data_type {
+            Data::DenseVector { dimension } => {
+                if *dimension > 512 { 1.2 } else { 1.0 }  // More benefit for high-dimensional data
+            },
+            Data::SparseVector { .. } => 1.1,   // Moderate benefit for sparse vectors
+            Data::Metadata => 0.9,              // Less benefit for simple metadata
+            Data::FullText => 1.15,             // Good benefit for text search
+            Data::Identifier => 0.8,            // Minimal benefit for simple identifiers
         }
     }
 }

@@ -6,13 +6,13 @@
 use serde::{Deserialize, Serialize};
 
 /// Unified quantization level configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UnifiedQuantizationLevel {
     pub level_type: Option<QuantizationLevel>,
 }
 
 /// Quantization level types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum QuantizationLevel {
     None(NoQuantization),
     Uniform(UniformQuantization),
@@ -43,7 +43,7 @@ impl std::hash::Hash for UniformQuantization {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProductQuantization {
     pub bits_per_code: i32,
     pub num_subvectors: i32,
@@ -85,7 +85,7 @@ impl std::hash::Hash for BinaryQuantization {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CustomQuantization {
     pub type_id: String,
     pub bits_per_element: i32,

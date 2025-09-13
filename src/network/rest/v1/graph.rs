@@ -68,6 +68,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
+// For base64 encoding of bytes (using standard library instead)
+// use base64;
+
 // Use proto types directly with custom serde implementations
 use crate::graph::{
     Edge, EdgeQuery, Node, NodeQuery, TraversalRequest,
@@ -258,8 +261,8 @@ impl From<&Node> for RestNode {
             labels: node.labels.clone(),
             properties: convert_properties_to_json(&node.properties),
             embedding: node.embedding.as_ref().map(RestEmbeddingVersion::from),
-            created_at: node.created_at_ms.as_ref().map(|t| format_timestamp(t)),
-            updated_at: node.updated_at_ms.as_ref().map(|t| format_timestamp(t)),
+            created_at: Some(format_timestamp(&node.created_at_ms)),
+            updated_at: Some(format_timestamp(&node.updated_at_ms)),
         }
     }
 }
@@ -273,8 +276,8 @@ impl From<&Edge> for RestEdge {
             edge_type: edge.edge_type.clone(),
             properties: convert_properties_to_json(&edge.properties),
             weight: edge.weight,
-            created_at: edge.created_at.as_ref().map(|t| format_timestamp(t)),
-            updated_at: edge.updated_at.as_ref().map(|t| format_timestamp(t)),
+            created_at: Some(format_timestamp(&edge.created_at_ms)),
+            updated_at: Some(format_timestamp(&edge.updated_at_ms)),
         }
     }
 }
@@ -359,17 +362,20 @@ impl From<RestNodeInput> for Node {
             id: input.id,
             labels: input.labels,
             properties: convert_json_to_properties(input.properties),
-            embedding: input.embedding.map(|e| EmbeddingVersion {
-                vector: e.vector,
-                model_version: e.version,
-                model_id: String::new(), // Set default empty string
-                dimension: e.vector.len() as u32,
-                created_at: None,
-                model_params: std::collections::HashMap::new(),
-                modality: 0, // Default to first modality value
+            embedding: input.embedding.map(|e| {
+                let dimension = e.vector.len() as u32;
+                EmbeddingVersion {
+                    vector: e.vector,
+                    model_version: e.version,
+                    model_id: String::new(), // Set default empty string
+                    dimension,
+                    created_at_ms: 0,
+                    model_params: std::collections::HashMap::new(),
+                    modality: 0, // Default to first modality value
+                }
             }),
-            created_at: None, // Set by service
-            updated_at: None, // Set by service
+            created_at_ms: 0, // Set by service
+            updated_at_ms: 0, // Set by service
         }
     }
 }
@@ -383,8 +389,8 @@ impl From<RestEdgeInput> for Edge {
             edge_type: input.edge_type,
             properties: convert_json_to_properties(input.properties),
             weight: input.weight,
-            created_at: None, // Set by service
-            updated_at: None, // Set by service
+            created_at_ms: 0, // Set by service
+            updated_at_ms: 0, // Set by service
         }
     }
 }
@@ -398,6 +404,15 @@ fn convert_properties_to_json(props: &HashMap<String, PropertyValue>) -> HashMap
             Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
             Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(arr)) => {
                 serde_json::Value::Array(arr.values.iter().map(|v| convert_property_value_to_json(v)).collect())
+            },
+            Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
+                serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
+            },
+            Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
+                serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
+            },
+            Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
+                serde_json::Value::Array(vec.values.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
             },
             None => serde_json::Value::Null,
         };
@@ -420,6 +435,15 @@ fn convert_property_value_to_json(prop: &PropertyValue) -> serde_json::Value {
         Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(arr)) => {
             serde_json::Value::Array(arr.values.iter().map(|v| convert_property_value_to_json(v)).collect())
+        },
+        Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
+            serde_json::Value::String(format!("{:?}", b)) // Convert to debug string for now
+        },
+        Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_obj)) => {
+            serde_json::Value::Object(serde_json::Map::new()) // TODO: Proper object conversion
+        },
+        Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vec)) => {
+            serde_json::Value::Array(vec.values.iter().map(|f| serde_json::Value::Number(serde_json::Number::from_f64(*f as f64).unwrap_or(serde_json::Number::from(0)))).collect())
         },
         None => serde_json::Value::Null,
     }
@@ -449,9 +473,9 @@ fn convert_json_to_property_value(value: serde_json::Value) -> PropertyValue {
     PropertyValue { value: prop_value }
 }
 
-fn format_timestamp(ts: &prost_types::Timestamp) -> String {
-    // Convert protobuf timestamp to ISO 8601 string
-    chrono::DateTime::from_timestamp(ts.seconds, ts.nanos as u32)
+fn format_timestamp(ts_ms: &i64) -> String {
+    // Convert Unix epoch milliseconds to ISO 8601 string
+    chrono::DateTime::from_timestamp_millis(*ts_ms)
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
         .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string())
 }
@@ -1059,7 +1083,6 @@ pub async fn delete_edge(
 /// Perform graph traversal
 pub async fn traverse_graph(
     State(app_state): State<AppState>,
-    headers: HeaderMap,
     Json(request): Json<TraversalRequest>,
 ) -> impl IntoResponse {
     debug!(
@@ -1067,15 +1090,9 @@ pub async fn traverse_graph(
         request.start_node_id
     );
 
-    // Read per-call overrides from headers (if present)
-    let override_enable_prefetch = headers
-        .get("x-graph-prefetch-enabled")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.eq_ignore_ascii_case("true") || s == "1");
-    let override_prefetch_budget = headers
-        .get("x-graph-prefetch-budget")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<usize>().ok());
+    // TODO: Read per-call overrides from headers (temporarily disabled)
+    let override_enable_prefetch = None;
+    let override_prefetch_budget = None;
 
     match app_state
         .unified_handlers

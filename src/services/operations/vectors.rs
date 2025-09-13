@@ -1234,12 +1234,9 @@ impl VectorOperationsService {
             storage_results.len()
         );
 
-        // Convert WAL results to OptimizedSearchRecord and merge with storage results
+        // WAL results are already OptimizedSearchRecord, no conversion needed
         let wal_optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
-            wal_results
-                .into_iter()
-                .map(|r| crate::core::search::results::OptimizedSearchRecord::from_internal(r))
-                .collect();
+            wal_results;
 
         // Merge and rank results from both stages
         let mut all_results =
@@ -1809,8 +1806,26 @@ impl VectorOperationsService {
         self.wal_manager.force_flush_all().await?;
 
         // Trigger compaction in storage engine
-        // TODO: Implement compact_all in storage engine
-        // self.storage_engine.compact_all().await?;
+        // Note: compact_all is not available in UnifiedStorageEngine trait
+        // Instead, we need to compact each collection individually
+        let collections: Vec<String> = self.collection_cache.iter()
+            .map(|entry| entry.key().clone())
+            .collect();
+        
+        for collection_id in collections {
+            if let Some(collection) = self.collection_cache.get(&collection_id) {
+                match self.storage_engine.compact_collection(&collection_id, Some(&collection)).await {
+                    Ok(result) => {
+                        info!("✅ Compacted collection {}: {} files processed", 
+                              collection_id, result.output_files.unwrap_or(0));
+                    }
+                    Err(e) => {
+                        debug!("⚠️ Compaction failed for collection {}: {}", collection_id, e);
+                        // Continue with other collections
+                    }
+                }
+            }
+        }
 
         info!("✅ Force flush all completed");
         Ok(())
@@ -1825,8 +1840,20 @@ impl VectorOperationsService {
             .await?;
 
         // Trigger compaction for this collection
-        // TODO: Implement compact_collection in storage engine
-        // self.storage_engine.compact_collection(collection_id).await?;
+        if let Some(collection) = self.collection_cache.get(collection_id) {
+            match self.storage_engine.compact_collection(collection_id, Some(&collection)).await {
+                Ok(result) => {
+                    info!("✅ Compacted collection {}: {} files created, {} files processed", 
+                          collection_id, result.output_files.unwrap_or(0), result.input_files.unwrap_or(0));
+                }
+                Err(e) => {
+                    debug!("⚠️ Compaction failed for collection {}: {}", collection_id, e);
+                    // Don't fail the entire flush operation due to compaction issues
+                }
+            }
+        } else {
+            debug!("⚠️ Collection {} not found in cache, skipping compaction", collection_id);
+        }
 
         info!("✅ Force flush for collection {} completed", collection_id);
         Ok(())
@@ -1836,8 +1863,19 @@ impl VectorOperationsService {
         // Collect metrics from various components
         let wal_stats = self.wal_manager.stats().await?;
 
-        // Get storage engine metrics - not implemented yet
-        let storage_metrics = serde_json::json!({"status": "not_implemented"});
+        // Get storage engine metrics
+        let storage_metrics = match self.storage_engine.health_check().await {
+            Ok(health) => serde_json::json!({
+                "status": health.status,
+                "response_time_ms": health.response_time_ms,
+                "healthy": health.healthy,
+                "warnings": health.warnings
+            }),
+            Err(e) => serde_json::json!({
+                "status": "error",
+                "error": e.to_string()
+            })
+        };
 
         // Get query cache metrics - not implemented yet
         let cache_stats = serde_json::json!({
@@ -1866,19 +1904,45 @@ impl VectorOperationsService {
         let status = "healthy";
         let issues: Vec<String> = Vec::new();
 
-        // Check WAL health - method not implemented yet
-        // TODO: Implement health_check in WAL manager
+        // Check WAL health
+        let wal_health = match self.wal_manager.stats().await {
+            Ok(stats) => {
+                let memory_usage_mb = stats.memory_size_bytes as f64 / (1024.0 * 1024.0);
+                if memory_usage_mb > 500.0 { // More than 500MB in memory
+                    vec![format!("High WAL memory usage: {:.1}MB", memory_usage_mb)]
+                } else {
+                    vec![]
+                }
+            }
+            Err(e) => vec![format!("WAL stats error: {}", e)]
+        };
 
-        // Check storage engine health - method not implemented yet
-        // TODO: Implement health_check in storage engine
+        // Check storage engine health
+        let storage_health = match self.storage_engine.health_check().await {
+            Ok(engine_health) => {
+                match engine_health.status.as_str() {
+                    "healthy" => vec![],
+                    _ => vec![format!("Storage engine: {}", engine_health.status)]
+                }
+            }
+            Err(e) => vec![format!("Storage engine health check failed: {}", e)]
+        };
+        
+        // Combine health issues
+        let mut all_issues = issues;
+        all_issues.extend(wal_health);
+        all_issues.extend(storage_health);
+        
+        // Update status based on issues
+        let status = if all_issues.is_empty() { "healthy" } else { "degraded" };
 
         Ok(serde_json::json!({
             "status": status,
+            "issues": all_issues,
             "timestamp": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
-            "issues": issues,
             "collections": self.collection_cache.len(),
         }))
     }

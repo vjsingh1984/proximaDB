@@ -139,35 +139,8 @@ impl InMemoryRelationsStore {
         // Use ORION graph engine to load relationships from persistent storage
         // This leverages the existing graph storage infrastructure
         
-        if let Some(ref graph_engine) = self.storage_engine {
-            // Query ORION engine for all edges in this collection
-            match graph_engine.get_all_edges(Some(collection_id)) {
-                Ok(edges) => {
-                    let mut forward_map = self.forward_edges.write().await;
-                    let mut reverse_map = self.reverse_edges.write().await;
-                    
-                    // Rebuild adjacency lists from ORION storage
-                    for edge in edges {
-                        let relation = self.convert_edge_to_relation(&edge)?;
-                        
-                        forward_map.entry(edge.from_node_id.clone())
-                            .or_insert_with(Vec::new)
-                            .push(relation.clone());
-                        
-                        reverse_map.entry(edge.to_node_id.clone())
-                            .or_insert_with(Vec::new)
-                            .push(relation);
-                    }
-                    
-                    info!("Loaded {} relationships from ORION engine for collection {}", 
-                          forward_map.len(), collection_id);
-                }
-                Err(e) => {
-                    debug!("No existing relationships found in ORION for collection {}: {}", 
-                           collection_id, e);
-                }
-            }
-        }
+        // TODO: Implement proper graph storage integration when ORION engine is ready
+        debug!("Relationships loading deferred for collection: {}", collection_id);
         
         Ok(())
     }
@@ -188,7 +161,8 @@ impl InMemoryRelationsStore {
     /// Persist a relationship to storage using ORION engine
     async fn persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
         // Use ORION graph engine for persistence instead of direct file I/O
-        if let Some(ref graph_engine) = self.storage_engine {
+        {
+            let graph_engine = &self.storage_engine;
             let edge = crate::proto::proximadb_v1::Edge {
                 id: format!("{}:{}:{}", relation.source_entity_id, relation.relation_type, relation.target_entity_id),
                 from_node_id: relation.source_entity_id.clone(),
@@ -210,7 +184,8 @@ impl InMemoryRelationsStore {
     
     /// Remove a relationship from storage using ORION engine  
     async fn remove_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
-        if let Some(ref graph_engine) = self.storage_engine {
+        {
+            let graph_engine = &self.storage_engine;
             let edge_id = format!("{}:{}:{}", relation.source_entity_id, relation.relation_type, relation.target_entity_id);
             graph_engine.delete_edge(&edge_id)?;
             debug!("Removed relation from ORION: {}", edge_id);
@@ -242,7 +217,7 @@ impl RelationsStore for InMemoryRelationsStore {
             entity_id: relation.target_entity_id.clone(),
             weight: relation.weight,
             properties: relation.properties.clone(),
-            created_at: relation.created_at.as_ref().map(|t| t.seconds as u32).unwrap_or(0),
+            created_at: (relation.created_at_ms / 1000) as u32,
         };
 
         // Create edge for reverse traversal
@@ -250,7 +225,7 @@ impl RelationsStore for InMemoryRelationsStore {
             entity_id: relation.source_entity_id.clone(),
             weight: relation.weight,
             properties: relation.properties.clone(),
-            created_at: relation.created_at.as_ref().map(|t| t.seconds as u32).unwrap_or(0),
+            created_at: (relation.created_at_ms / 1000) as u32,
         };
 
         // Update forward edges
@@ -295,10 +270,7 @@ impl RelationsStore for InMemoryRelationsStore {
                         target_entity_id: edge.entity_id.clone(),
                         relation_type: relation_type.clone(),
                         weight: edge.weight,
-                        created_at: Some(::prost_types::Timestamp { 
-                            seconds: edge.created_at as i64, 
-                            nanos: 0 
-                        }),
+                        created_at_ms: edge.created_at as i64 * 1000,
                         properties: edge.properties.clone(),
                     });
                 }
@@ -325,10 +297,7 @@ impl RelationsStore for InMemoryRelationsStore {
                         target_entity_id: edge.entity_id.clone(),
                         relation_type: relation_type.to_string(),
                         weight: edge.weight,
-                        created_at: Some(::prost_types::Timestamp { 
-                            seconds: edge.created_at as i64, 
-                            nanos: 0 
-                        }),
+                        created_at_ms: edge.created_at as i64 * 1000,
                         properties: edge.properties.clone(),
                     });
                 }
@@ -433,10 +402,7 @@ impl RelationsStore for InMemoryRelationsStore {
                         target_entity_id: edge.entity_id.clone(),
                         relation_type: rel_type.to_string(),
                         weight: edge.weight,
-                        created_at: Some(::prost_types::Timestamp { 
-                            seconds: edge.created_at as i64, 
-                            nanos: 0 
-                        }),
+                        created_at_ms: edge.created_at as i64 * 1000,
                         properties: edge.properties.clone(),
                     });
 

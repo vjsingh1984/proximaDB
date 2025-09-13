@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use serde::{Deserialize, Serialize};
 
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::error::ProximaDBError;
@@ -13,7 +14,7 @@ use crate::storage::engines::core::io::zero_copy::{
 
 /// SST Global metadata (fixed size, bytemuck-compatible)
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct SstGlobalHeader {
     /// Total file size
     pub file_size: u64,
@@ -51,7 +52,7 @@ pub struct SstGlobalHeader {
 
 /// SST DataBlock metadata (fixed size, array-based)
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct SstBlockHeader {
     /// Block offset in file
     pub offset: u64,
@@ -85,6 +86,7 @@ pub struct SstBlockHeader {
 }
 
 /// Complete SST metadata structure
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SstMetadata {
     /// Fixed-size global header
     pub global: SstGlobalHeader,

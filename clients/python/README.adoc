@@ -15,7 +15,7 @@ The official Python client for ProximaDB — gRPC‑first, aligned with current 
 * **Rich Filtering**: Advanced metadata filtering with complex queries
 * **Multi-Protocol**: gRPC and REST API support
 * **Observability**: Built-in metrics and logging
-* **Security**: TLS encryption and authentication support
+* **Enterprise Security**: Multi-method authentication (API keys, JWT, OAuth2, mTLS) with RBAC
 
 == Installation
 
@@ -30,7 +30,122 @@ For development:
 pip install -e .
 ----
 
-== Quick Start (gRPC, v1)
+== Quick Start
+
+=== Simple Connection
+[source,python]
+----
+from proximadb import connect
+
+# Quick start with API key authentication
+client = connect(
+    url="http://localhost:5678",
+    api_key="your-api-key"
+)
+
+# Create collection and perform operations
+collection = client.create_collection("documents", dimension=768)
+----
+
+=== Authentication Methods
+
+==== API Key Authentication
+[source,python]
+----
+from proximadb import ProximaDBClient
+from proximadb.auth import AuthConfig, AuthMethod
+
+# Method 1: Simple API key
+client = connect(url="http://localhost:5678", api_key="your-key")
+
+# Method 2: Enhanced API key configuration
+auth_config = AuthConfig(
+    method=AuthMethod.API_KEY,
+    api_key="your-api-key"
+)
+client = ProximaDBClient(url="http://localhost:5678", auth_config=auth_config)
+----
+
+==== JWT Authentication
+[source,python]
+----
+# JWT with automatic token refresh
+auth_config = AuthConfig(
+    method=AuthMethod.JWT,
+    jwt_token="your.jwt.token",
+    refresh_token="your-refresh-token",
+    auto_refresh=True,
+    refresh_threshold_seconds=300
+)
+
+client = ProximaDBClient(url="http://localhost:5678", auth_config=auth_config)
+
+# Check authentication status and permissions
+auth_status = client.get_auth_status()
+print(f"Roles: {auth_status['roles']}")
+print(f"Permissions: {auth_status['permissions']}")
+----
+
+==== OAuth2 Authentication
+[source,python]
+----
+# OAuth2 with Google Workspace
+auth_config = AuthConfig(
+    method=AuthMethod.OAUTH2,
+    oauth2_client_id="your-google-client-id",
+    oauth2_client_secret="your-client-secret",
+    oauth2_provider="google",
+    oauth2_scopes=["openid", "profile", "email"]
+)
+
+client = ProximaDBClient(url="http://localhost:5678", auth_config=auth_config)
+----
+
+==== Mutual TLS (mTLS)
+[source,python]
+----
+# Client certificate authentication
+auth_config = AuthConfig(
+    method=AuthMethod.CLIENT_CERT,
+    client_cert_file="/path/to/client.crt",
+    client_key_file="/path/to/client.key",
+    ca_cert_file="/path/to/ca.crt"
+)
+
+client = ProximaDBClient(
+    url="https://localhost:5679",  # Secure endpoint
+    auth_config=auth_config,
+    verify_ssl=True
+)
+----
+
+=== Role-Based Access Control
+
+[source,python]
+----
+# Check permissions before operations
+auth_status = client.get_auth_status()
+
+if 'collections.create' in auth_status.get('permissions', []):
+    collection = client.create_collection("secure_collection", dimension=768)
+    print("✅ Collection created with proper permissions")
+else:
+    print("❌ Insufficient permissions to create collection")
+
+# Multi-tenant operations
+tenant_config = AuthConfig(
+    method=AuthMethod.JWT,
+    jwt_token="tenant-specific-token",
+    tenant_id="acme-corp",
+    tenant_isolation=True
+)
+
+tenant_client = ProximaDBClient(auth_config=tenant_config)
+# All operations automatically scoped to tenant
+collections = tenant_client.list_collections()  # Only tenant's collections
+----
+
+== Advanced gRPC Usage
 
 [source,python]
 ----
@@ -38,7 +153,7 @@ import numpy as np
 from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
 from proximadb import proximadb_pb2 as pb2  # Messages
 
-# Initialize sync gRPC client (5679). Server exposes proximadb.v1.VectorService.
+# Initialize sync gRPC client with authentication
 client = ProximaDBSyncGrpcClient("localhost:5679")
 
 # Create a collection with primary HNSW index
@@ -290,16 +405,43 @@ pytest -q clients/python/tests/integration_sks -m integration
 
 CI note: mark integration jobs to run only when a ProximaDB service is available. The tests skip gracefully if the server is not reachable.
 
-=== TLS/SSL
+=== Security Configuration
 
+==== TLS/SSL Configuration
 [source,python]
 ----
+# gRPC with TLS
 client = GrpcClient(
-host="proximadb.example.com",
-port=443,
-use_tls=True,
-tls_cert_path="/path/to/cert.pem"
+    host="proximadb.example.com",
+    port=443,
+    use_tls=True,
+    tls_cert_path="/path/to/cert.pem"
 )
+
+# REST with custom SSL verification
+client = ProximaDBClient(
+    url="https://secure.proximadb.com",
+    verify_ssl=True,
+    cert_file="/path/to/client.crt",
+    key_file="/path/to/client.key"
+)
+----
+
+==== Authentication Management
+[source,python]
+----
+# Check authentication status
+auth_status = client.get_auth_status()
+print(f"Authenticated: {auth_status['authenticated']}")
+print(f"Method: {auth_status['method']}")
+print(f"Expires: {auth_status['expires_at']}")
+
+# Refresh authentication tokens
+if client.refresh_authentication():
+    print("✅ Authentication refreshed successfully")
+
+# Logout and cleanup
+client.logout()
 ----
 
 == API Reference

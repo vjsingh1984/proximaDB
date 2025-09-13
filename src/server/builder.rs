@@ -465,28 +465,31 @@ impl ServerBuilder {
             self.server_config.indexing.default_distance_metric
         );
 
-        // Build storage system
-        let storage_system = self.storage_builder.build().await?;
-        tracing::info!("✅ Storage system initialized");
-
         // Initialize compute engines based on hardware config
-        let compute_system = self.initialize_compute_engines().await?;
+        let _compute_system = self.initialize_compute_engines().await?;
         tracing::info!("✅ Compute engines initialized");
         
         // Initialize indexing system
-        let indexing_system = self.initialize_indexing_system().await?;
+        let _indexing_system = self.initialize_indexing_system().await?;
         tracing::info!("✅ Indexing system initialized");
-        
-        // Initialize monitoring systems  
+
+        // Initialize monitoring systems before building storage system
         let monitoring_system = self.initialize_monitoring_systems().await?;
         tracing::info!("✅ Monitoring systems initialized");
         
-        // Initialize network layer based on config
+        // Initialize network layer before building storage system  
         let network_system = self.initialize_network_layer().await?;
         tracing::info!("✅ Network layer initialized");
+        
+        // Extract server config before storage builder move
+        let server_config = self.server_config.clone();
+        
+        // Build storage system (last since it consumes self.storage_builder)
+        let storage_system = self.storage_builder.build().await?;
+        tracing::info!("✅ Storage system initialized");
 
         let server = ProximaDBServer {
-            config: self.server_config,
+            config: server_config,
             storage_system: Arc::new(storage_system),
         };
 
@@ -508,14 +511,16 @@ impl ServerBuilder {
     /// Initialize compute engines based on hardware configuration
     async fn initialize_compute_engines(&self) -> Result<()> {
         // Initialize unified distance computation engine
-        let _distance_engine = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-            &self.server_config.compute
-        )?;
+        let _distance_engine = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+            crate::proto::proximadb_v1::DistanceMetric::Cosine // Default metric
+        ));
         
         // Initialize unified quantization engine
+        let codebook_store = Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
         let _quantization_engine = crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
-            &self.server_config.compute.quantization
-        )?;
+            _distance_engine.clone(),
+            codebook_store
+        );
         
         Ok(())
     }

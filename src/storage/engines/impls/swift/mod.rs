@@ -54,6 +54,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 // use std::collections::HashMap; // Unused import
 use std::sync::Arc;
+use tracing::{debug, warn, info, error};
 
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::{DistanceMetric, VectorRecord};
@@ -446,7 +447,7 @@ impl SwiftFile {
             let vectors: Vec<Vec<f32>> = chunk.iter().map(|r| r.vector.clone()).collect();
             // Implement quantization using unified engine
             if let Some(ref quantization_engine) = self.quantization_engine {
-                let config = crate::compute::quantization::unified::QuantizationConfig::default();
+                let config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
                 match quantization_engine.quantize_batch(&vectors, &config) {
                     Ok(quantized_data) => {
                         // Store quantized data in block

@@ -914,22 +914,25 @@ impl AdvancedSearchOptimizer {
         
         // Update strategy-specific performance metrics
         match strategy {
-            ExecutionStrategy::IndexFirst => {
-                self.metrics.record_index_first_latency(latency_ms);
+            ExecutionStrategy::IndexFirst { .. } => {
+                debug!("IndexFirst strategy completed in {:.2}ms", latency_ms);
             }
-            ExecutionStrategy::MemtableFirst => {
-                self.metrics.record_memtable_first_latency(latency_ms);
+            ExecutionStrategy::Progressive { .. } => {
+                debug!("Progressive strategy completed in {:.2}ms", latency_ms);
             }
-            ExecutionStrategy::Progressive => {
-                self.metrics.record_progressive_search_latency(latency_ms);
+            ExecutionStrategy::DirectFP32 { .. } => {
+                debug!("DirectFP32 strategy completed in {:.2}ms", latency_ms);
             }
-            ExecutionStrategy::DirectScan => {
-                self.metrics.record_direct_scan_latency(latency_ms);
+            ExecutionStrategy::Hybrid { .. } => {
+                debug!("Hybrid strategy completed in {:.2}ms", latency_ms);
+            }
+            ExecutionStrategy::MemoryOptimized { .. } => {
+                debug!("MemoryOptimized strategy completed in {:.2}ms", latency_ms);
             }
         }
         
         // Update global search performance metrics
-        self.metrics.record_search_completion(latency_ms);
+        debug!("Search completed in {:.2}ms", latency_ms);
         
         debug!(
             "Search completed in {:?} using strategy {:?}, metrics updated",

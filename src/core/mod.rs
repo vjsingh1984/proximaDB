@@ -36,6 +36,9 @@ pub mod config;
 /// Configuration loading from files and environment
 pub mod config_loader;
 
+/// Dynamic configuration reloading for production deployments
+pub mod config_reloader;
+
 /// Type conversions and proto-to-native mappings
 pub mod conversions;
 

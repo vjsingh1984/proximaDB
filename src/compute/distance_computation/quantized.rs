@@ -6,7 +6,6 @@
 //! for binary, INT8, and PQ quantization with proper data types.
 
 use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{info, trace};
 

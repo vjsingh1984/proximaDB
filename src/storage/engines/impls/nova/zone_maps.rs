@@ -840,7 +840,7 @@ impl SelectivityModel {
 // These are simplified for the scope of this implementation
 
 /// Workload statistics for optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WorkloadStats {
     pub avg_query_selectivity: f32,
     pub avg_top_k: u32,
@@ -866,7 +866,7 @@ pub enum StorageType {
 }
 
 /// Performance history for learning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PerformanceHistory {
     pub recent_queries: Vec<QueryPerformance>,
     pub avg_latency_ms: f32,

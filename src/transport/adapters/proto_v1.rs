@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::core::metadata_types::MetadataValue;
 use crate::core::search::FilterExpression;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1;

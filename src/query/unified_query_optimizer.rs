@@ -281,8 +281,8 @@ pub enum ExecutionStep {
 /// Unified cost model - SINGLE SOURCE OF TRUTH
 pub struct UnifiedCostModel {
     /// Cost calculation strategies
-    // TODO: Restore when CostStrategy trait is available
-    // strategies: HashMap<String, Box<dyn CostStrategy>>,
+    /// Cost calculation strategies
+    strategies: HashMap<String, Box<dyn CostStrategy>>,
 
     /// Historical cost data
     historical_costs: Arc<parking_lot::RwLock<HashMap<String, f64>>>,
@@ -627,6 +627,80 @@ struct QueryAnalysis {
     top_k: usize, // Number of results requested
 }
 
+/// Cost calculation strategy trait for different optimization approaches
+pub trait CostStrategy: Send + Sync {
+    /// Calculate cost for a specific operation type
+    fn calculate_cost(&self, operation: &OperationType, context: &CostContext) -> f64;
+    
+    /// Get strategy name for debugging and metrics
+    fn name(&self) -> &'static str;
+    
+    /// Check if this strategy applies to the given context
+    fn applies_to(&self, context: &CostContext) -> bool;
+}
+
+/// Context for cost calculations
+#[derive(Debug, Clone)]
+pub struct CostContext {
+    /// Dataset size in number of vectors
+    pub dataset_size: usize,
+    /// Vector dimension
+    pub dimension: usize,
+    /// Available memory budget in MB
+    pub memory_budget_mb: f64,
+    /// Hardware capabilities
+    pub hardware: crate::core::hardware_capabilities::HardwareCapabilities,
+    /// Index availability
+    pub available_indexes: Vec<String>,
+    /// Filter selectivity estimate
+    pub filter_selectivity: Option<f64>,
+}
+
+/// Operation types for cost calculation
+#[derive(Debug, Clone)]
+pub enum OperationType {
+    VectorSearch { top_k: usize, use_quantization: bool },
+    MetadataFilter { filter_count: usize, selectivity: f64 },
+    IndexBuild { index_type: String, vector_count: usize },
+    CompactionOperation { file_count: usize, total_size_mb: f64 },
+}
+
+/// Default cost strategy implementation
+pub struct DefaultCostStrategy;
+
+impl CostStrategy for DefaultCostStrategy {
+    fn calculate_cost(&self, operation: &OperationType, context: &CostContext) -> f64 {
+        match operation {
+            OperationType::VectorSearch { top_k, use_quantization } => {
+                let base_cost = context.dataset_size as f64 * 0.001; // Base scan cost
+                let result_cost = *top_k as f64 * 0.1; // Result processing cost
+                let quantization_factor = if *use_quantization { 0.3 } else { 1.0 }; // 70% savings with quantization
+                
+                (base_cost + result_cost) * quantization_factor
+            }
+            OperationType::MetadataFilter { filter_count, selectivity } => {
+                let scan_cost = context.dataset_size as f64 * selectivity * 0.0001;
+                let filter_cost = *filter_count as f64 * 0.01;
+                scan_cost + filter_cost
+            }
+            OperationType::IndexBuild { vector_count, .. } => {
+                *vector_count as f64 * context.dimension as f64 * 0.01 // Complex operation
+            }
+            OperationType::CompactionOperation { file_count, total_size_mb } => {
+                *file_count as f64 * 0.5 + total_size_mb * 0.1 // File I/O cost
+            }
+        }
+    }
+    
+    fn name(&self) -> &'static str {
+        "default"
+    }
+    
+    fn applies_to(&self, _context: &CostContext) -> bool {
+        true // Default strategy applies to all contexts
+    }
+}
+
 /// Cost analysis results
 #[derive(Debug)]
 struct CostAnalysis {
@@ -637,6 +711,12 @@ struct CostAnalysis {
     filter_selectivity: Option<f64>,
     filters: Vec<FilterAnalysis>,
     has_bloom_filters: bool,
+    /// Dataset size for accurate cost estimation
+    dataset_size: usize,
+    /// Estimated memory usage for operation
+    estimated_memory_mb: f64,
+    /// Estimated I/O operations required
+    estimated_io_ops: usize,
 }
 
 /// Filter analysis
@@ -1153,8 +1233,7 @@ impl UnifiedQueryOptimizer {
         cost_analysis: &CostAnalysis,
     ) -> Result<FilterExecutionMethod> {
         // Choose method based on cost and filter selectivity
-        // TODO: Add dataset_size to CostAnalysis or pass it separately
-        let estimated_dataset_size = (cost_analysis.total_cost * 10000.0) as usize; // Rough estimate
+        let estimated_dataset_size = cost_analysis.dataset_size;
 
         let method = if estimated_dataset_size < 10000 {
             FilterExecutionMethod::SequentialScan
@@ -1176,8 +1255,7 @@ impl UnifiedQueryOptimizer {
         query_analysis: &QueryAnalysis,
     ) -> Result<SearchExecutionMethod> {
         // Choose search method based on estimated dataset size and available indexes
-        // TODO: Add dataset_size to CostAnalysis or pass it separately
-        let estimated_dataset_size = (cost_analysis.total_cost * 10000.0) as usize; // Rough estimate
+        let estimated_dataset_size = cost_analysis.dataset_size;
 
         let method = if estimated_dataset_size < 10000 {
             // Small dataset - direct FP32 search
@@ -1221,8 +1299,7 @@ impl UnifiedQueryOptimizer {
         cost_analysis: &CostAnalysis,
     ) -> Option<QuantizationStrategy> {
         // Use quantization for large datasets
-        // TODO: Add dataset_size to CostAnalysis or pass it separately
-        let estimated_dataset_size = (cost_analysis.total_cost * 10000.0) as usize; // Rough estimate
+        let estimated_dataset_size = cost_analysis.dataset_size;
 
         if estimated_dataset_size > 100000 {
             Some(QuantizationStrategy {
@@ -1238,7 +1315,7 @@ impl UnifiedQueryOptimizer {
     /// Build cost analysis (stub implementation)
     fn build_cost_analysis(
         &self,
-        _context: &UnifiedQueryContext<'_>,
+        context: &UnifiedQueryContext<'_>,
         _analysis: &QueryAnalysis,
     ) -> Result<CostAnalysis> {
         Ok(CostAnalysis {
@@ -1249,6 +1326,9 @@ impl UnifiedQueryOptimizer {
             filter_selectivity: Some(0.8),
             filters: vec![],
             has_bloom_filters: false,
+            dataset_size: context.collection_config.vector_count.unwrap_or(10000) as usize,
+            estimated_memory_mb: 64.0, // Reasonable default
+            estimated_io_ops: 100, // Default estimate
         })
     }
 
@@ -1365,8 +1445,11 @@ impl Default for UnifiedOptimizerConfig {
 
 impl UnifiedCostModel {
     fn new() -> Self {
+        let mut strategies: HashMap<String, Box<dyn CostStrategy>> = HashMap::new();
+        strategies.insert("default".to_string(), Box::new(DefaultCostStrategy));
+        
         Self {
-            // strategies: HashMap::new(), // TODO: Restore when CostStrategy trait is available
+            strategies,
             historical_costs: Arc::new(parking_lot::RwLock::new(HashMap::new())),
             hardware: crate::core::hardware_capabilities::get_hardware_capabilities(),
         }

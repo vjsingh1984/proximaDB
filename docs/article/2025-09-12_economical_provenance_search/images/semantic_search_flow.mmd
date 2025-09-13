@@ -1,0 +1,21 @@
+graph TD
+    subgraph "User & Application Layer"
+        A[User Query: &quot;papers on gene editing&quot;] --> B{Embedding Model};
+        B --> C[Query Vector];
+    end
+
+    subgraph "ProximaDB: Economical & Trustworthy AI"
+        C --> D{1. ANN Search};
+        D -- Scans --> E[(Disk-Optimized Index<br/>On SSD or Cloud Storage)];
+        D -- Retrieves --> F((Top-K Vector IDs));
+        F --> G{2. Graph Lookup};
+        G -- Fetches --> H[(Knowledge Graph<br/>Tracks Data Provenance)];
+    end
+
+    subgraph "Business Value: Auditable & Relevant Results"
+        G --> I["- Paper A (Source: doc_123.pdf)<br/>- Paper B (Source: arxiv.org/...)<br/>- Paper C (Source: internal_db:row_5)"];
+    end
+
+    style E fill:#cde4ff,stroke:#333,stroke-width:2px
+    style H fill:#d5f5e3,stroke:#333,stroke-width:2px
+    style I fill:#fff2cc,stroke:#333,stroke-width:1px

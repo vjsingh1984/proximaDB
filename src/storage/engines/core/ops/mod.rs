@@ -158,20 +158,20 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 // Temporary placeholder types until modules are created
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UniversalPerformanceConfig {
     pub max_concurrent_operations: usize,
     pub enable_prefetching: bool,
     pub cache_size_bytes: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UniversalValidationConfig {
     pub validate_on_insert: bool,
     pub strict_mode: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UniversalBatchConfig {
     pub batch_size: usize,
     pub max_batch_memory_mb: usize,

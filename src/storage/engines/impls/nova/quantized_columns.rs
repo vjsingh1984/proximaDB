@@ -15,7 +15,7 @@ use tracing::debug;
 use crate::compute::quantization::unified::{Codebook, UnifiedQuantizationEngine};
 
 /// Metadata for quantized columns in Parquet
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct QuantizedColumnMetadata {
     /// Binary column info
     pub binary_column: Option<BinaryColumnInfo>,
@@ -33,20 +33,20 @@ pub struct QuantizedColumnMetadata {
     pub stats: QuantizationStats,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BinaryColumnInfo {
     pub column_name: String,
     pub bits_per_vector: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Int8ColumnInfo {
     pub column_name: String,
     pub global_scale: f32,
     pub global_zero_point: i8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PQColumnInfo {
     pub column_name: String,
     pub num_segments: usize,

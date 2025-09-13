@@ -119,7 +119,7 @@ pub struct SstCompactor {
 
 impl SstCompactor {
     /// Notify AXIS indexes of changes during compaction
-    async fn notify_axis_of_changes(&self, stats: &ZeroCopyCompactionStats) {
+    async fn notify_axis_of_changes(&self, stats: &ZeroCopyCompactionStats, collection_id: &str, output_file: &str) -> Result<()> {
         // This would integrate with AXIS similar to how EnhancedCompactionStats does it
         // For now, just log the notification
         if stats.recommend_index_rebuild {
@@ -139,26 +139,9 @@ impl SstCompactor {
         }
 
         // Actual AXIS integration for index updates
-        if let Some(ref axis_manager) = self.axis_manager {
-            // Notify AXIS of compaction completion for index updates
-            let compaction_event = crate::index::axis::eventlog::event_log::IndexEvent {
-                event_id: uuid::Uuid::new_v4().to_string(),
-                collection_id: collection_id.to_string(),
-                file_paths: vec![output_file.clone()],
-                operation_type: crate::index::axis::eventlog::event_log::OperationType::Compaction,
-                timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
-                metadata: std::collections::HashMap::new(),
-            };
-            
-            match axis_manager.process_compaction_event(compaction_event).await {
-                Ok(_) => {
-                    debug!("AXIS notified of compaction completion for collection {}", collection_id);
-                }
-                Err(e) => {
-                    warn!("Failed to notify AXIS of compaction: {}", e);
-                }
-            }
-        }
+        // TODO: Add axis_manager field to SstCompactor or use event log service
+        debug!("AXIS integration placeholder - compaction completed for collection {}", collection_id);
+        Ok(())
     }
 
     /// Check if a record is append-only (no meaningful ID)

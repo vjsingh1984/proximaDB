@@ -535,7 +535,12 @@ impl FileSystem for ZeroCopyFilesystem {
                 }
             }
 
-            // TODO: Invalidate metadata cache entries (placeholder)
+            // Invalidate metadata cache entries using existing zero-copy cache system
+            if let Err(e) = self.zero_copy_system.invalidate_file_metadata(path).await {
+                debug!("Failed to invalidate metadata cache for {}: {} (non-critical)", path, e);
+            } else {
+                debug!("Invalidated metadata cache for deleted file: {}", path);
+            }
         }
 
         result

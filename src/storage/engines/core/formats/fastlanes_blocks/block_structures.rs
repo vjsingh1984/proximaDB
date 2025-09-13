@@ -201,7 +201,7 @@ pub struct FastLanesDataBlock {
 
 /// Block metadata for FastLanes encoded blocks
 /// Shared between SST and SWIFT engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FastLanesBlockMetadata {
     /// Basic information
     pub record_count: u32,

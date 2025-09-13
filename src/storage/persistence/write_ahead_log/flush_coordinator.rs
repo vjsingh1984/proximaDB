@@ -9,7 +9,7 @@
 //! both AvroWAL and BincodeWAL implementations to manage flush state tracking,
 //! cleanup of memory structures, and coordination between memory/disk WAL modes.
 
-use anyhow::Result;
+use anyhow::{Result, Context};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -739,7 +739,7 @@ impl WALFlushCoordinator {
         
         // Read the file data
         let data = filesystem.read(file_path).await
-            .with_context(|| format!("Failed to read WAL file: {}", file_path))?;
+            .context("Failed to read WAL file")?;
 
         if data.is_empty() {
             warn!("Empty WAL file encountered: {}", file_path);
@@ -751,7 +751,7 @@ impl WALFlushCoordinator {
 
         // Deserialize the batch
         let vectors = serializer.deserialize_batch(&data)
-            .with_context(|| format!("Failed to deserialize WAL file: {}", file_path))?;
+            .context("Failed to deserialize WAL file")?;
 
         Ok(vectors)
     }

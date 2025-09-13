@@ -28,6 +28,14 @@
 use std::fmt;
 use std::sync::{Arc, RwLock};
 
+/// Information about a node stored on disk
+#[derive(Debug, Clone)]
+pub struct DiskNodeInfo {
+    pub file_path: String,
+    pub offset: u64,
+    pub size: u64,
+}
+
 /// Error types for B+ tree operations
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BTreeError {

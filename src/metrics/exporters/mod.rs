@@ -23,7 +23,7 @@ pub trait MetricsExporter: Send + Sync {
 }
 
 /// Unified metrics snapshot for export
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetricsSnapshot {
     pub timestamp: i64,
     pub system: SystemMetrics,
@@ -34,7 +34,7 @@ pub struct MetricsSnapshot {
 }
 
 /// System-wide metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SystemMetrics {
     pub cpu_usage: f32,
     pub memory_used_bytes: u64,
@@ -72,13 +72,13 @@ impl Default for SystemMetrics {
 }
 
 /// Server-specific metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ServerMetrics {
     pub uptime_seconds: f64,
 }
 
 /// Storage-specific metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct StorageMetrics {
     pub total_vectors: u64,
     pub total_collections: u64,
@@ -86,14 +86,15 @@ pub struct StorageMetrics {
 }
 
 /// Query-specific metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct QueryMetrics {
     pub total_queries: u64,
     pub failed_queries: u64,
+    pub p99_latency_ms: f64,
 }
 
 /// Index-specific metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct IndexMetrics {
     pub total_indexes: u64,
     pub index_memory_usage_bytes: u64,
@@ -101,7 +102,7 @@ pub struct IndexMetrics {
 }
 
 /// Per-collection metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CollectionMetrics {
     pub vector_count: u64,
     pub index_size_bytes: u64,
@@ -112,7 +113,7 @@ pub struct CollectionMetrics {
 }
 
 /// Cache system metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CacheMetrics {
     pub hit_rate: f64,
     pub evictions_per_second: f64,
@@ -121,7 +122,7 @@ pub struct CacheMetrics {
 }
 
 /// Compression metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompressionMetrics {
     pub compression_ratio: f64,
     pub compressed_bytes: u64,

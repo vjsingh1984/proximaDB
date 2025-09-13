@@ -503,23 +503,23 @@ impl CollectionService {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
         let indexing_algorithm: crate::core::IndexingAlgorithm = match config.primary_index.as_str() {
-            "hnsw" => crate::core::IndexingAlgorithm::Hnsw,
-            "ivf" => crate::core::IndexingAlgorithm::Ivf,
-            "pq" => crate::core::IndexingAlgorithm::Pq,
-            "flat" => crate::core::IndexingAlgorithm::Flat,
-            "annoy" => crate::core::IndexingAlgorithm::Annoy,
-            "lsh" => crate::core::IndexingAlgorithm::Lsh,
-            _ => crate::core::IndexingAlgorithm::Hnsw,
+            "hnsw" => "hnsw".to_string(),
+            "ivf" => "ivf".to_string(),
+            "pq" => "pq".to_string(),
+            "flat" => "flat".to_string(),
+            "annoy" => "annoy".to_string(),
+            "lsh" => "lsh".to_string(),
+            _ => "hnsw".to_string(),
         };
 
-        let algorithm_str = match indexing_algorithm {
-            crate::core::IndexingAlgorithm::Hnsw => "HNSW",
-            crate::core::IndexingAlgorithm::Ivf => "IVF",
-            crate::core::IndexingAlgorithm::Pq => "PQ",
-            crate::core::IndexingAlgorithm::Flat => "FLAT",
-            crate::core::IndexingAlgorithm::Annoy => "ANNOY",
-            crate::core::IndexingAlgorithm::Lsh => "LSH",
-            crate::core::IndexingAlgorithm::Unspecified => "HNSW", // Default to HNSW
+        let algorithm_str = match indexing_algorithm.as_str() {
+            "hnsw" => "HNSW",
+            "ivf" => "IVF",
+            "pq" => "PQ",
+            "flat" => "FLAT",
+            "annoy" => "ANNOY",
+            "lsh" => "LSH",
+            _ => "HNSW", // Default to HNSW
         };
 
         let smart_config = crate::index::config::IndexConfig::create_smart_default(

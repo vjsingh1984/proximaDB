@@ -146,7 +146,7 @@ pub struct GlobalMetrics {
 }
 
 /// Query optimization hints based on metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct QueryOptimizationHints {
     pub collection_id: String,
     pub hints: Vec<OptimizationHint>,
@@ -154,7 +154,7 @@ pub struct QueryOptimizationHints {
 }
 
 /// Individual optimization hint
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OptimizationHint {
     pub hint_type: HintType,
     pub priority: HintPriority,
@@ -165,7 +165,7 @@ pub struct OptimizationHint {
 }
 
 /// Type of optimization hint
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum HintType {
     IndexSelection,
     ParallelScan,
@@ -179,7 +179,7 @@ pub enum HintType {
 }
 
 /// Priority level for hints
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum HintPriority {
     Critical, // Severely impacting performance
     High,     // Significant improvement possible

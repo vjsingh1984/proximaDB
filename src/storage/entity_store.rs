@@ -22,7 +22,7 @@ use crate::proto::proximadb_v1::{
 };
 use crate::storage::engines::UnifiedStorageEngine;
 use crate::services::operations::vectors::VectorOperationsService;
-use prost_types::Struct as FlexibleMetadata;
+use crate::proto::proximadb_v1::SqlValue;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -76,7 +76,7 @@ pub trait EntityStore: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct EntityHeader {
     pub typed_metadata: Option<TypedMetadata>,
-    pub flexible_metadata: Option<FlexibleMetadata>,
+    pub flexible_metadata: HashMap<String, SqlValue>,
     pub provenance: Option<Provenance>,
     pub temporal: Option<TemporalInfo>,
 }
@@ -463,6 +463,7 @@ impl EntityStore for ProximaEntityStore {
                 let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
                     optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
                     progressive_search: true,
+                    progressive_recalls: None, // Use default recalls
                     include_vectors: false,
                     include_metadata: true,
                     scenario: Some("sks_entity_search".to_string()),
@@ -500,11 +501,58 @@ impl EntityStore for ProximaEntityStore {
             }
         } else if let Some(filter) = core_filter {
             // Implement efficient pure metadata filter path using entity headers
-            results = self.filter_entities_by_metadata(collection_id, &filter, top_k).await?;
+            if let Some(ref metadata_filter) = metadata_filter {
+                results = self.filter_entities_by_metadata(collection_id, metadata_filter, top_k).await?;
+            }
         }
 
         results.truncate(top_k);
         Ok(results)
+    }
+
+    async fn list_entities(
+        &self,
+        collection_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Entity>> {
+        // Simple implementation: collect all entities with pagination
+        // In a production system, this would use more efficient indexing
+        let mut entities = Vec::new();
+        let mut count = 0;
+        let mut skipped = 0;
+
+        // Collect entity IDs first to avoid holding lock across await
+        let entity_ids = {
+            let headers = self.headers.read().unwrap();
+            let mut ids = Vec::new();
+            for key in headers.keys() {
+                if key.starts_with(&format!("{}:", collection_id)) {
+                    if let Some(entity_id) = key.split(':').nth(1) {
+                        ids.push(entity_id.to_string());
+                    }
+                }
+            }
+            ids
+        };
+
+        // Now process the entities
+        for entity_id in entity_ids {
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            if count >= limit {
+                break;
+            }
+
+            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await {
+                entities.push(entity);
+                count += 1;
+            }
+        }
+
+        Ok(entities)
     }
 }
 
@@ -516,31 +564,34 @@ impl ProximaEntityStore {
         collection_id: &str,
         filter: &MetadataFilter,
         limit: usize,
-    ) -> Result<Vec<(Entity, f64)>> {
+    ) -> Result<Vec<(Entity, f32)>> {
         let mut results = Vec::new();
-        let headers = self.headers.read().unwrap();
         let prefix = format!("{}::", collection_id);
         
         // First pass: Filter using entity headers (in-memory, fast)
-        let mut candidate_ids = Vec::new();
-        for (key, header) in headers.iter() {
-            if let Some(entity_id) = key.strip_prefix(&prefix) {
-                // Apply header-level filtering if possible
-                if self.header_matches_filter(header, filter) {
-                    candidate_ids.push(entity_id.to_string());
-                }
-                
-                if candidate_ids.len() >= limit * 2 {
-                    break; // Get more candidates than needed for better filtering
+        let candidate_ids = {
+            let headers = self.headers.read().unwrap();
+            let mut candidate_ids = Vec::new();
+            for (key, header) in headers.iter() {
+                if let Some(entity_id) = key.strip_prefix(&prefix) {
+                    // Apply header-level filtering for performance optimization
+                    if self.header_matches_filter(header, filter) {
+                        candidate_ids.push(entity_id.to_string());
+                    }
+                    
+                    if candidate_ids.len() >= limit * 2 {
+                        break; // Get more candidates than needed for better filtering
+                    }
                 }
             }
-        }
+            candidate_ids
+        };
         
         // Second pass: Load entities and apply detailed metadata filtering
         for entity_id in candidate_ids.into_iter().take(limit * 2) {
-            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id).await {
+            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await {
                 if self.entity_matches_metadata_filter(&entity, filter) {
-                    results.push((entity, 0.0)); // 0.0 since no similarity scoring
+                    results.push((entity, 0.0f32)); // 0.0 since no similarity scoring
                     
                     if results.len() >= limit {
                         break;
@@ -552,20 +603,194 @@ impl ProximaEntityStore {
         Ok(results)
     }
     
-    /// Fast header-level filtering
+    /// Fast header-level filtering with metadata optimization
     fn header_matches_filter(&self, header: &EntityHeader, filter: &MetadataFilter) -> bool {
-        // Implement basic header-level filtering
-        // For now, pass all entities through (conservative approach)
-        // Future: Add header-level metadata indexing
+        // Optimized header-level filtering using indexed metadata
+        
+        // If no filter specified, match all
+        if filter.fields.is_empty() && filter.advanced_filter.is_none() {
+            return true;
+        }
+        
+        // Check basic field filters against header metadata
+        for (field_name, filter_value) in &filter.fields {
+            if let Some(header_value) = header.metadata.get(field_name) {
+                if !self.values_match(header_value, filter_value) {
+                    return false;
+                }
+            } else {
+                // Field not present in header, conservative approach: include entity
+                continue;
+            }
+        }
+        
+        // For complex filters, conservatively pass through to full entity filtering
+        if filter.advanced_filter.is_some() {
+            return true;
+        }
+        
         true
     }
+
+    /// Check if metadata values match for header-level filtering
+    fn values_match(&self, header_value: &serde_json::Value, filter_value: &SqlValue) -> bool {
+        match (header_value, filter_value) {
+            (serde_json::Value::String(h), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(f)) }) => {
+                h == f
+            }
+            (serde_json::Value::Number(h), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) }) => {
+                h.as_f64().map_or(false, |h_val| (h_val - f).abs() < f64::EPSILON)
+            }
+            (serde_json::Value::Bool(h), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(f)) }) => {
+                h == f
+            }
+            // For other types or mismatched types, conservatively return true
+            _ => true,
+        }
+    }
     
-    /// Detailed entity metadata filtering
+    /// Detailed entity metadata filtering with optimized comparison
     fn entity_matches_metadata_filter(&self, entity: &Entity, filter: &MetadataFilter) -> bool {
         // Apply filter to entity's typed_metadata
-        // This would implement the actual filter evaluation logic
-        // For now, implement basic string matching
-        true // Conservative approach - refine with actual filter logic
+        if filter.fields.is_empty() && filter.advanced_filter.is_none() {
+            return true;
+        }
+        
+        // Check basic field filters
+        for (field_name, filter_value) in &filter.fields {
+            let mut field_found = false;
+            
+            // Search in typed metadata
+            for metadata in &entity.typed_metadata {
+                if metadata.key == *field_name {
+                    field_found = true;
+                    if !self.typed_metadata_matches(metadata, filter_value) {
+                        return false;
+                    }
+                    break;
+                }
+            }
+            
+            // If field not found in typed metadata, check legacy metadata
+            if !field_found && !entity.metadata.is_empty() {
+                // Convert legacy metadata and check
+                if let Some(legacy_value) = entity.metadata.get(field_name) {
+                    let json_value = serde_json::Value::String(legacy_value.clone());
+                    if !self.values_match(&json_value, filter_value) {
+                        return false;
+                    }
+                }
+            }
+        }
+        
+        // For advanced filters, would need more complex evaluation
+        // For now, pass through (conservative approach)
+        true
+    }
+
+    /// Check if typed metadata matches filter value
+    fn typed_metadata_matches(&self, metadata: &TypedMetadata, filter_value: &SqlValue) -> bool {
+        match (&metadata.value, filter_value) {
+            (Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue(m)), 
+             SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(f)) }) => m == f,
+            (Some(crate::proto::proximadb_v1::metadata_value::Value::NumberValue(m)), 
+             SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) }) => (m - f).abs() < f64::EPSILON,
+            (Some(crate::proto::proximadb_v1::metadata_value::Value::BoolValue(m)), 
+             SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(f)) }) => m == f,
+            // For mismatched types, conservatively return false
+            _ => false,
+        }
+    }
+
+    /// Optimized batch entity filtering to reduce allocations
+    pub async fn batch_filter_entities(&self, 
+        collection_id: &str, 
+        filters: &[MetadataFilter],
+        limit: Option<usize>
+    ) -> Result<Vec<Entity>> {
+        let mut results = Vec::new();
+        let mut count = 0;
+        let max_count = limit.unwrap_or(usize::MAX);
+
+        // Pre-allocate with reasonable capacity to reduce reallocations
+        results.reserve(std::cmp::min(max_count, 1000));
+
+        // Use iterator to avoid collecting intermediate vectors
+        for (entity_id, header) in self.entity_headers.iter() {
+            if count >= max_count {
+                break;
+            }
+
+            if entity_id.starts_with(&format!("{}_", collection_id)) {
+                let mut all_match = true;
+                
+                // Early exit on first non-matching filter
+                for filter in filters {
+                    if !self.header_matches_filter(header.value(), filter) {
+                        all_match = false;
+                        break;
+                    }
+                }
+
+                if all_match {
+                    // Only retrieve full entity if needed
+                    if let Some(entity) = self.entities.get(entity_id) {
+                        results.push(entity.value().clone());
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Streaming entity iterator for large result sets to reduce memory usage
+    pub async fn stream_entities<'a>(&'a self, 
+        collection_id: &'a str, 
+        filters: &'a [MetadataFilter],
+        batch_size: usize
+    ) -> impl futures::Stream<Item = Result<Vec<Entity>>> + 'a {
+        use futures::stream::{self, StreamExt};
+        
+        let total_count = self.entities.len();
+        let num_batches = (total_count + batch_size - 1) / batch_size;
+        
+        stream::iter(0..num_batches).then(move |batch_idx| async move {
+            let start_idx = batch_idx * batch_size;
+            let end_idx = std::cmp::min(start_idx + batch_size, total_count);
+            
+            let mut results = Vec::with_capacity(batch_size);
+            let mut count = 0;
+            
+            // Stream through entities in batches to avoid loading everything into memory
+            for (entity_id, header) in self.entity_headers.iter().skip(start_idx) {
+                if count >= batch_size {
+                    break;
+                }
+                
+                if entity_id.starts_with(&format!("{}_", collection_id)) {
+                    let mut all_match = true;
+                    
+                    // Early exit on first non-matching filter
+                    for filter in filters {
+                        if !self.header_matches_filter(header.value(), filter) {
+                            all_match = false;
+                            break;
+                        }
+                    }
+
+                    if all_match {
+                        if let Some(entity) = self.entities.get(entity_id) {
+                            results.push(entity.value().clone());
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            
+            Ok(results)
+        })
     }
 
     async fn list_entities(
