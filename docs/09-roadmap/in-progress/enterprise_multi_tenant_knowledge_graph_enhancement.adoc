@@ -1,0 +1,1142 @@
+= Enterprise Multi-Tenant Knowledge Graph Enhancement
+:toc: macro
+:toclevels: 4
+:icons: font
+:source-highlighter: highlight.js
+
+[.lead]
+**Comprehensive specification for enhancing ProximaDB's existing graph and SKS capabilities** with enterprise multi-tenancy, domain-aware knowledge graphs, and advanced RBAC integration.
+
+toc::[]
+
+== 🎯 Executive Summary & Business Requirements
+
+=== Current State Analysis
+
+**Existing Capabilities** (✅ Production Ready):
+- **Graph Engine**: ORION/PULSAR/QUASAR with 1M+ edges/second
+- **SKS Implementation**: Entity store with typed/flexible metadata
+- **Vector Collections**: Production-ready with 2,847+ QPS
+- **Basic RBAC**: Collection-level access control
+
+**Enterprise Gaps Identified**:
+- **Multi-Tenancy**: No tenant isolation for knowledge graphs
+- **Domain Separation**: Mixed business contexts in single store
+- **Advanced RBAC**: No entity/relationship-level access control
+- **Compliance**: Audit trails mixed across organizational boundaries
+- **Scalability**: Global locks and single points of failure
+
+=== Business Use Case Requirements
+
+[source,mermaid]
+----
+graph TB
+    subgraph "🏢 Enterprise Customer: Global Financial Services"
+        A[Regulatory Domain<br/>AML/KYC entities<br/>Compliance relationships<br/>Audit provenance]
+        B[Trading Domain<br/>Market entities<br/>Portfolio relationships<br/>Trading provenance]
+        C[Risk Domain<br/>Risk entities<br/>Correlation relationships<br/>Risk provenance]
+        D[Customer Domain<br/>Customer entities<br/>Interaction relationships<br/>Service provenance]
+    end
+    
+    subgraph "🔐 Security Requirements"
+        E[Tenant Isolation<br/>Complete data separation<br/>between organizational units]
+        F[Domain RBAC<br/>Regulatory vs Trading<br/>access control]
+        G[Entity-Level Security<br/>PII protection<br/>field-level access]
+        H[Compliance Audit<br/>Domain-specific trails<br/>regulatory reporting]
+    end
+    
+    subgraph "🎯 Business Outcomes"
+        I[Regulatory Compliance<br/>SOX, Basel III, GDPR<br/>domain-specific audit]
+        J[Risk Intelligence<br/>Cross-domain correlation<br/>real-time assessment]
+        K[Customer Intelligence<br/>360° customer view<br/>privacy-compliant]
+        L[Operational Excellence<br/>Domain expertise<br/>efficient workflows]
+    end
+    
+    A --> E
+    B --> F
+    C --> G
+    D --> H
+    
+    E --> I
+    F --> J
+    G --> K
+    H --> L
+    
+    style A fill:#FFE5E5
+    style B fill:#E5F3FF
+    style C fill:#FFF3E5
+    style D fill:#E5FFE5
+    style I fill:#4CAF50
+    style J fill:#2196F3
+    style K fill:#FF9800
+    style L fill:#9C27B0
+----
+
+=== Specific Business Requirements
+
+[cols="3,2,3,2", options="header"]
+|===
+| Business Requirement | Priority | Current Gap | Target Solution
+
+| **Regulatory Compliance**
+| Critical
+| Mixed audit trails across domains
+| Domain-specific provenance with compliance boundaries
+
+| **Multi-Tenant Data Isolation**
+| Critical  
+| Global entity store with no isolation
+| Tenant-aware knowledge graphs with RBAC
+
+| **Domain Expertise**
+| High
+| Mixed business contexts in single store
+| Domain-specific entity stores with business logic
+
+| **Advanced Analytics**
+| High
+| No cross-domain correlation capabilities
+| Knowledge composition across authorized domains
+
+| **Scalability**
+| Medium
+| Global locks and single points of failure
+| Distributed domain graphs with sharding
+
+| **Operational Efficiency**
+| Medium
+| Complex queries across mixed contexts
+| Domain-aware query optimization
+|===
+
+== 🏗️ Comprehensive Architecture Design
+
+=== Enhanced Graph & SKS Architecture
+
+[source,mermaid]
+----
+classDiagram
+    namespace TenantLayer {
+        class TenantKnowledgeGraph {
+            +tenant_id: String
+            +domain_graphs: DashMap~String, DomainKnowledgeGraph~
+            +tenant_rbac: TenantRBACPolicy
+            +audit_logger: TenantAuditLogger
+            +security_context: TenantSecurityContext
+            +get_or_create_domain(name: String) Arc~DomainKnowledgeGraph~
+            +cross_domain_query(query: CrossDomainQuery) Result~ComposedKnowledge~
+            +enforce_tenant_boundaries(query: Query) Result~()~
+        }
+        
+        class TenantRBACPolicy {
+            +tenant_id: String
+            +domain_policies: Map~String, DomainPolicy~
+            +user_roles: Map~String, TenantRole~
+            +validate_domain_access(user: UserContext, domain: String) Result~()~
+            +validate_cross_domain_query(query: CrossDomainQuery) Result~()~
+            +filter_results_by_permissions(results: Vec~Entity~) Vec~Entity~
+        }
+    }
+    
+    namespace DomainLayer {
+        class DomainKnowledgeGraph {
+            +domain_id: String
+            +entity_store: DomainEntityStore
+            +relationship_store: DomainRelationshipStore
+            +provenance_store: DomainProvenanceStore
+            +collection_bridges: Map~String, CollectionEntityBridge~
+            +domain_schema: DomainSchema
+            +query_entities(query: EntityQuery, user: UserContext) Result~Vec~Entity~~
+            +query_relationships(query: RelationshipQuery) Result~Vec~Relationship~~
+            +compose_knowledge(query: CompositionQuery) Result~DomainKnowledge~
+        }
+        
+        class DomainEntityStore {
+            +domain_id: String
+            +entities: DashMap~String, Entity~
+            +entity_headers: DashMap~String, EntityHeader~
+            +entity_index: DomainEntityIndex
+            +rbac_filter: DomainRBACFilter
+            +store_entity(entity: Entity, permissions: EntityPermissions) Result~()~
+            +batch_filter_entities(filter: EntityFilter, rbac: RBACContext) Result~Vec~Entity~~
+            +stream_entities_secure(filter: EntityFilter, rbac: RBACContext) SecureEntityStream
+        }
+        
+        class DomainRelationshipStore {
+            +domain_id: String
+            +relationships: DashMap~String, Relationship~
+            +relationship_index: RelationshipIndex
+            +graph_engine: Arc~GraphEngine~
+            +add_relationship(rel: Relationship, permissions: RelPermissions) Result~()~
+            +traverse_secure(start: EntityId, path: TraversalPath, rbac: RBACContext) Result~TraversalResult~
+            +query_relationships_rbac(query: RelQuery, rbac: RBACContext) Result~Vec~Relationship~~
+        }
+    }
+    
+    namespace CollectionBridge {
+        class CollectionEntityBridge {
+            +collection_id: String
+            +domain_id: String
+            +entity_mappings: DashMap~VectorId, EntityId~
+            +bridge_config: BridgeConfiguration
+            +collection_rbac: CollectionRBACPolicy
+            +sync_vector_to_entity(vector: VectorRecord, entity: Entity) Result~()~
+            +get_entity_for_vector(vector_id: String, user: UserContext) Result~Option~Entity~~
+            +enrich_vector_with_knowledge(vector_id: String, depth: u32) Result~EnrichedVector~
+        }
+        
+        class BridgeConfiguration {
+            +auto_entity_creation: bool
+            +relationship_inference: RelationshipInferencePolicy
+            +provenance_tracking: ProvenanceTrackingPolicy
+            +sync_mode: SyncMode
+            +validate_bridge_config() Result~()~
+        }
+    }
+    
+    namespace RBAC {
+        class UserContext {
+            +user_id: String
+            +tenant_id: String
+            +roles: Vec~String~
+            +permissions: Set~Permission~
+            +department: Option~String~
+            +clearance_level: ClearanceLevel
+            +session_context: SessionContext
+            +has_permission(permission: Permission) bool
+            +can_access_domain(domain: String) bool
+            +can_access_entity(entity_id: String) bool
+        }
+        
+        class DomainRBACFilter {
+            +domain_id: String
+            +entity_policies: Map~String, EntityPolicy~
+            +relationship_policies: Map~String, RelationshipPolicy~
+            +field_access_matrix: FieldAccessMatrix
+            +filter_entity_query(query: EntityQuery, user: UserContext) Result~FilteredEntityQuery~
+            +filter_relationship_query(query: RelQuery, user: UserContext) Result~FilteredRelQuery~
+            +apply_field_level_filtering(entity: Entity, user: UserContext) Result~Entity~
+        }
+    }
+    
+    TenantKnowledgeGraph --> DomainKnowledgeGraph
+    TenantKnowledgeGraph --> TenantRBACPolicy
+    DomainKnowledgeGraph --> DomainEntityStore
+    DomainKnowledgeGraph --> DomainRelationshipStore
+    DomainKnowledgeGraph --> DomainProvenanceStore
+    DomainKnowledgeGraph --> CollectionEntityBridge
+    DomainEntityStore --> DomainRBACFilter
+    DomainRelationshipStore --> DomainRBACFilter
+    CollectionEntityBridge --> BridgeConfiguration
+    DomainRBACFilter --> UserContext
+----
+
+== 🔧 Detailed Implementation Specification
+
+=== Core Components Enhancement
+
+==== 1. Tenant Knowledge Graph (Enterprise Root)
+
+```rust
+/// Enterprise tenant-aware knowledge graph coordinator
+pub struct TenantKnowledgeGraph {
+    /// Unique tenant identifier  
+    tenant_id: String,
+    
+    /// Domain-specific knowledge graphs
+    domain_graphs: Arc<DashMap<String, Arc<DomainKnowledgeGraph>>>,
+    
+    /// Tenant-level RBAC policy
+    tenant_rbac: Arc<TenantRBACPolicy>,
+    
+    /// Tenant-specific audit logger
+    audit_logger: Arc<TenantAuditLogger>,
+    
+    /// Security context for all operations
+    security_context: TenantSecurityContext,
+    
+    /// Tenant configuration
+    tenant_config: TenantConfig,
+    
+    /// Cross-domain knowledge composer
+    knowledge_composer: Arc<CrossDomainKnowledgeComposer>,
+}
+
+impl TenantKnowledgeGraph {
+    /// Create or retrieve domain-specific knowledge graph
+    pub async fn get_or_create_domain(
+        &self,
+        domain_name: &str,
+        user_context: &UserContext,
+    ) -> Result<Arc<DomainKnowledgeGraph>> {
+        // Validate user can access/create domain
+        self.tenant_rbac.validate_domain_access(user_context, domain_name)?;
+        
+        if let Some(domain) = self.domain_graphs.get(domain_name) {
+            Ok(domain.clone())
+        } else {
+            // Create new domain with RBAC inheritance
+            let domain_config = DomainConfig {
+                domain_name: domain_name.to_string(),
+                tenant_id: self.tenant_id.clone(),
+                rbac_policy: self.tenant_rbac.create_domain_policy(domain_name)?,
+                audit_policy: self.audit_logger.create_domain_audit_policy(domain_name)?,
+                performance_tier: self.tenant_config.default_performance_tier.clone(),
+                compliance_requirements: self.tenant_config.compliance_requirements.clone(),
+            };
+            
+            let domain_graph = DomainKnowledgeGraph::new(
+                format!("{}::{}", self.tenant_id, domain_name),
+                domain_config,
+                self.tenant_rbac.clone(),
+            ).await?;
+            
+            let domain_arc = Arc::new(domain_graph);
+            self.domain_graphs.insert(domain_name.to_string(), domain_arc.clone());
+            
+            // Log domain creation for audit
+            self.audit_logger.log_domain_creation(domain_name, user_context).await?;
+            
+            Ok(domain_arc)
+        }
+    }
+    
+    /// Execute cross-domain knowledge composition query
+    pub async fn compose_knowledge_across_domains(
+        &self,
+        composition_query: CrossDomainCompositionQuery,
+        user_context: &UserContext,
+    ) -> Result<ComposedKnowledge> {
+        // Validate user has access to all requested domains
+        for domain_name in &composition_query.domains {
+            self.tenant_rbac.validate_domain_access(user_context, domain_name)?;
+        }
+        
+        // Use knowledge composer for complex cross-domain queries
+        self.knowledge_composer.compose_knowledge(
+            &composition_query,
+            user_context,
+            &self.domain_graphs,
+        ).await
+    }
+}
+```
+
+==== 2. Domain Knowledge Graph (Business Context)
+
+```rust
+/// Domain-specific knowledge graph with business context
+pub struct DomainKnowledgeGraph {
+    /// Unique domain identifier (tenant::domain)
+    domain_id: String,
+    
+    /// Domain-specific entity storage
+    entity_store: Arc<DomainEntityStore>,
+    
+    /// Domain-specific relationship management
+    relationship_store: Arc<DomainRelationshipStore>,
+    
+    /// Domain-specific provenance and audit
+    provenance_store: Arc<DomainProvenanceStore>,
+    
+    /// Bridges to vector collections
+    collection_bridges: Arc<DashMap<String, Arc<CollectionEntityBridge>>>,
+    
+    /// Domain business schema and rules
+    domain_schema: DomainSchema,
+    
+    /// Domain-specific RBAC filtering
+    rbac_filter: Arc<DomainRBACFilter>,
+    
+    /// Domain performance optimization
+    domain_optimizer: Arc<DomainQueryOptimizer>,
+}
+
+impl DomainKnowledgeGraph {
+    /// Link vector collection to domain knowledge graph
+    pub async fn link_collection(
+        &self,
+        collection_id: &str,
+        link_configuration: CollectionLinkConfiguration,
+        user_context: &UserContext,
+    ) -> Result<()> {
+        // Validate user can link collections to this domain
+        self.rbac_filter.validate_collection_link_permission(user_context, collection_id)?;
+        
+        // Create bidirectional bridge
+        let bridge = CollectionEntityBridge::new(
+            collection_id.to_string(),
+            self.domain_id.clone(),
+            link_configuration,
+            self.rbac_filter.clone(),
+        ).await?;
+        
+        self.collection_bridges.insert(collection_id.to_string(), Arc::new(bridge));
+        
+        // Initialize entity-vector synchronization
+        self.initialize_collection_sync(collection_id, user_context).await?;
+        
+        Ok(())
+    }
+    
+    /// Query entities with comprehensive RBAC and optimization
+    pub async fn query_entities_secure(
+        &self,
+        query: DomainEntityQuery,
+        user_context: &UserContext,
+    ) -> Result<SecureEntityResult> {
+        // Apply multi-level RBAC filtering
+        let filtered_query = self.rbac_filter.filter_entity_query(&query, user_context)?;
+        
+        // Optimize query based on domain characteristics
+        let optimized_query = self.domain_optimizer.optimize_entity_query(&filtered_query)?;
+        
+        // Execute query with performance monitoring
+        let raw_results = self.entity_store.execute_optimized_query(&optimized_query).await?;
+        
+        // Apply field-level security filtering
+        let secure_results = self.rbac_filter.apply_field_level_filtering(raw_results, user_context)?;
+        
+        // Track access for audit and optimization
+        self.provenance_store.log_entity_access(&query, user_context, secure_results.len()).await?;
+        
+        Ok(SecureEntityResult {
+            entities: secure_results,
+            access_metadata: AccessMetadata {
+                query_fingerprint: query.fingerprint(),
+                filtered_count: raw_results.len() - secure_results.len(),
+                access_timestamp: chrono::Utc::now(),
+                user_context: user_context.clone(),
+            },
+            provenance_chain: self.provenance_store.build_access_provenance(&query).await?,
+        })
+    }
+}
+```
+
+==== 3. Enhanced Collection-Entity Bridge
+
+```rust
+/// Intelligent bridge between vector collections and domain entities
+pub struct CollectionEntityBridge {
+    /// Collection identifier
+    collection_id: String,
+    
+    /// Target domain identifier
+    domain_id: String,
+    
+    /// Bidirectional vector-entity mappings
+    vector_to_entity: Arc<DashMap<String, String>>,
+    entity_to_vectors: Arc<DashMap<String, Vec<String>>>,
+    
+    /// Bridge configuration and policies
+    bridge_config: BridgeConfiguration,
+    
+    /// Collection-specific RBAC
+    collection_rbac: Arc<CollectionRBACPolicy>,
+    
+    /// Automatic synchronization engine
+    sync_engine: Arc<CollectionEntitySyncEngine>,
+    
+    /// Bridge performance metrics
+    bridge_metrics: Arc<BridgeMetrics>,
+}
+
+impl CollectionEntityBridge {
+    /// Enrich vector search with knowledge graph context
+    pub async fn enrich_vector_search_with_knowledge(
+        &self,
+        vector_search_results: Vec<VectorSearchResult>,
+        enrichment_config: KnowledgeEnrichmentConfig,
+        user_context: &UserContext,
+    ) -> Result<Vec<EnrichedVectorResult>> {
+        let mut enriched_results = Vec::new();
+        
+        for vector_result in vector_search_results {
+            // Get entity for vector (with RBAC validation)
+            if let Some(entity) = self.get_entity_for_vector_secure(
+                &vector_result.vector_id,
+                user_context,
+            ).await? {
+                // Get relationships if requested and authorized
+                let relationships = if enrichment_config.include_relationships {
+                    self.get_entity_relationships_secure(&entity.id, user_context).await?
+                } else {
+                    Vec::new()
+                };
+                
+                // Get provenance if requested and authorized
+                let provenance = if enrichment_config.include_provenance {
+                    self.get_entity_provenance_secure(&entity.id, user_context).await?
+                } else {
+                    None
+                };
+                
+                enriched_results.push(EnrichedVectorResult {
+                    vector_result,
+                    entity: Some(entity),
+                    relationships,
+                    provenance,
+                    enrichment_metadata: EnrichmentMetadata {
+                        bridge_id: self.collection_id.clone(),
+                        domain_id: self.domain_id.clone(),
+                        enrichment_timestamp: chrono::Utc::now(),
+                        rbac_applied: true,
+                    },
+                });
+            } else {
+                // No entity mapping - return vector-only result
+                enriched_results.push(EnrichedVectorResult {
+                    vector_result,
+                    entity: None,
+                    relationships: Vec::new(),
+                    provenance: None,
+                    enrichment_metadata: EnrichmentMetadata {
+                        bridge_id: self.collection_id.clone(),
+                        domain_id: self.domain_id.clone(),
+                        enrichment_timestamp: chrono::Utc::now(),
+                        rbac_applied: true,
+                    },
+                });
+            }
+        }
+        
+        Ok(enriched_results)
+    }
+}
+```
+
+== 🔐 Advanced RBAC Integration
+
+=== Multi-Level Security Model
+
+[source,mermaid]
+----
+graph TD
+    subgraph "🎭 User Request Processing"
+        A[User Request<br/>analyst@company.com<br/>Role: senior_risk_analyst<br/>Dept: risk_management]
+    end
+    
+    subgraph "🛡️ RBAC Validation Chain"
+        B[Tenant Level<br/>✅ User belongs to tenant<br/>✅ Tenant access active<br/>✅ Compliance validated]
+        C[Domain Level<br/>✅ Risk domain access<br/>✅ Department authorization<br/>✅ Clearance level check]
+        D[Entity Level<br/>✅ Entity access permissions<br/>✅ Field-level visibility<br/>✅ PII access control]
+        E[Relationship Level<br/>✅ Relationship traversal rights<br/>✅ Cross-entity correlation<br/>✅ Inference permissions]
+        F[Collection Level<br/>✅ Vector collection access<br/>✅ Search operation rights<br/>✅ Result enrichment perms]
+    end
+    
+    subgraph "📊 Authorized Operation"
+        G[Filtered Knowledge Access<br/>🔒 Tenant-scoped entities<br/>🔒 Domain-appropriate relations<br/>🔒 User-authorized fields<br/>🔒 Compliance-logged access]
+    end
+    
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    
+    style A fill:#4CAF50
+    style B fill:#2196F3
+    style C fill:#FF9800
+    style D fill:#9C27B0
+    style E fill:#F44336
+    style F fill:#795548
+    style G fill:#607D8B
+----
+
+=== Permission Matrix Design
+
+[cols="2,2,2,2,2,2", options="header"]
+|===
+| Role | Tenant Access | Domain Access | Entity Access | Relationship Access | Collection Access
+
+| **tenant_admin**
+| All tenant data
+| All domains
+| All entities + metadata
+| All relationships + traversal
+| All collections + management
+
+| **domain_expert**
+| Single tenant
+| Assigned domains
+| Domain entities + full metadata
+| Domain relationships + traversal
+| Domain collections + read/write
+
+| **senior_analyst**
+| Single tenant
+| Read domains
+| Filtered entities (no PII)
+| Limited relationship traversal
+| Read-only collections
+
+| **junior_analyst** 
+| Single tenant
+| Public domains
+| Public entities (anonymized)
+| No relationship access
+| Read-only public collections
+
+| **service_account**
+| Single tenant
+| Service domains
+| Service entities (API)
+| Automated relationships
+| Service collections (API)
+
+| **external_auditor**
+| Audit scope
+| Compliance domains
+| Audit entities (anonymized)
+| Audit relationships (metadata)
+| Audit collections (statistics)
+|===
+
+== 🎯 Enterprise Use Case Implementation
+
+=== Financial Services: Risk Assessment with Regulatory Compliance
+
+```rust
+/// Risk assessment use case with multi-domain knowledge correlation
+pub async fn financial_risk_assessment_use_case() -> Result<RiskAssessmentReport> {
+    // Initialize tenant knowledge graph for bank
+    let bank_tenant = TenantKnowledgeGraph::new(
+        "global_bank_corp".to_string(),
+        TenantConfig {
+            compliance_requirements: vec![
+                ComplianceFramework::BaselIII,
+                ComplianceFramework::SOX,
+                ComplianceFramework::GDPR,
+            ],
+            default_performance_tier: PerformanceTier::Hot, // Financial data needs speed
+            audit_retention_days: 2555, // 7 years for regulatory compliance
+            data_residency: DataResidency::RegionLocked, // Financial data locality
+        },
+    ).await?;
+    
+    // Create domain-specific knowledge graphs
+    let risk_domain = bank_tenant.get_or_create_domain(
+        "risk_management",
+        &UserContext::system_admin(),
+    ).await?;
+    
+    let customer_domain = bank_tenant.get_or_create_domain(
+        "customer_intelligence", 
+        &UserContext::system_admin(),
+    ).await?;
+    
+    let trading_domain = bank_tenant.get_or_create_domain(
+        "trading_operations",
+        &UserContext::system_admin(),
+    ).await?;
+    
+    // Link collections to domains with specific policies
+    risk_domain.link_collection(
+        "credit_risk_vectors",
+        CollectionLinkConfiguration {
+            auto_entity_creation: true,
+            entity_type: "risk_profile",
+            relationship_inference: RelationshipInferencePolicy::Conservative,
+            provenance_tracking: ProvenanceTrackingPolicy::Full, // Regulatory requirement
+            field_mapping: risk_field_mapping(),
+        },
+        &UserContext::risk_admin(),
+    ).await?;
+    
+    customer_domain.link_collection(
+        "customer_behavior_vectors", 
+        CollectionLinkConfiguration {
+            auto_entity_creation: true,
+            entity_type: "customer_profile",
+            relationship_inference: RelationshipInferencePolicy::Aggressive,
+            provenance_tracking: ProvenanceTrackingPolicy::Metadata, // Privacy balance
+            field_mapping: customer_field_mapping(),
+        },
+        &UserContext::customer_admin(),
+    ).await?;
+    
+    // Execute cross-domain risk assessment query
+    let risk_analyst_context = UserContext {
+        user_id: "senior_analyst_001".to_string(),
+        tenant_id: "global_bank_corp".to_string(),
+        roles: vec!["senior_risk_analyst".to_string()],
+        department: Some("risk_management".to_string()),
+        clearance_level: ClearanceLevel::Confidential,
+        permissions: risk_analyst_permissions(),
+    };
+    
+    let composition_query = CrossDomainCompositionQuery {
+        primary_domain: "risk_management".to_string(),
+        related_domains: vec!["customer_intelligence".to_string(), "trading_operations".to_string()],
+        composition_rules: vec![
+            CompositionRule::CorrelateEntities {
+                primary_field: "customer_id",
+                correlation_strength: 0.8,
+                max_hops: 2,
+            },
+            CompositionRule::EnrichWithRelationships {
+                relationship_types: vec!["portfolio_holder", "transaction_counterparty"],
+                include_indirect: true,
+            },
+            CompositionRule::AggregateRiskMetrics {
+                risk_factors: vec!["credit_score", "transaction_volume", "network_centrality"],
+                time_window: Duration::from_days(90),
+            },
+        ],
+        filters: CompositionFilters {
+            risk_threshold: Some(0.7),
+            customer_segment: Some("high_value".to_string()),
+            geographic_region: Some("north_america".to_string()),
+        },
+        result_format: CompositionResultFormat::RiskAssessmentReport,
+    };
+    
+    let composed_knowledge = bank_tenant.compose_knowledge_across_domains(
+        composition_query,
+        &risk_analyst_context,
+    ).await?;
+    
+    // Generate risk assessment report with full audit trail
+    Ok(RiskAssessmentReport {
+        assessment_id: Uuid::new_v4().to_string(),
+        composed_knowledge,
+        regulatory_compliance: RegulatoryCompliance {
+            basel_iii_compliant: true,
+            sox_audit_trail: composed_knowledge.provenance.sox_audit_chain,
+            gdpr_privacy_validated: true,
+        },
+        generated_at: chrono::Utc::now(),
+        generated_by: risk_analyst_context,
+    })
+}
+```
+
+=== Healthcare: Personalized Medicine with HIPAA Compliance
+
+```rust
+/// Personalized medicine use case with strict privacy controls
+pub async fn personalized_medicine_use_case() -> Result<PersonalizedTreatmentPlan> {
+    // Healthcare tenant with HIPAA compliance
+    let healthcare_tenant = TenantKnowledgeGraph::new(
+        "regional_health_system".to_string(),
+        TenantConfig {
+            compliance_requirements: vec![
+                ComplianceFramework::HIPAA,
+                ComplianceFramework::FDA_CFR_Part11,
+                ComplianceFramework::GDPR,
+            ],
+            default_performance_tier: PerformanceTier::Warm, // Balance cost/performance
+            audit_retention_days: 2555, // Long-term medical record retention
+            data_residency: DataResidency::StrictLocal, // Patient data locality
+            encryption_requirements: EncryptionRequirements::FIPS_140_2_Level_3,
+        },
+    ).await?;
+    
+    // Create medical domain knowledge graphs
+    let clinical_domain = healthcare_tenant.get_or_create_domain(
+        "clinical_care",
+        &UserContext::medical_admin(),
+    ).await?;
+    
+    let research_domain = healthcare_tenant.get_or_create_domain(
+        "medical_research",
+        &UserContext::research_admin(), 
+    ).await?;
+    
+    let genomics_domain = healthcare_tenant.get_or_create_domain(
+        "genomics_analysis",
+        &UserContext::genomics_admin(),
+    ).await?;
+    
+    // Link collections with strict privacy controls
+    clinical_domain.link_collection(
+        "patient_clinical_embeddings",
+        CollectionLinkConfiguration {
+            auto_entity_creation: true,
+            entity_type: "patient_profile",
+            relationship_inference: RelationshipInferencePolicy::Conservative, // Privacy-first
+            provenance_tracking: ProvenanceTrackingPolicy::Full, // HIPAA requirement
+            privacy_controls: PrivacyControls {
+                anonymization_required: true,
+                pii_fields_encrypted: true,
+                access_logging_required: true,
+                consent_validation_required: true,
+            },
+            field_mapping: clinical_field_mapping_hipaa_compliant(),
+        },
+        &UserContext::clinical_admin(),
+    ).await?;
+    
+    // Execute personalized medicine query with privacy controls
+    let physician_context = UserContext {
+        user_id: "dr_smith_md".to_string(),
+        tenant_id: "regional_health_system".to_string(),
+        roles: vec!["attending_physician".to_string(), "clinical_researcher".to_string()],
+        department: Some("cardiology".to_string()),
+        clearance_level: ClearanceLevel::PHI_Authorized, // HIPAA-specific clearance
+        medical_license: Some("MD_12345_STATE_CA".to_string()),
+        patient_consent_context: Some(PatientConsentContext {
+            patient_id: "patient_789".to_string(),
+            consent_types: vec!["treatment_planning", "clinical_research"],
+            consent_expiry: chrono::Utc::now() + chrono::Duration::days(365),
+        }),
+    };
+    
+    let personalized_query = CrossDomainCompositionQuery {
+        primary_domain: "clinical_care".to_string(),
+        related_domains: vec!["medical_research".to_string(), "genomics_analysis".to_string()],
+        composition_rules: vec![
+            CompositionRule::CorrelatePatientData {
+                patient_id: "patient_789".to_string(),
+                correlation_types: vec!["genetic_markers", "treatment_history", "drug_responses"],
+                privacy_level: PrivacyLevel::PHI_Protected,
+            },
+            CompositionRule::InferTreatmentOptions {
+                condition: "cardiovascular_disease".to_string(),
+                patient_characteristics: vec!["genetic_profile", "comorbidities", "medication_history"],
+                evidence_level: EvidenceLevel::ClinicalTrials,
+            },
+            CompositionRule::ValidateContraindications {
+                proposed_treatments: vec!["medication_A", "procedure_B"],
+                patient_profile: "patient_789".to_string(),
+                safety_threshold: 0.95,
+            },
+        ],
+        privacy_controls: PrivacyControls {
+            anonymization_required: false, // Direct patient care
+            audit_trail_required: true,
+            consent_validation_required: true,
+            access_purpose: AccessPurpose::DirectPatientCare,
+        },
+    };
+    
+    let composed_medical_knowledge = healthcare_tenant.compose_knowledge_across_domains(
+        personalized_query,
+        &physician_context,
+    ).await?;
+    
+    Ok(PersonalizedTreatmentPlan {
+        patient_id: "patient_789".to_string(),
+        composed_knowledge: composed_medical_knowledge,
+        hipaa_compliance: HIPAACompliance {
+            patient_consent_validated: true,
+            minimum_necessary_applied: true,
+            access_logged: true,
+            phi_protection_verified: true,
+        },
+        generated_at: chrono::Utc::now(),
+        authorized_physician: physician_context,
+    })
+}
+```
+
+== 📊 Performance & Scalability Design
+
+=== Domain Sharding Strategy
+
+[source,mermaid]
+----
+graph TB
+    subgraph "🏢 Enterprise Tenant: Global Corp"
+        A[Domain Shard 1<br/>Americas Operations<br/>Entity Store US<br/>Relationship Store US]
+        B[Domain Shard 2<br/>EMEA Operations<br/>Entity Store EU<br/>Relationship Store EU]
+        C[Domain Shard 3<br/>APAC Operations<br/>Entity Store APAC<br/>Relationship Store APAC]
+    end
+    
+    subgraph "⚖️ Load Balancing & Query Routing"
+        D[Domain Query Router<br/>Geographic routing<br/>Load balancing<br/>Failover handling]
+        E[Cross-Shard Composer<br/>Distributed queries<br/>Result aggregation<br/>Consistency management]
+    end
+    
+    subgraph "📈 Performance Optimization"
+        F[Domain-Specific Caching<br/>Hot entity caching<br/>Relationship memoization<br/>Query result caching]
+        G[Intelligent Prefetching<br/>Domain-aware patterns<br/>User behavior prediction<br/>Cross-domain correlation]
+    end
+    
+    A --> D
+    B --> D
+    C --> D
+    
+    D --> E
+    E --> F
+    F --> G
+    
+    style A fill:#4CAF50
+    style B fill:#2196F3
+    style C fill:#FF9800
+    style D fill:#9C27B0
+    style E fill:#F44336
+    style F fill:#795548
+    style G fill:#607D8B
+----
+
+=== Performance Characteristics
+
+[cols="3,2,3,2", options="header"]
+|===
+| Performance Aspect | Current Global Design | Enhanced Domain Design | Improvement
+
+| **Entity Query Latency**
+| 50-100ms (global lock)
+| 10-20ms (domain-scoped)
+| **3-5x Faster**
+
+| **Relationship Traversal**
+| 100-500ms (full graph)
+| 20-50ms (domain graph)
+| **5-10x Faster**
+
+| **RBAC Validation**
+| Basic collection-level
+| Multi-level hierarchical
+| **Enterprise Grade**
+
+| **Concurrent Users**
+| Limited by global locks
+| Scales per domain
+| **10x+ Concurrency**
+
+| **Memory Usage**
+| Single large cache
+| Domain-specific caches
+| **Optimized Memory**
+
+| **Audit Performance**
+| Mixed audit trails
+| Domain-specific trails
+| **Compliance Optimized**
+|===
+
+== 🚀 Implementation Plan
+
+=== Phase 1: Core Architecture (4-6 weeks)
+
+[cols="3,1,3,2", options="header"]
+|===
+| Implementation Task | Priority | Description | Timeline
+
+| **TenantKnowledgeGraph**
+| P0
+| Core tenant-aware knowledge graph implementation
+| Week 1-2
+
+| **DomainKnowledgeGraph**  
+| P0
+| Domain-specific entity and relationship stores
+| Week 2-3
+
+| **CollectionEntityBridge**
+| P0
+| Collection-entity linking with RBAC
+| Week 3-4
+
+| **Basic RBAC Integration**
+| P0
+| Multi-level permission validation
+| Week 4-5
+
+| **Backward Compatibility**
+| P1
+| Global store adapter for existing code
+| Week 5-6
+|===
+
+=== Phase 2: Advanced Features (6-8 weeks)
+
+[cols="3,1,3,2", options="header"]
+|===
+| Implementation Task | Priority | Description | Timeline
+
+| **Cross-Domain Composition**
+| P1
+| Knowledge fusion across domains
+| Week 7-9
+
+| **Advanced RBAC**
+| P1
+| Field-level and relationship-level security
+| Week 9-11
+
+| **Provenance Enhancement**
+| P1
+| Domain-specific audit trails
+| Week 11-12
+
+| **Performance Optimization**
+| P2
+| Domain sharding and caching
+| Week 13-14
+|===
+
+=== Phase 3: Enterprise Features (8-10 weeks)
+
+[cols="3,1,3,2", options="header"]
+|===
+| Implementation Task | Priority | Description | Timeline
+
+| **Compliance Automation**
+| P1
+| Automated regulatory reporting
+| Week 15-16
+
+| **Advanced Analytics**
+| P2
+| Cross-domain business intelligence
+| Week 17-18
+
+| **Multi-Region Support**
+| P2
+| Geographic data distribution
+| Week 19-20
+|===
+
+== 🔧 API Design Specification
+
+=== Enhanced SKS Functions
+
+```sql
+-- Domain-aware entity queries with RBAC
+SELECT entity_id, entity_type, metadata
+FROM DOMAIN('risk_management').entities 
+WHERE ENTITY_TYPE = 'high_risk_customer'
+  AND AUTHORIZED_BY_RBAC(CURRENT_USER())
+  AND DOMAIN_ACCESSIBLE('risk_management', CURRENT_USER());
+
+-- Cross-domain knowledge composition
+SELECT 
+    r.entity_id as risk_entity,
+    c.entity_id as customer_entity,
+    COMPOSE_KNOWLEDGE(r.entity_id, c.entity_id) as composed_intelligence,
+    TRACE_PROVENANCE(r.entity_id, c.entity_id) as audit_trail
+FROM DOMAIN('risk_management').entities r
+JOIN DOMAIN('customer_intelligence').entities c
+  ON RELATED(r.entity_id, c.entity_id, 'customer_relationship')
+WHERE r.risk_score > 0.8
+  AND AUTHORIZED_CROSS_DOMAIN(CURRENT_USER(), ['risk_management', 'customer_intelligence']);
+
+-- Collection-entity enriched search
+SELECT 
+    vector_id,
+    similarity_score,
+    ENRICH_WITH_ENTITY(vector_id, 'customer_domain') as entity_context,
+    ENRICH_WITH_RELATIONSHIPS(vector_id, 'interaction_network', 2) as relationship_context
+FROM VECTOR_SEARCH(
+    collection = 'customer_behavior_vectors',
+    query_vector = VECTOR(0.1, 0.2, ...),
+    k = 50
+) enriched
+WHERE ENTITY_ACCESSIBLE(enriched.entity_id, CURRENT_USER())
+ORDER BY similarity_score DESC;
+```
+
+=== REST API Enhancement
+
+```typescript
+// Tenant-aware knowledge graph API
+interface TenantKnowledgeGraphAPI {
+    // Domain management
+    createDomain(tenantId: string, domainName: string, config: DomainConfig): Promise<DomainGraph>;
+    getDomain(tenantId: string, domainName: string): Promise<DomainGraph | null>;
+    listDomains(tenantId: string, userContext: UserContext): Promise<DomainGraph[]>;
+    
+    // Collection-entity bridging
+    linkCollectionToDomain(
+        tenantId: string,
+        domainName: string, 
+        collectionId: string,
+        linkConfig: CollectionLinkConfig
+    ): Promise<CollectionBridge>;
+    
+    // Cross-domain knowledge composition
+    composeKnowledge(
+        tenantId: string,
+        compositionQuery: CrossDomainQuery,
+        userContext: UserContext
+    ): Promise<ComposedKnowledge>;
+    
+    // Secure entity operations
+    queryEntitiesSecure(
+        tenantId: string,
+        domainName: string,
+        query: EntityQuery,
+        userContext: UserContext
+    ): Promise<SecureEntityResult>;
+    
+    // Relationship traversal with RBAC
+    traverseRelationshipsSecure(
+        tenantId: string,
+        domainName: string,
+        traversalQuery: TraversalQuery,
+        userContext: UserContext
+    ): Promise<SecureTraversalResult>;
+}
+```
+
+== 📈 Success Metrics & Validation
+
+=== Implementation Success Criteria
+
+[cols="3,2,3,2", options="header"]
+|===
+| Success Metric | Target | Measurement Method | Validation
+
+| **Tenant Isolation**
+| 100% data separation
+| Security audit + penetration testing
+| No cross-tenant data leakage
+
+| **RBAC Effectiveness**
+| 100% authorization coverage
+| Permission matrix validation testing  
+| All access properly controlled
+
+| **Performance Improvement**
+| 3-5x faster domain queries
+| Benchmark testing vs current design
+| Latency reduction achieved
+
+| **Compliance Readiness**
+| SOC 2, HIPAA, GDPR ready
+| Compliance framework validation
+| Regulatory audit preparation
+
+| **Scalability**
+| 10x+ concurrent users
+| Load testing with domain isolation
+| Linear scaling demonstrated
+
+| **Backward Compatibility**
+| 100% existing code works
+| Regression testing suite
+| No breaking changes
+|===
+
+=== Enterprise Validation Scenarios
+
+**Financial Services Validation**:
+- Multi-domain risk assessment with regulatory compliance
+- Cross-border data residency and privacy controls
+- Real-time fraud detection with audit trails
+- Regulatory reporting automation
+
+**Healthcare Validation**:
+- Patient care with HIPAA-compliant knowledge graphs
+- Clinical research with anonymized data correlation
+- Drug interaction analysis with safety provenance
+- Medical device integration with FDA compliance
+
+**E-commerce Validation**:
+- Customer intelligence with privacy controls
+- Product recommendation with business context
+- Supply chain optimization with relationship intelligence
+- Marketing personalization with consent management
+
+---
+
+**🎯 This specification enhances ProximaDB's existing graph and SKS capabilities to support true enterprise multi-tenancy with domain-aware knowledge graphs, comprehensive RBAC, and regulatory compliance.**
+
+_Specification Version: 1.0_ +
+_Date: September 12, 2025_ +
+_Status: Design Complete - Ready for Implementation_
