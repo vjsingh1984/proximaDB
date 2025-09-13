@@ -116,6 +116,9 @@ pub mod audit;
 /// AI-powered intelligence for Release 2 enterprise platform
 pub mod ai;
 
+/// Executive intelligence platform for C-level strategic analytics
+pub mod executive;
+
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
 pub mod index;
 // Unified metrics module - combines advanced persistent metrics with real-time monitoring
