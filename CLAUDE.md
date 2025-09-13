@@ -30,14 +30,21 @@ cargo test --verbose
 # Integration tests
 cargo test --test integration --verbose
 
-# Python tests (requires server running)
+# Python SDK tests (from clients/python directory)
 cd clients/python && pytest tests/ -v
+
+# Python integration tests (from tests/python directory)
+cd tests/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=/workspace/clients/python/src python3 -m pytest -v
 
 # Run specific test category
 cargo test --test integration storage::
 
 # Single test with debug output
 RUST_LOG=debug cargo test test_name -- --nocapture
+
+# Check current compilation status
+cargo build 2>&1 | tee current_error.log
+cat current_error.log | head -20  # Review recent errors
 ```
 
 ### Running the Server
@@ -72,6 +79,11 @@ cargo bench
 # Specific benchmarks
 cargo bench --bench simd_distance_bench
 cargo bench --bench engine_comparison_bench
+cargo bench --bench flush_optimization_bench
+cargo bench --bench vector_optimization_bench
+
+# Run benchmark binary
+cargo run --bin proximadb-bench
 ```
 
 ## Architecture Overview
@@ -157,6 +169,16 @@ Key configuration sections:
 - `[storage.compaction]`: Background optimization settings
 - `[compute.quantization]`: Compression algorithm selection
 
+### Feature Flags
+Important Cargo feature flags (use with `--features`):
+- `sql_frontend` (default): Modern SQL frontend vs legacy sql_engine
+- `cloud-full`: Enable all cloud storage backends (AWS + Azure + GCP)
+- `aws`, `azure`, `gcp`: Individual cloud storage backends
+- `rocksdb`: RocksDB metadata backend support
+- `distributed`, `standalone`: Deployment mode selection
+- `gpu`: GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
+- `debug-filters`: Enable debug filtering for search operations
+
 ### Data Directories
 - `/data/wal/`: Write-ahead log files
 - `/data/metadata/`: Metadata storage with subdirs: current/, archive/, __staging/
@@ -189,18 +211,24 @@ All engines implement the `UnifiedStorageEngine` trait with:
 ## Development Guidelines
 
 ### When Fixing Compilation Errors
-1. **Check current_error.log**: Always review the latest compilation log
-2. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, etc.)
-3. **Quantization Issues**: All engines should use `compute::quantization::unified`
-4. **Filesystem Issues**: All engines should use `IntelligentFilesystem`
-5. **Proto Types**: Use internal types, proto conversion only at service boundaries
+1. **Check current_error.log**: Always review the latest compilation log with `cargo build 2>&1 | tee current_error.log`
+2. **Common Error Patterns**:
+   - `struct import 'AxisConfig' is private`: Use public interfaces from index::axis modules
+   - `this function takes 1 argument but 0 arguments were supplied`: Check UnifiedDistanceCompute requires DistanceMetric parameter
+   - Lifetime errors: Review async/await usage and reference management
+3. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, SST, SWIFT, RAPTOR, PRISM, HELIX)
+4. **Quantization Issues**: All engines should use `compute::quantization::unified`
+5. **Filesystem Issues**: All engines should use `IntelligentFilesystem`
+6. **Proto Types**: Use internal types, proto conversion only at service boundaries
 
 ### Testing Strategy
-1. **Unit Tests**: `tests/unit/` - test individual components
-2. **Integration Tests**: `tests/integration/` - test system interactions  
-3. **Engine-Specific Tests**: Each engine has its own test suite
-4. **Python SDK Tests**: `clients/python/tests/` - test client functionality
-5. **Benchmarks**: `benches/` - performance testing
+1. **Rust Unit Tests**: Located in individual modules and `tests/` directory
+2. **Integration Tests**: `cargo test --test integration` - test system interactions  
+3. **Engine-Specific Tests**: Each storage engine has its own test suite
+4. **Python SDK Tests**: `clients/python/tests/` - test SDK functionality
+5. **Python Integration Tests**: `tests/python/` - comprehensive system tests
+6. **Benchmarks**: `benches/` - performance testing with criterion
+7. **Current Status**: Use `current_error.log` to track compilation issues
 
 ### Important Files
 - `src/lib.rs`: Main library entry point

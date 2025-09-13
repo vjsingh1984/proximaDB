@@ -15,7 +15,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 // Use unified components instead of custom implementations
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
+use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute, SimilarityResult};
 use crate::core::search::results::OptimizedSearchRecord;
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
@@ -61,14 +61,8 @@ impl Ord for OrdFloat {
 }
 
 /// Result structures for similarity search
-
-/// Individual similarity search result
-#[derive(Debug, Clone)]
-pub struct SimilarityResult {
-    pub id: String,
-    pub distance: f32,
-    pub vector: Vec<f32>,
-}
+/// Note: Using unified SimilarityResult from compute::distance_computation::engine
+/// Local struct removed to eliminate duplication
 
 /// Partial rowgroup structure for selective column reading
 pub struct PartialRowGroup {
