@@ -4554,33 +4554,65 @@ impl SstStorage {
         Ok(result)
     }
 
-    // TODO: Missing methods needed by VectorOperationsService - implement properly
+    /// Configure scan filter for metadata filtering during storage scans
+    /// 
+    /// Integrates with SST's three-stage filtering pipeline for optimal performance
     async fn set_scan_filter(
         &self,
-        _collection_id: &str,
-        _filter: &UnifiedMetadataFilter,
+        collection_id: &str,
+        filter: &UnifiedMetadataFilter,
     ) -> Result<()> {
-        // TODO: Implement scan filter configuration
-        Ok(())
+        // Delegate to the comprehensive filter_methods implementation
+        self.set_scan_filter(collection_id, filter).await
     }
 
+    /// Configure index filter for metadata filtering during index lookups
+    /// 
+    /// Integrates with SST's index-based filtering for enhanced query performance
     async fn set_index_filter(
         &self,
-        _collection_id: &str,
-        _index: &str,
-        _filter: &UnifiedMetadataFilter,
+        collection_id: &str,
+        index_name: &str,
+        filter: &UnifiedMetadataFilter,
     ) -> Result<()> {
-        // TODO: Implement index filter configuration
-        Ok(())
+        // Delegate to the comprehensive filter_methods implementation
+        self.set_index_filter(collection_id, index_name, filter).await
     }
 
-    async fn collection(&self, _collection_id: &str) -> Result<Collection> {
-        // TODO: Implement collection retrieval
+    /// Retrieve collection metadata for the specified collection
+    async fn collection(&self, collection_id: &str) -> Result<Collection> {
         use crate::proto::proximadb_v1::Collection;
-        Ok(Collection {
-            id: _collection_id.to_string(),
-            ..Default::default()
-        })
+        
+        // Get collection metadata from the metadata store
+        let storage_url = self.get_collection_storage_url(collection_id)?;
+        let metadata_path = format!("{}/metadata.json", storage_url);
+        
+        // Try to load existing metadata, or create default if not found
+        match self.filesystem.read_file(&metadata_path).await {
+            Ok(metadata_bytes) => {
+                // Parse existing metadata
+                let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse collection metadata: {}", e))?;
+                
+                Ok(Collection {
+                    id: collection_id.to_string(),
+                    name: metadata.get("name").and_then(|v| v.as_str()).unwrap_or(collection_id).to_string(),
+                    dimension: metadata.get("dimension").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                    distance_metric: metadata.get("distance_metric").and_then(|v| v.as_str()).unwrap_or("cosine").to_string(),
+                    ..Default::default()
+                })
+            }
+            Err(_) => {
+                // Return minimal collection info if metadata not found
+                Ok(Collection {
+                    id: collection_id.to_string(),
+                    name: collection_id.to_string(),
+                    dimension: 0, // Will be determined from first vector
+                    distance_metric: "cosine".to_string(),
+                    ..Default::default()
+                })
+            }
+        }
     }
 
     async fn list_collection_files(&self, collection_id: &str) -> Result<Vec<String>> {
