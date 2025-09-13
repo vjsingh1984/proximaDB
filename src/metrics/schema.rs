@@ -91,7 +91,7 @@ pub struct CollectionMetrics {
 }
 
 /// Statistics for a filterable column
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FilterableColumnStats {
     pub column_name: String,
     pub data_type: String, // Data type of the column
@@ -105,7 +105,7 @@ pub struct FilterableColumnStats {
 }
 
 /// Information about an available index
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexInfo {
     pub index_name: String,
     pub algorithm: String, // "HNSW", "IVF", "FLAT", etc.
@@ -117,7 +117,7 @@ pub struct IndexInfo {
 }
 
 /// Index build status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum IndexBuildStatus {
     NotStarted,
     Building { progress_percent: f32 },

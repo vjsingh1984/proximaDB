@@ -526,7 +526,7 @@ async fn phase4_full_precision(
         let sem = semaphore.clone();
         let query = query.to_vec();
         let filter = filter.clone();
-        let distance_metric = sst.header.distance_metric;
+        let distance_metric = sst.header.distance_metric.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();

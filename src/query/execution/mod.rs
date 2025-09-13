@@ -35,12 +35,12 @@ impl QueryEngine {
         graph_service: Arc<GraphService>,
     ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::new(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
         );
 
         let executor = crate::query::execution::executor::QueryExecutor::new(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
         );
 
@@ -59,12 +59,12 @@ impl QueryEngine {
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
     ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::with_params(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
             params,
         );
         let executor = crate::query::execution::executor::QueryExecutor::new(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
         );
         Self {
@@ -84,14 +84,14 @@ impl QueryEngine {
         fusion_weights: Option<Vec<f64>>,
     ) -> Self {
         let mut planner = crate::query::execution::planner::ExecutionPlanner::with_params(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
             params,
         );
         planner.set_seeding_strategy(seeding_strategy.clone());
         planner.set_fusion_weights(fusion_weights);
         let executor = crate::query::execution::executor::QueryExecutor::new(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
         );
         Self {
@@ -167,7 +167,7 @@ impl QueryEngine {
 }
 
 /// Execution strategy determined by query analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ExecutionStrategy {
     /// Vector-only queries (similarity search, metadata filtering)
     VectorOnly,
@@ -193,7 +193,7 @@ pub struct ExecutionPlan {
 }
 
 /// Individual operation in the execution plan
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ExecutionOperation {
     /// Vector search operation with HashMap metadata filtering
     VectorSearch {
