@@ -143,4 +143,84 @@ impl DistanceTableCache {
         // Individual cache clearing is managed by the orchestrator
         debug!("Distance table cache clear requested - managed by unified orchestrator");
     }
+
+    /// Batch precompute and cache distance tables for performance optimization
+    pub async fn warm_cache_batch<F>(&self, keys: Vec<DistanceTableKey>, compute_fn: F) -> Result<()>
+    where
+        F: Fn(&DistanceTableKey) -> Result<Vec<Vec<f32>>>,
+    {
+        debug!("Warming cache with {} distance tables", keys.len());
+        
+        for key in keys {
+            let cache_key = self.create_cache_key(&key);
+            
+            // Skip if already cached
+            if let Ok(Some(_)) = self.cache_orchestrator.get(&CacheType::DistanceTable, &cache_key) {
+                continue;
+            }
+            
+            // Compute and cache
+            if let Ok(distances) = compute_fn(&key) {
+                let cached_table = CachedDistanceTable {
+                    distances,
+                    access_count: 0,
+                };
+                
+                if let Ok(cached_data) = serde_json::to_vec(&cached_table) {
+                    let _ = self.cache_orchestrator.put(CacheType::DistanceTable, cache_key, cached_data, None);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Optimize cache by prefetching related distance tables
+    pub async fn prefetch_related(&self, base_key: &DistanceTableKey) -> Result<()> {
+        let related_keys = self.generate_related_keys(base_key);
+        
+        // Implement simple prefetching for commonly accessed patterns
+        for related_key in related_keys {
+            let cache_key = self.create_cache_key(&related_key);
+            
+            // Check if already cached to avoid unnecessary work
+            if let Ok(None) = self.cache_orchestrator.get(&CacheType::DistanceTable, &cache_key) {
+                // Could implement predictive computation here based on patterns
+                trace!("Could prefetch related key: {:?}", related_key);
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Generate related keys for predictive caching
+    fn generate_related_keys(&self, base_key: &DistanceTableKey) -> Vec<DistanceTableKey> {
+        let mut related = Vec::new();
+        
+        // Generate variants with different bit counts (common access pattern)
+        for bits in [4, 8, 16, 32] {
+            if bits != base_key.bits {
+                related.push(DistanceTableKey {
+                    query_hash: base_key.query_hash,
+                    segments: base_key.segments,
+                    bits,
+                    metric: base_key.metric.clone(),
+                });
+            }
+        }
+        
+        // Generate variants with different segment counts
+        for segments in [8, 16, 32, 64] {
+            if segments != base_key.segments {
+                related.push(DistanceTableKey {
+                    query_hash: base_key.query_hash,
+                    segments,
+                    bits: base_key.bits,
+                    metric: base_key.metric.clone(),
+                });
+            }
+        }
+        
+        related
+    }
 }

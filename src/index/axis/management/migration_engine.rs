@@ -642,27 +642,30 @@ impl IndexMigrationEngine {
     }
 
     /// Get performance score for different algorithms (higher is better)
-    fn algorithm_performance_score(&self, algorithm: &crate::index::axis::types::IndexingAlgorithm) -> f64 {
-        use crate::index::axis::types::IndexingAlgorithm;
+    fn algorithm_performance_score(&self, algorithm: &crate::index::axis::types::IndexAlgorithm) -> f64 {
+        use crate::index::axis::types::IndexAlgorithm;
         match algorithm {
-            IndexingAlgorithm::Hnsw => 95.0,      // Excellent for high-dimensional data
-            IndexingAlgorithm::Ivf => 85.0,       // Good for large datasets
-            IndexingAlgorithm::Pq => 75.0,        // Good for memory-constrained scenarios
-            IndexingAlgorithm::Flat => 60.0,      // Baseline performance
-            IndexingAlgorithm::Annoy => 70.0,     // Good for static datasets
-            IndexingAlgorithm::Lsh => 65.0,       // Good for approximate similarity
+            IndexAlgorithm::HNSW { .. } => 95.0,          // Excellent for high-dimensional data
+            IndexAlgorithm::IVF { .. } => 85.0,           // Good for large datasets  
+            IndexAlgorithm::PQ { .. } => 75.0,            // Good for memory-constrained scenarios
+            IndexAlgorithm::LSH { .. } => 65.0,           // Good for approximate similarity
+            IndexAlgorithm::BTree { .. } => 80.0,         // Excellent for exact metadata indexing
+            IndexAlgorithm::InvertedIndex { .. } => 90.0, // Excellent for full-text search
+            IndexAlgorithm::SkipList { .. } => 70.0,      // Good for sorted data
+            IndexAlgorithm::BloomFilter { .. } => 50.0,   // Good for membership testing
         }
     }
 
     /// Get multiplier based on data type characteristics
     fn data_type_multiplier(&self, data_type: &Data) -> f64 {
         match data_type {
-            Data::HighDimensional => 1.2,  // More benefit from advanced indexes
-            Data::LowDimensional => 1.0,   // Standard benefit
-            Data::Text => 1.1,             // Moderate benefit
-            Data::Image => 1.15,           // Good benefit for image data
-            Data::Audio => 1.1,            // Moderate benefit
-            Data::Mixed => 1.05,           // Slight benefit
+            Data::DenseVector { dimension } => {
+                if *dimension > 512 { 1.2 } else { 1.0 }  // More benefit for high-dimensional data
+            },
+            Data::SparseVector { .. } => 1.1,   // Moderate benefit for sparse vectors
+            Data::Metadata => 0.9,              // Less benefit for simple metadata
+            Data::FullText => 1.15,             // Good benefit for text search
+            Data::Identifier => 0.8,            // Minimal benefit for simple identifiers
         }
     }
 }

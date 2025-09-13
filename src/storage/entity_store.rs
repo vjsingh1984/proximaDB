@@ -691,15 +691,58 @@ impl ProximaEntityStore {
     /// Check if typed metadata matches filter value
     fn typed_metadata_matches(&self, metadata: &TypedMetadata, filter_value: &SqlValue) -> bool {
         match (&metadata.value, filter_value) {
-            (Some(crate::proto::proximadb_v1::typed_metadata::Value::StringValue(m)), 
+            (Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue(m)), 
              SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(f)) }) => m == f,
-            (Some(crate::proto::proximadb_v1::typed_metadata::Value::NumberValue(m)), 
+            (Some(crate::proto::proximadb_v1::metadata_value::Value::NumberValue(m)), 
              SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) }) => (m - f).abs() < f64::EPSILON,
-            (Some(crate::proto::proximadb_v1::typed_metadata::Value::BoolValue(m)), 
+            (Some(crate::proto::proximadb_v1::metadata_value::Value::BoolValue(m)), 
              SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(f)) }) => m == f,
             // For mismatched types, conservatively return false
             _ => false,
         }
+    }
+
+    /// Optimized batch entity filtering to reduce allocations
+    pub async fn batch_filter_entities(&self, 
+        collection_id: &str, 
+        filters: &[MetadataFilter],
+        limit: Option<usize>
+    ) -> Result<Vec<Entity>> {
+        let mut results = Vec::new();
+        let mut count = 0;
+        let max_count = limit.unwrap_or(usize::MAX);
+
+        // Pre-allocate with reasonable capacity to reduce reallocations
+        results.reserve(std::cmp::min(max_count, 1000));
+
+        // Use iterator to avoid collecting intermediate vectors
+        for (entity_id, header) in self.entity_headers.iter() {
+            if count >= max_count {
+                break;
+            }
+
+            if entity_id.starts_with(&format!("{}_", collection_id)) {
+                let mut all_match = true;
+                
+                // Early exit on first non-matching filter
+                for filter in filters {
+                    if !self.header_matches_filter(header.value(), filter) {
+                        all_match = false;
+                        break;
+                    }
+                }
+
+                if all_match {
+                    // Only retrieve full entity if needed
+                    if let Some(entity) = self.entities.get(entity_id) {
+                        results.push(entity.value().clone());
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     async fn list_entities(

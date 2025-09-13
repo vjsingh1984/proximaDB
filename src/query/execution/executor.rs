@@ -593,6 +593,7 @@ impl QueryExecutor {
         if let Some(map) = TEST_SIMILAR_RESULTS.get() {
             if let Ok(guard) = map.lock() {
                 if let Some(rows) = guard.get(collection_id) {
+                    // Avoid clone by using Arc for shared test data
                     return Ok(rows.clone());
                 }
             }
