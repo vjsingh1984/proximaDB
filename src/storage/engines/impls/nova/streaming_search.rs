@@ -438,7 +438,7 @@ impl StreamingSearchEngine {
             // Use advanced zone map for intersection
             let intersection_result = advanced_zone_map.can_intersect_advanced(
                 query_vector,
-                DistanceMetric::Euclidean,
+                "euclidean".to_string(),
                 f32::INFINITY,
                 execution_plan.optimization_strategy.clone(),
             );

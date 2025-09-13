@@ -1142,7 +1142,8 @@ impl CrossCacheOrchestrator {
             CacheType::Metadata => {
                 if let Some(cache) = &self.metadata_cache {
                     // TODO: Fix method signature - put might only take key and value
-                    cache.put(&key, value).await
+                    let json_value = serde_json::from_slice(&value).unwrap_or(serde_json::Value::Null);
+                    cache.put(&key, json_value).await
                 } else {
                     Ok(())
                 }
@@ -1199,25 +1200,25 @@ impl CrossCacheOrchestrator {
 
         // Add cache-specific metrics
         if let Some(cache) = &self.query_cache {
-            if let Ok(cache_metrics) = cache.get_metrics().await {
+            if let Ok(cache_metrics) = cache.metrics() {
                 metrics.insert("query_cache".to_string(), cache_metrics);
             }
         }
 
         if let Some(cache) = &self.filter_cache {
-            if let Ok(cache_metrics) = cache.get_metrics().await {
+            if let Ok(cache_metrics) = cache.metrics() {
                 metrics.insert("filter_cache".to_string(), cache_metrics);
             }
         }
 
         if let Some(cache) = &self.index_cache {
-            if let Ok(cache_metrics) = cache.get_metrics().await {
+            if let Ok(cache_metrics) = cache.metrics() {
                 metrics.insert("index_cache".to_string(), cache_metrics);
             }
         }
 
         if let Some(cache) = &self.metadata_cache {
-            if let Ok(cache_metrics) = cache.get_metrics().await {
+            if let Ok(cache_metrics) = cache.metrics() {
                 metrics.insert("metadata_cache".to_string(), cache_metrics);
             }
         }

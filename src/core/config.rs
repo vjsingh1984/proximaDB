@@ -269,7 +269,7 @@ impl Default for StorageConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ServerConfig {
     pub node_id: String,
     pub bind_address: String,
@@ -447,7 +447,7 @@ pub struct FilesystemOptimizationConfig {
 }
 
 /// Temp strategy configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TempStrategy {
     /// Same directory temp (recommended for local filesystem)
     SameDirectory,
@@ -990,7 +990,7 @@ pub struct WalStorageConfig {
     pub global_shrink_factor: Option<f64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum WalDistributionStrategy {
     /// Round-robin across WAL directories
     RoundRobin,

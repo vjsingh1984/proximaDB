@@ -481,7 +481,7 @@ pub struct ColumnStats {
     pub uncompressed_size: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ColumnEncoding {
     Dictionary { num_entries: usize },
     Integer { bits: usize },
@@ -611,7 +611,7 @@ pub struct LocalityClusterInfo {
     pub vector_count: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FieldDescriptor {
     pub name: String,
     pub data_type: MetadataData,

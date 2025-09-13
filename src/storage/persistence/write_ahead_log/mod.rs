@@ -2360,7 +2360,7 @@ impl WriteAheadLogManager {
             let collection_start = std::time::Instant::now();
             
             // 1. Force flush any pending data from memory to disk
-            match self.shared_wal_behavior.flush_collection(collection_id).await {
+            match self.flush_collection(collection_id).await {
                 Ok(flush_result) => {
                     debug!(
                         "Collection '{}' flushed: {} entries, {} bytes", 

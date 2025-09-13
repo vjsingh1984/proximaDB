@@ -147,14 +147,15 @@ impl QueryExecutor {
             Vec::new()
         }
     }
-    /// Create new query executor with service integrations
-    pub fn new(
+    /// Create new query executor with service integrations (non-optional vector service)
+    pub fn with_services(
         vector_service: Arc<VectorOperationsService>,
         graph_service: Arc<GraphService>,
     ) -> Self {
         Self {
             vector_service: Some(vector_service),
             graph_service,
+            memory_pool: VectorPool::new(),
         }
     }
 
@@ -163,6 +164,7 @@ impl QueryExecutor {
         Self {
             vector_service: None,
             graph_service,
+            memory_pool: VectorPool::new(),
         }
     }
 

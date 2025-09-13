@@ -2657,7 +2657,7 @@ pub struct HnswConfig {
     pub lazy_loading: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct IvfConfig {
     #[prost(uint32, tag = "1")]
     pub n_lists: u32,
@@ -2675,7 +2675,7 @@ pub struct IvfConfig {
     pub min_train_size: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct LshConfig {
     #[prost(uint32, tag = "1")]
     pub n_hash_tables: u32,

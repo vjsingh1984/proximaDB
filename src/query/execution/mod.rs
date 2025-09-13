@@ -35,7 +35,7 @@ impl QueryEngine {
         graph_service: Arc<GraphService>,
     ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::new(
-            Some(vector_service.clone()),
+            vector_service.clone(),
             graph_service.clone(),
         );
 
@@ -59,7 +59,7 @@ impl QueryEngine {
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
     ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::with_params(
-            Some(vector_service.clone()),
+            vector_service.clone(),
             graph_service.clone(),
             params,
         );
@@ -84,7 +84,7 @@ impl QueryEngine {
         fusion_weights: Option<Vec<f64>>,
     ) -> Self {
         let mut planner = crate::query::execution::planner::ExecutionPlanner::with_params(
-            Some(vector_service.clone()),
+            vector_service.clone(),
             graph_service.clone(),
             params,
         );
@@ -327,7 +327,7 @@ impl ExecutionOperation {
 }
 
 /// Seeding strategy for hybrid graph→vector path
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SeedingStrategy {
     /// Average seed embeddings into a single query vector
     Average,
@@ -338,7 +338,7 @@ pub enum SeedingStrategy {
 }
 
 /// Fusion strategies for hybrid queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum FusionStrategy {
     /// Simple additive score combination
     Additive,
@@ -351,7 +351,7 @@ pub enum FusionStrategy {
 }
 
 /// Projection transformations for result formatting
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ProjectionTransform {
     /// Extract metadata field with HashMap optimization
     ExtractMetadata { field: String },
@@ -362,14 +362,14 @@ pub enum ProjectionTransform {
 }
 
 /// Aggregate specification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AggregateSpec {
     pub alias: String,
     pub func: AggregateFunc,
     pub field: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AggregateFunc {
     Count,
     Sum,
@@ -378,7 +378,7 @@ pub enum AggregateFunc {
     Max,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum JoinKind {
     Inner,
     Left,

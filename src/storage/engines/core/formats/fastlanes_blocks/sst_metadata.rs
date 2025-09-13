@@ -98,9 +98,11 @@ pub struct SstMetadata {
     pub variable_data: Vec<u8>,
 
     /// Parsed global bloom filter (lazy-loaded)
+    #[serde(skip)]
     global_bloom: parking_lot::RwLock<Option<Arc<SstableBloomFilter>>>,
 
     /// Parsed block bloom filters (lazy-loaded)
+    #[serde(skip)]
     block_blooms: parking_lot::RwLock<HashMap<u32, Arc<Vec<u8>>>>,
 }
 
