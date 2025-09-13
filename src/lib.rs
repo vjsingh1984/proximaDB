@@ -110,6 +110,9 @@ pub mod api_handlers;
 /// Enhanced authentication and authorization for multi-tenant enterprise
 pub mod auth;
 
+/// Comprehensive audit system for enterprise compliance
+pub mod audit;
+
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
 pub mod index;
 // Unified metrics module - combines advanced persistent metrics with real-time monitoring
