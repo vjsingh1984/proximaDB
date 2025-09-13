@@ -10,7 +10,7 @@
 
 toc::[]
 
-== 🛡️ Security Overview
+== Security Overview
 
 ProximaDB's security architecture is built on three foundational principles:
 
@@ -18,45 +18,51 @@ ProximaDB's security architecture is built on three foundational principles:
 |===
 | Security Principle | Implementation
 
-| **🔐 Identity & Access Management**
+| **Identity & Access Management**
 | Multi-method authentication with granular role-based access control
 
-| **🏢 Multi-Tenant Isolation** 
+| **Multi-Tenant Isolation** 
 | Secure tenant boundaries with data segregation and resource isolation
 
-| **🔒 Transport & Data Security**
+| **Transport & Data Security**
 | End-to-end encryption with mutual TLS and configurable data protection
 |===
 
-== 🔑 Authentication Methods
+== Authentication Methods
 
 ProximaDB supports multiple authentication methods to fit different deployment scenarios and security requirements.
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
     A[Client Application] --> B{Authentication Method}
     B -->|Simple| C[API Key]
-    B -->|Enterprise| D[JWT Token]  
+    B -->|Enterprise| D[JWT Token]
     B -->|SSO Integration| E[OAuth2]
     B -->|Zero Trust| F[mTLS Client Cert]
-    
+
     C --> G[ProximaDB Server]
     D --> H[Token Validation]
     E --> I[Identity Provider]
     F --> J[Certificate Authority]
-    
+
     H --> G
     I --> H
     J --> G
-    
+
     G --> K[Role-Based Access Control]
     K --> L[Resource Access]
-    
-    style A fill:#e1f5fe
-    style G fill:#c8e6c9
-    style K fill:#fff3e0
-    style L fill:#f3e5f5
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style L fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
 ----
 
 === API Key Authentication
@@ -146,27 +152,28 @@ auth_config = AuthConfig(
 • Perfect for zero-trust architectures
 • Hardware security module (HSM) support
 
-== 👥 Role-Based Access Control (RBAC)
+== Role-Based Access Control (RBAC)
 
 ProximaDB implements fine-grained RBAC with 23+ predefined permissions across all platform capabilities.
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TB
     subgraph "User Identity"
         U[User] --> R[Roles]
         R --> P[Permissions]
     end
-    
+
     subgraph "Permission Categories"
         P --> C1[Collections]
-        P --> C2[Vectors] 
+        P --> C2[Vectors]
         P --> C3[Graph]
         P --> C4[Knowledge Store]
         P --> C5[System Admin]
         P --> C6[Security & Audit]
     end
-    
+
     subgraph "Resource Access"
         C1 --> R1[collections.create<br/>collections.read<br/>collections.update<br/>collections.delete]
         C2 --> R2[vectors.read<br/>vectors.write<br/>vectors.search<br/>vectors.batch]
@@ -175,16 +182,22 @@ flowchart TB
         C5 --> R5[system.health<br/>system.metrics<br/>system.config<br/>system.admin]
         C6 --> R6[security.audit<br/>security.manage<br/>security.view]
     end
-    
-    style U fill:#ffecb3
-    style R fill:#e8f5e8
-    style P fill:#e3f2fd
-    style R1 fill:#fff3e0
-    style R2 fill:#f3e5f5
-    style R3 fill:#e0f2f1
-    style R4 fill:#fce4ec
-    style R5 fill:#fff8e1
-    style R6 fill:#e8eaf6
+
+    style U fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style P fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C1 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C2 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C3 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C4 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C5 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C6 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style R1 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R2 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R3 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R4 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R5 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R6 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 === Permission Categories
@@ -252,7 +265,7 @@ roles:
       - "*"  # All permissions
 ----
 
-== 🏢 Multi-Tenant Architecture
+== Multi-Tenant Architecture
 
 ProximaDB's multi-tenant capabilities provide secure isolation for shared deployments while maintaining performance and operational efficiency.
 
@@ -326,15 +339,15 @@ graph TB
 |===
 | Isolation Level | Description | Security Boundary
 
-| **🔒 Strict Isolation**
+| **Strict Isolation**
 | Complete data and resource separation
 | Physical separation per tenant
 
-| **🏗️ Logical Isolation** 
+| **Logical Isolation** 
 | Shared infrastructure with logical boundaries
 | Namespace and access control separation
 
-| **🔄 Hybrid Isolation**
+| **Hybrid Isolation**
 | Configurable per-tenant requirements
 | Mixed physical/logical based on sensitivity
 |===
@@ -367,7 +380,7 @@ collections = client.list_collections()  # Only ACME Corp collections
 • Audit trail per tenant
 • Custom configuration per tenant
 
-== 🔒 Transport Security
+== Transport Security
 
 === TLS/SSL Configuration
 
@@ -402,7 +415,7 @@ require_client_cert = false  # Set true for mTLS
 • CORS configuration for web applications
 • Rate limiting and DDoS protection
 
-== 📊 Security Monitoring & Audit
+== Security Monitoring & Audit
 
 ProximaDB provides comprehensive security monitoring with real-time threat detection and compliance-ready audit trails.
 
@@ -494,7 +507,7 @@ ProximaDB logs all authentication events for security monitoring and compliance:
 • Cross-tenant access attempts
 • Performance impact of security controls
 
-== 🚀 Production Deployment Security
+== Production Deployment Security
 
 === Secure Configuration
 
@@ -844,7 +857,7 @@ with ProximaDBClient(auth_config=auth_config) as client:
 • Regular security assessments
 • Compliance reporting dashboards
 
-== 🎯 Getting Started with Security
+== Getting Started with Security
 
 === Quick Security Setup
 
@@ -898,4 +911,4 @@ proximadb deploy --config secure-config.toml
 
 [.text-center]
 *ProximaDB Security - Protecting Your Unified Intelligence Platform* +
-**🛡️ Enterprise-Ready • 🔐 Zero-Trust Compatible • 🏢 Multi-Tenant Secure**
+**Enterprise-Ready • Zero-Trust Compatible • Multi-Tenant Secure**

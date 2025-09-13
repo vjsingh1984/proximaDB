@@ -12,7 +12,7 @@ image::cover/proximadb_enterprise_cover.svg[ProximaDB Enterprise Cover, width=10
 image::logo/proximadb_enterprise_logo.svg[ProximaDB Enterprise Logo, width=400, align="center"]
 
 [.lead.text-center]
-**🚀 ProximaDB - High-Performance Vector Database with Multi-Tenant Foundation** +
+**ProximaDB - High-Performance Vector Database with Multi-Tenant Foundation** +
 _Advanced vector database with graph capabilities and multi-tenant architecture in development_
 
 image:https://img.shields.io/badge/Production-Ready-brightgreen[Production Ready, link=https://github.com/proximadb/proximadb]
@@ -23,70 +23,71 @@ image:https://img.shields.io/badge/AI%20Foundation-Early%20Stage-lightblue[AI Fo
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "🎯 Enterprise Value Proposition"
+    subgraph "ENTERPRISE VALUE PROPOSITION"
         A[90% Infrastructure Cost Reduction<br/>Unified Platform vs Multiple Systems]
         B[18-Month Competitive Advantage<br/>Faster AI Implementation]
         C[2.8x Performance Improvement<br/>2,847+ QPS with 94.2% Cache Efficiency]
         D[Enterprise Security & Compliance<br/>SOC 2, GDPR, HIPAA Ready]
     end
-    
-    subgraph "🚀 Production Certification"
-        E[100% Production Ready<br/>✅ Enterprise Deployment<br/>✅ Real-time Monitoring<br/>✅ Comprehensive Security]
+
+    subgraph "PRODUCTION CERTIFICATION"
+        E[100% Production Ready<br/>Enterprise Deployment<br/>Real-time Monitoring<br/>Comprehensive Security]
     end
-    
+
     A --> E
     B --> E
     C --> E
     D --> E
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#F44336
-    style E fill:#9C27B0
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 [.mission-statement]
 ****
 **Enterprise AI Infrastructure Simplified**: ProximaDB Enterprise v1.0.4 delivers **100% production-ready** unified intelligence capabilities that eliminate the complexity of managing multiple AI systems. Organizations achieve **90% cost reduction** and **18-month competitive advantage** through our category-creating platform.
 
-**✅ Production Certified**: Complete enterprise deployment with real-time monitoring, advanced security, and comprehensive operational support.
+**Production Certified**: Complete enterprise deployment with real-time monitoring, advanced security, and comprehensive operational support.
 ****
 
 ---
 
 toc::[]
 
-== 🎯 Executive Summary: Enterprise AI Transformation
+== Executive Summary: Enterprise AI Transformation
 
 === The Multi-System Challenge
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
-    subgraph "❌ Current Fragmented Approach"
+    subgraph "CURRENT FRAGMENTED APPROACH"
         A[Vector Database<br/>$50K/year<br/>Complex Setup]
         B[Graph Database<br/>$75K/year<br/>Separate Management]
         C[Knowledge Store<br/>$40K/year<br/>Additional Complexity]
         D[Integration Layer<br/>$85K/year<br/>Custom Development]
     end
-    
-    subgraph "📊 Total Cost"
+
+    subgraph "TOTAL COST IMPACT"
         E[Annual TCO: $250K+<br/>6-Month Integration<br/>Multiple Vendors<br/>Operational Overhead]
     end
-    
+
     A --> E
     B --> E
     C --> E
     D --> E
-    
-    style A fill:#ffebee
-    style B fill:#ffebee
-    style C fill:#ffebee
-    style D fill:#ffebee
-    style E fill:#f44336
+
+    style A fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style B fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style C fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style E fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
 ----
 
 **Enterprise Pain Points**:
@@ -99,30 +100,31 @@ graph LR
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "✅ ProximaDB Unified Platform"
-        A[Enterprise Vector Database<br/>✅ 2,847+ QPS Performance<br/>✅ 94.2% Cache Efficiency]
-        B[Native Graph Engine<br/>✅ ORION/PULSAR/QUASAR<br/>✅ 1M+ Edges/Second]
-        C[Semantic Knowledge Store<br/>✅ Real-time Analytics<br/>✅ Advanced Reasoning]
-        D[Unified Query Interface<br/>✅ SQL + SKS Functions<br/>✅ GraphQL Integration]
+    subgraph "PROXIMADB UNIFIED PLATFORM"
+        A[Enterprise Vector Database<br/>2,847+ QPS Performance<br/>94.2% Cache Efficiency]
+        B[Native Graph Engine<br/>ORION/PULSAR/QUASAR<br/>1M+ Edges/Second]
+        C[Semantic Knowledge Store<br/>Real-time Analytics<br/>Advanced Reasoning]
+        D[Unified Query Interface<br/>SQL + SKS Functions<br/>GraphQL Integration]
     end
-    
-    subgraph "🎯 Enterprise Benefits"
+
+    subgraph "ENTERPRISE BENEFITS"
         E[90% Cost Reduction<br/>Single Platform License<br/>Unified Infrastructure<br/>One Support Contract]
         F[18-Month Time Advantage<br/>Instant AI Capabilities<br/>No Integration Required<br/>Production Ready]
     end
-    
+
     A --> E
     B --> E
     C --> F
     D --> F
-    
-    style A fill:#4CAF50
-    style B fill:#4CAF50
-    style C fill:#4CAF50
-    style D fill:#4CAF50
-    style E fill:#2196F3
-    style F fill:#FF9800
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
 **Enterprise Value Delivered**:
@@ -131,26 +133,27 @@ graph TB
 - **Single Vendor**: Unified support, SLA, and operational excellence
 - **Advanced AI**: Immediate access to cutting-edge AI workflows and capabilities
 
-== 🏢 Enterprise Use Cases & Industry Applications
+== Enterprise Use Cases & Industry Applications
 
 === Financial Services: Risk & Fraud Detection
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
-    subgraph "📊 Financial Intelligence Workflow"
+    subgraph "FINANCIAL INTELLIGENCE WORKFLOW"
         A[Transaction Vectors<br/>Real-time Analysis<br/>Anomaly Detection] --> D[Risk Assessment<br/>Unified Intelligence<br/>Instant Decisions]
         B[Customer Relationships<br/>Graph Analysis<br/>Network Effects] --> D
         C[Market Knowledge<br/>Semantic Context<br/>Regulatory Intelligence] --> D
     end
-    
-    D --> E[Automated Actions<br/>🚨 Fraud Prevention<br/>📈 Risk Scoring<br/>⚖️ Compliance]
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#F44336
+
+    D --> E[Automated Actions<br/>Fraud Prevention<br/>Risk Scoring<br/>Compliance]
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Business Impact**: 
@@ -162,30 +165,31 @@ graph LR
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "🏥 Healthcare Intelligence Platform"
+    subgraph "HEALTHCARE INTELLIGENCE PLATFORM"
         A[Patient Vectors<br/>Genomic Profiles<br/>Medical Embeddings]
         B[Clinical Relationships<br/>Drug Interactions<br/>Treatment Networks]
         C[Medical Knowledge<br/>Research Literature<br/>Clinical Guidelines]
     end
-    
-    subgraph "🎯 Personalized Outcomes"
+
+    subgraph "PERSONALIZED OUTCOMES"
         D[Treatment Recommendations<br/>Drug Discovery<br/>Clinical Decision Support]
         E[Population Health<br/>Epidemiological Analysis<br/>Public Health Intelligence]
     end
-    
+
     A --> D
     B --> D
     C --> E
-    D --> F[Patient Outcomes<br/>📈 95% Treatment Accuracy<br/>🔬 Accelerated Research<br/>💊 Personalized Medicine]
+    D --> F[Patient Outcomes<br/>95% Treatment Accuracy<br/>Accelerated Research<br/>Personalized Medicine]
     E --> F
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#673AB7
-    style F fill:#E91E63
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Business Impact**:
@@ -197,32 +201,33 @@ graph TB
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
-    subgraph "🛒 Commerce Intelligence Ecosystem"
+    subgraph "E-COMMERCE INTELLIGENCE ECOSYSTEM"
         A[Product Vectors<br/>Visual Similarity<br/>Feature Embeddings]
         B[Customer Journey<br/>Behavioral Graphs<br/>Purchase Networks]
         C[Market Intelligence<br/>Trend Analysis<br/>Competitive Insights]
     end
-    
-    subgraph "🎯 Personalized Experience"
+
+    subgraph "PERSONALIZED EXPERIENCE"
         D[Real-time Recommendations<br/>Dynamic Pricing<br/>Inventory Optimization]
         E[Customer Analytics<br/>Lifetime Value<br/>Churn Prediction]
     end
-    
+
     A --> D
     B --> E
     C --> D
     C --> E
-    
-    D --> F[Business Results<br/>📈 35% Revenue Increase<br/>🎯 85% Personalization<br/>💰 40% Cost Reduction]
+
+    D --> F[Business Results<br/>35% Revenue Increase<br/>85% Personalization<br/>40% Cost Reduction]
     E --> F
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#673AB7
-    style F fill:#E91E63
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Business Impact**:
@@ -230,31 +235,32 @@ graph TD
 - **Personalization**: 85% improvement in customer experience relevance
 - **Operational Efficiency**: 40% reduction in infrastructure and development costs
 
-== 🚀 Production-Ready Enterprise Architecture
+== Production-Ready Enterprise Architecture
 
 === Comprehensive Technical Excellence
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "🌐 Enterprise API Layer"
-        A[REST API<br/>Port 5678<br/>✅ Production Ready<br/>✅ Enterprise Security]
-        B[gRPC API<br/>Port 5679<br/>✅ TLS 1.3 Encrypted<br/>✅ High Performance]
-        C[Enterprise Dashboard<br/>8-Tab Interface<br/>✅ Real-time Monitoring<br/>✅ Security Analytics]
+    subgraph "ENTERPRISE API LAYER"
+        A[REST API<br/>Port 5678<br/>Production Ready<br/>Enterprise Security]
+        B[gRPC API<br/>Port 5679<br/>TLS 1.3 Encrypted<br/>High Performance]
+        C[Enterprise Dashboard<br/>8-Tab Interface<br/>Real-time Monitoring<br/>Security Analytics]
     end
-    
-    subgraph "🔧 Intelligence Layer"
-        D[Advanced Query Engine<br/>✅ SQL + SKS Functions<br/>✅ CTE/UNION/INTERSECT/EXCEPT<br/>✅ Query Plan Caching]
-        E[7 Storage Engines<br/>✅ SST, VIPER, NOVA<br/>✅ SWIFT, RAPTOR, PRISM, HELIX<br/>✅ Workload Optimization]
-        F[AXIS Index System<br/>✅ Progressive Search<br/>✅ Multi-tier Optimization<br/>✅ Adaptive Selection]
+
+    subgraph "INTELLIGENCE LAYER"
+        D[Advanced Query Engine<br/>SQL + SKS Functions<br/>CTE/UNION/INTERSECT/EXCEPT<br/>Query Plan Caching]
+        E[7 Storage Engines<br/>SST, VIPER, NOVA<br/>SWIFT, RAPTOR, PRISM, HELIX<br/>Workload Optimization]
+        F[AXIS Index System<br/>Progressive Search<br/>Multi-tier Optimization<br/>Adaptive Selection]
     end
-    
-    subgraph "🧠 Optimization Layer"
-        G[Unified Cache Orchestrator<br/>✅ 14 Cache Types<br/>✅ 94.2% Hit Rate<br/>✅ Memory Pool Optimization]
-        H[Performance Engine<br/>✅ 60-80% Memory Reduction<br/>✅ Streaming Architecture<br/>✅ Batch Processing]
-        I[Enterprise Security<br/>✅ Multi-method Auth<br/>✅ RBAC + Encryption<br/>✅ Compliance Ready]
+
+    subgraph "OPTIMIZATION LAYER"
+        G[Unified Cache Orchestrator<br/>14 Cache Types<br/>94.2% Hit Rate<br/>Memory Pool Optimization]
+        H[Performance Engine<br/>60-80% Memory Reduction<br/>Streaming Architecture<br/>Batch Processing]
+        I[Enterprise Security<br/>Multi-method Auth<br/>RBAC + Encryption<br/>Compliance Ready]
     end
-    
+
     A --> D
     B --> D
     C --> D
@@ -263,16 +269,16 @@ graph TB
     E --> G
     F --> H
     G --> I
-    
-    style A fill:#4CAF50
-    style B fill:#4CAF50
-    style C fill:#4CAF50
-    style D fill:#2196F3
-    style E fill:#FF9800
-    style F fill:#9C27B0
-    style G fill:#673AB7
-    style H fill:#E91E63
-    style I fill:#795548
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style F fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 === Enterprise Performance Metrics
@@ -284,85 +290,86 @@ graph TB
 | **Query Performance**
 | Throughput
 | 2,847+ QPS
-| ✅ **Exceeds Enterprise**
+| **Exceeds Enterprise**
 
 | **Response Latency**
 | P99 Latency
 | 156.7ms
-| ✅ **Production Grade**
+| **Production Grade**
 
 | **Cache Efficiency**
 | Hit Rate
 | 94.2%
-| ✅ **Excellent**
+| **Excellent**
 
 | **Memory Optimization**
 | Allocation Reduction
 | 60-80%
-| ✅ **Outstanding**
+| **Outstanding**
 
 | **Security Score**
 | Compliance Rating
 | 95/100
-| ✅ **Enterprise Ready**
+| **Enterprise Ready**
 
 | **Resource Efficiency**
 | CPU Utilization
 | 45.2% avg
-| ✅ **Optimized**
+| **Optimized**
 |===
 
-== 🛡️ Enterprise Security & Compliance
+== Enterprise Security & Compliance
 
 === Multi-Layer Security Framework
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "🔐 Authentication Layer"
-        A[API Keys<br/>✅ Enterprise Grade]
-        B[JWT Tokens<br/>✅ Secure Validation]
-        C[OAuth 2.0<br/>✅ SSO Integration]
-        D[mTLS Certificates<br/>✅ Mutual Authentication]
+    subgraph "AUTHENTICATION LAYER"
+        A[API Keys<br/>Enterprise Grade]
+        B[JWT Tokens<br/>Secure Validation]
+        C[OAuth 2.0<br/>SSO Integration]
+        D[mTLS Certificates<br/>Mutual Authentication]
     end
-    
-    subgraph "🛡️ Authorization Layer"
-        E[RBAC System<br/>✅ Role-based Access]
-        F[Collection Permissions<br/>✅ Fine-grained Control]
-        G[Tenant Isolation<br/>✅ Multi-tenant Ready]
+
+    subgraph "AUTHORIZATION LAYER"
+        E[RBAC System<br/>Role-based Access]
+        F[Collection Permissions<br/>Fine-grained Control]
+        G[Tenant Isolation<br/>Multi-tenant Ready]
     end
-    
-    subgraph "🔒 Encryption Layer"
-        H[TLS 1.3<br/>✅ Transport Security]
-        I[AES-256<br/>✅ Data at Rest]
-        J[Key Management<br/>✅ Enterprise HSM]
+
+    subgraph "ENCRYPTION LAYER"
+        H[TLS 1.3<br/>Transport Security]
+        I[AES-256<br/>Data at Rest]
+        J[Key Management<br/>Enterprise HSM]
     end
-    
-    subgraph "📋 Compliance Layer"
-        K[SOC 2 Type II<br/>✅ Audit Ready]
-        L[GDPR<br/>✅ Privacy Compliant]
-        M[HIPAA<br/>✅ Healthcare Ready]
-        N[Audit Logging<br/>✅ Complete Trail]
+
+    subgraph "COMPLIANCE LAYER"
+        K[SOC 2 Type II<br/>Audit Ready]
+        L[GDPR<br/>Privacy Compliant]
+        M[HIPAA<br/>Healthcare Ready]
+        N[Audit Logging<br/>Complete Trail]
     end
-    
+
     A --> E
     B --> E
     C --> E
     D --> E
-    
+
     E --> H
     F --> I
     G --> J
-    
+
     H --> K
     I --> L
     J --> M
     K --> N
-    
-    style A fill:#4CAF50
-    style E fill:#2196F3
-    style H fill:#FF9800
-    style K fill:#9C27B0
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style K fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 **Security Certifications**:
@@ -371,25 +378,26 @@ graph TB
 - **HIPAA Ready**: Healthcare data security and encryption
 - **Enterprise Standards**: Multi-method authentication and encryption
 
-== 📊 Enterprise Monitoring & Observability
+== Enterprise Monitoring & Observability
 
 === Real-Time Intelligence Dashboard
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
-    subgraph "🎛️ Enterprise Dashboard (8 Specialized Tabs)"
-        A[🔍 System Overview<br/>Health Status<br/>Resource Monitoring<br/>Connection Tracking]
-        B[📊 Collections<br/>Vector Analytics<br/>Storage Performance<br/>Usage Statistics]
-        C[⚡ Performance<br/>Real-time Metrics<br/>Query Analytics<br/>Latency Tracking]
-        D[💾 Cache<br/>Efficiency Monitoring<br/>Hit Rate Analytics<br/>Memory Usage]
-        E[🔒 Security<br/>Event Monitoring<br/>Threat Detection<br/>Compliance Status]
-        F[🚨 Alerts<br/>Multi-level System<br/>Smart Filtering<br/>Incident Management]
-        G[📈 Metrics<br/>Time-series Charts<br/>Export Capabilities<br/>Trend Analysis]
-        H[🔧 Diagnostics<br/>Health Checks<br/>System Info<br/>Troubleshooting]
+    subgraph "ENTERPRISE DASHBOARD (8 SPECIALIZED TABS)"
+        A[System Overview<br/>Health Status<br/>Resource Monitoring<br/>Connection Tracking]
+        B[Collections<br/>Vector Analytics<br/>Storage Performance<br/>Usage Statistics]
+        C[Performance<br/>Real-time Metrics<br/>Query Analytics<br/>Latency Tracking]
+        D[Cache<br/>Efficiency Monitoring<br/>Hit Rate Analytics<br/>Memory Usage]
+        E[Security<br/>Event Monitoring<br/>Threat Detection<br/>Compliance Status]
+        F[Alerts<br/>Multi-level System<br/>Smart Filtering<br/>Incident Management]
+        G[Metrics<br/>Time-series Charts<br/>Export Capabilities<br/>Trend Analysis]
+        H[Diagnostics<br/>Health Checks<br/>System Info<br/>Troubleshooting]
     end
-    
-    A --> I[Enterprise Intelligence<br/>✅ Real-time Visibility<br/>✅ Proactive Monitoring<br/>✅ Automated Response]
+
+    A --> I[Enterprise Intelligence<br/>Real-time Visibility<br/>Proactive Monitoring<br/>Automated Response]
     B --> I
     C --> I
     D --> I
@@ -397,16 +405,16 @@ graph TD
     F --> I
     G --> I
     H --> I
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#F44336
-    style F fill:#795548
-    style G fill:#607D8B
-    style H fill:#009688
-    style I fill:#1E88E5
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style E fill:#f44336,stroke:#d32f2f,stroke-width:2px,color:#ffffff
+    style F fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+    style G fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+    style H fill:#009688,stroke:#00695c,stroke-width:2px,color:#ffffff
+    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 **Monitoring Excellence**:
@@ -415,65 +423,68 @@ graph TD
 - **Enterprise Integration**: Prometheus, Grafana, and custom export capabilities
 - **Automated Response**: Smart alerting with escalation and incident management
 
-== 💼 Enterprise Deployment & Operations
+== Enterprise Deployment & Operations
 
 === One-Click Production Deployment
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
     A[Enterprise Deployment<br/>Decision] --> B{Infrastructure Choice}
-    
-    B -->|Docker| C[🐳 Container Deployment<br/>Production Optimized<br/>Auto-scaling Ready]
-    B -->|Kubernetes| D[☸️ K8s HA Deployment<br/>Multi-zone Redundancy<br/>Auto-healing]
-    B -->|Cloud Native| E[☁️ Cloud Deployment<br/>AWS/Azure/GCP<br/>Managed Service]
-    
-    C --> F[Configuration<br/>📋 Enterprise Settings<br/>🔒 Security Hardening<br/>📊 Monitoring Setup]
+
+    B -->|Docker| C[Container Deployment<br/>Production Optimized<br/>Auto-scaling Ready]
+    B -->|Kubernetes| D[K8s HA Deployment<br/>Multi-zone Redundancy<br/>Auto-healing]
+    B -->|Cloud Native| E[Cloud Deployment<br/>AWS/Azure/GCP<br/>Managed Service]
+
+    C --> F[Configuration<br/>Enterprise Settings<br/>Security Hardening<br/>Monitoring Setup]
     D --> F
     E --> F
-    
-    F --> G[Health Validation<br/>✅ System Health Checks<br/>✅ Performance Validation<br/>✅ Security Verification]
-    
-    G --> H[🎉 Production Ready<br/>✅ Enterprise Dashboard Active<br/>✅ Real-time Monitoring<br/>✅ 24/7 Support]
-    
-    style A fill:#4CAF50
-    style C fill:#2196F3
-    style D fill:#FF9800
-    style E fill:#9C27B0
-    style F fill:#673AB7
-    style G fill:#E91E63
-    style H fill:#1E88E5
+
+    F --> G[Health Validation<br/>System Health Checks<br/>Performance Validation<br/>Security Verification]
+
+    G --> H[Production Ready<br/>Enterprise Dashboard Active<br/>Real-time Monitoring<br/>24/7 Support]
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style E fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style F fill:#673ab7,stroke:#512da8,stroke-width:2px,color:#ffffff
+    style G fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
+    style H fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 **Deployment Options**:
 
 ```bash
-# 🚀 One-Click Enterprise Deployment
+# One-Click Enterprise Deployment
 ./scripts/enterprise_deploy.sh --env production --replicas 3
 
-# 🐳 Docker Production Deployment
+# Docker Production Deployment
 docker run -d -p 5678:5678 -p 5679:5679 \
   --name proximadb-enterprise \
   -v proximadb_data:/data \
   proximadb/proximadb:v1.0.4
 
-# ☸️ Kubernetes High-Availability
+# Kubernetes High-Availability
 kubectl apply -f k8s/ha-deployment.yaml
 ```
 
-== 🎯 Industry-Specific Solutions
+== Industry-Specific Solutions
 
 === AI-Powered Search & Recommendation
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
 sequenceDiagram
     participant User
     participant API as ProximaDB API
     participant Vector as Vector Engine
     participant Graph as Graph Engine
     participant Knowledge as Knowledge Store
-    
+
     User->>+API: Search Request
     API->>+Vector: Semantic Search
     Vector->>+Graph: Relationship Analysis
@@ -482,7 +493,7 @@ sequenceDiagram
     Graph-->>-Vector: Relationship Scores
     Vector-->>-API: Unified Results
     API-->>-User: Intelligent Response
-    
+
     Note over User,Knowledge: Single API Call = Complete Intelligence
 ----
 
@@ -495,17 +506,18 @@ sequenceDiagram
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
-    subgraph "📊 Real-Time Intelligence Pipeline"
+    subgraph "REAL-TIME INTELLIGENCE PIPELINE"
         A[Data Ingestion<br/>Multi-format Support<br/>Real-time Streaming] --> B[Intelligent Processing<br/>Vector Embeddings<br/>Graph Relationships<br/>Knowledge Extraction]
         B --> C[Unified Analytics<br/>Cross-modal Insights<br/>Predictive Intelligence<br/>Automated Reporting]
-        C --> D[Business Actions<br/>📈 Strategic Decisions<br/>🎯 Operational Optimization<br/>💡 Innovation Insights]
+        C --> D[Business Actions<br/>Strategic Decisions<br/>Operational Optimization<br/>Innovation Insights]
     end
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
 ----
 
 **Enterprise Benefits**:
@@ -513,19 +525,20 @@ graph LR
 - **Predictive Intelligence**: AI-powered forecasting with multi-dimensional analysis
 - **Automated Reporting**: Intelligent business intelligence with minimal human intervention
 
-== 🚀 Getting Started: Enterprise Quick Start
+== Getting Started: Enterprise Quick Start
 
 === 5-Minute Production Setup
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
-    A[Minutes 1-2<br/>📦 Download & Configure<br/>Enterprise Container<br/>Security Settings] --> B[Minutes 3-4<br/>🚀 Deploy & Validate<br/>One-click Deployment<br/>Health Verification]
-    B --> C[Minute 5<br/>📊 Access Dashboard<br/>Enterprise Monitoring<br/>Production Ready]
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
+    A[Minutes 1-2<br/>Download & Configure<br/>Enterprise Container<br/>Security Settings] --> B[Minutes 3-4<br/>Deploy & Validate<br/>One-click Deployment<br/>Health Verification]
+    B --> C[Minute 5<br/>Access Dashboard<br/>Enterprise Monitoring<br/>Production Ready]
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
 ----
 
 **Quick Start Commands**:
@@ -611,7 +624,7 @@ curl -X POST https://proximadb.company.com:5678/v1/unified_search \
   }'
 ```
 
-== 📈 Competitive Advantages & ROI
+== Competitive Advantages & ROI
 
 === Enterprise Value Comparison
 
@@ -659,7 +672,7 @@ curl -X POST https://proximadb.company.com:5678/v1/unified_search \
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 pie title 3-Year ROI Analysis (Cumulative Savings)
     "Year 1 Savings: $225K" : 225
     "Year 2 Additional: $248K" : 248
@@ -698,7 +711,7 @@ pie title 3-Year ROI Analysis (Cumulative Savings)
 - **Year 2 Cumulative**: $473K (total savings with optimization)
 - **Year 3 Total ROI**: $743K (including productivity gains and innovation value)
 
-== 🏆 Enterprise Success Stories & Testimonials
+== Enterprise Success Stories & Testimonials
 
 [.testimonial]
 ****
@@ -721,7 +734,7 @@ pie title 3-Year ROI Analysis (Cumulative Savings)
 *— Head of Infrastructure, E-commerce Unicorn*
 ****
 
-== 🔗 Enterprise Resources & Support
+== Enterprise Resources & Support
 
 === Production Documentation & Support
 
@@ -766,28 +779,30 @@ pie title 3-Year ROI Analysis (Cumulative Savings)
 - **Consulting Services**: Architecture design and implementation support
 - **Training Programs**: Enterprise team training and certification
 
-== 🎯 Call to Action: Transform Your AI Infrastructure
+== Call to Action: Transform Your AI Infrastructure
 
 === Ready for Enterprise Deployment?
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
     A[Start Here] --> B{Your Use Case}
-    
-    B -->|Proof of Concept| C[🧪 Pilot Deployment<br/>Quick Setup<br/>Sample Data<br/>Performance Validation]
-    B -->|Production Migration| D[🚀 Enterprise Deployment<br/>Full Security<br/>High Availability<br/>Comprehensive Monitoring]
-    B -->|Custom Integration| E[🤝 Enterprise Consulting<br/>Architecture Design<br/>Custom Development<br/>Training & Support]
-    
-    C --> F[📞 Next Steps<br/>Schedule Demo<br/>Discuss Requirements<br/>Plan Implementation]
+
+    B -->|Proof of Concept| C[Pilot Deployment<br/>Quick Setup<br/>Sample Data<br/>Performance Validation]
+    B -->|Production Migration| D[Enterprise Deployment<br/>Full Security<br/>High Availability<br/>Comprehensive Monitoring]
+    B -->|Custom Integration| E[Enterprise Consulting<br/>Architecture Design<br/>Custom Development<br/>Training & Support]
+
+    C --> F[Next Steps<br/>Schedule Demo<br/>Discuss Requirements<br/>Plan Implementation]
     D --> F
     E --> F
-    
-    style A fill:#4CAF50
-    style C fill:#2196F3
-    style D fill:#FF9800
-    style E fill:#9C27B0
-    style F fill:#1E88E5
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style E fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 ### **Get Started Today**
@@ -835,16 +850,16 @@ Integration partnerships and ecosystem development
 ---
 
 [.text-center]
-**🎉 ProximaDB Enterprise v1.0.4 - Ready to Transform Your AI Infrastructure 🎉**
+**ProximaDB Enterprise v1.0.4 - Ready to Transform Your AI Infrastructure**
 
-**✅ 100% Production Certified** | **✅ Enterprise Security** | **✅ Real-time Monitoring** | **✅ Comprehensive Support**
+**100% Production Certified** | **Enterprise Security** | **Real-time Monitoring** | **Comprehensive Support**
 
 ---
 
 **Ready to revolutionize your AI infrastructure?** ProximaDB Enterprise v1.0.4 is the production-certified platform that transforms complex multi-system architectures into unified intelligence capabilities.
 
 [.text-center]
-**🚀 Start Your Enterprise AI Transformation Today 🚀**
+**Start Your Enterprise AI Transformation Today**
 
 ---
 

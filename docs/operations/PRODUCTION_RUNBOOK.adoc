@@ -36,7 +36,7 @@ toc::[]
 | <<monitoring-guide>>
 |===
 
-== 🏗️ Production Architecture
+== Production Architecture
 
 [source,mermaid]
 ----
@@ -435,38 +435,53 @@ kubectl exec -it proximadb-0 -- proximadb-cli restore \
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
-    A[⚠️ Alert Triggered] --> B{Severity Level?}
-    
-    B -->|Critical| C[🚨 Immediate Response]
-    B -->|Warning| D[📊 Investigate Metrics]
-    B -->|Info| E[📝 Log for Review]
-    
+    A[Alert Triggered] --> B{Severity Level?}
+
+    B -->|Critical| C[Immediate Response]
+    B -->|Warning| D[Investigate Metrics]
+    B -->|Info| E[Log for Review]
+
     C --> F{System Health?}
-    F -->|Degraded| G[🔄 Auto Recovery]
-    F -->|Failed| H[📞 Escalate to On-call]
-    
-    D --> I[📈 Check Dashboard]
+    F -->|Degraded| G[Auto Recovery]
+    F -->|Failed| H[Escalate to On-call]
+
+    D --> I[Check Dashboard]
     I --> J{Performance Issue?}
-    J -->|Yes| K[🔧 Apply Optimization]
-    J -->|No| L[✅ Monitor & Document]
-    
+    J -->|Yes| K[Apply Optimization]
+    J -->|No| L[Monitor & Document]
+
     G --> M{Recovery Success?}
-    M -->|Yes| N[✅ Resolved]
+    M -->|Yes| N[Resolved]
     M -->|No| H
-    
-    H --> O[🚨 Emergency Protocol]
+
+    H --> O[Emergency Protocol]
     O --> P[Team Notification]
     P --> Q[Investigation & Fix]
     Q --> N
-    
+
     K --> N
     L --> N
     E --> N
-    
-    style C fill:#F44336
-    style H fill:#FF5722
-    style N fill:#4CAF50
+
+    style A fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style H fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style M fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style N fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style O fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style P fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style Q fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 === Performance Issues

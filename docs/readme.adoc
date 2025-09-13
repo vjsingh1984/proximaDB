@@ -8,42 +8,43 @@ Cloud-native vector database engineered for AI-first applications with seven spe
 
 toc::[]
 
-== 🎯 Quick Navigation by Role
+== Quick Navigation by Role
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TB
     subgraph "Business Decision Makers"
         A[Business Value] --> B[ROI Analysis]
-        A --> C[Cost Comparison] 
+        A --> C[Cost Comparison]
         A --> D[Use Cases]
     end
-    
-    subgraph "Technical Architects" 
+
+    subgraph "Technical Architects"
         E[Architecture] --> F[Storage Engines]
-        E --> G[Performance] 
+        E --> G[Performance]
         E --> H[Design Patterns]
     end
-    
+
     subgraph "Developers & Users"
         I[Getting Started] --> J[API Reference]
         I --> K[User Guide]
         I --> L[Examples]
     end
-    
+
     subgraph "Operations Teams"
         M[Deployment] --> N[Monitoring]
         M --> O[Administration]
         M --> P[Troubleshooting]
     end
-    
-    style A fill:#e3f2fd
-    style E fill:#f3e5f5
-    style I fill:#e8f5e8
-    style M fill:#fff3e0
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
-== 📚 Documentation Catalog
+== Documentation Catalog
 
 [cols="3,2,3,2"]
 |===
@@ -52,82 +53,83 @@ flowchart TB
 |**link:business_overview.adoc[Business Overview]**
 |Decision Makers
 |Value proposition, ROI analysis, market positioning
-|✅ Streamlined
+|Streamlined
 
 |**link:technical_architecture.adoc[Technical Architecture]**
 |System Architects
 |System design, performance, implementation details
-|✅ Enhanced
+|Enhanced
 
 |**link:reference/graph_api_reference.adoc[Graph API Reference]**
 |Developers
 |Complete graph database API documentation
-|✅ Professional
+|Professional
 
 |**link:reference/sks_technical_reference.adoc[SKS Technical Reference]**
 |Developers
 |Semantic Knowledge Store implementation guide
-|✅ Comprehensive
+|Comprehensive
 
 |**link:operations_guide.adoc[Operations Guide]**
 |Administrators
 |Deployment, monitoring, maintenance procedures
-|✅ Production-ready
+|Production-ready
 
 |**link:04-storage-engines/README.adoc[Storage Engines]**
 |Architects & Developers
 |Engine specifications and selection guides
-|✅ Detailed
+|Detailed
 
 |**link:09-roadmap/[Implementation Roadmap]**
 |Development Teams
 |Future development plans and specifications
-|✅ Comprehensive
+|Comprehensive
 
 |**link:archive/[Technical Reports]**
 |Technical Teams
 |Historical reports and migration guides
-|✅ Archived
+|Archived
 |===
 
-== ⚡ ProximaDB Overview
+== ProximaDB Overview
 
 === System Architecture
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "Client Layer"
+    subgraph "CLIENT LAYER"
         A[REST API<br/>Port 5678]
         B[gRPC API<br/>Port 5679]
         C[Python SDK]
     end
-    
-    subgraph "Service Layer"
+
+    subgraph "SERVICE LAYER"
         D[Vector Operations<br/>40-60% latency improvement]
         E[Graph Service<br/>Native traversal]
         F[Entity Store<br/>Multi-version embeddings]
     end
-    
-    subgraph "Storage Engine Layer"
+
+    subgraph "STORAGE ENGINE LAYER"
         subgraph "Production Ready"
-            G[VIPER<br/>📊 Columnar Analytics]
-            H[SST<br/>⚡ High-Throughput Writes]
-            I[RAPTOR<br/>🕸️ Graph + HNSW]
+            G[VIPER<br/>Columnar Analytics]
+            H[SST<br/>High-Throughput Writes]
+            I[RAPTOR<br/>Graph + HNSW]
         end
-        
+
         subgraph "Advanced Development"
-            J[NOVA<br/>📈 Enhanced Columnar]
-            K[SWIFT<br/>🚀 High Performance]
-            L[PRISM<br/>🔍 Progressive Search]
-            M[HELIX<br/>🔗 Unified Operations]
+            J[NOVA<br/>Enhanced Columnar]
+            K[SWIFT<br/>High Performance]
+            L[PRISM<br/>Progressive Search]
+            M[HELIX<br/>Unified Operations]
         end
     end
-    
+
     A --> D
     B --> D
     C --> D
-    
+
     D --> G
     D --> H
     D --> I
@@ -135,22 +137,30 @@ graph TB
     D --> K
     D --> L
     D --> M
-    
+
     E --> I
     F --> G
-    
-    style D fill:#74b9ff
-    style G fill:#00b894
-    style H fill:#00b894
-    style I fill:#00b894
-    style J fill:#fdcb6e
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style J fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style K fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
 === Performance Highlights
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#74b9ff"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 xychart-beta
     title "ProximaDB Performance Advantages"
     x-axis ["Latency", "Throughput", "Memory Efficiency", "Cost Reduction"]
@@ -164,7 +174,7 @@ xychart-beta
 * **45-65% memory reduction**: Through progressive optimization
 * **90% cost savings**: vs distributed alternatives
 
-== 🔗 Quick Start Paths
+== Quick Start Paths
 
 === "I want to understand the business value"
 → link:proximadb_enterprise_guide.adoc[Business Overview]
@@ -178,10 +188,11 @@ xychart-beta
 === "I need to deploy in production"
 → link:operations/production_runbook.adoc[Operations Guide]
 
-== 📋 Key Innovations
+== Key Innovations
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 mindmap
   root((ProximaDB Innovations))
     Proto-First Design
@@ -233,7 +244,7 @@ mindmap
 |Minimal CPU overhead
 |===
 
-== 🏗️ Documentation Standards
+== Documentation Standards
 
 === Content Quality Guidelines
 
@@ -254,14 +265,16 @@ All diagrams use professional styling:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#74b9ff"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
     A[Professional] --> B[Consistent]
     B --> C[Clear]
     C --> D[Informative]
-    
-    style A fill:#74b9ff
-    style D fill:#00b894
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 === Audience Tone Matrix
@@ -296,7 +309,7 @@ flowchart LR
 |Innovation, thought leadership, market positioning
 |===
 
-== 🤝 Contributing to Documentation
+== Contributing to Documentation
 
 See link:guides/getting_started.adoc[Development Guide] for:
 
@@ -305,29 +318,29 @@ See link:guides/getting_started.adoc[Development Guide] for:
 * AsciiDoc formatting best practices
 * Mermaid diagram guidelines
 
-== 📊 Document Status
+== Document Status
 
 [cols="3,2,2,2"]
 |===
 |Category |Status |Format |Audience
 
 |Business Overview
-|✅ Streamlined
+|Streamlined
 |AsciiDoc + Mermaid
 |Decision Makers
 
 |Technical Architecture
-|✅ Enhanced
+|Enhanced
 |AsciiDoc + Mermaid
 |Architects
 
 |User Documentation
-|🔄 In Progress
+|In Progress
 |AsciiDoc + Examples
 |Developers
 
 |Operations Guide
-|✅ Complete
+|Complete
 |AsciiDoc + Procedures
 |Administrators
 |===

@@ -13,13 +13,13 @@ image:https://img.shields.io/badge/Performance-Optimized-success[Performance Opt
 
 toc::[]
 
-== 🎯 Level 1: Executive Overview (High Abstraction)
+== Level 1: Executive Overview (High Abstraction)
 
 === Business Value Proposition
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 pie title ProximaDB Enterprise Value Distribution
     "Infrastructure Cost Savings (90%)" : 40
     "Development Time Reduction (18mo)" : 25
@@ -38,90 +38,92 @@ ProximaDB Enterprise eliminates the complexity of managing separate AI infrastru
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
-    A[✅ Core Systems<br/>100% Complete] --> E[🚀 Production Ready<br/>Enterprise Certified]
-    B[✅ Performance<br/>Optimized & Benchmarked] --> E
-    C[✅ Security<br/>Enterprise Grade] --> E
-    D[✅ Monitoring<br/>8-Tab Dashboard] --> E
-    
-    style A fill:#4CAF50
-    style B fill:#4CAF50
-    style C fill:#4CAF50
-    style D fill:#4CAF50
-    style E fill:#2196F3
+    A[Core Systems<br/>100% Complete] --> E[Production Ready<br/>Enterprise Certified]
+    B[Performance<br/>Optimized & Benchmarked] --> E
+    C[Security<br/>Enterprise Grade] --> E
+    D[Monitoring<br/>8-Tab Dashboard] --> E
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
 ----
 
 **ProximaDB Enterprise v1.0.4** is **✅ 100% production certified** with enterprise-grade capabilities.
 
-== 🏗️ Level 2: Technical Architecture (Medium Abstraction)
+== Level 2: Technical Architecture (Medium Abstraction)
 
 === System Architecture Overview
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "🌐 API & Interface Layer"
-        A[REST API<br/>Port 5678<br/>✅ Enterprise Ready]
-        B[gRPC API<br/>Port 5679<br/>✅ TLS Secured]
-        C[Enterprise Dashboard<br/>8-Tab Interface<br/>✅ Real-time Monitoring]
+    subgraph "API & INTERFACE LAYER"
+        A[REST API<br/>Port 5678<br/>Enterprise Ready]
+        B[gRPC API<br/>Port 5679<br/>TLS Secured]
+        C[Enterprise Dashboard<br/>8-Tab Interface<br/>Real-time Monitoring]
     end
-    
-    subgraph "🔧 Service & Query Layer"
-        D[VectorOperationsService<br/>✅ Memory Pool Optimized]
-        E[QueryExecutor<br/>✅ CTE/UNION/INTERSECT/EXCEPT]
-        F[ExecutionPlanner<br/>✅ Query Plan Caching]
-        G[GraphService<br/>✅ ORION/PULSAR/QUASAR]
+
+    subgraph "SERVICE & QUERY LAYER"
+        D[VectorOperationsService<br/>Memory Pool Optimized]
+        E[QueryExecutor<br/>CTE/UNION/INTERSECT/EXCEPT]
+        F[ExecutionPlanner<br/>Query Plan Caching]
+        G[GraphService<br/>ORION/PULSAR/QUASAR]
     end
-    
-    subgraph "💾 Storage Engine Layer (7 Engines)"
-        H[SST Engine<br/>⚡ OLTP Row Storage]
-        I[VIPER Engine<br/>📊 Analytics Columnar]
-        J[NOVA Engine<br/>📈 Progressive Analytics]
-        K[SWIFT + RAPTOR + PRISM + HELIX<br/>🚀 Specialized Engines]
+
+    subgraph "STORAGE ENGINE LAYER (7 ENGINES)"
+        H[SST Engine<br/>OLTP Row Storage]
+        I[VIPER Engine<br/>Analytics Columnar]
+        J[NOVA Engine<br/>Progressive Analytics]
+        K[SWIFT + RAPTOR + PRISM + HELIX<br/>Specialized Engines]
     end
-    
-    subgraph "🧠 Intelligence & Cache Layer"
-        L[CrossCacheOrchestrator<br/>✅ 14 Cache Types<br/>94.2% Hit Rate]
-        M[VectorPool<br/>✅ Memory Optimization<br/>60-80% Reduction]
-        N[AXIS Index Engine<br/>✅ Progressive Search]
-        O[UnifiedQuantization<br/>✅ Hardware Accelerated]
+
+    subgraph "INTELLIGENCE & CACHE LAYER"
+        L[CrossCacheOrchestrator<br/>14 Cache Types<br/>94.2% Hit Rate]
+        M[VectorPool<br/>Memory Optimization<br/>60-80% Reduction]
+        N[AXIS Index Engine<br/>Progressive Search]
+        O[UnifiedQuantization<br/>Hardware Accelerated]
     end
-    
-    subgraph "🛡️ Security & Monitoring"
-        P[Multi-method Auth<br/>✅ API/JWT/OAuth2/mTLS]
-        Q[EnterpriseDashboard<br/>✅ Security Score: 95/100]
-        R[MetricsCollector<br/>✅ Prometheus Ready]
-        S[AlertSystem<br/>✅ Multi-level Alerts]
+
+    subgraph "SECURITY & MONITORING"
+        P[Multi-method Auth<br/>API/JWT/OAuth2/mTLS]
+        Q[EnterpriseDashboard<br/>Security Score: 95/100]
+        R[MetricsCollector<br/>Prometheus Ready]
+        S[AlertSystem<br/>Multi-level Alerts]
     end
-    
+
     %% Connections
     A --> D
     B --> E
     C --> Q
-    
+
     D --> H
     E --> I
     F --> J
     G --> K
-    
+
     H --> L
     I --> M
     J --> N
     K --> O
-    
+
     P --> A
     P --> B
     Q --> C
     R --> Q
     S --> Q
-    
-    style A fill:#4CAF50
-    style B fill:#4CAF50
-    style C fill:#4CAF50
-    style L fill:#2196F3
-    style M fill:#2196F3
-    style P fill:#FF9800
-    style Q fill:#FF9800
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style L fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style M fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style P fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style Q fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
 ----
 
 === Performance Architecture
@@ -134,25 +136,26 @@ graph TB
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
-    subgraph "Performance Optimizations"
-        A[Memory Pools<br/>✅ Vector & HashMap Reuse<br/>60-80% Reduction]
-        B[Unified Caching<br/>✅ 14 Cache Types<br/>94.2% Hit Rate]
-        C[Streaming Processing<br/>✅ Constant Memory<br/>Async Entity Streaming]
-        D[Batch Operations<br/>✅ 2-3x Throughput<br/>Cache Batching]
+    subgraph "PERFORMANCE OPTIMIZATIONS"
+        A[Memory Pools<br/>Vector & HashMap Reuse<br/>60-80% Reduction]
+        B[Unified Caching<br/>14 Cache Types<br/>94.2% Hit Rate]
+        C[Streaming Processing<br/>Constant Memory<br/>Async Entity Streaming]
+        D[Batch Operations<br/>2-3x Throughput<br/>Cache Batching]
     end
-    
+
     A --> B
     B --> C
     C --> D
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
 ----
 
-== 🔧 Level 3: Implementation Details (Low Abstraction)
+== Level 3: Implementation Details (Low Abstraction)
 
 === Core Trait Implementations
 
@@ -212,6 +215,7 @@ classDiagram
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
 sequenceDiagram
     participant Client
     participant Planner as ExecutionPlanner
@@ -219,18 +223,18 @@ sequenceDiagram
     participant Executor as QueryExecutor
     participant Engine as StorageEngine
     participant Pool as VectorPool
-    
+
     Client->>+Planner: SQL Query
     Planner->>+Cache: Check Plan Cache
     Cache-->>-Planner: Cached Plan (94.2% hit rate)
-    
+
     alt Plan Cache Hit
         Planner-->>Client: Cached Execution Plan
     else Plan Cache Miss
         Planner->>Planner: Generate New Plan
         Planner->>Cache: Store Plan in Cache
     end
-    
+
     Planner->>+Executor: Execute Plan
     Executor->>+Pool: Get Reusable Vectors
     Pool-->>-Executor: Optimized Buffers
@@ -238,41 +242,45 @@ sequenceDiagram
     Engine-->>-Executor: Search Results
     Executor->>Pool: Return Buffers
     Executor-->>-Client: Query Results
-    
-    Note over Client,Pool: ✅ Production Optimized Flow<br/>Memory pools + Unified caching
+
+    Note over Client,Pool: Production Optimized Flow<br/>Memory pools + Unified caching
 ----
 
-== 📋 Level 4: Reference & Operations (Maximum Detail)
+== Level 4: Reference & Operations (Maximum Detail)
 
 === Production Deployment Procedures
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
     A[Start Deployment] --> B{Environment Check}
-    B -->|✅ Pass| C[Pull Container Image]
-    B -->|❌ Fail| D[Fix Prerequisites]
+    B -->|Pass| C[Pull Container Image]
+    B -->|Fail| D[Fix Prerequisites]
     D --> B
-    
+
     C --> E[Configure Security]
     E --> F[Deploy Enterprise Stack]
     F --> G[Health Verification]
-    
+
     G --> H{All Checks Pass?}
-    H -->|✅ Yes| I[Enable Monitoring]
-    H -->|❌ No| J[Rollback & Debug]
-    
+    H -->|Yes| I[Enable Monitoring]
+    H -->|No| J[Rollback & Debug]
+
     I --> K[Configure Alerts]
     K --> L[Performance Validation]
-    L --> M[✅ Production Ready]
-    
+    L --> M[Production Ready]
+
     J --> N[Investigate Issues]
     N --> O[Apply Fixes]
     O --> F
-    
-    style M fill:#4CAF50
-    style J fill:#F44336
-    style D fill:#FF9800
+
+    style M fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style J fill:#f44336,stroke:#d32f2f,stroke-width:2px,color:#ffffff
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 **Deployment Commands**:
@@ -293,31 +301,32 @@ open http://localhost:5678/dashboard
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
-    subgraph "Enterprise Dashboard Tabs"
-        A[🔍 System Overview<br/>Health Status<br/>Resource Monitoring<br/>Connection Tracking]
-        B[📊 Collections<br/>Vector Analytics<br/>Storage Engine Status<br/>Collection Management]
-        C[⚡ Performance<br/>Live Metrics<br/>Query Analytics<br/>Latency Tracking]
-        D[💾 Cache<br/>Hit Rate Analytics<br/>Memory Usage<br/>Efficiency Monitoring]
-        E[🔒 Security<br/>Auth Events<br/>Security Score<br/>Compliance Status]
-        F[🚨 Alerts<br/>Multi-level Alerts<br/>Smart Filtering<br/>Acknowledgment]
-        G[📈 Metrics<br/>Time-series Charts<br/>Export Capabilities<br/>Trend Analysis]
-        H[🔧 Diagnostics<br/>Health Checks<br/>System Info<br/>Troubleshooting]
+    subgraph "ENTERPRISE DASHBOARD TABS"
+        A[System Overview<br/>Health Status<br/>Resource Monitoring<br/>Connection Tracking]
+        B[Collections<br/>Vector Analytics<br/>Storage Engine Status<br/>Collection Management]
+        C[Performance<br/>Live Metrics<br/>Query Analytics<br/>Latency Tracking]
+        D[Cache<br/>Hit Rate Analytics<br/>Memory Usage<br/>Efficiency Monitoring]
+        E[Security<br/>Auth Events<br/>Security Score<br/>Compliance Status]
+        F[Alerts<br/>Multi-level Alerts<br/>Smart Filtering<br/>Acknowledgment]
+        G[Metrics<br/>Time-series Charts<br/>Export Capabilities<br/>Trend Analysis]
+        H[Diagnostics<br/>Health Checks<br/>System Info<br/>Troubleshooting]
     end
-    
+
     A --> B --> C --> D --> E --> F --> G --> H
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#F44336
-    style F fill:#795548
-    style G fill:#607D8B
-    style H fill:#009688
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style E fill:#f44336,stroke:#d32f2f,stroke-width:2px,color:#ffffff
+    style F fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+    style G fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+    style H fill:#009688,stroke:#00695c,stroke-width:2px,color:#ffffff
 ----
 
-== 🔗 Navigation Guide
+== Navigation Guide
 
 === Quick Access Links
 

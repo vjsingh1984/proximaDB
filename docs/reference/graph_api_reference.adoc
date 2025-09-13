@@ -8,31 +8,35 @@ Comprehensive API documentation for ProximaDB's native graph database capabiliti
 
 toc::[]
 
-== 📋 Overview
+== Overview
 
 ProximaDB's graph database provides high-performance, zero-copy architecture for graph operations with three distinct modes:
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
-    subgraph "Operation Modes"
+    subgraph "OPERATION MODES"
         A[Graph-Only Mode<br/>Pure graph operations]
         B[Unified Mode<br/>Vector + graph combined]
         C[Hybrid Mode<br/>Advanced semantic queries]
     end
-    
+
     D[Application] --> A
-    D --> B  
+    D --> B
     D --> C
-    
+
     A --> E[Graph Service]
     B --> E
     C --> E
     E --> F[RAPTOR Engine<br/>Native graph storage]
-    
-    style D fill:#e3f2fd
-    style E fill:#1e88e5
-    style F fill:#43a047
+
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style A fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 === Core Capabilities
@@ -62,30 +66,31 @@ graph LR
 |Real-time performance insights
 |===
 
-== 🏗️ Graph Architecture
+== Graph Architecture
 
 === System Component Design
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "API Layer"
+    subgraph "API LAYER"
         A[REST API<br/>Port 5678<br/>HTTP/JSON]
         B[gRPC API<br/>Port 5679<br/>Protobuf/Streaming]
     end
-    
-    subgraph "Service Layer"
+
+    subgraph "SERVICE LAYER"
         C[GraphService<br/>Business logic<br/>Query processing]
         D[QueryPlanner<br/>Cost-based optimization<br/>Statistics-driven]
         E[TransactionManager<br/>ACID guarantees<br/>WAL integration]
     end
-    
-    subgraph "Storage Layer"
+
+    subgraph "STORAGE LAYER"
         F[Graph Engine<br/>ORION/RAPTOR<br/>Memory pools]
         G[Index Manager<br/>Label/Property indexes<br/>B-tree structures]
         H[Storage Backend<br/>Persistent storage<br/>Recovery support]
     end
-    
+
     A --> C
     B --> C
     C --> D
@@ -94,9 +99,15 @@ graph TB
     E --> F
     F --> G
     F --> H
-    
-    style C fill:#1e88e5
-    style F fill:#43a047
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style G fill:#66bb6a,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style H fill:#66bb6a,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 === Data Model
@@ -138,7 +149,7 @@ classDiagram
     Edge --> PropertyValue
 ----
 
-== 🔌 REST API Reference
+== REST API Reference
 
 === Node Operations
 

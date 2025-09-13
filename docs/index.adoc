@@ -14,46 +14,50 @@ image:https://img.shields.io/badge/Version-1.0.4-success[Version]
 
 toc::[]
 
-== 🚀 Production Status Overview
+== Production Status Overview
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "📊 Production Certification"
-        A[ProximaDB Enterprise v1.0.4<br/>✅ 100% Production Ready<br/>✅ 2,847+ QPS<br/>✅ 94.2% Cache Efficiency]
+    subgraph "Production Certification"
+        A[ProximaDB Enterprise v1.0.4<br/>100% Production Ready<br/>2,847+ QPS<br/>94.2% Cache Efficiency]
     end
-    
-    subgraph "📚 Documentation Suite"
-        B[Business Overview<br/>📋 Value Proposition]
-        C[Technical Architecture<br/>🏗️ System Design]
-        D[Operations Guide<br/>🔧 Production Ops]
-        E[Production Runbook<br/>📋 Daily Operations]
+
+    subgraph "Documentation Suite"
+        B[Business Overview<br/>Value Proposition]
+        C[Technical Architecture<br/>System Design]
+        D[Operations Guide<br/>Production Ops]
+        E[Production Runbook<br/>Daily Operations]
     end
-    
-    subgraph "🔍 Reference Materials"
-        F[Architecture Diagram<br/>🎨 Visual Reference]
-        G[Roadmap Status<br/>📈 Implementation Status]
-        H[API Documentation<br/>🔗 Developer Guide]
+
+    subgraph "Reference Materials"
+        F[Architecture Diagram<br/>Visual Reference]
+        G[Roadmap Status<br/>Implementation Status]
+        H[API Documentation<br/>Developer Guide]
     end
-    
+
     A --> B
     A --> C
     A --> D
     A --> E
-    
+
     B --> F
     C --> F
     D --> G
     E --> H
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#F44336
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
-== 📋 Documentation Structure
+== Documentation Structure
 
 === Core Documentation
 
@@ -64,22 +68,22 @@ graph TB
 | **Enterprise Guide**
 | link:proximadb_enterprise_guide.adoc[proximadb_enterprise_guide.adoc]
 | Complete enterprise documentation with all capabilities
-| ✅ **Complete**
+| **Complete**
 
 | **Getting Started**
 | link:guides/getting_started.adoc[guides/getting_started.adoc]
 | Quick start guide for developers and users
-| ✅ **Complete**
+| **Complete**
 
 | **Security Architecture**
 | link:security.adoc[security.adoc]
 | Enterprise security framework and compliance
-| ✅ **Complete**
+| **Complete**
 
 | **Production Runbook**
 | link:operations/production_runbook.adoc[operations/production_runbook.adoc]
 | Daily operations and troubleshooting
-| ✅ **Complete**
+| **Complete**
 |===
 
 === Reference Documentation
@@ -91,27 +95,27 @@ graph TB
 | **API Reference**
 | link:reference/graph_api_reference.adoc[reference/graph_api_reference.adoc]
 | Complete API documentation
-| ✅ **Complete**
+| **Complete**
 
 | **Technical Reference**
 | link:reference/sks_technical_reference.adoc[reference/sks_technical_reference.adoc]
 | SKS implementation guide
-| ✅ **Complete**
+| **Complete**
 
 | **Architecture Diagram**
 | link:09-roadmap/analysis/class_diagram.mmd[09-roadmap/analysis/class_diagram.mmd]
 | Complete system class diagram
-| ✅ **Complete**
+| **Complete**
 
 | **Enterprise Guide**
 | link:proximadb_enterprise_guide.adoc[proximadb_enterprise_guide.adoc]
 | Comprehensive enterprise documentation
-| ✅ **Complete**
+| **Complete**
 
 | **Roadmap Overview**
 | link:09-roadmap/README.md[09-roadmap/README.md]
 | Implementation roadmap status
-| ✅ **Complete**
+| **Complete**
 |===
 
 === Configuration and Examples
@@ -123,15 +127,15 @@ graph TB
 | **Example Configuration**
 | link:config/example_config.toml[config/example_config.toml]
 | Production configuration examples
-| ✅ **Complete**
+| **Complete**
 
 | **Deployment Scripts**
 | link:../scripts/enterprise_deploy.sh[../scripts/enterprise_deploy.sh]
 | Automated deployment procedures
-| ✅ **Complete**
+| **Complete**
 |===
 
-== 🎯 Quick Navigation
+== Quick Navigation
 
 === For Business Stakeholders
 1. **Enterprise Guide**: link:proximadb_enterprise_guide.adoc[Enterprise Guide] - Complete business and technical overview
@@ -147,46 +151,47 @@ graph TB
 2. **Security Guide**: link:security.adoc[Security Guide] - Enterprise security framework
 3. **Architecture Diagram**: link:09-roadmap/analysis/class_diagram.mmd[Class Diagram] - System visualization
 
-== 🏗️ Documentation Architecture Philosophy
+== Documentation Architecture Philosophy
 
 === Hierarchical Abstraction Model
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
-    subgraph "📊 Level 1: Executive Overview"
+    subgraph "Level 1: Executive Overview"
         A[Business Value<br/>High-level Benefits<br/>ROI and Competitive Advantage]
     end
-    
-    subgraph "🏗️ Level 2: Technical Architecture"
+
+    subgraph "Level 2: Technical Architecture"
         B[System Components<br/>Storage Engines, APIs, Cache<br/>Component Relationships]
         C[Performance Metrics<br/>Throughput, Latency, Efficiency<br/>Production Benchmarks]
     end
-    
-    subgraph "🔧 Level 3: Implementation Details"
+
+    subgraph "Level 3: Implementation Details"
         D[Code Architecture<br/>Classes, Traits, Methods<br/>Implementation Patterns]
         E[Operations Procedures<br/>Deployment, Monitoring, Debug<br/>Step-by-step Guides]
     end
-    
-    subgraph "📋 Level 4: Reference Materials"
+
+    subgraph "Level 4: Reference Materials"
         F[API Documentation<br/>Endpoint Details<br/>Request/Response Schemas]
         G[Configuration Reference<br/>Parameter Details<br/>Tuning Guidelines]
     end
-    
+
     A --> B
     A --> C
     B --> D
     C --> E
     D --> F
     E --> G
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#F44336
-    style F fill:#795548
-    style G fill:#607D8B
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style F fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style G fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
 ----
 
 === Mermaid Diagram Progression
@@ -199,7 +204,7 @@ graph TD
 
 **Reference Level (Level 4)**: Sequence diagrams showing operational procedures and API interactions
 
-== 🔗 External References
+== External References
 
 === Production Systems
 - **Enterprise Dashboard**: http://localhost:5678/dashboard

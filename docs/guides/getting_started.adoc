@@ -10,7 +10,7 @@
 
 toc::[]
 
-== 🚀 5-Minute Quick Start
+== 5-Minute Quick Start
 
 === Prerequisites
 
@@ -39,6 +39,7 @@ toc::[]
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 journey
     title ProximaDB Installation Journey
     section Download
@@ -104,15 +105,20 @@ curl -X POST http://localhost:5678/api/v1/collections/my_vectors/search \
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
     A[Download Binary] --> B[Extract Archive]
     B --> C[Create Config]
     C --> D[Start Service]
     D --> E[Verify Health]
     E --> F[Ready for Use]
-    
-    style A fill:#e3f2fd
-    style F fill:#e8f5e8
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#0d47a1
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Step-by-step:**
@@ -145,7 +151,7 @@ EOF
 curl http://localhost:5678/health
 ----
 
-== 🏗️ Basic Configuration
+== Basic Configuration
 
 === Configuration File Structure
 
@@ -176,22 +182,24 @@ mindmap
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
     A[Choose Storage Engine] --> B{Primary Use Case}
-    
-    B -->|Real-time Updates<br/>High Write Volume| C[SST Engine<br/>⚡ Optimized for writes<br/>200K vectors/sec]
-    
-    B -->|Analytics<br/>Complex Queries| D[VIPER Engine<br/>📊 Columnar storage<br/>500K vectors/sec batch]
-    
-    B -->|Similarity Search<br/>Clustering| E[HELIX Engine<br/>🔄 PCA clustering<br/>70-90% query pruning]
-    
-    B -->|Mixed Workload| F[Auto-Selection<br/>🤖 Intelligent routing<br/>Based on query patterns]
-    
-    style A fill:#e3f2fd
-    style C fill:#43a047
-    style D fill:#43a047
-    style E fill:#43a047
-    style F fill:#1e88e5
+
+    B -->|Real-time Updates<br/>High Write Volume| C[SST Engine<br/>Optimized for writes<br/>200K vectors/sec]
+
+    B -->|Analytics<br/>Complex Queries| D[VIPER Engine<br/>Columnar storage<br/>500K vectors/sec batch]
+
+    B -->|Similarity Search<br/>Clustering| E[HELIX Engine<br/>PCA clustering<br/>70-90% query pruning]
+
+    B -->|Mixed Workload| F[Auto-Selection<br/>Intelligent routing<br/>Based on query patterns]
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
 ----
 
 **Configuration Examples:**
@@ -226,7 +234,7 @@ parallel_search = true
 max_threads = 8
 ----
 
-== 📡 Client Integration
+== Client Integration
 
 === Python SDK
 
@@ -282,21 +290,22 @@ for result in results:
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
 sequenceDiagram
     participant App as Application
     participant API as REST API
     participant ProximaDB as ProximaDB
-    
+
     App->>API: POST /collections
     API->>ProximaDB: Create collection
     ProximaDB-->>API: Collection created
     API-->>App: 201 Created
-    
+
     App->>API: POST /collections/{name}/vectors
     API->>ProximaDB: Insert vectors
     ProximaDB-->>API: Vectors stored
     API-->>App: 200 OK
-    
+
     App->>API: POST /collections/{name}/search
     API->>ProximaDB: Vector search
     ProximaDB-->>API: Search results
@@ -341,7 +350,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ----
 
-== 🔧 Configuration Examples
+== Configuration Examples
 
 === Development Environment
 
@@ -406,12 +415,13 @@ cert_path = "/etc/ssl/certs/proximadb.crt"
 key_path = "/etc/ssl/private/proximadb.key"
 ----
 
-== 📊 First Steps Checklist
+== First Steps Checklist
 
 === Deployment Verification
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 stateDiagram-v2
     [*] --> Installing
     Installing --> Configured: Config file created
@@ -419,7 +429,7 @@ stateDiagram-v2
     Starting --> Healthy: Health check passed
     Healthy --> Ready: First collection created
     Ready --> Operational: First query successful
-    
+
     Installing: Download and extract\nCreate directories\nSet permissions
     Configured: Config file validated\nPorts available\nStorage accessible
     Starting: Service initialization\nPort binding\nStorage connection
@@ -459,50 +469,61 @@ stateDiagram-v2
 |link:BUSINESS_OVERVIEW.adoc[Business Overview]
 |===
 
-== 🎯 Common Use Cases
+== Common Use Cases
 
 === Semantic Search
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
     A[User Query] --> B[Text Embedding]
-    B --> C[Vector Search] 
+    B --> C[Vector Search]
     C --> D[Similarity Ranking]
     D --> E[Relevant Results]
-    
-    style A fill:#e3f2fd
-    style E fill:#e8f5e8
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 === Recommendation Systems
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
     A[User Behavior] --> B[Embedding Generation]
     B --> C[Similar User Lookup]
-    C --> D[Content Aggregation] 
+    C --> D[Content Aggregation]
     D --> E[Personalized Recommendations]
-    
+
     F[Content Features] --> G[Content Embeddings]
     G --> H[Content Similarity]
     H --> D
-    
-    style A fill:#f3e5f5
-    style F fill:#fff3e0
-    style E fill:#e8f5e8
+
+    style A fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 === Knowledge Discovery
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
 sequenceDiagram
     participant User
     participant ProximaDB
     participant KnowledgeBase
-    
+
     User->>ProximaDB: Query concepts
     ProximaDB->>KnowledgeBase: Search embeddings
     KnowledgeBase-->>ProximaDB: Related concepts

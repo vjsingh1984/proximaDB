@@ -233,7 +233,7 @@ pie title Revenue Strategy (24-month projection)
 - **18 Months**: $150M ARR (marketplace economy launch)
 - **24 Months**: $300M ARR (platform economy maturity)
 
-## 📊 Executive Decision Framework
+== Executive Decision Framework
 
 === Investment Priority Matrix
 
