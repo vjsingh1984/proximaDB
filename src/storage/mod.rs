@@ -218,6 +218,9 @@ pub mod strategy;
 // Specialized cache system with shared infrastructure
 pub mod cache;
 
+// Multi-tenant architecture modules
+pub mod tenant;
+
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;
 pub mod provenance;
