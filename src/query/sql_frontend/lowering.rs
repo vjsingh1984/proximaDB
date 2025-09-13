@@ -126,7 +126,7 @@ impl QueryLowering {
             from,
             joins,
             selection,
-            group_by: self.lower_group_by(&select.group_by).await?,
+            group_by: self.lower_group_by(&select.group_by.exprs).await?,
             having: if let Some(having_expr) = &select.having {
                 Some(self.lower_expr(having_expr).await?)
             } else {

@@ -195,7 +195,7 @@ use serde::{Deserialize, Serialize};
 pub use server_builder::{GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder};
 
 /// Network server configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
     /// Server bind address
     pub bind_address: String,

@@ -807,7 +807,7 @@ impl SharedServices {
                         Err(e) => {
                             warn!(
                                 "Failed to recover vector {} for collection {}: {}",
-                                vector_record.id.as_ref().unwrap_or(&"<no_id>".to_string()),
+                                &vector_record.id,
                                 collection_id,
                                 e
                             );

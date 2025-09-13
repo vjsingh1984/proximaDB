@@ -84,7 +84,7 @@ impl ConfigReloader {
         Ok(Self {
             config: Arc::new(RwLock::new(initial_config)),
             config_path,
-            loader: ConfigLoader::new(),
+            loader: ConfigLoader,
             last_modified: Arc::new(RwLock::new(last_modified)),
             change_notifier: change_tx,
             check_interval: Duration::from_secs(30), // Check every 30 seconds
@@ -161,9 +161,8 @@ impl ConfigReloader {
         debug!("Configuration file changed, reloading: {}", config_path);
         
         // Load new configuration
-        let loader = ConfigLoader::new();
-        let new_config = loader.load_from_file(config_path).await
-            .context("Failed to load new configuration")?;
+        let new_config = ConfigLoader::load_with_defaults(config_path)
+            .map_err(|e| anyhow::anyhow!("Failed to load new configuration: {}", e))?;
         
         // Store old config for comparison
         let old_config = {

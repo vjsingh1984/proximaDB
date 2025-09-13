@@ -139,16 +139,14 @@ impl IntoApiError for serde_json::Error {
     }
 }
 
-/// Implement IntoResponse for Result<T, ApiError> where T: IntoResponse
-impl<T> IntoResponse for Result<T, ApiError>
+/// Helper function to convert Result<T, ApiError> to Response
+pub fn result_into_response<T>(result: Result<T, ApiError>) -> Response
 where
     T: IntoResponse,
 {
-    fn into_response(self) -> Response {
-        match self {
-            Ok(value) => value.into_response(),
-            Err(error) => error.into_response(),
-        }
+    match result {
+        Ok(value) => value.into_response(),
+        Err(error) => error.into_response(),
     }
 }
 

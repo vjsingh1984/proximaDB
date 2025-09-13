@@ -106,9 +106,9 @@ pub struct PerformanceProfiler {
     output_path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PerformanceProfile {
-    timestamp: SystemTime,
+    timestamp_ms: u64,
     operation: String,
     duration_ms: f64,
     cache_type: CacheType,
@@ -534,7 +534,10 @@ impl PerformanceProfiler {
         }
 
         let profile = PerformanceProfile {
-            timestamp: SystemTime::now(),
+            timestamp_ms: SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
             operation,
             duration_ms,
             cache_type,

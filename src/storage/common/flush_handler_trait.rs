@@ -183,6 +183,10 @@ impl FlushHandler for NovaFlushHandler {
             force: false,
             synchronous: true,
             hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            priority: crate::storage::traits::OperationPriority::Medium,
+            collection_config: None,
+            estimated_input_size: 0,
         };
         
         // Delegate to NOVA engine's unified compaction interface
@@ -225,6 +229,10 @@ impl FlushHandler for SwiftFlushHandler {
             force: false,
             synchronous: true,
             hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            priority: crate::storage::traits::OperationPriority::Medium,
+            collection_config: None,
+            estimated_input_size: 0,
         };
         
         // Delegate to SWIFT engine's unified compaction interface
@@ -266,6 +274,10 @@ impl FlushHandler for PrismFlushHandler {
             force: false,
             synchronous: true,
             hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            priority: crate::storage::traits::OperationPriority::Medium,
+            collection_config: None,
+            estimated_input_size: 0,
         };
         
         // Delegate to PRISM engine's unified compaction interface
@@ -307,6 +319,10 @@ impl FlushHandler for RaptorFlushHandler {
             force: false,
             synchronous: true,
             hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            priority: crate::storage::traits::OperationPriority::Medium,
+            collection_config: None,
+            estimated_input_size: 0,
         };
         
         // Delegate to RAPTOR engine's unified compaction interface

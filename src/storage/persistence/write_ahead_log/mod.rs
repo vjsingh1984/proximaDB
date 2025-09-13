@@ -165,7 +165,7 @@ pub use recovery_thread_pool::{
 pub use serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer};
 
 /// Modern WAL operation - binary payload for batch operations (Proto-first architecture)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WALOperation {
     /// Operation type: "upsert_batch", "delete_batch", "flush", "checkpoint"
     pub operation_type: String,
@@ -1824,7 +1824,9 @@ impl WriteAheadLogManager {
                     timestamp: Some(vector_record.timestamp),
                     updated_at: vector_record.updated_at,
                     expires_at: vector_record.expires_at,
-                    source: vector_record.source,
+                    source: vector_record.source.map(|s| crate::proto::proximadb_v1::SourceContent {
+                        data: Some(crate::proto::proximadb_v1::source_content::Data::TextContent(s))
+                    }),
                     expanded_context: Vec::new(),
                     semantic_similarity: Some(similarity_result.clone()),
                     quantization_info: None, // TODO: Add quantization info if available

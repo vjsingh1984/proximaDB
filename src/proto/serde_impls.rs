@@ -341,6 +341,9 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorRecord {
                     timestamp,
                     updated_at,
                     expires_at,
+                    quantized_vector: None,
+                    source: String::new(),
+                    version: 0,
                 })
             }
         }

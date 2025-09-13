@@ -234,7 +234,7 @@ pub struct QuantizationParams {
 }
 
 /// Metadata stored in columnar format
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataColumns {
     /// String metadata columns
     pub string_columns: HashMap<String, Vec<Option<String>>>,
@@ -245,7 +245,7 @@ pub struct MetadataColumns {
 }
 
 /// Column page metadata for selective field access
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnPageMetadata {
     pub column_type: ColumnType,
     pub offset: u64,            // File offset for this column
@@ -259,7 +259,7 @@ pub struct ColumnPageMetadata {
 }
 
 /// Column types in RAPTOR files
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ColumnType {
     VectorsFp32,
     VectorsQuantized,
@@ -313,7 +313,7 @@ pub struct RowGroupMetadata {
 ///
 /// ENHANCED: Now includes all statistics needed for 5-component boosting formula
 /// These statistics are STORED at write-time and used for runtime boosting calculations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CentroidStats {
     pub cluster_id: u32,    // IVF cluster assignment
     pub mean_distance: f32, // Mean distance of vectors to centroid (d₂ component)
@@ -434,7 +434,7 @@ pub struct RowPageMetadata {
 
 // ====== Vector Statistics (unified) ======
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VectorStats {
     pub dimension: usize,
     pub min_norm: f32,
@@ -470,7 +470,7 @@ impl Default for VectorEncoding {
 
 // ====== Column Statistics (unified from reader.rs and rowgroup.rs) ======
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnStats {
     pub null_count: usize,
     pub distinct_count: Option<usize>,
@@ -1415,7 +1415,7 @@ pub enum CompressionType {
 }
 
 /// Compression metadata for inter-centroid matrix reconstruction
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InterCentroidCompressionMetadata {
     /// Minimum distance value (for delta encoding base)
     pub min_distance: f32,
@@ -1511,7 +1511,7 @@ pub struct HierarchicalData {
 }
 
 /// Delta entry for hierarchical storage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeltaEntry {
     /// Vector index within rowgroup
     pub vector_index: u32,
@@ -1710,7 +1710,7 @@ pub struct VectorCentroidCompressionMetadata {
 }
 
 /// Per-centroid distance statistics for adaptive compression
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CentroidDistanceStats {
     /// Centroid ID
     pub centroid_id: u16,
@@ -1727,7 +1727,7 @@ pub struct CentroidDistanceStats {
 }
 
 /// FastLanes encoding metadata for a dimension
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FastLanesMetadata {
     /// Min value in this dimension (for delta encoding)
     pub min_value: f32,
@@ -1745,7 +1745,7 @@ pub struct FastLanesMetadata {
 // FastLanesScheme now imported from common::fastlanes_encoding module for code reuse
 
 /// Sparse entry in P×K matrix for boundary vectors only
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SparseEntry {
     /// Vector index within rowgroup
     pub vector_idx: u32,

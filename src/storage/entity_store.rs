@@ -22,7 +22,6 @@ use crate::proto::proximadb_v1::{
 };
 use crate::storage::engines::UnifiedStorageEngine;
 use crate::services::operations::vectors::VectorOperationsService;
-use std::collections::HashMap;
 use crate::proto::proximadb_v1::SqlValue;
 use serde::{Deserialize, Serialize};
 use tokio::fs;

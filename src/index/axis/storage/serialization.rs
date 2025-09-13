@@ -68,7 +68,7 @@ pub enum Index {
 }
 
 /// Metadata for serialized index
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexMetadata {
     /// Index type
     pub index_type: Index,
