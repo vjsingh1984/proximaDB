@@ -16,8 +16,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 #[cfg(test)]
-use std::sync::Mutex;
-#[cfg(test)]
 static TEST_VECTOR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
 #[cfg(test)]
 static TEST_SIMILAR_RESULTS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<QueryRow>>>> = std::sync::OnceLock::new();
@@ -1407,6 +1405,7 @@ impl QueryExecutor {
 #[cfg(test)]
 mod executor_tests {
     use super::*;
+    use async_trait::async_trait;
     use crate::query::execution::{ExecutionPlan, ExecutionStrategy};
     use crate::storage::entity_store::{CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore};
 

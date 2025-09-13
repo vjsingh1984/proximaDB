@@ -7,7 +7,7 @@
 mod tests {
     use super::super::*;
     use crate::storage::cache::specialized::{
-        MetadataStore, VectorStore,
+        MetadataStore,
         metadata_store::{ColumnStatistics, ParquetFileMetadata, ParquetSchemaMapping},
     };
     use std::collections::HashMap;

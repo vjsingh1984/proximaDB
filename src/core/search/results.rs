@@ -1,9 +1,7 @@
 //! Search result types
 
 use crate::compute::distance_computation::engine::SimilarityResult;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::proto::proximadb_v1::SourceContent;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -67,20 +65,20 @@ fn convert_json_map_to_sql_value_map(
 // All functionality moved to OptimizedSearchRecord for better performance
 
 // Type definitions needed by OptimizedSearchRecord
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SearchDebugInfo {
     pub engine_used: String,
     pub search_time_ms: f64,
     pub candidates_evaluated: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QuantizationInfo {
     pub quantization_type: String,
     pub compression_ratio: f32,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EngineStats {
     pub vectors_scanned: usize,
     pub cache_hits: usize,
@@ -100,6 +98,7 @@ pub struct OptimizedSearchRecord {
     /// Distance value (lower = more similar, if different from score)  
     pub similarity: Option<f32>,
     /// Original vector data (using Arc to avoid cloning)
+    #[serde(skip)]
     pub vector: Option<Arc<Vec<f32>>>,
     /// Associated metadata (using HashMap<String, SqlValue> for full SQL type support and superior performance)
     pub metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
@@ -114,8 +113,10 @@ pub struct OptimizedSearchRecord {
     /// TTL expiration timestamp
     pub expires_at: Option<i64>,
     /// Original source content
+    #[serde(skip)]
     pub source: Option<SourceContent>,
     /// Expanded context for RAG applications
+    #[serde(skip)]
     pub expanded_context: Vec<SourceContent>,
     /// Semantic distance information
     pub semantic_similarity: Option<SimilarityResult>,

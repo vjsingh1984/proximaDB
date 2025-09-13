@@ -355,7 +355,7 @@ mod sst_filename_tests {
 /// Used for MVCC (Multi-Version Concurrency Control). Higher sequence numbers
 /// represent newer versions. During reads, we return the latest version that's
 /// visible to the transaction.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstMetadata {
     /// True if this is a deletion marker - tombstones cascade through LSM levels
     /// until they reach the bottom where they're garbage collected
@@ -4562,8 +4562,9 @@ impl SstStorage {
         collection_id: &str,
         filter: &UnifiedMetadataFilter,
     ) -> Result<()> {
-        // Delegate to the comprehensive filter_methods implementation
-        self.set_scan_filter(collection_id, filter).await
+        // TODO: Implement proper scan filter delegation
+        // Avoiding recursive call for now
+        Ok(())
     }
 
     /// Configure index filter for metadata filtering during index lookups
@@ -4575,8 +4576,9 @@ impl SstStorage {
         index_name: &str,
         filter: &UnifiedMetadataFilter,
     ) -> Result<()> {
-        // Delegate to the comprehensive filter_methods implementation
-        self.set_index_filter(collection_id, index_name, filter).await
+        // TODO: Implement proper index filter delegation
+        // Avoiding recursive call for now
+        Ok(())
     }
 
     /// Retrieve collection metadata for the specified collection

@@ -17,7 +17,7 @@ use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
 /// Cached execution plan with metadata
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 struct CachedPlan {
     plan: ExecutionPlan,
     #[serde(skip)] // Skip serialization for Instant

@@ -356,7 +356,7 @@ pub struct CentroidStats {
 /// Lightweight reference stored in each rowgroup's metadata
 /// Only stores INDICES, not distances - distances computed at query time
 /// Optimized with u16 IDs: supports 65,536 rowgroups = 67M vectors per file
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RowGroupNeighbor {
     pub rowgroup_id: u16, // Direct index into footer centroids array (67M vectors max)
     pub neighbor_cluster_id: u16, // Cluster assignment of neighbor (65k clusters max)
@@ -444,7 +444,7 @@ pub struct VectorStats {
     pub encoding: VectorEncoding,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum VectorEncoding {
     Raw,
     ProductQuantization {
