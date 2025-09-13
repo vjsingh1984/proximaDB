@@ -7,12 +7,14 @@ pub mod context;
 pub mod resources;
 pub mod entity_store;
 pub mod domain;
+pub mod rbac;
 
 pub use manager::TenantManager;
 pub use context::{TenantContext, TenantConfig, TenantStatus, BusinessContext, DataSensitivityLevel};
 pub use resources::{TenantResourceTracker, ResourceLimits};
 pub use entity_store::{TenantAwareEntityStore, UserContext};
 pub use domain::{DomainManager, DomainContext, CollectionDomainMapping};
+pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};

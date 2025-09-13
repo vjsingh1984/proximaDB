@@ -107,6 +107,9 @@ pub mod graph;
 /// Unified API handlers for REST and gRPC with proto-first zero-copy design
 pub mod api_handlers;
 
+/// Enhanced authentication and authorization for multi-tenant enterprise
+pub mod auth;
+
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
 pub mod index;
 // Unified metrics module - combines advanced persistent metrics with real-time monitoring
