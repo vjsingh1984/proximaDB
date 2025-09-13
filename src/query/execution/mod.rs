@@ -240,6 +240,29 @@ pub enum ExecutionOperation {
     Union {
         all: bool, // UNION ALL vs UNION (distinct)
     },
+    /// Set UNION operation with explicit left/right references
+    SetUnion {
+        left_results: String,
+        right_results: String,
+        distinct: bool,
+    },
+    /// Set INTERSECT operation
+    SetIntersect {
+        left_results: String,
+        right_results: String,
+        distinct: bool,
+    },
+    /// Set EXCEPT operation
+    SetExcept {
+        left_results: String,
+        right_results: String,
+        distinct: bool,
+    },
+    /// CTE Materialization operation
+    CteMaterialization {
+        cte_name: String,
+        query_plan: Box<ExecutionPlan>,
+    },
 }
 
 impl ExecutionOperation {
@@ -283,6 +306,21 @@ impl ExecutionOperation {
             }
             ExecutionOperation::Join { kind, left_keys, .. } => {
                 format!("Join ({:?}) keys:{}", kind, left_keys.len())
+            }
+            ExecutionOperation::Union { all } => {
+                format!("Union ({})", if *all { "ALL" } else { "DISTINCT" })
+            }
+            ExecutionOperation::SetUnion { distinct, .. } => {
+                format!("Set Union ({})", if *distinct { "DISTINCT" } else { "ALL" })
+            }
+            ExecutionOperation::SetIntersect { distinct, .. } => {
+                format!("Set Intersect ({})", if *distinct { "DISTINCT" } else { "ALL" })
+            }
+            ExecutionOperation::SetExcept { distinct, .. } => {
+                format!("Set Except ({})", if *distinct { "DISTINCT" } else { "ALL" })
+            }
+            ExecutionOperation::CteMaterialization { cte_name, .. } => {
+                format!("CTE Materialization ({})", cte_name)
             }
         }
     }
