@@ -10,10 +10,22 @@ use crate::query::execution::{
     ExecutionOperation, ExecutionPlan, ExecutionStrategy, FusionStrategy, ProjectionTransform,
 };
 use crate::services::operations::vectors::VectorOperationsService;
+use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 
-/// Cost-based execution planner for unified query optimization
+/// Cached execution plan with metadata
+#[derive(Debug, Clone)]
+struct CachedPlan {
+    plan: ExecutionPlan,
+    created_at: std::time::Instant,
+    hit_count: u64,
+    avg_execution_time_ms: f64,
+}
+
+/// Cost-based execution planner for unified query optimization with unified caching
 pub struct ExecutionPlanner {
     vector_service: Arc<VectorOperationsService>,
     graph_service: Arc<GraphService>,
@@ -21,6 +33,8 @@ pub struct ExecutionPlanner {
     params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>, // for decoding $1 vectors when not substituted
     seeding_strategy: crate::query::execution::SeedingStrategy,
     fusion_weights: Option<Vec<f64>>,
+    /// Unified cache orchestrator for query plan caching
+    cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
 }
 
 impl ExecutionPlanner {
@@ -36,6 +50,7 @@ impl ExecutionPlanner {
             params: None,
             seeding_strategy: crate::query::execution::SeedingStrategy::Average,
             fusion_weights: None,
+            plan_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 

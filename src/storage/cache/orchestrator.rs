@@ -116,6 +116,8 @@ pub enum CacheType {
     FilterBitmap,
     IndexStructure,
     Metadata,
+    /// Query execution plans for performance optimization
+    QueryPlan,
     // SKS/Graph extensions
     /// Entity headers (typed/flexible metadata, provenance, temporal)
     EntityHeader,
