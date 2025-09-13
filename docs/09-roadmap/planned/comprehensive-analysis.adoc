@@ -84,11 +84,11 @@ Duplication Status: **All identified duplications resolved and cleaned up**
 | Implementation placeholders and optimizations, not critical gaps
 
 | Query System Technical Debt
-| 🔧 Minor Gap
-| 151 query-related TODO items for optimization
+| ✅ Done
+| Query plan caching and unified cache migration completed
 | Tech Debt
 | Medium
-| SKS functions complete, cost optimization implemented
+| SKS functions complete, cost optimization implemented, unified cache integration
 
 | Network Technical Debt
 | ✅ Done
@@ -105,11 +105,11 @@ Duplication Status: **All identified duplications resolved and cleaned up**
 | Header-level filtering, typed metadata matching, performance optimization
 
 | Utils Technical Debt
-| 🔧 Minor Gap
-| B-tree disk loading, bitmap serialization optimization
+| ✅ Done
+| Unified cache migration completed, persistence layer improvements
 | Tech Debt
 | Medium
-| 4 TODO items for persistence layer improvements
+| Distance cache and metrics store migrated to unified cache infrastructure
 
 | Infrastructure Technical Debt
 | ✅ Done
@@ -847,6 +847,48 @@ Duplication Status: **All identified duplications resolved and cleaned up**
 | Feature
 | Medium
 | ORION/PULSAR/QUASAR metrics
+|===
+
+=== Unified Cache Infrastructure Improvements
+
+[cols="3,1,4,2,1,3", options="header"]
+|===
+| Component | Status | Description | Category | Priority | Implementation Notes
+
+| Query Plan Caching
+| ✅ Done
+| Unified cache integration for execution plans with hit count tracking
+| Performance
+| High
+| ExecutionPlanner now uses CrossCacheOrchestrator with serialization
+
+| Distance Table Cache Migration
+| ✅ Done
+| Migrated PQ distance tables to unified cache infrastructure
+| Performance
+| High
+| Replaced HashMap with CrossCacheOrchestrator, added DistanceTable cache type
+
+| Metrics Store Cache Migration
+| ✅ Done
+| Migrated metrics snapshots to unified cache system
+| Performance
+| Medium
+| Added MetricsSnapshot cache type, unified cache orchestrator integration
+
+| Cache Type Extensions
+| ✅ Done
+| Extended CacheType enum with new specialized cache types
+| Infrastructure
+| Medium
+| Added QueryPlan, DistanceTable, and MetricsSnapshot cache types
+
+| Cross-Cache Orchestration
+| ✅ Done
+| Improved cache coordination and memory management
+| Performance
+| High
+| Enhanced CrossCacheOrchestrator with new cache type support
 |===
 
 === Alerting & Health

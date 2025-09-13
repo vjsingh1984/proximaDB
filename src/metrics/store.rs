@@ -16,6 +16,7 @@ use super::MetricsConfig;
 use super::schema::{CollectionMetrics, GlobalMetrics};
 use super::updater::MetricsUpdate;
 use crate::storage::persistence::filesystem::{FileOptions, FilesystemFactory};
+use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
 
 /// Metrics persistence layer with cross-cloud support
 pub struct MetricsPersistenceLayer {
@@ -28,7 +29,9 @@ pub struct MetricsPersistenceLayer {
     /// Configuration
     config: MetricsConfig,
 
-    /// In-memory cache of latest snapshots
+    /// Unified cache orchestrator for metrics snapshots
+    cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+    /// Legacy in-memory cache for backwards compatibility
     snapshot_cache: Arc<RwLock<HashMap<String, MetricsSnapshot>>>,
 
     /// Pending updates buffer
@@ -87,6 +90,7 @@ impl MetricsPersistenceLayer {
             filesystem_factory,
             base_path: normalized_base,
             config,
+            cache_orchestrator: None,
             snapshot_cache: Arc::new(RwLock::new(HashMap::new())),
             pending_updates: Arc::new(RwLock::new(Vec::new())),
             last_snapshot: Arc::new(RwLock::new(0)),

@@ -17,9 +17,10 @@ use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
 /// Cached execution plan with metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct CachedPlan {
     plan: ExecutionPlan,
+    #[serde(skip)] // Skip serialization for Instant
     created_at: std::time::Instant,
     hit_count: u64,
     avg_execution_time_ms: f64,
@@ -50,7 +51,24 @@ impl ExecutionPlanner {
             params: None,
             seeding_strategy: crate::query::execution::SeedingStrategy::Average,
             fusion_weights: None,
-            plan_cache: Arc::new(RwLock::new(HashMap::new())),
+            cache_orchestrator: None,
+        }
+    }
+
+    /// Create new execution planner with unified cache orchestrator
+    pub fn with_cache(
+        vector_service: Arc<VectorOperationsService>,
+        graph_service: Arc<GraphService>,
+        cache_orchestrator: Arc<CrossCacheOrchestrator>,
+    ) -> Self {
+        Self {
+            vector_service,
+            graph_service,
+            cost_model: CostModel::new(),
+            params: None,
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
+            fusion_weights: None,
+            cache_orchestrator: Some(cache_orchestrator),
         }
     }
 
@@ -80,11 +98,53 @@ impl ExecutionPlanner {
     /// - Hybrid: For combined vector + graph intelligence
     /// - Relational: For traditional SQL operations
     pub fn create_plan(&self, query: &Query) -> Result<ExecutionPlan> {
-        match query {
+        // Generate cache key for query plan caching
+        let cache_key = self.generate_cache_key(query);
+        
+        // Check unified cache for existing plan
+        if let Some(ref cache_orchestrator) = self.cache_orchestrator {
+            if let Ok(Some(cached_data)) = cache_orchestrator.get(&CacheType::QueryPlan, &cache_key) {
+                if let Ok(cached_plan) = serde_json::from_slice::<CachedPlan>(&cached_data) {
+                    // Update hit count and return cached plan
+                    let updated_plan = CachedPlan {
+                        plan: cached_plan.plan.clone(),
+                        created_at: cached_plan.created_at,
+                        hit_count: cached_plan.hit_count + 1,
+                        avg_execution_time_ms: cached_plan.avg_execution_time_ms,
+                    };
+                    
+                    // Update cache with new hit count
+                    if let Ok(updated_data) = serde_json::to_vec(&updated_plan) {
+                        let _ = cache_orchestrator.put(CacheType::QueryPlan, cache_key, updated_data, None);
+                    }
+                    
+                    return Ok(cached_plan.plan);
+                }
+            }
+        }
+        
+        // Generate new plan
+        let plan = match query {
             Query::Select(select) => self.plan_select(select),
             Query::With { ctes, query } => self.plan_cte(ctes, query),
             Query::Set { left, op, all, right } => self.plan_set_operation(left, op, *all, right),
+        }?;
+        
+        // Cache the new plan if cache orchestrator is available
+        if let Some(ref cache_orchestrator) = self.cache_orchestrator {
+            let cached_plan = CachedPlan {
+                plan: plan.clone(),
+                created_at: std::time::Instant::now(),
+                hit_count: 0,
+                avg_execution_time_ms: 0.0,
+            };
+            
+            if let Ok(cached_data) = serde_json::to_vec(&cached_plan) {
+                let _ = cache_orchestrator.put(CacheType::QueryPlan, cache_key, cached_data, None);
+            }
         }
+        
+        Ok(plan)
     }
 
     /// Plan SELECT query with intelligent strategy detection
@@ -906,6 +966,48 @@ impl ExecutionPlanner {
         }
 
         hints
+    }
+
+    /// Generate cache key for query plan caching
+    fn generate_cache_key(&self, query: &Query) -> String {
+        let mut hasher = DefaultHasher::new();
+        format!("{:?}", query).hash(&mut hasher);
+        format!("plan_{:x}", hasher.finish())
+    }
+
+    /// Plan CTE (Common Table Expression) queries
+    fn plan_cte(&self, _ctes: &[crate::query::ast::Cte], query: &Query) -> Result<ExecutionPlan> {
+        // For now, just plan the main query - CTE optimization to be implemented
+        self.create_plan(query)
+    }
+
+    /// Plan set operation queries (UNION, INTERSECT, EXCEPT)
+    fn plan_set_operation(
+        &self,
+        left: &Query,
+        op: &crate::query::ast::SetOp,
+        all: bool,
+        right: &Query,
+    ) -> Result<ExecutionPlan> {
+        let left_plan = self.create_plan(left)?;
+        let right_plan = self.create_plan(right)?;
+
+        let set_operation = match op {
+            crate::query::ast::SetOp::Union => ExecutionOperation::SetUnion { distinct: !all },
+            crate::query::ast::SetOp::Intersect => ExecutionOperation::SetIntersect { distinct: !all },
+            crate::query::ast::SetOp::Except => ExecutionOperation::SetExcept { distinct: !all },
+        };
+
+        Ok(ExecutionPlan {
+            execution_strategy: ExecutionStrategy::Relational,
+            operations: vec![set_operation],
+            estimated_cost: left_plan.estimated_cost + right_plan.estimated_cost,
+            optimizations: vec!["Set operation optimization".to_string()],
+            performance_hints: vec!["Consider LIMIT for large set operations".to_string()],
+            seeding_strategy: self.seeding_strategy.clone(),
+            limit: None,
+            offset: None,
+        })
     }
 }
 

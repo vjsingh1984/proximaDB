@@ -131,6 +131,10 @@ pub enum CacheType {
     GraphAdjacency,
     /// Graph property indexes/postings
     GraphPropertyIndex,
+    /// Distance tables for PQ operations
+    DistanceTable,
+    /// Metrics snapshots for persistence layer
+    MetricsSnapshot,
 }
 
 static GLOBAL_ORCHESTRATOR: std::sync::OnceLock<Arc<CrossCacheOrchestrator>> = std::sync::OnceLock::new();
