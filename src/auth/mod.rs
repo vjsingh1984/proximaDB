@@ -2,9 +2,11 @@
 
 pub mod sso;
 pub mod rbac;
+pub mod federated_delegation_complete;
 
 pub use sso::{SSOIntegrationManager, SSOToken, SSOProvider, EnterpriseUserContext};
 pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
+pub use federated_delegation_complete::{CompleteFederatedIdentityDelegation, CompleteDelegationResult};
 
 use anyhow::Result;
 
