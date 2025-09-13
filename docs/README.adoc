@@ -49,12 +49,12 @@ flowchart TB
 |===
 |Document |Audience |Purpose |Status
 
-|**link:BUSINESS_OVERVIEW.adoc[Business Overview]**
+|**link:business_overview.adoc[Business Overview]**
 |Decision Makers
 |Value proposition, ROI analysis, market positioning
 |✅ Streamlined
 
-|**link:TECHNICAL_ARCHITECTURE.adoc[Technical Architecture]**
+|**link:technical_architecture.adoc[Technical Architecture]**
 |System Architects
 |System design, performance, implementation details
 |✅ Enhanced
@@ -69,7 +69,7 @@ flowchart TB
 |Semantic Knowledge Store implementation guide
 |✅ Comprehensive
 
-|**link:OPERATIONS_GUIDE.adoc[Operations Guide]**
+|**link:operations_guide.adoc[Operations Guide]**
 |Administrators
 |Deployment, monitoring, maintenance procedures
 |✅ Production-ready

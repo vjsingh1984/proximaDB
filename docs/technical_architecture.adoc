@@ -854,7 +854,7 @@ graph TD
 * **Implementation Details**: link:09-roadmap/planned/comprehensive-analysis.adoc[Implementation Status Analysis]
 * **API Specifications**: link:security.adoc[Security & API Reference]  
 * **Performance Analysis**: Performance benchmarks and optimization guides
-* **Development Guide**: link:operations-guide.adoc[Operations & Development Guide]
+* **Development Guide**: link:operations_guide.adoc[Operations & Development Guide]
 
 == 📈 Technical Roadmap
 

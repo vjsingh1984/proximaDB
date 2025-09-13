@@ -545,9 +545,9 @@ graph TB
 
 == 🔗 Related Documentation
 
-* **Technical Architecture**: link:technical-architecture.adoc[System Architecture Guide]
+* **Technical Architecture**: link:technical_architecture.adoc[System Architecture Guide]
 * **API Reference**: link:09-roadmap/planned/comprehensive-analysis.adoc[Comprehensive Analysis]
-* **Business Value**: link:business-overview.adoc[Business Overview]
+* **Business Value**: link:business_overview.adoc[Business Overview]
 
 [IMPORTANT]
 ====

@@ -213,8 +213,8 @@ ProximaDB has achieved significant architectural maturity with a comprehensive v
 
 == Links to Detailed Documentation
 
-* link:MASTER_IMPLEMENTATION_ROADMAP_2025.adoc[Master Implementation Roadmap] - Comprehensive technical specifications
-* link:PHASE_0_DETAILED_IMPLEMENTATION_SPECS.adoc[Phase 0 Detailed Specs] - Immediate technical debt resolution
+* link:master-implementation-roadmap-2025.adoc[Master Implementation Roadmap] - Comprehensive technical specifications
+* link:phase-0-detailed-implementation-specs.adoc[Phase 0 Detailed Specs] - Immediate technical debt resolution
 * link:ROADMAP_STATUS_RECONCILIATION_2025-09-11.md[Current Status Assessment] - Detailed implementation analysis
 * link:in-progress/TECHNICAL_DEBT_AND_REFACTORS.adoc[Technical Debt Tracking] - Specific TODO and optimization items
 
@@ -222,8 +222,8 @@ ProximaDB has achieved significant architectural maturity with a comprehensive v
 * link:in-progress/semantic_knowledge_store_features.adoc[Semantic Knowledge Store] - SKS implementation details
 * link:in-progress/cross_cache_orchestrator_wiring.adoc[Cache Orchestrator] - Cross-engine caching system
 
-* link:planned/ARCHITECTURE_SCALING_AND_HARDENING_PLAN.adoc[Scaling & Hardening] - Distributed architecture plans
-* link:planned/UNIFIED_CACHE_ORCHESTRATOR_SPEC.adoc[Cache Orchestrator Spec] - ML-based caching design
-* link:planned/VISIBILITY_AND_ADOPTION_ROADMAP.adoc[Adoption Strategy] - Ecosystem and market approach
+* link:planned/architecture-scaling-and-hardening-plan.adoc[Scaling & Hardening] - Distributed architecture plans
+* link:planned/unified-cache-orchestrator-spec.adoc[Cache Orchestrator Spec] - ML-based caching design
+* link:planned/visibility-and-adoption-roadmap.adoc[Adoption Strategy] - Ecosystem and market approach
 
 This roadmap reflects ProximaDB's evolution from a foundational implementation to a mature, production-ready platform positioned for enterprise deployment and ecosystem leadership.

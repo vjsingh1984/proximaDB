@@ -397,8 +397,8 @@ graph TD
 4. **Business Case**: Calculate specific ROI for your use case
 
 **Contact Information:**
-* **Technical Questions**: link:operations-guide.adoc[Operations Guide]
-* **Architecture Discussion**: link:technical-architecture.adoc[Technical Architecture]
+* **Technical Questions**: link:operations_guide.adoc[Operations Guide]
+* **Architecture Discussion**: link:technical_architecture.adoc[Technical Architecture]
 * **Implementation Planning**: link:09-roadmap/master-implementation-roadmap-2025.adoc[Master Roadmap]
 
 [IMPORTANT]

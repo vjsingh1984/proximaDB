@@ -740,7 +740,7 @@ enable_async_indexing = true
 == 🔗 Related Documentation
 
 * **API Reference**: Complete gRPC and REST API specifications
-* **Architecture**: link:TECHNICAL_ARCHITECTURE.adoc[System Architecture Details]
+* **Architecture**: link:technical_architecture.adoc[System Architecture Details]
 * **Storage Engines**: Engine selection for SKS workloads
 * **Performance**: SKS-specific optimization guidelines
 
