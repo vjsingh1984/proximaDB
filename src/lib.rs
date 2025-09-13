@@ -87,8 +87,6 @@
 
 /// Shared infrastructure components for cross-cutting concerns
 pub mod infrastructure;
-/// Transport adapters for wire types (REST/gRPC v1) ↔ native domain types
-pub mod transport;
 
 /// High-performance compute layer with SIMD/GPU acceleration for vector operations
 pub mod compute;

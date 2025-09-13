@@ -224,3 +224,153 @@ impl DistanceTableCache {
         related
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_distance_cache_creation() {
+        let config = CacheConfig {
+            max_entries: 100,
+            ttl_seconds: 3600,
+        };
+        let cache_orchestrator = Arc::new(
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
+        );
+        
+        let cache = DistanceTableCache::new(&config, cache_orchestrator).await.unwrap();
+        assert_eq!(cache.config.max_entries, 100);
+    }
+
+    #[tokio::test]
+    async fn test_cache_key_generation() {
+        let config = CacheConfig {
+            max_entries: 100,
+            ttl_seconds: 3600,
+        };
+        let cache_orchestrator = Arc::new(
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
+        );
+        
+        let cache = DistanceTableCache::new(&config, cache_orchestrator).await.unwrap();
+        
+        let key = DistanceTableKey {
+            query_hash: 12345,
+            segments: 8,
+            bits: 16,
+            metric: DistanceMetric::Cosine,
+        };
+        
+        let cache_key = cache.create_cache_key(&key);
+        assert!(cache_key.contains("12345"));
+        assert!(cache_key.contains("8"));
+        assert!(cache_key.contains("16"));
+    }
+
+    #[tokio::test]
+    async fn test_distance_cache_get_or_compute() {
+        let config = CacheConfig {
+            max_entries: 100,
+            ttl_seconds: 3600,
+        };
+        let cache_orchestrator = Arc::new(
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
+        );
+        
+        let cache = DistanceTableCache::new(&config, cache_orchestrator).await.unwrap();
+        
+        let key = DistanceTableKey {
+            query_hash: 12345,
+            segments: 8,
+            bits: 16,
+            metric: DistanceMetric::Cosine,
+        };
+        
+        let compute_fn = || -> Result<Vec<Vec<f32>>> {
+            Ok(vec![vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]])
+        };
+        
+        // First call should compute
+        let result1 = cache.get_or_compute(key.clone(), compute_fn).await.unwrap();
+        assert_eq!(result1.len(), 2);
+        assert_eq!(result1[0], vec![1.0, 2.0, 3.0]);
+    }
+
+    #[tokio::test]
+    async fn test_cache_batch_warming() {
+        let config = CacheConfig {
+            max_entries: 100,
+            ttl_seconds: 3600,
+        };
+        let cache_orchestrator = Arc::new(
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
+        );
+        
+        let cache = DistanceTableCache::new(&config, cache_orchestrator).await.unwrap();
+        
+        let keys = vec![
+            DistanceTableKey {
+                query_hash: 111,
+                segments: 8,
+                bits: 16,
+                metric: DistanceMetric::Cosine,
+            },
+            DistanceTableKey {
+                query_hash: 222,
+                segments: 8,
+                bits: 16,
+                metric: DistanceMetric::Euclidean,
+            },
+        ];
+        
+        let compute_fn = |_key: &DistanceTableKey| -> Result<Vec<Vec<f32>>> {
+            Ok(vec![vec![1.0, 2.0], vec![3.0, 4.0]])
+        };
+        
+        // Test batch warming
+        let result = cache.warm_cache_batch(keys, compute_fn).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_related_key_generation() {
+        let config = CacheConfig {
+            max_entries: 100,
+            ttl_seconds: 3600,
+        };
+        let cache_orchestrator = Arc::new(
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
+        );
+        
+        let cache = DistanceTableCache::new(&config, cache_orchestrator).await.unwrap();
+        
+        let base_key = DistanceTableKey {
+            query_hash: 12345,
+            segments: 16,
+            bits: 8,
+            metric: DistanceMetric::Cosine,
+        };
+        
+        let related_keys = cache.generate_related_keys(&base_key);
+        
+        // Should generate related keys with different bit counts and segment counts
+        assert!(!related_keys.is_empty());
+        
+        // Should not include the base key itself
+        assert!(!related_keys.iter().any(|k| k.bits == base_key.bits && k.segments == base_key.segments));
+    }
+
+    #[test]
+    fn test_cache_stats_default() {
+        let stats = CacheStats::default();
+        
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.evictions, 0);
+        assert_eq!(stats.total_requests, 0);
+        assert_eq!(stats.size_mb, 0);
+        assert_eq!(stats.hit_rate_percent, 0.0);
+    }
+}

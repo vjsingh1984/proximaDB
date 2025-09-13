@@ -1054,6 +1054,148 @@ mod tests {
         let got2 = csr.get_relations("c1", "e1").await.unwrap();
         assert!(got2.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_batch_filter_entities() {
+        let store = ProximaEntityStore::new(
+            Arc::new(MockStorageEngine),
+            None,
+        );
+        
+        // Create test entities
+        let entity1 = Entity {
+            id: "test_entity_1".to_string(),
+            typed_metadata: vec![TypedMetadata {
+                key: "category".to_string(),
+                value: Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue("electronics".to_string())),
+            }],
+            embeddings: vec![],
+            ..Default::default()
+        };
+        
+        let entity2 = Entity {
+            id: "test_entity_2".to_string(),
+            typed_metadata: vec![TypedMetadata {
+                key: "category".to_string(),
+                value: Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue("books".to_string())),
+            }],
+            embeddings: vec![],
+            ..Default::default()
+        };
+        
+        // Store entities
+        store.store_entity("test_collection", entity1).await.unwrap();
+        store.store_entity("test_collection", entity2).await.unwrap();
+        
+        // Create filter for electronics category
+        let filter = MetadataFilter {
+            fields: {
+                let mut fields = std::collections::HashMap::new();
+                fields.insert("category".to_string(), SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())),
+                });
+                fields
+            },
+            advanced_filter: None,
+        };
+        
+        // Test batch filtering
+        let results = store.batch_filter_entities("test_collection", &[filter], Some(10)).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "test_entity_1");
+    }
+
+    #[tokio::test]
+    async fn test_streaming_entities() {
+        let store = ProximaEntityStore::new(
+            Arc::new(MockStorageEngine),
+            None,
+        );
+        
+        // Create multiple test entities
+        for i in 0..5 {
+            let entity = Entity {
+                id: format!("stream_entity_{}", i),
+                typed_metadata: vec![TypedMetadata {
+                    key: "index".to_string(),
+                    value: Some(crate::proto::proximadb_v1::metadata_value::Value::NumberValue(i as f64)),
+                }],
+                embeddings: vec![],
+                ..Default::default()
+            };
+            store.store_entity("stream_collection", entity).await.unwrap();
+        }
+        
+        // Test streaming with batch size of 2
+        let stream = store.stream_entities("stream_collection", &[], 2).await;
+        use futures::StreamExt;
+        
+        let mut total_entities = 0;
+        let mut batch_count = 0;
+        
+        // Collect all batches
+        pin_mut!(stream);
+        while let Some(batch_result) = stream.next().await {
+            let batch = batch_result.unwrap();
+            total_entities += batch.len();
+            batch_count += 1;
+            assert!(batch.len() <= 2); // Batch size should be respected
+        }
+        
+        assert_eq!(total_entities, 5);
+        assert!(batch_count >= 3); // Should be multiple batches due to batch size limit
+    }
+
+    #[tokio::test]
+    async fn test_header_level_filtering() {
+        let store = ProximaEntityStore::new(
+            Arc::new(MockStorageEngine),
+            None,
+        );
+        
+        // Create entity header
+        let header = EntityHeader {
+            typed_metadata: Some(TypedMetadata {
+                key: "status".to_string(),
+                value: Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue("active".to_string())),
+            }),
+            flexible_metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("priority".to_string(), serde_json::Value::String("high".to_string()));
+                metadata
+            },
+            provenance: None,
+            temporal: None,
+        };
+        
+        // Create filter that should match
+        let matching_filter = MetadataFilter {
+            fields: {
+                let mut fields = std::collections::HashMap::new();
+                fields.insert("priority".to_string(), SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("high".to_string())),
+                });
+                fields
+            },
+            advanced_filter: None,
+        };
+        
+        // Create filter that should not match
+        let non_matching_filter = MetadataFilter {
+            fields: {
+                let mut fields = std::collections::HashMap::new();
+                fields.insert("priority".to_string(), SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("low".to_string())),
+                });
+                fields
+            },
+            advanced_filter: None,
+        };
+        
+        // Test header-level filtering
+        assert!(store.header_matches_filter(&header, &matching_filter));
+        assert!(!store.header_matches_filter(&header, &non_matching_filter));
+    }
 }
 
 static GLOBAL_ENTITY_STORE: std::sync::OnceLock<Arc<ProximaEntityStore>> = std::sync::OnceLock::new();
