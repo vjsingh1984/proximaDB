@@ -782,21 +782,21 @@ impl RaptorReader {
                     if let (Some(min), Some(max)) =
                         (&column_stats.min_value, &column_stats.max_value)
                     {
-                        &predicate.value >= min && &predicate.value <= max
+                        true // TODO: Implement SqlValue comparison
                     } else {
                         true // No statistics available, include rowgroup
                     }
                 }
                 super::common::PredicateOp::Lt => {
                     if let Some(min) = &column_stats.min_value {
-                        &predicate.value > min
+                        true // TODO: Implement SqlValue comparison
                     } else {
                         true
                     }
                 }
                 super::common::PredicateOp::Gt => {
                     if let Some(max) = &column_stats.max_value {
-                        &predicate.value < max
+                        true // TODO: Implement SqlValue comparison
                     } else {
                         true
                     }

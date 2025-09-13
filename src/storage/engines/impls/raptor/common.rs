@@ -668,14 +668,14 @@ pub struct SearchResult {
 
 // ====== Predicates for filtering ======
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Predicate {
     pub field: String,
     pub op: PredicateOp,
     pub value: MetadataValue,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PredicateOp {
     Eq,
     Ne,

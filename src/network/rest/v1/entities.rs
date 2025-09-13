@@ -10,7 +10,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::Json,
+    response::{Json, IntoResponse},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -52,13 +52,13 @@ pub struct GetEntityQuery {
 pub struct SearchEntitiesRequest {
     pub query_vector: Option<Vec<f32>>,
     pub query_text: Option<String>,
-    pub filters: Option<MetadataFilter>,
+    pub filters: Option<serde_json::Value>, // Will be converted to MetadataFilter
     pub top_k: Option<usize>,
     pub progressive: Option<bool>,
 }
 
 /// Response for entity search
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SearchEntitiesResponse {
     pub results: Vec<EntityResult>,
     pub total: u32,
@@ -76,7 +76,7 @@ pub async fn upsert_entity(
     Path(collection_id): Path<String>,
     State(state): State<EntityApiState>,
     Json(request): Json<UpsertEntityRequest>,
-) -> Result<Json<UpsertEntityResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> impl IntoResponse {
     info!("REST: Upserting entity in collection: {}", collection_id);
 
     // Validate collection_id
@@ -127,7 +127,7 @@ pub async fn get_entity(
     Path((collection_id, entity_id)): Path<(String, String)>,
     Query(params): Query<GetEntityQuery>,
     State(state): State<EntityApiState>,
-) -> Result<Json<Entity>, (StatusCode, Json<ErrorResponse>)> {
+) -> impl IntoResponse {
     debug!(
         "REST: Getting entity {} from collection {}",
         entity_id, collection_id
@@ -193,7 +193,7 @@ pub async fn delete_entity(
     Path((collection_id, entity_id)): Path<(String, String)>,
     Query(params): Query<DeleteEntityQuery>,
     State(state): State<EntityApiState>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+) -> impl IntoResponse {
     info!(
         "REST: Deleting entity {} from collection {} (hard_delete: {})",
         entity_id,
@@ -259,7 +259,7 @@ pub async fn search_entities(
     Path(collection_id): Path<String>,
     State(state): State<EntityApiState>,
     Json(request): Json<SearchEntitiesRequest>,
-) -> Result<Json<SearchEntitiesResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> impl IntoResponse {
     let top_k = request.top_k.unwrap_or(10);
 
     info!(
@@ -298,13 +298,28 @@ pub async fn search_entities(
         request.query_vector
     };
 
+    // Convert filters from JSON Value to MetadataFilter if present
+    let metadata_filter = match request.filters {
+        Some(filter_json) => {
+            // Try to convert JSON Value to MetadataFilter
+            match serde_json::from_value::<MetadataFilter>(filter_json) {
+                Ok(filter) => Some(filter),
+                Err(_) => {
+                    warn!("Failed to parse filters, ignoring");
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
     // Perform search
     match state
         .store
         .search_entities(
             &collection_id,
             query_vector,
-            request.filters,
+            metadata_filter,
             // temporal_filter, // TODO: Add when available
             top_k,
         )
@@ -347,7 +362,7 @@ pub async fn list_entities(
     Path(collection_id): Path<String>,
     Query(params): Query<ListEntitiesQuery>,
     State(state): State<EntityApiState>,
-) -> Result<Json<Vec<Entity>>, (StatusCode, Json<ErrorResponse>)> {
+) -> impl IntoResponse {
     let offset = params.offset.unwrap_or(0);
     let limit = params.limit.unwrap_or(100).min(1000); // Cap at 1000
 

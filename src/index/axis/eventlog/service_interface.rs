@@ -100,7 +100,7 @@ pub trait EventLogService: EventLogQuery + EventLogCommand {
 }
 
 /// Event filter for queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EventFilter {
     /// Collection ID filter
     pub collection_id: Option<String>,

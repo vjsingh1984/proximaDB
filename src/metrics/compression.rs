@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Compression metrics for a single collection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CompressionMetrics {
     pub collection_id: String,
     pub engine_type: String, // "sst" or "viper"

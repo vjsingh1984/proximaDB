@@ -1200,27 +1200,23 @@ impl CrossCacheOrchestrator {
 
         // Add cache-specific metrics
         if let Some(cache) = &self.query_cache {
-            if let Ok(cache_metrics) = cache.metrics() {
-                metrics.insert("query_cache".to_string(), cache_metrics);
-            }
+            let cache_metrics = cache.metrics();
+            metrics.insert("query_cache".to_string(), cache_metrics.clone());
         }
 
         if let Some(cache) = &self.filter_cache {
-            if let Ok(cache_metrics) = cache.metrics() {
-                metrics.insert("filter_cache".to_string(), cache_metrics);
-            }
+            let cache_metrics = cache.metrics();
+            metrics.insert("filter_cache".to_string(), cache_metrics.clone());
         }
 
         if let Some(cache) = &self.index_cache {
-            if let Ok(cache_metrics) = cache.metrics() {
-                metrics.insert("index_cache".to_string(), cache_metrics);
-            }
+            let cache_metrics = cache.metrics();
+            metrics.insert("index_cache".to_string(), cache_metrics.clone());
         }
 
         if let Some(cache) = &self.metadata_cache {
-            if let Ok(cache_metrics) = cache.metrics() {
-                metrics.insert("metadata_cache".to_string(), cache_metrics);
-            }
+            let cache_metrics = cache.metrics();
+            metrics.insert("metadata_cache".to_string(), cache_metrics.clone());
         }
 
         Ok(serde_json::Value::Object(metrics))

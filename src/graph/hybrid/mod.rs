@@ -225,7 +225,7 @@ pub struct FusionConfig {
 }
 
 /// Weights for fusion
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FusionWeights {
     /// Weight for vector similarity score
     pub vector_weight: f32,

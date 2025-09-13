@@ -99,7 +99,7 @@ pub struct IndexMetadata {
 }
 
 /// Header for serialized index file
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexHeader {
     /// Magic bytes (AXIS)
     pub magic: [u8; 4],
@@ -144,7 +144,7 @@ pub struct IndexDelta {
 }
 
 /// Operations that can be applied as deltas
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DeltaOperation {
     /// Add new vectors
     AddVectors { vectors: Vec<(String, Vec<f32>)> },

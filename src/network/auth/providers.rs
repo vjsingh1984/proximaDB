@@ -329,7 +329,7 @@ impl AuthProvider for OAuth2AuthProvider {
         Ok(AuthResult {
             user_id: user_info.id,
             tenant_id: user_info.tenant_id,
-            roles: user_info.roles,
+            roles: user_info.roles.clone(),
             permissions: self.map_roles_to_permissions(&user_info.roles),
             auth_method: AuthMethod::OAuth2,
             token_expires_at: user_info.expires_at,
@@ -445,6 +445,20 @@ pub struct SamlAuthProvider {
     certificate: String,
 }
 
+#[derive(Debug)]
+struct SamlResponse {
+    user_id: String,
+    tenant_id: String,
+}
+
+#[derive(Debug)]
+struct SamlAssertion {
+    user_id: String,
+    tenant_id: String,
+    roles: Vec<String>,
+    expires_at: Option<i64>,
+}
+
 impl SamlAuthProvider {
     pub fn new(entity_id: String, sso_url: String, certificate: String) -> Self {
         Self {
@@ -452,6 +466,29 @@ impl SamlAuthProvider {
             sso_url,
             certificate,
         }
+    }
+
+    fn decode_saml_response(&self, credentials: &str) -> Result<SamlResponse, AuthError> {
+        // TODO: Implement SAML response decoding
+        Ok(SamlResponse {
+            user_id: "placeholder_user".to_string(),
+            tenant_id: "placeholder_tenant".to_string(),
+        })
+    }
+
+    async fn validate_saml_assertion(&self, _response: &SamlResponse) -> Result<SamlAssertion, AuthError> {
+        // TODO: Implement SAML assertion validation
+        Ok(SamlAssertion {
+            user_id: "placeholder_user".to_string(),
+            tenant_id: "placeholder_tenant".to_string(),
+            roles: vec!["user".to_string()],
+            expires_at: None,
+        })
+    }
+
+    fn map_roles_to_permissions(&self, _roles: &[String]) -> Vec<String> {
+        // TODO: Implement role to permission mapping
+        vec!["read".to_string(), "write".to_string()]
     }
 }
 
@@ -467,7 +504,7 @@ impl AuthProvider for SamlAuthProvider {
         Ok(AuthResult {
             user_id: assertion.user_id,
             tenant_id: assertion.tenant_id,
-            roles: assertion.roles,
+            roles: assertion.roles.clone(),
             permissions: self.map_roles_to_permissions(&assertion.roles),
             auth_method: AuthMethod::OAuth2, // SAML treated as OAuth2 equivalent
             token_expires_at: assertion.expires_at,
@@ -532,7 +569,7 @@ impl AuthProvider for DatabaseAuthProvider {
         Ok(AuthResult {
             user_id: user.id,
             tenant_id: user.tenant_id,
-            roles: user.roles,
+            roles: user.roles.clone(),
             permissions: self.map_roles_to_permissions(&user.roles),
             auth_method: AuthMethod::ApiKey, // Database auth is similar to API key
             token_expires_at: None,

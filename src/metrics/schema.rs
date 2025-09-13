@@ -189,7 +189,7 @@ pub enum HintPriority {
 }
 
 /// Estimated improvement from applying the hint
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ImprovementEstimate {
     pub latency_reduction_percent: Option<f32>,
     pub throughput_increase_percent: Option<f32>,
