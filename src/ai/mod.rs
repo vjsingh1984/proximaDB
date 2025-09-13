@@ -4,11 +4,13 @@ pub mod llm;
 pub mod nlp;
 pub mod insights;
 pub mod analytics;
+pub mod natural_language_api;
 
 pub use llm::{LLMIntegrationEngine, AIIntelligenceFoundation};
 pub use nlp::{EnterpriseNLPEngine, BusinessIntent};
 pub use insights::{AutomatedInsightEngine, BusinessInsightsGenerator};
 pub use analytics::{PredictiveAnalyticsEngine, ConversationalAnalyticsEngine};
+pub use natural_language_api::{NaturalLanguageBusinessIntelligenceAPI, ConversationalBusinessAnswer};
 
 use anyhow::Result;
 use std::sync::Arc;
