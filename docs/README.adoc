@@ -59,12 +59,12 @@ flowchart TB
 |System design, performance, implementation details
 |✅ Enhanced
 
-|**link:GRAPH_API_REFERENCE.adoc[Graph API Reference]**
+|**link:graph_api_reference.adoc[Graph API Reference]**
 |Developers
 |Complete graph database API documentation
 |✅ Professional
 
-|**link:SKS_TECHNICAL_REFERENCE.adoc[SKS Technical Reference]**
+|**link:sks_technical_reference.adoc[SKS Technical Reference]**
 |Developers
 |Semantic Knowledge Store implementation guide
 |✅ Comprehensive
