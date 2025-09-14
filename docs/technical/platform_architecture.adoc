@@ -1,0 +1,246 @@
+= ProximaDB Platform Architecture - Technical Overview
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+:imagesdir: ../assets
+
+[.lead]
+**Technical architecture overview of ProximaDB's comprehensive AI-powered enterprise platform** +
+_Detailed technical information for architects, engineers, and technical decision makers_
+
+== Platform Architecture Overview
+
+=== Core Architecture Principles
+
+ProximaDB is built on **five foundational architecture principles**:
+- **AI-First Design**: Native AI integration across all platform components
+- **Multi-Tenant by Design**: Enterprise-grade isolation and security from ground up
+- **Performance Optimization**: Specialized storage engines for different workload patterns
+- **Cloud-Native Operations**: Leveraging cloud provider capabilities for scale and reliability
+- **Security by Default**: Comprehensive security and compliance framework integrated throughout
+
+=== System Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "CLIENT ACCESS LAYER"
+        A[REST API<br/>RESTful endpoints<br/>JSON/HTTP protocols]
+        B[gRPC API<br/>High-performance RPC<br/>Binary protocol efficiency]
+        C[AI Intelligence API<br/>Natural language processing<br/>Business intelligence endpoints]
+    end
+
+    subgraph "SERVICE ORCHESTRATION LAYER"
+        D[Collection Service<br/>Vector collection management<br/>Multi-tenant coordination]
+        E[Vector Operations<br/>Search and similarity operations<br/>Performance optimization]
+        F[AI Intelligence Service<br/>LLM provider management<br/>Business insight generation]
+        G[Authentication Service<br/>Enterprise SSO integration<br/>RBAC enforcement]
+    end
+
+    subgraph "STORAGE AND COMPUTE LAYER"
+        H[Storage Engine Factory<br/>7 specialized engines<br/>Workload optimization]
+        I[Compute Engine<br/>Quantization and SIMD<br/>Hardware acceleration]
+        J[Cache Orchestration<br/>14 cache types<br/>Memory optimization]
+        K[Index Management<br/>AXIS engine<br/>Multiple index types]
+    end
+
+    subgraph "INFRASTRUCTURE LAYER"
+        L[IntelligentFilesystem<br/>Multi-cloud abstraction<br/>S3, Azure, GCS support]
+        M[Tenant Management<br/>Isolation and security<br/>Resource management]
+        N[Monitoring and Metrics<br/>Performance tracking<br/>Business analytics]
+    end
+
+    A --> D
+    B --> E
+    C --> F
+    A --> G
+    D --> H
+    E --> I
+    F --> J
+    G --> K
+    H --> L
+    I --> M
+    J --> N
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style K fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style N fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+----
+
+== AI Intelligence Architecture
+
+=== LLM Provider Ecosystem
+
+**Multi-Provider Architecture** ensures reliability and optimization:
+- **Commercial Providers**: OpenAI, Anthropic, Cohere for production reliability
+- **Cloud Providers**: Azure OpenAI, AWS Bedrock for enterprise integration
+- **Self-Hosted Options**: Ollama, vLLM, HuggingFace for data sovereignty
+
+=== Natural Language Processing Pipeline
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+sequenceDiagram
+    participant User
+    participant NL_Processor
+    participant Schema_Context
+    participant LLM_Engine
+    participant SQL_Validator
+    participant Query_Engine
+
+    User->>NL_Processor: "What are our top customers?"
+    NL_Processor->>Schema_Context: Get accessible tables
+    Schema_Context-->>NL_Processor: Schema information
+    NL_Processor->>LLM_Engine: Generate SQL with context
+    LLM_Engine-->>NL_Processor: SQL query
+    NL_Processor->>SQL_Validator: Validate security
+    SQL_Validator-->>NL_Processor: Validated SQL
+    NL_Processor->>Query_Engine: Execute query
+    Query_Engine-->>User: Business insights
+----
+
+== Multi-Tenant Enterprise Architecture
+
+=== Tenant Isolation Design
+
+**Complete enterprise-grade isolation** across all platform components:
+- **Data Isolation**: Tenant-specific data storage with cross-tenant access prevention
+- **Compute Isolation**: Resource limits and performance SLA enforcement
+- **Security Isolation**: Comprehensive RBAC with audit logging
+- **API Isolation**: Tenant-aware endpoints with rate limiting
+
+=== Security Framework
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph LR
+    subgraph "AUTHENTICATION LAYER"
+        A[Enterprise SSO<br/>AWS IAM, Azure AD]
+        B[API Key Management<br/>Secure key rotation]
+        C[JWT Token Validation<br/>Standard token processing]
+    end
+
+    subgraph "AUTHORIZATION LAYER"
+        D[RBAC System<br/>Role-based permissions]
+        E[Tenant Validation<br/>Multi-tenant enforcement]
+        F[Resource Access Control<br/>Granular permissions]
+    end
+
+    subgraph "AUDIT AND COMPLIANCE"
+        G[Comprehensive Logging<br/>All operations tracked]
+        H[SOC 2 Framework<br/>Compliance automation]
+        I[Security Monitoring<br/>Threat detection]
+    end
+
+    A --> D
+    B --> E
+    C --> F
+    D --> G
+    E --> H
+    F --> I
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+----
+
+== Performance and Optimization
+
+=== Storage Engine Specialization
+
+**Workload-Optimized Performance** through specialized storage engines:
+- **Analytics Workloads**: VIPER and NOVA engines for business intelligence
+- **OLTP Operations**: SST and SWIFT engines for real-time applications
+- **Mixed Workloads**: RAPTOR and PRISM engines for adaptive optimization
+- **Time-Series Data**: HELIX engine for temporal data patterns
+
+=== Compute Optimization
+
+**Advanced Performance Features**:
+- **Hardware Acceleration**: Automatic SIMD, AVX2, GPU optimization
+- **Quantization**: Binary, INT8, PQ4/8/16/32 with automatic selection
+- **Caching**: 14 cache types with intelligent orchestration
+- **Memory Management**: Advanced memory optimization and resource management
+
+== Deployment and Operations
+
+=== Enterprise Deployment Automation
+
+**One-Click Enterprise Setup** across all major platforms:
+- **Platform Detection**: Kubernetes, AWS, Azure, GCP, Docker, bare metal
+- **Resource Analysis**: CPU, memory, storage, network capacity estimation
+- **Configuration Generation**: Enterprise-optimized configurations automatically
+- **Health Validation**: Comprehensive deployment verification and monitoring
+
+=== Revenue Operations
+
+**Enterprise Revenue Management**:
+- **Usage Metering**: Real-time tracking of all billable operations
+- **Billing Automation**: Sophisticated pricing with enterprise discount tiers
+- **Customer Success**: Automated health monitoring and expansion detection
+- **Cost Optimization**: Transparent usage analytics and optimization recommendations
+
+== Integration and Extensibility
+
+=== API Platform
+
+**Comprehensive Enterprise APIs**:
+- **Vector Operations**: Full CRUD operations with advanced querying
+- **AI Intelligence**: Natural language processing and business intelligence
+- **Graph Operations**: Relationship queries and graph traversal
+- **Administration**: Tenant management and system administration
+
+=== Extension Points
+
+**Platform Extensibility**:
+- **Custom Storage Engines**: Framework for specialized storage implementations
+- **LLM Provider Integration**: Support for additional AI providers
+- **Third-Party Connectors**: Framework for enterprise system integration
+- **Custom Analytics**: Business intelligence customization and extension
+
+== Technical Implementation Details
+
+=== Code Organization
+
+```
+src/
+├── ai/                    # AI intelligence platform (30 files)
+├── storage/               # Storage engines and data management (200+ files)
+├── services/              # Business logic and orchestration
+├── auth/                  # Authentication and authorization (10 files)
+├── deployment/            # Deployment automation (7 files)
+├── revenue/               # Revenue operations (7 files)
+├── monitoring/            # Observability and metrics
+└── network/               # API endpoints and networking
+```
+
+=== Performance Characteristics
+
+**Validated Performance Capabilities**:
+- **Multi-Engine Storage**: 7 specialized engines for different workload optimization
+- **AI Processing**: 9 LLM providers with automatic fallback and optimization
+- **Multi-Tenant Scale**: Complete tenant isolation with performance SLA enforcement
+- **Enterprise Deployment**: Automated setup reducing deployment time from weeks to hours
+
+This technical overview provides comprehensive understanding of ProximaDB's enterprise platform architecture for technical evaluation and implementation planning.
