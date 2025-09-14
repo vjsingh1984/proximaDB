@@ -8,7 +8,7 @@ pub mod tier_enforcement;
 pub mod offline_validation;
 pub mod feature_gates;
 
-pub use license_manager::{LicenseManager, LicenseInfo, LicenseStatus};
-pub use tier_enforcement::{TierEnforcement, LicenseTier, FeatureLimit};
+pub use license_manager::{LicenseManager, LicenseInfo, LicenseStatus, LicenseTier};
+pub use tier_enforcement::{TierEnforcement, FeatureLimit};
 pub use offline_validation::{OfflineLicenseValidator, LicenseToken, LicenseValidation};
 pub use feature_gates::{FeatureGate, FeatureAccess, FeatureValidation};

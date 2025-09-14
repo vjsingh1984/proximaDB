@@ -7,7 +7,7 @@ use tracing::{info, debug, warn};
 use crate::auth::{EnterpriseAuthManager, SSOToken, EnterpriseUserContext};
 use crate::storage::tenant::{
     TenantManager, DomainManager, TenantAwareEntityStore, DomainKnowledgeGraph,
-    TenantConfig, BusinessContext, CollectionBridgeConfig,
+    TenantConfig, BusinessContext, knowledge_graph::CollectionBridgeConfig,
 };
 
 /// Enterprise API handler for multi-tenant operations
@@ -202,7 +202,7 @@ impl EnterpriseAPIHandler {
                     BusinessContext {
                         primary_function: "enterprise_risk_assessment".to_string(),
                         data_sensitivity: crate::storage::tenant::DataSensitivityLevel::Confidential,
-                        performance_requirements: crate::storage::tenant::PerformanceRequirements {
+                        performance_requirements: crate::storage::tenant::context::PerformanceRequirements {
                             latency_requirement_ms: 50,
                             throughput_requirement_qps: 5000,
                             availability_requirement: 0.999,
@@ -218,7 +218,7 @@ impl EnterpriseAPIHandler {
                     BusinessContext {
                         primary_function: "trading_and_portfolio_management".to_string(),
                         data_sensitivity: crate::storage::tenant::DataSensitivityLevel::Confidential,
-                        performance_requirements: crate::storage::tenant::PerformanceRequirements {
+                        performance_requirements: crate::storage::tenant::context::PerformanceRequirements {
                             latency_requirement_ms: 10,
                             throughput_requirement_qps: 10000,
                             availability_requirement: 0.9999,
@@ -236,7 +236,7 @@ impl EnterpriseAPIHandler {
                     BusinessContext {
                         primary_function: "patient_care_and_clinical_decision_support".to_string(),
                         data_sensitivity: crate::storage::tenant::DataSensitivityLevel::Restricted,
-                        performance_requirements: crate::storage::tenant::PerformanceRequirements {
+                        performance_requirements: crate::storage::tenant::context::PerformanceRequirements {
                             latency_requirement_ms: 100,
                             throughput_requirement_qps: 2000,
                             availability_requirement: 0.999,

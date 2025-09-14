@@ -10,8 +10,8 @@ pub mod natural_language;
 pub mod business_intelligence;
 pub mod executive_dashboard;
 
-pub use llm::{LLMIntegrationEngine, AIIntelligenceFoundation};
-pub use nlp::{EnterpriseNLPEngine, BusinessIntent};
+pub use llm::{LLMIntegrationEngine, AIIntelligenceFoundation, BusinessIntent};
+pub use nlp::{EnterpriseNLPEngine};
 pub use insights::{AutomatedInsightEngine, BusinessInsightsGenerator};
 pub use analytics::{PredictiveAnalyticsEngine, ConversationalAnalyticsEngine, GovernanceAnalyticsEngine};
 pub use natural_language_api::{NaturalLanguageBusinessIntelligenceAPI, ConversationalBusinessAnswer};

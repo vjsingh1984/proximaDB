@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc, Duration};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::sso::{SSOProvider, EnterpriseUserContext};
-use crate::audit::correlation::{AuditCorrelationEngine, ComprehensiveAuditTrail};
+use crate::audit::{AuditCorrelationEngine, ComprehensiveAuditTrail};
 
 /// Complete federated identity delegation system for enterprise multi-cloud environments
 pub struct CompleteFederatedIdentityDelegation {

@@ -1,15 +1,25 @@
 //! Comprehensive audit system for enterprise multi-tenant platform
 
 pub mod correlation;
+pub mod logger;
+pub mod storage;
+pub mod types;
 
 pub use correlation::{
     AuditCorrelationEngine,
-    ComprehensiveAuditTrail,
-    ProviderAuditEvent,
-    EventChain,
+    // ComprehensiveAuditTrail, // TODO: Not yet implemented
+    // ProviderAuditEvent, // TODO: Not yet implemented
+    // EventChain, // TODO: Not yet implemented
 };
 
+pub use logger::AuditLogger;
+
 use anyhow::Result;
+
+// TODO: Implement these types properly
+pub type ComprehensiveAuditTrail = String;
+pub type ProviderAuditEvent = String;
+pub type EventChain = String;
 
 /// Enterprise audit coordinator
 pub struct EnterpriseAuditCoordinator {
