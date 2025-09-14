@@ -1,0 +1,217 @@
+= ProximaDB License Management and Tier System
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+:imagesdir: ../assets
+
+[.lead]
+**ProximaDB License Management** - Comprehensive license tier system supporting both SaaS and air-gapped deployments with privacy-conscious customer requirements.
+
+== License System Overview
+
+=== Multi-Deployment Model Support
+
+ProximaDB's license management system is designed for **all deployment scenarios** including privacy-conscious customers and air-gapped environments:
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "DEPLOYMENT MODELS"
+        A[SaaS Hosted<br/>ProximaDB-managed<br/>Online license validation]
+        B[Customer VPC<br/>Customer infrastructure<br/>Limited connectivity]
+        C[Air-Gapped<br/>No external connectivity<br/>Offline license validation]
+        D[Hybrid<br/>Mixed deployment<br/>Flexible validation]
+    end
+
+    subgraph "LICENSE VALIDATION METHODS"
+        E[Online Validation<br/>Real-time license checking<br/>Phone home capability]
+        F[Offline Validation<br/>Cryptographic token validation<br/>No connectivity required]
+        G[Certificate-Based<br/>PKI license validation<br/>Enterprise security]
+    end
+
+    A --> E
+    B --> F
+    C --> F
+    D --> G
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+----
+
+== License Tiers and Features
+
+=== Free Tier (30-Day Trial)
+
+**Trial experience with core capabilities**:
+- **Duration**: 30 days with 7-day grace period
+- **Usage Limits**: 10 collections, 100K vectors, 1000 API calls/day, 50 AI queries/day
+- **Features**: Basic vector search, natural language queries, single tenant
+- **Support**: Community forum support
+- **Privacy**: Complete offline validation, no phone home required
+
+=== Professional Tier ($299/month)
+
+**Advanced capabilities for growing businesses**:
+- **Usage Limits**: 1000 collections, 100M vectors, 100K API calls/day, 10K AI queries/day
+- **AI Features**: Executive dashboards, advanced AI capabilities, 3 LLM providers
+- **Multi-Tenant**: Up to 10 tenants with enhanced isolation
+- **Security**: SSO integration, audit logging, SOC 2 compliance
+- **Support**: Email support with SLA
+
+=== Enterprise Tier (Custom Pricing)
+
+**Unlimited enterprise capabilities**:
+- **Usage**: Unlimited collections, vectors, API calls, AI queries
+- **AI Features**: All 9 LLM providers, custom AI development, advanced business intelligence
+- **Multi-Tenant**: Unlimited tenants with complete isolation and custom configuration
+- **Security**: All compliance frameworks, advanced encryption, security monitoring
+- **Support**: Dedicated customer success manager, 24/7 support, SLA guarantees
+
+== Privacy-Conscious Deployment Support
+
+=== Air-Gapped License Validation
+
+**Complete offline operation** for maximum privacy:
+- **No Phone Home**: Zero external connectivity required for license validation
+- **Cryptographic Validation**: Signed license tokens validated locally
+- **Certificate-Based**: PKI infrastructure for enterprise security
+- **Audit Compliance**: License usage tracking without external reporting
+
+=== Customer VPC Deployment
+
+**Limited connectivity with privacy protection**:
+- **Optional Phone Home**: Customer controls whether license validation contacts external services
+- **Local License Storage**: License information stored securely in customer infrastructure
+- **Flexible Validation**: Online or offline validation based on customer security policies
+- **Usage Analytics**: Optional usage reporting with customer control
+
+=== Enterprise Security Integration
+
+**Seamless integration with enterprise security**:
+- **Certificate Integration**: PKI-based license validation with enterprise CA
+- **HSM Support**: Hardware security module integration for license key storage
+- **Compliance Automation**: License compliance reporting for enterprise audits
+- **Custom Terms**: Bespoke licensing terms for large enterprise customers
+
+== Feature Gating and Enforcement
+
+=== Runtime Feature Validation
+
+**Real-time license enforcement**:
+
+[cols="2,2,2,2", options="header"]
+|===
+| Feature Category | Free Tier | Professional Tier | Enterprise Tier
+
+| **AI Capabilities**
+| Basic NL queries only
+| Executive dashboards, 3 LLM providers
+| All 9 providers, custom AI development
+
+| **Multi-Tenant**
+| Single tenant only
+| 10 tenants, enhanced isolation
+| Unlimited tenants, complete isolation
+
+| **Performance**
+| Basic engines (SST, VIPER)
+| 4 engines, advanced caching
+| All 7 engines, custom optimization
+
+| **Security**
+| Basic authentication
+| SSO, audit logging, SOC 2
+| All compliance, advanced encryption
+
+| **Enterprise**
+| Community support
+| Deployment automation, integrations
+| Dedicated support, SLA guarantees
+|===
+
+=== Usage Limit Enforcement
+
+**Automated limit monitoring and enforcement**:
+- **Hard Limits**: Absolute limits that cannot be exceeded (collections, storage)
+- **Soft Limits**: Warning limits with graceful degradation (API calls)
+- **Rate Limits**: Time-based limits with throttling (AI queries per day)
+- **Concurrent Limits**: Resource limits with queue management (concurrent users)
+
+== License Management APIs
+
+=== Customer License APIs
+
+**Self-service license management**:
+- **GET /license/status**: Current license status and usage information
+- **GET /license/usage**: Usage analytics and limit tracking
+- **POST /license/upgrade**: License upgrade request and payment processing
+- **GET /license/features**: Available features and entitlements
+
+=== Admin License APIs
+
+**Administrative license management**:
+- **POST /admin/licenses**: Create new customer license
+- **PUT /admin/licenses/:id**: Update license terms or entitlements
+- **GET /admin/licenses/analytics**: License usage analytics across customers
+- **POST /admin/licenses/validate**: Validate customer license tokens
+
+== Privacy and Compliance
+
+=== Data Protection
+
+**Privacy-conscious license management**:
+- **No Telemetry**: License validation works without sending usage data externally
+- **Local Storage**: All license information stored in customer infrastructure
+- **Encryption**: License tokens encrypted with customer-controlled keys
+- **Audit Trails**: License usage logging for customer audit requirements
+
+=== Compliance Support
+
+**Regulatory compliance assistance**:
+- **GDPR Compliance**: European data protection with automated license compliance
+- **SOC 2 Support**: License management audit trail for SOC 2 certification
+- **Enterprise Audit**: License usage reporting for enterprise compliance requirements
+- **Custom Compliance**: Configurable compliance frameworks for industry-specific needs
+
+== Business Model Integration
+
+=== Revenue Operations
+
+**License management integrated with revenue systems**:
+- **Usage-Based Billing**: Automatic billing based on license tier and usage
+- **Upgrade Automation**: Seamless license tier upgrades with immediate feature access
+- **Trial Management**: Automated trial-to-paid conversion with sales team integration
+- **Customer Success**: License usage analytics for customer health monitoring
+
+=== Sales Integration
+
+**License management supports sales process**:
+- **Trial Automation**: Automatic trial license generation for sales prospects
+- **Feature Demonstrations**: License-gated feature access for customer demonstrations
+- **Upgrade Recommendations**: AI-powered upgrade suggestions based on usage patterns
+- **Sales Analytics**: License conversion tracking and sales pipeline optimization
+
+== Getting Started
+
+=== For SaaS Customers
+
+1. **Trial Access**: Automatic 30-day trial with core features
+2. **Feature Exploration**: Guided feature discovery with usage tracking
+3. **Upgrade Path**: Seamless upgrade to Professional or Enterprise tiers
+4. **Support Integration**: Integrated support based on license tier
+
+=== For Privacy-Conscious Customers
+
+1. **Offline License**: Cryptographically signed license file for air-gapped deployment
+2. **Local Validation**: Complete license validation without external connectivity
+3. **Enterprise Terms**: Custom licensing terms for large enterprise customers
+4. **Compliance Support**: License management aligned with enterprise security policies
+
+ProximaDB's License Management System provides **comprehensive license tier enforcement** supporting both SaaS and privacy-conscious deployment models with **no phone home requirement** for air-gapped enterprise customers.

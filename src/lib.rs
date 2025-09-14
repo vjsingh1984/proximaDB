@@ -125,6 +125,9 @@ pub mod revenue;
 /// Sales enablement platform for customer-facing sales automation
 pub mod sales_enablement;
 
+/// License management and tier enforcement for all deployment models
+pub mod licensing;
+
 /// Executive intelligence platform for C-level strategic analytics
 pub mod executive;
 
