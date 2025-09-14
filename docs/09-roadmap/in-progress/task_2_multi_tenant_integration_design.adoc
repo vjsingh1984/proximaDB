@@ -1,0 +1,763 @@
+= Task #2: Multi-Tenant Integration Completion - Development Specification
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+
+[.lead]
+**Complete development specification for Multi-Tenant Integration** - Critical foundation for enterprise deployment and scalability.
+
+== Executive Summary
+
+=== Current Status Assessment
+* **Architecture Foundation**: 90% complete (~3,128 lines of solid implementation)
+* **TenantManager**: Fully implemented with DashMap-based tenant tracking
+* **RBAC Framework**: Complete implementation (~650 lines)
+* **Critical Gap**: System integration missing - services not using tenant isolation
+* **Business Impact**: Enterprise deployment blocked without complete tenant integration
+
+=== Strategic Importance
+* **Enterprise Readiness**: Required for enterprise customer onboarding
+* **Revenue Scaling**: Enables multi-tenant SaaS business model
+* **Security Compliance**: Mandatory for SOC 2 and enterprise security requirements
+* **Competitive Position**: Multi-tenant foundation enables enterprise market capture
+
+== Technical Architecture
+
+=== Current Implementation Status
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "COMPLETED FOUNDATION - 90%"
+        A[TenantManager<br/>✅ Complete Implementation<br/>216 lines solid code]
+        B[RBAC System<br/>✅ Complete Framework<br/>650 lines implementation]
+        C[Tenant Isolation<br/>✅ Architecture Complete<br/>Resource tracking ready]
+        D[Security Framework<br/>✅ Permission System<br/>Multi-tenant aware]
+    end
+
+    subgraph "MISSING INTEGRATION - 10%"
+        E[CollectionService Integration<br/>❌ No tenant validation<br/>Direct access bypasses isolation]
+        F[VectorOperations Integration<br/>❌ No resource limits<br/>Cross-tenant access possible]
+        G[Search Service Integration<br/>❌ No tenant filtering<br/>Data leakage risk]
+        H[Performance Enforcement<br/>❌ No resource limits<br/>No tenant SLA enforcement]
+    end
+
+    A -.-> E
+    B -.-> F
+    C -.-> G
+    D -.-> H
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style G fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style H fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+----
+
+=== Target Integration Architecture
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "CLIENT REQUESTS"
+        A[Collection Request]
+        B[Vector Operation]
+        C[Search Query]
+    end
+
+    subgraph "TENANT VALIDATION LAYER"
+        D[TenantManager<br/>Validate Tenant Access<br/>Check Resource Limits]
+        E[RBAC Enforcer<br/>Verify Permissions<br/>Enforce Security Policy]
+    end
+
+    subgraph "CORE SERVICES WITH ISOLATION"
+        F[CollectionService<br/>With Tenant Context<br/>Isolated Operations]
+        G[VectorOperations<br/>With Resource Limits<br/>Performance SLA]
+        H[SearchService<br/>With Tenant Filtering<br/>Data Isolation]
+    end
+
+    subgraph "STORAGE WITH ISOLATION"
+        I[Storage Engines<br/>Tenant-Aware Storage<br/>Resource Monitoring]
+    end
+
+    A --> D
+    B --> D
+    C --> D
+    D --> E
+    E --> F
+    E --> G
+    E --> H
+    F --> I
+    G --> I
+    H --> I
+
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+----
+
+== Development Plan
+
+=== Phase 1: Collection Service Integration (Weeks 1-2)
+
+==== Implementation Files
+* **Location**: `src/services/collection/`
+* **Key Modifications**:
+  - `mod.rs` - Add tenant validation to all operations
+  - `tenant_integration.rs` - New file for tenant-aware logic
+  - `resource_limits.rs` - New file for resource enforcement
+
+==== Core Integration Logic
+[source,rust]
+----
+// File: src/services/collection/mod.rs (MODIFICATION)
+use crate::storage::tenant::TenantManager;
+use crate::auth::rbac::RBACEnforcer;
+
+pub struct CollectionService {
+    // Existing fields
+    storage_factory: Arc<StorageEngineFactory>,
+
+    // NEW: Tenant integration
+    tenant_manager: Arc<TenantManager>,
+    rbac_enforcer: Arc<RBACEnforcer>,
+    metrics: Arc<CollectionMetrics>,
+}
+
+impl CollectionService {
+    // MODIFIED: Add tenant validation to collection creation
+    pub async fn create_collection(&self, req: CreateCollectionRequest) -> Result<Collection, CollectionError> {
+        // Step 1: Validate tenant access and authentication
+        let tenant_context = self.tenant_manager
+            .validate_tenant_access(&req.tenant_id, &req.user_context)
+            .await
+            .map_err(CollectionError::TenantValidationFailed)?;
+
+        // Step 2: Check RBAC permissions for collection creation
+        self.rbac_enforcer
+            .enforce_collection_operation(&req.user_context, Operation::CreateCollection)
+            .await
+            .map_err(CollectionError::PermissionDenied)?;
+
+        // Step 3: Validate resource limits
+        let resource_check = self.tenant_manager
+            .check_collection_limits(&tenant_context, &req.collection_config)
+            .await?;
+
+        if !resource_check.allowed {
+            return Err(CollectionError::ResourceLimitExceeded(resource_check.reason));
+        }
+
+        // Step 4: Create collection with tenant isolation
+        let collection_config = self.apply_tenant_isolation_config(&req.collection_config, &tenant_context)?;
+        let collection = self.create_collection_internal(collection_config).await?;
+
+        // Step 5: Register collection with tenant manager
+        self.tenant_manager
+            .register_collection(&req.tenant_id, &collection.id)
+            .await?;
+
+        // Step 6: Update tenant metrics
+        self.metrics.record_collection_created(&req.tenant_id).await;
+
+        Ok(collection)
+    }
+
+    // NEW: Apply tenant-specific configuration
+    fn apply_tenant_isolation_config(
+        &self,
+        config: &CollectionConfig,
+        tenant_context: &TenantContext,
+    ) -> Result<CollectionConfig, CollectionError> {
+        let mut tenant_config = config.clone();
+
+        // Add tenant ID to all metadata
+        tenant_config.metadata.insert("tenant_id".to_string(), tenant_context.tenant_id.clone());
+
+        // Apply tenant-specific storage settings
+        tenant_config.storage_config = self.apply_tenant_storage_config(
+            &tenant_config.storage_config,
+            &tenant_context.resource_limits,
+        )?;
+
+        // Add tenant isolation tags
+        tenant_config.tags.insert("tenant_isolation".to_string(), "enabled".to_string());
+
+        Ok(tenant_config)
+    }
+
+    // MODIFIED: Add tenant validation to all collection operations
+    pub async fn get_collection(&self, req: GetCollectionRequest) -> Result<Collection, CollectionError> {
+        // Validate tenant ownership of collection
+        let collection_tenant = self.tenant_manager
+            .get_collection_tenant(&req.collection_id)
+            .await?;
+
+        if collection_tenant != req.tenant_id {
+            return Err(CollectionError::CrossTenantAccessDenied);
+        }
+
+        // Check RBAC permissions
+        self.rbac_enforcer
+            .enforce_collection_access(&req.user_context, &req.collection_id, Operation::ReadCollection)
+            .await?;
+
+        // Proceed with normal collection retrieval
+        self.get_collection_internal(&req.collection_id).await
+    }
+}
+----
+
+==== Tenant Resource Limits Implementation
+[source,rust]
+----
+// File: src/services/collection/resource_limits.rs (NEW FILE)
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenantResourceLimits {
+    pub max_collections: u32,
+    pub max_vectors_per_collection: u64,
+    pub max_total_storage_bytes: u64,
+    pub max_queries_per_second: u32,
+    pub max_concurrent_operations: u32,
+    pub allowed_storage_engines: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResourceCheck {
+    pub allowed: bool,
+    pub reason: Option<String>,
+    pub current_usage: ResourceUsage,
+    pub limits: TenantResourceLimits,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceUsage {
+    pub collection_count: u32,
+    pub total_vectors: u64,
+    pub total_storage_bytes: u64,
+    pub current_qps: u32,
+    pub concurrent_operations: u32,
+}
+
+impl TenantManager {
+    pub async fn check_collection_limits(
+        &self,
+        tenant_context: &TenantContext,
+        collection_config: &CollectionConfig,
+    ) -> Result<ResourceCheck, TenantError> {
+        let current_usage = self.get_tenant_resource_usage(&tenant_context.tenant_id).await?;
+        let limits = tenant_context.resource_limits.clone();
+
+        // Check collection count limit
+        if current_usage.collection_count >= limits.max_collections {
+            return Ok(ResourceCheck {
+                allowed: false,
+                reason: Some(format!("Collection limit exceeded: {}/{}", current_usage.collection_count, limits.max_collections)),
+                current_usage,
+                limits,
+            });
+        }
+
+        // Check storage engine allowlist
+        if !limits.allowed_storage_engines.contains(&collection_config.storage_engine) {
+            return Ok(ResourceCheck {
+                allowed: false,
+                reason: Some(format!("Storage engine '{}' not allowed for tenant", collection_config.storage_engine)),
+                current_usage,
+                limits,
+            });
+        }
+
+        // Check estimated storage impact
+        let estimated_storage = self.estimate_collection_storage(collection_config).await?;
+        if current_usage.total_storage_bytes + estimated_storage > limits.max_total_storage_bytes {
+            return Ok(ResourceCheck {
+                allowed: false,
+                reason: Some("Storage limit would be exceeded".to_string()),
+                current_usage,
+                limits,
+            });
+        }
+
+        Ok(ResourceCheck {
+            allowed: true,
+            reason: None,
+            current_usage,
+            limits,
+        })
+    }
+}
+----
+
+=== Phase 2: Vector Operations Integration (Weeks 2-3)
+
+==== Implementation Files
+* **Location**: `src/services/operations/`
+* **Key Modifications**:
+  - `vector_operations.rs` - Add tenant context to all operations
+  - `tenant_metrics.rs` - New file for tenant-specific metrics
+  - `rate_limiter.rs` - New file for per-tenant rate limiting
+
+==== Vector Operations Integration
+[source,rust]
+----
+// File: src/services/operations/vector_operations.rs (MODIFICATION)
+impl VectorOperationsService {
+    // MODIFIED: Add tenant isolation to vector insertion
+    pub async fn insert_vectors(&self, req: InsertVectorsRequest) -> Result<InsertVectorsResponse, VectorError> {
+        // Step 1: Validate tenant ownership of collection
+        let collection_tenant = self.tenant_manager
+            .get_collection_tenant(&req.collection_id)
+            .await?;
+
+        if collection_tenant != req.tenant_id {
+            return Err(VectorError::CrossTenantAccessDenied);
+        }
+
+        // Step 2: Check rate limits
+        let rate_limit_check = self.rate_limiter
+            .check_tenant_rate_limit(&req.tenant_id, Operation::InsertVectors)
+            .await?;
+
+        if !rate_limit_check.allowed {
+            return Err(VectorError::RateLimitExceeded(rate_limit_check.retry_after));
+        }
+
+        // Step 3: Check resource limits
+        let resource_check = self.tenant_manager
+            .check_vector_insertion_limits(&req.tenant_id, req.vectors.len())
+            .await?;
+
+        if !resource_check.allowed {
+            return Err(VectorError::ResourceLimitExceeded(resource_check.reason));
+        }
+
+        // Step 4: Apply tenant context to vectors
+        let tenant_vectors = self.apply_tenant_context_to_vectors(&req.vectors, &req.tenant_id)?;
+
+        // Step 5: Proceed with insertion using existing logic
+        let response = self.insert_vectors_internal(tenant_vectors).await?;
+
+        // Step 6: Update tenant metrics
+        self.tenant_metrics
+            .record_vectors_inserted(&req.tenant_id, req.vectors.len())
+            .await;
+
+        Ok(response)
+    }
+
+    fn apply_tenant_context_to_vectors(
+        &self,
+        vectors: &[VectorRecord],
+        tenant_id: &str,
+    ) -> Result<Vec<VectorRecord>, VectorError> {
+        let mut tenant_vectors = Vec::new();
+
+        for vector in vectors {
+            let mut tenant_vector = vector.clone();
+
+            // Add tenant ID to metadata
+            tenant_vector.metadata.insert("tenant_id".to_string(), tenant_id.to_string());
+
+            // Add tenant isolation markers
+            tenant_vector.metadata.insert("tenant_isolated".to_string(), "true".to_string());
+
+            tenant_vectors.push(tenant_vector);
+        }
+
+        Ok(tenant_vectors)
+    }
+}
+----
+
+=== Phase 3: Search Service Integration (Weeks 3-4)
+
+==== Implementation Files
+* **Location**: `src/services/search/`
+* **Key Modifications**:
+  - `search_service.rs` - Add tenant filtering to all searches
+  - `tenant_filter.rs` - New file for tenant-aware search filtering
+  - `cross_tenant_prevention.rs` - New file for preventing data leakage
+
+==== Search Service Integration
+[source,rust]
+----
+// File: src/services/search/search_service.rs (MODIFICATION)
+impl SearchService {
+    // MODIFIED: Add tenant isolation to vector search
+    pub async fn vector_search(&self, req: VectorSearchRequest) -> Result<VectorSearchResponse, SearchError> {
+        // Step 1: Validate tenant access to collection
+        let collection_tenant = self.tenant_manager
+            .get_collection_tenant(&req.collection_id)
+            .await?;
+
+        if collection_tenant != req.tenant_id {
+            return Err(SearchError::CrossTenantAccessDenied);
+        }
+
+        // Step 2: Check search rate limits
+        let rate_check = self.rate_limiter
+            .check_tenant_search_rate(&req.tenant_id)
+            .await?;
+
+        if !rate_check.allowed {
+            return Err(SearchError::SearchRateLimitExceeded(rate_check.retry_after));
+        }
+
+        // Step 3: Apply tenant filtering to search
+        let tenant_filtered_request = self.apply_tenant_search_filter(&req, &req.tenant_id)?;
+
+        // Step 4: Execute search with tenant isolation
+        let mut response = self.vector_search_internal(tenant_filtered_request).await?;
+
+        // Step 5: Double-check results for tenant isolation (defense in depth)
+        response.results = self.validate_search_results_tenant_isolation(&response.results, &req.tenant_id).await?;
+
+        // Step 6: Update tenant search metrics
+        self.tenant_metrics
+            .record_search_executed(&req.tenant_id, response.results.len())
+            .await;
+
+        Ok(response)
+    }
+
+    fn apply_tenant_search_filter(
+        &self,
+        req: &VectorSearchRequest,
+        tenant_id: &str,
+    ) -> Result<VectorSearchRequest, SearchError> {
+        let mut filtered_req = req.clone();
+
+        // Add mandatory tenant filter to metadata filters
+        let tenant_filter = MetadataFilter {
+            key: "tenant_id".to_string(),
+            operator: FilterOperator::Equals,
+            value: tenant_id.to_string(),
+        };
+
+        // Combine with existing filters using AND logic
+        if let Some(existing_filters) = &filtered_req.metadata_filters {
+            filtered_req.metadata_filters = Some(MetadataFilters::And(vec![
+                existing_filters.clone(),
+                MetadataFilters::Filter(tenant_filter),
+            ]));
+        } else {
+            filtered_req.metadata_filters = Some(MetadataFilters::Filter(tenant_filter));
+        }
+
+        Ok(filtered_req)
+    }
+
+    // Defense in depth: validate all search results belong to correct tenant
+    async fn validate_search_results_tenant_isolation(
+        &self,
+        results: &[VectorSearchResult],
+        expected_tenant_id: &str,
+    ) -> Result<Vec<VectorSearchResult>, SearchError> {
+        let mut validated_results = Vec::new();
+
+        for result in results {
+            // Check if result has tenant_id metadata
+            if let Some(result_tenant_id) = result.metadata.get("tenant_id") {
+                if result_tenant_id == expected_tenant_id {
+                    validated_results.push(result.clone());
+                } else {
+                    // CRITICAL: Log potential data leakage attempt
+                    tracing::error!(
+                        "SECURITY ALERT: Cross-tenant data leakage prevented! Expected tenant: {}, Found: {}",
+                        expected_tenant_id,
+                        result_tenant_id
+                    );
+
+                    // Could also trigger security alert here
+                    self.security_monitor
+                        .report_potential_data_leakage(expected_tenant_id, result_tenant_id)
+                        .await;
+                }
+            } else {
+                // CRITICAL: Result without tenant_id is a security issue
+                tracing::error!("SECURITY ALERT: Vector result without tenant_id found!");
+                self.security_monitor
+                    .report_missing_tenant_metadata(&result.id)
+                    .await;
+            }
+        }
+
+        Ok(validated_results)
+    }
+}
+----
+
+=== Phase 4: Performance Isolation and SLA Enforcement (Weeks 4-6)
+
+==== Implementation Files
+* **Location**: `src/storage/tenant/performance/`
+* **Key Files**:
+  - `resource_monitor.rs` - Real-time resource monitoring
+  - `sla_enforcer.rs` - SLA enforcement and throttling
+  - `tenant_metrics_collector.rs` - Detailed tenant metrics
+
+==== Performance Isolation System
+[source,rust]
+----
+// File: src/storage/tenant/performance/resource_monitor.rs (NEW FILE)
+use std::collections::HashMap;
+use tokio::time::{Duration, Instant};
+
+pub struct TenantResourceMonitor {
+    tenant_usage: Arc<DashMap<String, TenantUsageMetrics>>,
+    monitoring_config: ResourceMonitoringConfig,
+    metrics_collector: Arc<MetricsCollector>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TenantUsageMetrics {
+    pub current_qps: f64,
+    pub avg_response_time_ms: f64,
+    pub memory_usage_bytes: u64,
+    pub cpu_usage_percent: f64,
+    pub storage_used_bytes: u64,
+    pub concurrent_operations: u32,
+    pub last_updated: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResourceMonitoringConfig {
+    pub monitoring_interval_ms: u64,
+    pub qps_window_seconds: u32,
+    pub memory_check_interval_ms: u64,
+    pub alert_thresholds: AlertThresholds,
+}
+
+impl TenantResourceMonitor {
+    pub async fn start_monitoring(&self) -> Result<(), MonitoringError> {
+        let mut interval = tokio::time::interval(Duration::from_millis(self.monitoring_config.monitoring_interval_ms));
+
+        loop {
+            interval.tick().await;
+
+            // Update metrics for all active tenants
+            let active_tenants = self.get_active_tenants().await;
+
+            for tenant_id in active_tenants {
+                if let Err(e) = self.update_tenant_metrics(&tenant_id).await {
+                    tracing::warn!("Failed to update metrics for tenant {}: {}", tenant_id, e);
+                }
+
+                // Check for threshold violations
+                if let Err(e) = self.check_tenant_thresholds(&tenant_id).await {
+                    tracing::error!("Tenant {} threshold violation: {}", tenant_id, e);
+                    self.handle_threshold_violation(&tenant_id, e).await;
+                }
+            }
+        }
+    }
+
+    async fn update_tenant_metrics(&self, tenant_id: &str) -> Result<(), MonitoringError> {
+        let current_metrics = TenantUsageMetrics {
+            current_qps: self.calculate_current_qps(tenant_id).await?,
+            avg_response_time_ms: self.calculate_avg_response_time(tenant_id).await?,
+            memory_usage_bytes: self.get_tenant_memory_usage(tenant_id).await?,
+            cpu_usage_percent: self.get_tenant_cpu_usage(tenant_id).await?,
+            storage_used_bytes: self.get_tenant_storage_usage(tenant_id).await?,
+            concurrent_operations: self.get_concurrent_operations(tenant_id).await?,
+            last_updated: Instant::now(),
+        };
+
+        self.tenant_usage.insert(tenant_id.to_string(), current_metrics);
+        Ok(())
+    }
+
+    pub async fn enforce_tenant_sla(&self, tenant_id: &str, operation: &Operation) -> Result<SLACheckResult, SLAError> {
+        let usage = self.tenant_usage.get(tenant_id)
+            .ok_or(SLAError::TenantNotFound)?;
+
+        let tenant_limits = self.get_tenant_limits(tenant_id).await?;
+
+        // Check QPS limits
+        if usage.current_qps > tenant_limits.max_qps as f64 {
+            return Ok(SLACheckResult {
+                allowed: false,
+                violation_type: SLAViolationType::QPSLimitExceeded,
+                retry_after: Some(Duration::from_secs(1)),
+                current_usage: usage.current_qps,
+                limit: tenant_limits.max_qps as f64,
+            });
+        }
+
+        // Check concurrent operations
+        if usage.concurrent_operations >= tenant_limits.max_concurrent_operations {
+            return Ok(SLACheckResult {
+                allowed: false,
+                violation_type: SLAViolationType::ConcurrencyLimitExceeded,
+                retry_after: Some(Duration::from_millis(500)),
+                current_usage: usage.concurrent_operations as f64,
+                limit: tenant_limits.max_concurrent_operations as f64,
+            });
+        }
+
+        // Check memory limits
+        if usage.memory_usage_bytes > tenant_limits.max_memory_bytes {
+            return Ok(SLACheckResult {
+                allowed: false,
+                violation_type: SLAViolationType::MemoryLimitExceeded,
+                retry_after: Some(Duration::from_secs(5)),
+                current_usage: usage.memory_usage_bytes as f64,
+                limit: tenant_limits.max_memory_bytes as f64,
+            });
+        }
+
+        Ok(SLACheckResult {
+            allowed: true,
+            violation_type: SLAViolationType::None,
+            retry_after: None,
+            current_usage: 0.0,
+            limit: 0.0,
+        })
+    }
+}
+----
+
+== Testing Strategy
+
+=== Integration Testing Framework
+[cols="3,2,3", options="header"]
+|===
+| Test Category | Priority | Test Description
+
+| **Cross-Tenant Isolation**
+| Critical
+| Verify tenant A cannot access tenant B's collections, vectors, or search results
+
+| **Resource Limit Enforcement**
+| Critical
+| Test QPS limits, memory limits, storage limits are properly enforced
+
+| **RBAC Integration**
+| High
+| Validate permissions are checked for all multi-tenant operations
+
+| **Performance Isolation**
+| High
+| Confirm tenant A's heavy usage doesn't impact tenant B's performance
+|===
+
+=== Security Testing
+* **Penetration Testing**: Attempt cross-tenant data access
+* **Permission Escalation**: Test privilege escalation scenarios
+* **Data Leakage Prevention**: Validate search results don't leak across tenants
+* **Audit Trail**: Verify all tenant operations are properly logged
+
+=== Performance Testing
+* **Multi-Tenant Load**: 100+ concurrent tenants with realistic workloads
+* **Resource Isolation**: Validate per-tenant QPS and response time SLAs
+* **Scalability**: Test system performance with 1000+ tenants
+* **Failure Recovery**: Test graceful degradation under resource pressure
+
+== Security Considerations
+
+=== Tenant Isolation Security
+* **Mandatory Tenant Filters**: All database queries must include tenant_id filters
+* **Defense in Depth**: Multiple validation layers prevent cross-tenant access
+* **Audit Logging**: All tenant operations logged for security monitoring
+* **Resource Limits**: Prevent tenant resource exhaustion attacks
+
+=== Data Security
+* **Metadata Isolation**: Tenant ID embedded in all vector metadata
+* **Search Result Validation**: Double-check all search results for tenant ownership
+* **Collection Ownership**: Strict validation of collection-tenant relationships
+* **API Key Isolation**: Tenant-specific API keys and authentication
+
+== Dependencies and Prerequisites
+
+=== Completed Components (Already Available)
+* **TenantManager**: Complete implementation with 216 lines of solid code
+* **RBAC System**: Complete framework with 650 lines of implementation
+* **Storage Engines**: All 7 engines ready for tenant-aware operations
+* **Metrics Collection**: Foundation exists for tenant-specific metrics
+
+=== External Dependencies
+* **Monitoring System**: Integration with existing ProximaDB monitoring
+* **Audit System**: Integration with audit logging framework
+* **Performance Metrics**: Integration with benchmark collection system
+
+== Success Metrics
+
+=== Functional Requirements
+* **Tenant Isolation**: 100% prevention of cross-tenant data access
+* **Resource Enforcement**: All tenant limits properly enforced
+* **Performance SLAs**: Per-tenant QPS guarantees maintained
+* **Security Compliance**: Pass security penetration testing
+
+=== Performance Requirements
+* **Multi-Tenant QPS**: 1,000+ QPS per tenant with isolation overhead <5%
+* **Response Time**: Tenant validation adds <10ms latency per operation
+* **Scalability**: Support 1,000+ concurrent tenants
+* **Resource Efficiency**: Multi-tenancy overhead <15% of single-tenant performance
+
+=== Business Requirements
+* **Enterprise Readiness**: SOC 2 compliance requirements met
+* **SLA Guarantees**: Per-tenant performance guarantees enforceable
+* **Scalable Revenue**: Support for tiered tenant pricing models
+* **Operational Excellence**: Automated tenant onboarding and management
+
+== Implementation Notes for Future Sessions
+
+=== Critical Context for Session Continuity
+* **Strong Foundation**: TenantManager and RBAC are genuinely complete and working
+* **Key Gap**: Services (Collection, VectorOps, Search) don't use tenant validation
+* **Security Priority**: Cross-tenant data leakage prevention is the highest risk
+* **Integration Pattern**: Add tenant validation at service entry points, not storage layer
+
+=== Integration Checklist
+- [ ] CollectionService.create_collection() - Add tenant validation
+- [ ] CollectionService.get_collection() - Add tenant ownership check
+- [ ] VectorOperationsService.insert_vectors() - Add tenant context
+- [ ] VectorOperationsService.search_vectors() - Add tenant filtering
+- [ ] SearchService.vector_search() - Add mandatory tenant filters
+- [ ] All services - Add rate limiting per tenant
+- [ ] All services - Add resource limit checking
+- [ ] All services - Add tenant metrics collection
+
+=== Critical Files to Modify
+```
+src/services/collection/mod.rs           # Add tenant validation
+src/services/operations/vector_operations.rs # Add tenant context
+src/services/search/search_service.rs    # Add tenant filtering
+src/storage/tenant/performance/          # NEW directory for SLA enforcement
+src/auth/rbac/enforcement.rs            # Add service integration
+```
+
+=== Configuration Template
+```toml
+[multi_tenant]
+enable_tenant_isolation = true
+enable_cross_tenant_validation = true
+enable_resource_limits = true
+enable_performance_sla = true
+
+[multi_tenant.default_limits]
+max_collections = 100
+max_vectors_per_collection = 10000000
+max_total_storage_gb = 100
+max_qps = 1000
+max_concurrent_operations = 50
+allowed_storage_engines = ["SST", "VIPER", "NOVA"]
+
+[multi_tenant.monitoring]
+metrics_collection_interval_ms = 1000
+sla_enforcement_enabled = true
+alerting_enabled = true
+```
+
+This specification provides complete implementation guidance for integrating the already-excellent multi-tenant foundation with the core ProximaDB services, ensuring enterprise-ready tenant isolation and performance guarantees.
