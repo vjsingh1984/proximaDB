@@ -198,9 +198,18 @@ impl VectorRecordSerialization for VectorRecord {
         let vector_bytes = cast_slice(&self.vector);
 
         // 2. Serialize remaining fields using fast bincode (faster than protobuf)
+        let metadata_json: Vec<serde_json::Value> = self.metadata.iter()
+            .map(|(key, sql_value)| {
+                serde_json::json!({
+                    "key": key,
+                    "value": sql_value
+                })
+            })
+            .collect();
+
         let other_fields = VectorRecordOtherFields {
             id: Some(self.id.clone()),
-            metadata: crate::core::conversions::sql_values_to_metadata_items(self.metadata.clone()),
+            metadata: metadata_json,
             timestamp: self.timestamp as u32,
             updated_at: self.updated_at.map(|t| t as u32),
             expires_at: self.expires_at.map(|t| t as u32),
@@ -270,10 +279,19 @@ impl VectorRecordSerialization for VectorRecord {
         let other_fields: VectorRecordOtherFields = bincode::deserialize(bincode_data)?;
 
         // 3. Combine zero-copy vector with fast-deserialized fields
+        let mut metadata = std::collections::HashMap::new();
+        for json_value in other_fields.metadata {
+            if let (Some(key), Some(value)) = (json_value.get("key"), json_value.get("value")) {
+                if let (Some(key_str), Ok(sql_value)) = (key.as_str(), serde_json::from_value(value.clone())) {
+                    metadata.insert(key_str.to_string(), sql_value);
+                }
+            }
+        }
+
         Ok(VectorRecord {
             id: other_fields.id.unwrap_or_default(),
             vector,
-            metadata: crate::core::conversions::metadata_items_to_sql_values(other_fields.metadata),
+            metadata,
             timestamp: other_fields.timestamp as i64,
             updated_at: other_fields.updated_at.map(|t| t as i64),
             expires_at: other_fields.expires_at.map(|t| t as i64),

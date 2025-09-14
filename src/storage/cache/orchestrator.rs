@@ -1201,22 +1201,66 @@ impl CrossCacheOrchestrator {
         // Add cache-specific metrics
         if let Some(cache) = &self.query_cache {
             let cache_metrics = cache.metrics();
-            metrics.insert("query_cache".to_string(), cache_metrics.clone());
+            let snapshot = cache_metrics.snapshot();
+            let value = serde_json::json!({
+                "l1_hits": snapshot.l1_hits,
+                "l2_hits": snapshot.l2_hits,
+                "l3_hits": snapshot.l3_hits,
+                "misses": snapshot.misses,
+                "total_gets": snapshot.total_gets,
+                "total_puts": snapshot.total_puts,
+                "hit_rate": snapshot.hit_rate,
+                "total_entries": snapshot.total_entries
+            });
+            metrics.insert("query_cache".to_string(), value);
         }
 
         if let Some(cache) = &self.filter_cache {
             let cache_metrics = cache.metrics();
-            metrics.insert("filter_cache".to_string(), cache_metrics.clone());
+            let snapshot = cache_metrics.snapshot();
+            let value = serde_json::json!({
+                "l1_hits": snapshot.l1_hits,
+                "l2_hits": snapshot.l2_hits,
+                "l3_hits": snapshot.l3_hits,
+                "misses": snapshot.misses,
+                "total_gets": snapshot.total_gets,
+                "total_puts": snapshot.total_puts,
+                "hit_rate": snapshot.hit_rate,
+                "total_entries": snapshot.total_entries
+            });
+            metrics.insert("filter_cache".to_string(), value);
         }
 
         if let Some(cache) = &self.index_cache {
             let cache_metrics = cache.metrics();
-            metrics.insert("index_cache".to_string(), cache_metrics.clone());
+            let snapshot = cache_metrics.snapshot();
+            let value = serde_json::json!({
+                "l1_hits": snapshot.l1_hits,
+                "l2_hits": snapshot.l2_hits,
+                "l3_hits": snapshot.l3_hits,
+                "misses": snapshot.misses,
+                "total_gets": snapshot.total_gets,
+                "total_puts": snapshot.total_puts,
+                "hit_rate": snapshot.hit_rate,
+                "total_entries": snapshot.total_entries
+            });
+            metrics.insert("index_cache".to_string(), value);
         }
 
         if let Some(cache) = &self.metadata_cache {
             let cache_metrics = cache.metrics();
-            metrics.insert("metadata_cache".to_string(), cache_metrics.clone());
+            let snapshot = cache_metrics.snapshot();
+            let value = serde_json::json!({
+                "l1_hits": snapshot.l1_hits,
+                "l2_hits": snapshot.l2_hits,
+                "l3_hits": snapshot.l3_hits,
+                "misses": snapshot.misses,
+                "total_gets": snapshot.total_gets,
+                "total_puts": snapshot.total_puts,
+                "hit_rate": snapshot.hit_rate,
+                "total_entries": snapshot.total_entries
+            });
+            metrics.insert("metadata_cache".to_string(), value);
         }
 
         Ok(serde_json::Value::Object(metrics))

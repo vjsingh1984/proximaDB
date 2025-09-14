@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 /// Alert for threshold violations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
     pub id: String,
     pub level: AlertLevel,
@@ -23,7 +23,7 @@ pub struct Alert {
 }
 
 /// Alert severity level
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertLevel {
     Info,
     Warning,

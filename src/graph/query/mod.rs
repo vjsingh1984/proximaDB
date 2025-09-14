@@ -63,6 +63,7 @@ pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
 
 use crate::core::error::ProximaDBError;
 use crate::graph::{EdgeId, NodeId};
+use serde::Serialize;
 use std::collections::HashMap;
 
 /// Result type for query operations

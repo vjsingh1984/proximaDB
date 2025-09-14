@@ -486,9 +486,9 @@ impl SamlAuthProvider {
         })
     }
 
-    fn map_roles_to_permissions(&self, _roles: &[String]) -> Vec<String> {
+    fn map_roles_to_permissions(&self, _roles: &[String]) -> Vec<Permission> {
         // TODO: Implement role to permission mapping
-        vec!["read".to_string(), "write".to_string()]
+        vec![Permission::SearchVectors, Permission::InsertVectors]
     }
 }
 
@@ -503,11 +503,13 @@ impl AuthProvider for SamlAuthProvider {
         
         Ok(AuthResult {
             user_id: assertion.user_id,
-            tenant_id: assertion.tenant_id,
+            tenant_id: Some(assertion.tenant_id),
             roles: assertion.roles.clone(),
             permissions: self.map_roles_to_permissions(&assertion.roles),
             auth_method: AuthMethod::OAuth2, // SAML treated as OAuth2 equivalent
-            token_expires_at: assertion.expires_at,
+            token_expires_at: assertion.expires_at.map(|timestamp| {
+                chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(|| chrono::Utc::now())
+            }),
         })
     }
     

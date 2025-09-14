@@ -73,7 +73,7 @@ pub struct CompressionMetrics {
 }
 
 /// Distribution of block sizes for analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BlockSizeDistribution {
     pub min_bytes: u64,
     pub max_bytes: u64,

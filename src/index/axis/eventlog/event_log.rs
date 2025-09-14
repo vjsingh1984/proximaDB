@@ -72,7 +72,7 @@ pub enum OperationType {
 pub type EventType = OperationType;
 
 /// File indexing status
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileIndexingStatus {
     /// File path
     pub file_path: String,

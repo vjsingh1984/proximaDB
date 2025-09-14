@@ -440,6 +440,7 @@ impl MetricsPersistenceLayer {
             filesystem_factory: self.filesystem_factory.clone(),
             base_path: self.base_path.clone(),
             config: self.config.clone(),
+            cache_orchestrator: self.cache_orchestrator.clone(),
             snapshot_cache: self.snapshot_cache.clone(),
             pending_updates: self.pending_updates.clone(),
             last_snapshot: self.last_snapshot.clone(),

@@ -546,8 +546,8 @@ impl ColdStorageBackend {
                 .embedding
                 .as_ref()
                 .and_then(|e: &crate::proto::proximadb_v1::EmbeddingVersion| Some(e.vector.clone())),
-            created_at: node.created_at_ms.as_ref().map(|t| t.seconds as u64),
-            updated_at: node.updated_at_ms.as_ref().map(|t| t.seconds as u64),
+            created_at: Some(node.created_at_ms as u64),
+            updated_at: Some(node.updated_at_ms as u64),
         })
     }
 
