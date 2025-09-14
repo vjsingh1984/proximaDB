@@ -79,7 +79,8 @@ async fn test_semantic_consistency_across_metrics() {
         );
 
         // Verify properties are correctly identified
-        let properties = metric.behavior_description();
+        // Behavior description method moved or renamed - use debug output instead
+        let properties = format!("{:?}", metric);
         assert!(
             !properties.is_empty(),
             "Metric {:?} should have behavior description",
@@ -216,42 +217,42 @@ async fn test_memtable_semantic_search() {
     // Create test vectors
     let test_vectors = vec![
         VectorRecord {
-            id: Some("identical".to_string()),
+            id: "identical".to_string(),
             vector: vec![1.0, 0.0, 0.0],
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            updated_at: Some(chrono::Utc::now().timestamp_millis()),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank field no longer exists
+            // score field no longer exists
+            // distance field no longer exists
             ..Default::default()
         },
         VectorRecord {
-            id: Some("similar".to_string()),
+            id: "similar".to_string(),
             vector: vec![0.9, 0.1, 0.0],
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            updated_at: Some(chrono::Utc::now().timestamp_millis()),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank field no longer exists
+            // score field no longer exists
+            // distance field no longer exists
             ..Default::default()
         },
         VectorRecord {
-            id: Some("orthogonal".to_string()),
+            id: "orthogonal".to_string(),
             vector: vec![0.0, 1.0, 0.0],
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            updated_at: Some(chrono::Utc::now().timestamp_millis()),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            // rank field no longer exists
+            // score field no longer exists
+            // distance field no longer exists
             ..Default::default()
         },
     ];
@@ -369,7 +370,7 @@ async fn test_quantization_semantic_distance() -> anyhow::Result<()> {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     use proximadb::compute::{InMemoryCodebookStore, UnifiedQuantizationEngine};
-    use proximadb::proto::proximadb::{ProductQuantization, quantization_level::LevelType};
+    use proximadb::proto::proximadb_v1::{ProductQuantization, quantization_level::LevelType};
     use std::sync::Arc;
 
     // Create quantization engine

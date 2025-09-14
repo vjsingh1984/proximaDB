@@ -13,7 +13,7 @@ mod common {
     include!("../common/mod.rs");
 }
 use crate::integration::viper_compression_integration_test::create_test_vectors;
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 // Old test utilities are no longer used - using UnifiedTestEnvironment instead
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::compression::CompressionAlgorithm;

@@ -13,7 +13,7 @@ mod write_ahead_log_batch_strategy_tests {
     use super::super::*;
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::VectorRecord;
-    use crate::proto::proximadb_v1::MetadataItem;
+    // use crate::proto::proximadb_v1::MetadataItem; // No longer needed
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::write_ahead_log::BatchId;
@@ -204,7 +204,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         async fn get_stats(&self) -> Result<WALStats> {
             if let Some(behavior) = &self.wal_behavior {
-                let collection_stats = behavior.stats().await?;
+                let collection_stats = behavior.get_stats().await?;
                 let total_entries: u64 = collection_stats.values().map(|s| s.total_entries).sum();
                 let total_memory: u64 =
                     collection_stats.values().map(|s| s.memory_size_bytes).sum();
@@ -239,7 +239,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         async fn get_collection_stats(&self, collection_id: &str) -> Result<WALStats> {
             if let Some(behavior) = &self.wal_behavior {
-                let all_stats = behavior.stats().await?;
+                let all_stats = behavior.get_stats().await?;
                 if let Some(collection_stat) = all_stats.get(collection_id) {
                     let mut collection_stats = HashMap::new();
                     collection_stats.insert(collection_id.to_string(), collection_stat.clone());
@@ -301,23 +301,21 @@ mod write_ahead_log_batch_strategy_tests {
     fn create_test_vector_record(id: &str, vector: Vec<f32>) -> VectorRecord {
         let now = chrono::Utc::now().timestamp_micros();
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector,
-            metadata: vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+            metadata: std::collections::HashMap::from([
+                ("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                         "test".to_string(),
-                    ),
-                ),
-            }],
-            timestamp: now as u32,
-            updated_at: Some(now as u32),
+                    )),
+                }),
+            ]),
+            timestamp: now as i64,
+            updated_at: Some(now as i64),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -437,7 +435,7 @@ mod write_ahead_log_batch_strategy_tests {
         let collection_id = "stats_collection";
 
         // Initially no stats
-        let stats = strategy.collection_stats(collection_id).await.unwrap();
+        let stats = strategy.get_collection_stats(collection_id).await.unwrap();
         assert_eq!(stats.total_entries, 0);
         assert_eq!(stats.collections_count, 0);
 
@@ -454,7 +452,7 @@ mod write_ahead_log_batch_strategy_tests {
             .unwrap();
 
         // Check updated stats
-        let stats = strategy.collection_stats(collection_id).await.unwrap();
+        let stats = strategy.get_collection_stats(collection_id).await.unwrap();
         assert_eq!(stats.total_entries, 8); // 5 + 3 vectors
         assert_eq!(stats.collections_count, 1);
         assert!(stats.memory_size_bytes > 0);
@@ -480,7 +478,7 @@ mod write_ahead_log_batch_strategy_tests {
             .unwrap();
 
         // Check global stats
-        let stats = strategy.stats().await.unwrap();
+        let stats = strategy.get_stats().await.unwrap();
         assert_eq!(stats.total_entries, 10); // 4 + 6 vectors
         assert_eq!(stats.collections_count, 2);
         assert!(stats.memory_size_bytes > 0);
@@ -503,7 +501,7 @@ mod write_ahead_log_batch_strategy_tests {
         let serialized = strategy.serialize_vectors_for_disk(&vectors);
         assert!(serialized.is_ok());
         let data = serialized.unwrap();
-        assert!(!data.is_none());
+        assert!(!data.is_empty());
 
         // Test deserialization
         let deserialized = strategy.deserialize_vectors_from_disk(&data);
@@ -526,7 +524,7 @@ mod write_ahead_log_batch_strategy_tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains_hash("Deserialization failed")
+                .contains("Deserialization failed")
         );
     }
 
@@ -560,7 +558,7 @@ mod write_ahead_log_batch_strategy_tests {
                 let error_msg = e.to_string();
                 assert!(error_msg.len() > 0);
                 // Could contain "Invalid cloud URL" or "Failed to get filesystem"
-                assert!(error_msg.contains_hash("Invalid") || error_msg.contains_hash("Failed"));
+                assert!(error_msg.contains("Invalid") || error_msg.contains("Failed"));
             }
         }
     }
@@ -614,12 +612,13 @@ mod write_ahead_log_batch_strategy_tests {
         match result {
             Ok(batch_urls) => {
                 // Unexpected success - but verify result structure
-                assert!(batch_urls.is_none() || !batch_urls.is_none());
+                // Verify result is a vector (empty or not)
+                assert!(batch_urls.len() >= 0);
             }
             Err(e) => {
                 // Expected failure in test environment
                 let error_msg = e.to_string();
-                assert!(error_msg.contains_hash("Invalid") || error_msg.contains_hash("Failed"));
+                assert!(error_msg.contains("Invalid") || error_msg.contains("Failed"));
             }
         }
     }
@@ -636,7 +635,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         // Base62 encoding should produce reasonable strings
         let id_str = batch1.batch_id.to_base62();
-        assert!(!id_str.is_none());
+        assert!(!id_str.is_empty());
         assert!(id_str.len() > 5); // Should be reasonably long
         assert!(id_str.chars().all(|c| c.is_alphanumeric())); // Base62 chars only
     }
@@ -739,7 +738,7 @@ mod write_ahead_log_batch_strategy_tests {
         }
 
         // Verify all collections were created
-        let stats = strategy.stats().await.unwrap();
+        let stats = strategy.get_stats().await.unwrap();
         assert_eq!(stats.collections_count, 5);
         assert_eq!(stats.total_entries, 50); // 5 collections * 10 vectors each
     }
@@ -791,7 +790,7 @@ mod write_ahead_log_batch_strategy_tests {
         assert!(
             error
                 .to_string()
-                .contains_hash("Unsupported payload format")
+                .contains("Unsupported payload format")
         );
     }
 
@@ -826,7 +825,7 @@ mod write_ahead_log_batch_strategy_tests {
                 // Expected since mock doesn't provide full write buffer behavior
                 assert!(
                     e.to_string()
-                        .contains_hash("Write buffer behavior not available")
+                        .contains("Write buffer behavior not available")
                 );
             }
         }
@@ -856,7 +855,7 @@ mod write_ahead_log_batch_strategy_tests {
                 // Expected since mock doesn't provide full write buffer behavior
                 assert!(
                     e.to_string()
-                        .contains_hash("Write buffer behavior not available")
+                        .contains("Write buffer behavior not available")
                 );
             }
         }
@@ -1005,18 +1004,18 @@ mod write_ahead_log_batch_strategy_tests {
 
         // Test that we can distinguish patterns (basic string validation)
         for url in valid_urls {
-            assert!(url.contains_hash("://"));
-            assert!(!url.is_none());
+            assert!(url.contains("://"));
+            assert!(!url.is_empty());
         }
 
         for url in invalid_urls {
             // These would fail URL validation in real implementation
-            if !url.is_none() {
+            if !url.is_empty() {
                 // Basic validation - either no protocol or unsupported
-                let has_protocol = url.contains_hash("://");
+                let has_protocol = url.contains("://");
                 if has_protocol {
-                    let protocol = url.split("://").next();
-                    assert!(!["s3", "adls", "gcs"].contains_hash(&protocol) || protocol == "ftp");
+                    let protocol = url.split("://").next().unwrap_or("");
+                    assert!(!["s3", "adls", "gcs"].contains(&protocol) || protocol == "ftp");
                 }
             }
         }
@@ -1043,7 +1042,7 @@ mod write_ahead_log_batch_strategy_tests {
         let encoded = batch_id.to_base62();
 
         // Verify Base62 encoding properties
-        assert!(!encoded.is_none());
+        assert!(!encoded.is_empty());
         assert!(encoded.len() >= 8); // Should be reasonably long for uniqueness
         assert!(encoded.chars().all(|c| c.is_ascii_alphanumeric())); // Only alphanumeric chars
 

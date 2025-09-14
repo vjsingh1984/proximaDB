@@ -22,8 +22,8 @@
 // Integration test modules - these are organized by functional area
 // Each subdirectory contains integration tests for that area
 
-// Test utilities moved to common/unified_test_utils.rs for consolidation
-// pub mod test_utils; // Deprecated - use common::unified_test_utils
+// Test utilities moved to common/integration_test_helpers.rs for consolidation
+// pub mod test_utils; // Deprecated - use common::integration_test_helpers
 
 // Isolated integration tests with individual collections
 // pub mod isolated_storage_assignment_test; // File not found - commented for now

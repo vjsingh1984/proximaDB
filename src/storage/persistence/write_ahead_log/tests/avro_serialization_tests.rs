@@ -45,31 +45,23 @@ fn create_test_config() -> WALConfig {
 /// Create test vector
 fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: vec![0.1; dimension],
-        metadata: vec![
-            MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "test".to_string(),
-                    ),
-                ),
-            },
-            MetadataItem {
-                key: "priority".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("1".to_string()),
-                ),
-            },
-        ],
+        metadata: std::collections::HashMap::from([
+            ("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string())),
+            }),
+            ("priority".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("1".to_string())),
+            }),
+        ]),
         timestamp: 1234567890,
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
+        ..Default::default()
     }
 }
 
@@ -524,10 +516,13 @@ mod integration_tests {
             Ok(None)
         }
 
-        async fn search_vectors_unified(
+        async fn search_vectors(
             &self,
-            _request: crate::core::search::UnifiedSearchRequest,
-        ) -> Result<Vec<crate::core::search::SearchResult>> {
+            _query_context: &crate::storage::traits::StorageQueryContext,
+            _operation_name: &str,
+            _query_vector: &[f32],
+            _top_k: usize,
+        ) -> Result<Vec<VectorRecord>> {
             Ok(vec![])
         }
 

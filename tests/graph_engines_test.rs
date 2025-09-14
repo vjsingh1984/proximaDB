@@ -54,19 +54,19 @@ async fn test_pulsar_engine_basic_operations() {
         updated_at_ms: 0,
     };
 
-    let inserted = engine.add_node(node).unwrap();
+    let inserted = engine.insert_node(node).unwrap();
     assert_eq!(inserted.id, "test_node_pulsar");
 
     // Wait for async operations
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Test node retrieval
-    let retrieved = engine.get_node_by_id("test_node_pulsar").unwrap().unwrap();
+    let retrieved = engine.get_node("test_node_pulsar").unwrap().unwrap();
     assert_eq!(retrieved.id, "test_node_pulsar");
     assert_eq!(retrieved.labels, vec!["TestNode"]);
 
     // Test node count
-    assert_eq!(engine.get_node_count().unwrap(), 1);
+    assert_eq!(engine.node_count().unwrap(), 1);
 
     // Test statistics
     let stats = engine.get_stats().await;
@@ -100,16 +100,16 @@ async fn test_quasar_engine_basic_operations() {
         updated_at_ms: 0,
     };
 
-    let inserted = engine.add_node(node).unwrap();
+    let inserted = engine.insert_node(node).unwrap();
     assert_eq!(inserted.id, "test_node_quasar");
 
     // Test node retrieval
-    let retrieved = engine.get_node_by_id("test_node_quasar").unwrap().unwrap();
+    let retrieved = engine.get_node("test_node_quasar").unwrap().unwrap();
     assert_eq!(retrieved.id, "test_node_quasar");
     assert_eq!(retrieved.labels, vec!["TestNode"]);
 
     // Test node count
-    assert_eq!(engine.get_node_count().unwrap(), 1);
+    assert_eq!(engine.node_count().unwrap(), 1);
 
     // Test statistics
     let stats = engine.get_stats().await;
@@ -211,7 +211,7 @@ async fn test_quasar_tiering_behavior() {
     // Verify access works across tiers
     for i in 0..5 {
         let node_id = format!("node_{}", i);
-        let retrieved = engine.get_node_by_id(&node_id).unwrap();
+        let retrieved = engine.get_node(&node_id).unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, node_id);
     }
@@ -343,7 +343,7 @@ async fn test_quasar_access_pattern_tracking() {
 
     // Access the node multiple times to build access pattern
     for _ in 0..5 {
-        let _ = engine.get_node_by_id("tracked_node").unwrap();
+        let _ = engine.get_node("tracked_node").unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 

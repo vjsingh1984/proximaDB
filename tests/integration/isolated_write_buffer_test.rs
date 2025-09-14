@@ -10,7 +10,7 @@ use std::sync::Arc;
 mod common {
     include!("../common/mod.rs");
 }
-use common::unified_test_utils::{UnifiedTestEnvironment as IsolatedTestEnvironment, setup_hardware_capabilities};
+use common::integration_test_helpers::{UnifiedTestEnvironment as IsolatedTestEnvironment, setup_hardware_capabilities};
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb::MetadataItem;
 use proximadb::storage::persistence::write_ahead_log::WriteBufferConfig;

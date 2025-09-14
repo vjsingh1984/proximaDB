@@ -151,7 +151,7 @@ async fn test_max_expansion_constraint() {
 #[tokio::test]
 async fn test_progressive_search_with_custom_recalls() {
     // Use test utilities helper
-    let vector_ops = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service().await.unwrap();
+    let vector_ops = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service().await.unwrap();
     
     // Test with custom recall rates
     let custom_recalls = ProgressiveRecalls {

@@ -66,13 +66,13 @@ async fn test_filter_bitmap_cache_roaring() {
         .await;
     assert!(combined.is_some());
     let combined_result = combined.unwrap();
-    assert_eq!(combined_result.bitmap.len(), 1); // Only ID 100 is in both
-    assert!(combined_result.bitmap.contains_hash(100));
+    assert_eq!(combined_result.bitmap.cardinality(), 1); // Only ID 100 is in both
+    assert!(combined_result.bitmap.contains(100));
 
     // Test filter decomposition
     let complex_filter = "(age > 25 AND category = 'electronics') OR status = 'active'";
     let decomposed = cache.decompose_filter(complex_filter).await;
-    assert!(!decomposed.is_none());
+    assert!(!decomposed.is_empty());
 
     // Test incremental updates
     let mut update_bitmap = crate::utils::bitmap::RoaringBitmap::new();
@@ -85,7 +85,7 @@ async fn test_filter_bitmap_cache_roaring() {
 
     let updated = cache.get_with_hooks(&"filter1".to_string()).await;
     assert!(updated.is_some());
-    assert!(updated.unwrap().bitmap.contains_hash(200));
+    assert!(updated.unwrap().bitmap.contains(200));
 }
 
 /// Test IndexNodeCache for hot path caching
@@ -137,8 +137,8 @@ async fn test_index_structure_cache_hot_paths() {
 
     // Test hot node identification
     let hot_nodes = cache.get_hot_nodes(5).await;
-    assert!(hot_nodes.contains_hash(&"root".to_string()));
-    assert!(hot_nodes.contains_hash(&"child1".to_string()));
+    assert!(hot_nodes.contains(&"root".to_string()));
+    assert!(hot_nodes.contains(&"child1".to_string()));
 
     // Test prefetch for traversal
     cache.prefetch_for_traversal("root", 2).await;
@@ -159,7 +159,7 @@ async fn test_query_result_cache_subqueries() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::proto::proximadb_v1::SearchResult;
+    use crate::core::VectorRecord;
     use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryKey};
     use std::time::SystemTime;
 
@@ -168,26 +168,38 @@ async fn test_query_result_cache_subqueries() {
     // Create main query result
     let main_query = CachedQueryResult {
         results: vec![
-            SearchResult {
-                id: Some("vec1".to_string()),
-                similarity: 0.9,
+            VectorRecord {
+                id: "vec1".to_string(),
                 vector: vec![],
-                metadata: vec![],
-                // rank removed -  None,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
-            SearchResult {
-                id: Some("vec2".to_string()),
-                similarity: 0.85,
+            VectorRecord {
+                id: "vec2".to_string(),
                 vector: vec![],
-                metadata: vec![],
-                // rank removed -  None,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
-            SearchResult {
-                id: Some("vec3".to_string()),
-                similarity: 0.8,
+            VectorRecord {
+                id: "vec3".to_string(),
                 vector: vec![],
-                metadata: vec![],
-                // rank removed -  None,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
         ],
         cached_at: SystemTime::now(),
@@ -197,19 +209,27 @@ async fn test_query_result_cache_subqueries() {
     // Create subqueries
     let subquery1 = CachedQueryResult {
         results: vec![
-            SearchResult {
-                id: Some("vec1".to_string()),
-                similarity: 0.95,
+            VectorRecord {
+                id: "vec1".to_string(),
                 vector: vec![],
-                metadata: vec![],
-                // rank removed -  None,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
-            SearchResult {
-                id: Some("vec2".to_string()),
-                similarity: 0.9,
+            VectorRecord {
+                id: "vec2".to_string(),
                 vector: vec![],
-                metadata: vec![],
-                // rank removed -  None,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
         ],
         cached_at: SystemTime::now(),
@@ -217,9 +237,15 @@ async fn test_query_result_cache_subqueries() {
     };
 
     let subquery2 = CachedQueryResult {
-        results: vec![SearchResult {
-            id: Some("vec3".to_string()),
-            similarity: 0.85,
+        results: vec![VectorRecord {
+            id: "vec3".to_string(),
+            // similarity field no longer exists in VectorRecord
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
             vector: vec![],
             metadata: vec![],
             // rank removed -  None,
@@ -296,7 +322,7 @@ async fn test_cache_compression() {
     // Verify decompression works
     let retrieved = cache.get_with_hooks(&"large".to_string()).await;
     assert!(retrieved.is_some());
-    assert_eq!(retrieved.unwrap().bitmap.len(), 10000);
+    assert_eq!(retrieved.unwrap().bitmap.cardinality(), 10000);
 }
 
 // Helper structs for testing - removed duplicates that are now in the actual implementation
@@ -331,13 +357,25 @@ impl QueryCache {
             QueryResult {
                 query_id: "sub1".to_string(),
                 results: vec!["vec1".to_string()],
-                similarity: 0.9,
+                // similarity field no longer exists in VectorRecord
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
                 execution_time_ms: 5.0,
             },
             QueryResult {
                 query_id: "sub2".to_string(),
                 results: vec!["vec2".to_string()],
-                similarity: 0.8,
+                // similarity field no longer exists in VectorRecord
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
                 execution_time_ms: 3.0,
             },
         ]
@@ -347,7 +385,13 @@ impl QueryCache {
         Some(QueryResult {
             query_id: "combined".to_string(),
             results: vec!["vec1".to_string(), "vec2".to_string(), "vec3".to_string()],
-            similarity: 0.85,
+            // similarity field no longer exists in VectorRecord
+            timestamp: 0,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
             execution_time_ms: 10.0,
         })
     }

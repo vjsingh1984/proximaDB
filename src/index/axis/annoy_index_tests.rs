@@ -37,16 +37,15 @@ mod tests {
         metadata: Vec<MetadataItem>,
     ) -> Arc<VectorRecord> {
         Arc::new(VectorRecord {
-            id: Some(id),
+            id,
             vector,
-            metadata,
-            timestamp: get_timestamp() as u32,
-            updated_at: Some(get_timestamp() as u32),
+            metadata: std::collections::HashMap::new(), // Convert to HashMap if needed
+            timestamp: get_timestamp() as i64,
+            updated_at: None,
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         })
     }
 
@@ -76,7 +75,7 @@ mod tests {
         let vectors = create_test_vectors(20, 8);
         for (id, vec) in &vectors {
             let record = create_test_record(id.clone(), vec.clone(), vec![]);
-            index.add(id.clone(), record).await.unwrap();
+            index.add(id.clone(), record.vector.clone()).await.unwrap();
         }
 
         // Build index
@@ -121,7 +120,7 @@ mod tests {
 
         for (id, vec) in &vectors {
             let record = create_test_record(id.to_string(), vec.clone(), vec![]);
-            index.add(id.to_string(), record).await.unwrap();
+            index.add(id.to_string(), record.vector.clone()).await.unwrap();
         }
 
         // Build index
@@ -162,7 +161,7 @@ mod tests {
             }];
 
             let record = create_test_record(format!("vec_{}", i), vec, metadata);
-            index.add(format!("vec_{}", i), record).await.unwrap();
+            index.add(format!("vec_{}", i), record.vector.clone()).await.unwrap();
         }
 
         // Build index
@@ -171,7 +170,15 @@ mod tests {
         // Search with filter
         let query = vec![1.0, 0.0, 0.0, 0.0];
         let filter = |record: &VectorRecord| -> bool {
-            record.metadata.iter().any(|item| key == "category" && matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "1"))
+            record.metadata.get("category")
+                .and_then(|sql_value| {
+                    if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &sql_value.value {
+                        Some(s == "1")
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false)
         };
 
         let results = index.search(&query, 5, Some(&filter)).await.unwrap();
@@ -192,19 +199,19 @@ mod tests {
         let record2 = create_test_record("v2".to_string(), vec![0.0, 1.0, 0.0, 0.0], vec![]);
 
         // Add before build - should work
-        index.add("v1".to_string(), record1).await.unwrap();
+        index.add("v1".to_string(), record1.vector.clone()).await.unwrap();
 
         // Build index
         index.build().await.unwrap();
 
         // Try to add after build - should fail
-        let result = index.add("v2".to_string(), record2).await;
+        let result = index.add("v2".to_string(), record2.vector.clone()).await;
         assert!(result.is_err());
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains_hash("cannot be modified")
+                .contains("cannot be modified")
         );
 
         // Try to remove - should fail
@@ -214,7 +221,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains_hash("does not support removal")
+                .contains("does not support removal")
         );
 
         // Search should still work
@@ -240,7 +247,7 @@ mod tests {
         let vectors = create_test_vectors(50, 8);
         for (id, vec) in &vectors {
             let record = create_test_record(id.clone(), vec.clone(), vec![]);
-            index1.add(id.clone(), record).await.unwrap();
+            index1.add(id.clone(), record.vector.clone()).await.unwrap();
         }
 
         index1.build().await.unwrap();
@@ -251,7 +258,7 @@ mod tests {
 
         for (id, vec) in &vectors {
             let record = create_test_record(id.clone(), vec.clone(), vec![]);
-            index2.add(id.clone(), record).await.unwrap();
+            index2.add(id.clone(), record.vector.clone()).await.unwrap();
         }
 
         index2.build().await.unwrap();
@@ -292,7 +299,7 @@ mod tests {
             vec[i % 4] = 1.0;
 
             let record = create_test_record(format!("vec_{}", i), vec, vec![]);
-            index.add(format!("vec_{}", i), record).await.unwrap();
+            index.add(format!("vec_{}", i), record.vector.clone()).await.unwrap();
         }
 
         // Build should still work
@@ -326,13 +333,13 @@ mod tests {
         // Try to add vector with wrong dimension
         let record = create_test_record("v1".to_string(), vec![1.0, 0.0], vec![]); // Wrong dimension
 
-        let result = index.add("v1".to_string(), record).await;
+        let result = index.add("v1".to_string(), record.vector.clone()).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains_hash("dimension"));
+        assert!(result.unwrap_err().to_string().contains("dimension"));
 
         // Add correct vector
         let record = create_test_record("v1".to_string(), vec![1.0, 0.0, 0.0, 0.0], vec![]);
-        index.add("v1".to_string(), record).await.unwrap();
+        index.add("v1".to_string(), record.vector.clone()).await.unwrap();
 
         // Build
         index.build().await.unwrap();
@@ -341,7 +348,7 @@ mod tests {
         let query = vec![1.0, 0.0]; // Wrong dimension
         let result = index.search(&query, 5, None).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains_hash("dimension"));
+        assert!(result.unwrap_err().to_string().contains("dimension"));
     }
 
     #[tokio::test]
@@ -366,7 +373,7 @@ mod tests {
         let vectors = create_test_vectors(20, 4);
         for (id, vec) in &vectors {
             let record = create_test_record(id.clone(), vec.clone(), vec![]);
-            index.add(id.clone(), record).await.unwrap();
+            index.add(id.clone(), record.vector.clone()).await.unwrap();
         }
 
         // Check stats after adding vectors

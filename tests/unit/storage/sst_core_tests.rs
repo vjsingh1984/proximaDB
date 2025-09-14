@@ -5,7 +5,7 @@
 mod common {
     include!("../../common/mod.rs");
 }
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::VectorRecord;
 use proximadb::core::search::{ComparisonOperator, FilterExpression};

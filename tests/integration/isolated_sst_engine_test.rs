@@ -13,7 +13,7 @@ use tracing::{debug, error, info, warn};
 mod common {
     include!("../common/mod.rs");
 }
-use common::unified_test_utils::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
+use common::integration_test_helpers::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb::{MetadataItem, StorageEngine, VectorRecord, metadata_item};

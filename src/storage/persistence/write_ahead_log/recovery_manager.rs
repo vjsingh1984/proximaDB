@@ -738,7 +738,7 @@ mod tests {
         // Create disk manager
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
             filesystem_factory,
-            temp_dir.path(),
+            temp_dir.path().to_str().unwrap(),
         ));
 
         // Create flush coordinator
@@ -746,23 +746,22 @@ mod tests {
 
         // Create recovery manager
         let recovery_manager =
-            RecoveryManager::new(disk_manager.clone(), flush_coordinator.clone());
+            RecoveryManager::new(disk_manager.clone(), flush_coordinator.clone(), filesystem_factory.clone());
 
         (disk_manager, flush_coordinator, recovery_manager, temp_dir)
     }
 
     fn create_test_vector(id: &str) -> VectorRecord {
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 1234567890,
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -922,17 +921,13 @@ mod tests {
                 Ok(None)
             }
 
-            async fn search_vectors_unified(
+            async fn search_vectors(
                 &self,
-                _collection_id: &str,
-                _storage_url: &str,
+                _query_context: &crate::storage::traits::StorageQueryContext,
+                _operation_name: &str,
                 _query_vector: &[f32],
-                _k: usize,
-                _distance_metric: &crate::compute::distance_computation::DistanceMetric,
-                _metadata_filters: Option<&crate::core::search::FilterExpression>,
-                _include_vectors: bool,
-                _include_metadata: bool,
-            ) -> Result<Vec<crate::core::search::SearchResult>> {
+                _top_k: usize,
+            ) -> Result<Vec<VectorRecord>> {
                 Ok(Vec::new())
             }
 

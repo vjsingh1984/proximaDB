@@ -32,7 +32,7 @@ async fn test_node_crud_operations() {
 
     // Create a test node
     let node = Node {
-        id: &"user_123".to_string().to_string(),
+        id: "user_123".to_string(),
         labels: vec!["User".to_string(), "Person".to_string()],
         properties: HashMap::from([
             (
@@ -61,14 +61,14 @@ async fn test_node_crud_operations() {
 
     // Test create
     let created_node = service.create_node(node.clone()).unwrap();
-    assert_eq!(created_node.id, &"user_123".to_string());
+    assert_eq!(created_node.id, "user_123".to_string());
     assert_eq!(created_node.labels.len(), 2);
     assert!(created_node.labels.contains(&"User".to_string()));
     assert!(created_node.labels.contains(&"Person".to_string()));
 
     // Test read
     let retrieved_node = service.get_node(&"user_123".to_string()).unwrap().unwrap();
-    assert_eq!(retrieved_node.id, &"user_123".to_string());
+    assert_eq!(retrieved_node.id, "user_123".to_string());
     assert_eq!(retrieved_node.properties.len(), 3);
 
     // Test update
@@ -85,7 +85,7 @@ async fn test_node_crud_operations() {
 
     // Test delete
     let deleted = service.delete_node(&"user_123".to_string()).unwrap().unwrap();
-    assert_eq!(deleted.id, &"user_123".to_string());
+    assert_eq!(deleted.id, "user_123".to_string());
 
     // Verify deletion
     let missing = service.get_node(&"user_123".to_string()).unwrap();
@@ -153,7 +153,7 @@ async fn test_edge_crud_operations() {
     assert_eq!(created_edge.weight, Some(1.0));
 
     // Test read
-    let retrieved_edge = service.get_edge("friendship_1").unwrap().unwrap();
+    let retrieved_edge = service.get_edge(&"friendship_1".to_string()).unwrap().unwrap();
     assert_eq!(retrieved_edge.from_node_id, "user_1");
     assert_eq!(retrieved_edge.to_node_id, "user_2");
 
@@ -165,11 +165,11 @@ async fn test_edge_crud_operations() {
     assert_eq!(updated.weight, Some(2.0));
 
     // Test delete
-    let deleted = service.delete_edge("friendship_1").unwrap().unwrap();
+    let deleted = service.delete_edge(&"friendship_1".to_string()).unwrap().unwrap();
     assert_eq!(deleted.id, "friendship_1");
 
     // Verify deletion
-    let missing = service.get_edge("friendship_1").unwrap();
+    let missing = service.get_edge(&"friendship_1".to_string()).unwrap();
     assert!(missing.is_none());
 }
 
@@ -198,8 +198,8 @@ async fn test_graph_traversal() {
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_node(node).unwrap();
     }
@@ -220,8 +220,8 @@ async fn test_graph_traversal() {
             edge_type: rel_type.to_string(),
             properties: HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_edge(edge).unwrap();
     }
@@ -286,8 +286,8 @@ async fn test_node_edge_queries() {
                 ),
             ]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_node(node).unwrap();
     }
@@ -334,8 +334,8 @@ async fn test_batch_operations() {
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         })
         .collect::<Vec<_>>();
 
@@ -351,8 +351,8 @@ async fn test_batch_operations() {
             edge_type: "NEXT".to_string(),
             properties: HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         })
         .collect::<Vec<_>>();
 
@@ -377,8 +377,8 @@ async fn test_graph_statistics() {
             labels: vec!["StatsTest".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_node(node).unwrap();
     }
@@ -391,8 +391,8 @@ async fn test_graph_statistics() {
             edge_type: "CONNECTS".to_string(),
             properties: HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_edge(edge).unwrap();
     }
@@ -476,8 +476,8 @@ async fn test_concurrent_access() {
                     },
                 )]),
                 embedding: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
             };
 
             service_clone.create_node(node).unwrap();
@@ -491,8 +491,8 @@ async fn test_concurrent_access() {
                     edge_type: "NEXT".to_string(),
                     properties: HashMap::new(),
                     weight: Some(1.0),
-                    created_at: None,
-                    updated_at: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
                 };
 
                 service_clone.create_edge(edge).unwrap();

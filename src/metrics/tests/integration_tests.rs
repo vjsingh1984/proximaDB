@@ -58,7 +58,7 @@ mod tests {
         }
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-            let collection_id = params.collection_id.as_ref().clone();
+            let collection_id = params.collection_id.as_ref().unwrap_or(&"unknown".to_string()).clone();
 
             self.operation_calls
                 .lock()
@@ -74,10 +74,10 @@ mod tests {
             Ok(FlushResult {
                 success: true,
                 collections_affected: vec![collection_id],
-                entries_flushed: params.vector_records.len() as u64,
-                bytes_written: (params.vector_records.len() * 1024) as u64,
-                files_created: 1,
-                duration_ms: 100,
+                entries_flushed: Some(params.vector_records.len() as u64),
+                bytes_written: Some((params.vector_records.len() * 1024) as u64),
+                files_created: Some(1),
+                duration_ms: Some(100),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
                 compaction_triggered: false,
@@ -86,7 +86,7 @@ mod tests {
         }
 
         async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-            let collection_id = params.collection_id.as_ref().clone();
+            let collection_id = params.collection_id.as_ref().unwrap_or(&"unknown".to_string()).clone();
 
             self.operation_calls
                 .lock()
@@ -101,13 +101,13 @@ mod tests {
             Ok(CompactionResult {
                 success: true,
                 collections_affected: vec![collection_id],
-                entries_processed: 1000,
-                entries_removed: 100,
-                bytes_read: 10 * 1024 * 1024,
-                bytes_written: 6 * 1024 * 1024,
-                input_files: 5,
-                output_files: 2,
-                duration_ms: 200,
+                entries_processed: Some(1000),
+                entries_removed: Some(100),
+                bytes_read: Some(10 * 1024 * 1024),
+                bytes_written: Some(6 * 1024 * 1024),
+                input_files: Some(5),
+                output_files: Some(2),
+                duration_ms: Some(200),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
             })
@@ -136,15 +136,8 @@ mod tests {
 
         async fn search_vectors_unified(
             &self,
-            _collection_id: &str,
-            _storage_url: &str,
-            _query_vector: &[f32],
-            _k: usize,
-            _distance_metric: &crate::compute::distance_computation::DistanceMetric,
-            _filter_expression: Option<&crate::core::search::FilterExpression>,
-            _include_vectors: bool,
-            _include_metadata: bool,
-        ) -> Result<Vec<crate::core::search::SearchResult>> {
+            _ctx: &crate::storage::traits::StorageQueryContext,
+        ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             self.operation_calls
                 .lock()
                 .await
@@ -218,15 +211,14 @@ mod tests {
     fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
         (0..count)
             .map(|i| VectorRecord {
-                id: Some(format!("integration_vector_{}", i)),
+                id: format!("integration_vector_{}", i),
                 vector: vec![0.1; 384],
-                metadata: Vec::new(),
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
                 // rank removed -  None,
-                similarity: None,
             })
             .collect()
     }
@@ -362,7 +354,7 @@ mod tests {
         // Verify storage engine was called
         let engine_calls = mock_engine.get_operation_calls().await;
         assert!(
-            !engine_calls.is_none(),
+            !engine_calls.is_empty(),
             "Storage engine should have been called"
         );
         assert!(engine_calls.iter().any(|call| call.starts_with("flush:")));
@@ -457,7 +449,7 @@ mod tests {
         // Verify storage engine was called
         let engine_calls = mock_engine.get_operation_calls().await;
         assert!(
-            !engine_calls.is_none(),
+            !engine_calls.is_empty(),
             "Storage engine should have been called"
         );
         assert!(engine_calls.iter().any(|call| call.starts_with("compact:")));
@@ -665,7 +657,7 @@ mod tests {
         let collection_list = metrics_store.list_collections().await.unwrap();
         for collection_id in &collections {
             assert!(
-                collection_list.contains_hash(&collection_id.to_string()),
+                collection_list.contains(&collection_id.to_string()),
                 "Collection list should include {}",
                 collection_id
             );

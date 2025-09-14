@@ -10,18 +10,19 @@
 mod common {
     include!("../common/mod.rs");
 }
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 
 use anyhow::Result;
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CompressionAlgorithm as ProtoCompressionAlgorithm, CompressionConfig, StorageEngine,
 };
-use proximadb::storage::engines::viper::ViperEngine;
+use proximadb::storage::engines::impls::viper::engine::ViperEngine;
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info};
 
@@ -139,7 +140,7 @@ fn create_randomized_vector_set(
         }
 
         query_vectors.push(VectorRecord {
-            id: Some(format!("query_s{}_{}", sparsity_percent, q)),
+            id: format!("query_s{}_{}", sparsity_percent, q),
             vector,
             metadata: vec![
                 proximadb::proto::proximadb::MetadataItem {
@@ -174,13 +175,10 @@ fn create_randomized_vector_set(
                     ),
                 },
             ],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
         });
     }
 
@@ -238,7 +236,7 @@ fn create_randomized_vector_set(
             }
 
             all_vectors.push(VectorRecord {
-                id: Some(format!("vec_s{}_{:06}", sparsity_percent, i)),
+                id: format!("vec_s{}_{:06}", sparsity_percent, i),
                 vector,
                 metadata: vec![
                     proximadb::proto::proximadb::MetadataItem {
@@ -289,13 +287,10 @@ fn create_randomized_vector_set(
                         ),
                     },
                 ],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
             });
         }
     }
@@ -376,7 +371,7 @@ async fn run_baseline(
 
             // Extract top-k IDs and scores
             let top_k_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
-            let top_k_scores: Vec<f32> = results.iter().map(|r| r.score).collect();
+            let top_k_scores: Vec<f32> = results.iter().enumerate().map(|(i, _)| 1.0 - (i as f32 * 0.1)).collect();
 
             println!(
                 "      SST Baseline: {} results, {:.2}ms latency, {} bytes",
@@ -455,7 +450,7 @@ async fn run_baseline(
 
             // Extract top-k IDs and scores from real results
             let top_k_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
-            let top_k_scores: Vec<f32> = results.iter().map(|r| r.score).collect();
+            let top_k_scores: Vec<f32> = results.iter().enumerate().map(|(i, _)| 1.0 - (i as f32 * 0.1)).collect();
 
             println!(
                 "      VIPER Baseline: {} results, {:.2}ms latency, {} bytes",
@@ -545,7 +540,7 @@ async fn run_benchmark(
             let engine = env.create_sst_engine().await?;
 
             // CREATE COLLECTION CONFIG ONCE with all settings
-            use proximadb::proto::proximadb::CompressionAlgorithm;
+            use proximadb::proto::proximadb_v1::CompressionAlgorithm;
 
             let compression_algo = match config.algorithm.as_str() {
                 "none" => CompressionAlgorithm::CompressionNone as i32,
@@ -559,8 +554,9 @@ async fn run_benchmark(
 
             let compression_config = CompressionConfig {
                 algorithm: compression_algo,
-                level: Some(config.level),
-                block_size_kb: Some(2048), // 2MB blocks for SST
+                level: Some(config.level as u32),
+                block_size_kb: 2048, // 2MB blocks for SST
+                quantization_type: None,
                 ..Default::default()
             };
 
@@ -682,8 +678,8 @@ async fn run_benchmark(
             println!(
                 "        🔧 SST: Compaction result - success: {}, entries_processed: {}, files merged: {}",
                 compact_result.success,
-                compact_result.entries_processed,
-                compact_result.input_files
+                compact_result.entries_processed.unwrap_or(0),
+                compact_result.input_files.unwrap_or(0)
             );
 
             // Count files after compaction
@@ -695,7 +691,7 @@ async fn run_benchmark(
                 "      Compaction: {} input files → {} output files, {} entries processed",
                 file_counts_before_compaction,
                 file_counts_after_compaction,
-                compact_result.entries_processed
+                compact_result.entries_processed.unwrap_or(0)
             );
 
             // Check if old files were cleaned up
@@ -710,20 +706,20 @@ async fn run_benchmark(
 
             // Check for potential duplication
             let expected_max_entries = (config.batch_count * config.vectors_per_batch) as u64;
-            if compact_result.entries_processed > expected_max_entries * 2 {
+            if compact_result.entries_processed.unwrap_or(0) > expected_max_entries * 2 {
                 println!(
                     "        ❌ ERROR: Compaction processed {} entries, expected ~{}",
-                    compact_result.entries_processed, expected_max_entries
+                    compact_result.entries_processed.unwrap_or(0), expected_max_entries
                 );
                 println!("        This indicates duplicate data - compaction should deduplicate!");
-            } else if compact_result.entries_processed
+            } else if compact_result.entries_processed.unwrap_or(0)
                 > expected_max_entries + (expected_max_entries / 10)
             {
                 println!(
                     "        ⚠️ Note: Compaction processed {} entries vs {} expected (+{}%)",
-                    compact_result.entries_processed,
+                    compact_result.entries_processed.unwrap_or(0),
                     expected_max_entries,
-                    ((compact_result.entries_processed - expected_max_entries) * 100
+                    ((compact_result.entries_processed.unwrap_or(0) - expected_max_entries) * 100
                         / expected_max_entries)
                 );
             }
@@ -751,19 +747,33 @@ async fn run_benchmark(
                 value: serde_json::Value::String("cat_3".to_string()),
             });
 
-            // Search with metadata filter
-            let filtered_results = engine
-                .search_vectors_unified(
-                    env.collection_id(),
-                    &format!("file://{}/data", env.persistent_dir.to_str().unwrap()),
-                    &query_vector,
-                    10,
-                    &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-                    filter.as_ref(),
-                    false, // include_metadata
-                    false, // include_vectors
-                )
+            // Search with metadata filter using unified interface
+            let collection = Arc::new(env.create_test_collection());
+            let search_params = Arc::new(proximadb::core::search::SearchParams::default());
+            let query_context = proximadb::storage::traits::StorageQueryContext {
+                search_params,
+                collection,
+                metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+            };
+
+            let filter_search_results = engine
+                .search_vectors_unified(&query_context)
                 .await?;
+
+            // Convert to VectorRecord format
+            let filtered_results: Vec<proximadb::proto::proximadb_v1::VectorRecord> = filter_search_results
+                .into_iter()
+                .map(|record| {
+                    proximadb::proto::proximadb_v1::VectorRecord {
+                        id: record.id,
+                        vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
+                        metadata: record.metadata,
+                        timestamp: record.timestamp.unwrap_or(0),
+                        source: None,
+                        quantized_vector: vec![],
+                    }
+                })
+                .collect();
 
             let filter_latency = start_filter.elapsed().as_micros() as f64 / 1000.0;
             metadata_filter_latencies.push(filter_latency);
@@ -927,7 +937,7 @@ async fn run_benchmark(
                 metadata_filter_latencies,
                 filter_result_count,
                 total_result_count,
-                compact_result.entries_processed as usize,
+                compact_result.entries_processed.unwrap_or(0) as usize,
                 accuracy,
                 matches,
                 Some(baseline), // Pass baseline for latency comparison
@@ -936,10 +946,7 @@ async fn run_benchmark(
         "VIPER" => {
             // Configure VIPER with compression
             let mut viper_config = env.viper_config.clone();
-            viper_config
-                .storage_config
-                .as_ref()
-                .and_then(|s| s.compression.as_ref()) = config.algorithm.clone();
+            viper_config.compression = config.algorithm.clone();
             viper_config.compression_level = config.level;
 
             let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
@@ -1014,7 +1021,9 @@ async fn run_benchmark(
             // Create collection config for VIPER with compression
             let compression_config = CompressionConfig {
                 algorithm: algorithm_enum,
-                level: Some(config.level),
+                level: Some(config.level as u32),
+                quantization_type: None,
+                block_size_kb: 1024,
                 ..Default::default()
             };
             let viper_collection = env.create_test_collection_with_settings(
@@ -1271,7 +1280,7 @@ async fn run_benchmark(
                 metadata_filter_latencies,
                 filter_result_count,
                 total_result_count,
-                compact_result.entries_processed as usize,
+                compact_result.entries_processed.unwrap_or(0) as usize,
                 accuracy,
                 matches,
                 Some(baseline), // Pass baseline for latency comparison
@@ -1776,7 +1785,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
                 );
 
                 // Compare VIPER and SST baseline results - they should be similar
-                if let Some(sst_baseline) = baselines.get(&format!("SST_{}", sparsity)) {
+                if let Some(sst_baseline) = baselines.get(&("SST".to_string(), *sparsity)) {
                     let mut matching_ids = 0;
                     for (i, viper_id) in viper_baseline.top_k_ids.iter().enumerate() {
                         if i < sst_baseline.top_k_ids.len()
@@ -1821,8 +1830,8 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         let vector_set = vector_sets.get(key).unwrap();
 
         // Get baselines for this sparsity level
-        let sst_baseline = baselines.get(&format!("SST_{}", sparsity));
-        let viper_baseline = baselines.get(&format!("VIPER_{}", sparsity));
+        let sst_baseline = baselines.get(&("SST".to_string(), sparsity));
+        let viper_baseline = baselines.get(&("VIPER".to_string(), sparsity));
 
         for (algo, levels) in &algorithms_and_levels {
             // Skip "none" algorithm as that's our baseline

@@ -21,15 +21,15 @@ mod tests {
         let metrics = CollectionMetrics::default();
 
         // Verify default values
-        assert!(metrics.collection_id.is_none());
+        assert!(metrics.collection_id.is_empty());
         assert_eq!(metrics.vector_count, 0);
         assert_eq!(metrics.dimension, 0);
         assert_eq!(metrics.total_inserts, 0);
         assert_eq!(metrics.total_searches, 0);
         assert_eq!(metrics.avg_insert_latency_us, 0.0);
         assert_eq!(metrics.sparsity_ratio, 0.0);
-        assert!(metrics.filterable_column_stats.is_none());
-        assert!(metrics.available_indexes.is_none());
+        assert!(metrics.filterable_column_stats.is_empty());
+        assert!(metrics.available_indexes.is_empty());
         assert_eq!(metrics.cache_hit_ratio, 0.0);
 
         info!("✅ CollectionMetrics defaults test passed");
@@ -88,7 +88,7 @@ mod tests {
             "category".to_string(),
             FilterableColumnStats {
                 column_name: "category".to_string(),
-                // data_type removed -  "string".to_string(),
+                data_type: "string".to_string(),
                 cardinality: 50,
                 null_count: 100,
                 selectivity: 0.001, // 50/50000
@@ -107,7 +107,7 @@ mod tests {
             "price".to_string(),
             FilterableColumnStats {
                 column_name: "price".to_string(),
-                // data_type removed -  "float".to_string(),
+                data_type: "float".to_string(),
                 cardinality: 10000,
                 null_count: 50,
                 selectivity: 0.2, // 10000/50000
@@ -196,12 +196,12 @@ mod tests {
         assert_eq!(metrics.cache_hit_ratio, 0.78);
 
         // Verify filterable column stats
-        let category_stats = metrics.filterable_column_stats.get(key).unwrap();
+        let category_stats = metrics.filterable_column_stats.get("category").unwrap();
         assert_eq!(category_stats.cardinality, 50);
         assert_eq!(category_stats.selectivity, 0.001);
         assert_eq!(category_stats.most_common_values.len(), 3);
 
-        let price_stats = metrics.filterable_column_stats.get(key).unwrap();
+        let price_stats = metrics.filterable_column_stats.get("price").unwrap();
         assert_eq!(price_stats.data_type, "float");
         assert!(price_stats.histogram_bounds.is_some());
         assert_eq!(price_stats.histogram_bounds.as_ref().unwrap().len(), 5);

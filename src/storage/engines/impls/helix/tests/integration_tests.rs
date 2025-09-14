@@ -34,9 +34,13 @@ fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord> {
         records.push(VectorRecord {
             id: format!("vec_{:06}", i),
             vector,
-            metadata: None,
+            metadata: std::collections::HashMap::new(),
             timestamp: i as i64,
             expires_at: None,
+            updated_at: Some(i as i64),
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         });
     }
 
@@ -50,7 +54,7 @@ async fn test_helix_engine_initialization() {
 
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
-    let filesystem_factory = Arc::new(FilesystemFactory::new());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new(
@@ -58,9 +62,7 @@ async fn test_helix_engine_initialization() {
         "test_collection".to_string(),
         temp_dir.path().to_path_buf(),
         filesystem_factory,
-        filesystem,
-        None, // No EventLog for testing
-    );
+    ).await.unwrap();
 
     assert_eq!(engine.engine_name(), "helix");
     assert_eq!(engine.engine_version(), "1.0.0");
@@ -137,7 +139,7 @@ async fn test_flush_and_compaction() {
     let mut config = HelixConfig::default();
     config.level0_file_num_compaction_trigger = 2; // Trigger compaction after 2 files
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new(
@@ -191,7 +193,7 @@ async fn test_liquid_clustering() {
     use crate::storage::engines::impls::helix::clustering::QueryPatternTracker;
     use crate::storage::engines::impls::helix::liquid_clustering::LiquidClusteringCoordinator;
 
-    let config = LiquidClusteringConfig::default();
+    let config = crate::storage::engines::impls::helix::liquid_clustering::LiquidClusteringConfig::default();
     let query_tracker = Arc::new(RwLock::new(QueryPatternTracker::default()));
 
     // Simulate query patterns
@@ -324,7 +326,7 @@ async fn test_progressive_search() {
     let query_hilbert = Some(500u64); // Close to first SSTable
 
     let temp_dir = TempDir::new().unwrap();
-    let filesystem_factory = Arc::new(FilesystemFactory::new());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     // Note: This would fail in real execution as files don't exist,
@@ -390,7 +392,7 @@ async fn test_end_to_end_search() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
     let engine = HelixEngine::new(
@@ -524,7 +526,7 @@ async fn bench_liquid_clustering() {
 
     println!("\n=== Liquid Clustering Benchmark ===");
 
-    let config = LiquidClusteringConfig::default();
+    let config = crate::storage::engines::impls::helix::liquid_clustering::LiquidClusteringConfig::default();
     let query_tracker = Arc::new(RwLock::new(QueryPatternTracker::default()));
 
     // Simulate access patterns

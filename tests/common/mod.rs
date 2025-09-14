@@ -5,8 +5,8 @@ use tracing::{debug, error, info, warn};
 
 pub mod test_assignments;
 
-// Unified test utilities for all ProximaDB components
-pub mod unified_test_utils;
+// Integration test utilities for all ProximaDB components
+pub mod integration_test_helpers;
 
 // Centralized test data generation
 pub mod test_data;

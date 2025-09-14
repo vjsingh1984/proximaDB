@@ -17,7 +17,7 @@ use rand::rngs::StdRng;
 
 // Use the unified test utilities for test environment only
 mod common;
-use common::unified_test_utils::UnifiedTestEnvironment;
+use common::integration_test_helpers::UnifiedTestEnvironment;
 
 /// Test SST compression with integrated quantization features
 #[tokio::test]

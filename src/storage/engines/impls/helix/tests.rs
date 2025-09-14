@@ -362,10 +362,10 @@ mod clustering_tests {
 
     #[test]
     fn test_hilbert_2d_ordering() {
-        let key00 = clustering::hilbert_2d(0, 0);
-        let key01 = clustering::hilbert_2d(0, u32::MAX);
-        let key10 = clustering::hilbert_2d(u32::MAX, 0);
-        let key11 = clustering::hilbert_2d(u32::MAX, u32::MAX);
+        let key00 = clustering::hilbert_encode_2d(0, 0);
+        let key01 = clustering::hilbert_encode_2d(0, u32::MAX);
+        let key10 = clustering::hilbert_encode_2d(u32::MAX, 0);
+        let key11 = clustering::hilbert_encode_2d(u32::MAX, u32::MAX);
 
         // Basic ordering test
         assert!(key00 < key11);

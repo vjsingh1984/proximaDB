@@ -110,9 +110,9 @@ mod tests {
         let strategies = WALBatchFactory::available_strategies();
 
         assert_eq!(strategies.len(), 3);
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::AvroBatch));
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::BincodeBatch));
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::ProtoBatch));
+        assert!(strategies.contains(&WriteBufferStrategyType::AvroBatch));
+        assert!(strategies.contains(&WriteBufferStrategyType::BincodeBatch));
+        assert!(strategies.contains(&WriteBufferStrategyType::ProtoBatch));
     }
 
     #[test]
@@ -123,8 +123,8 @@ mod tests {
         assert_eq!(info.serialization, "Apache Avro");
         assert!(info.schema_evolution);
         assert!(info.batch_native);
-        assert!(!info.recommended_use_cases.is_none());
-        assert!(!info.description.is_none());
+        assert!(!info.recommended_use_cases.is_empty());
+        assert!(!info.description.is_empty());
     }
 
     #[test]
@@ -135,8 +135,8 @@ mod tests {
         assert_eq!(info.serialization, "Bincode (native Rust)");
         assert!(!info.schema_evolution);
         assert!(info.batch_native);
-        assert!(!info.recommended_use_cases.is_none());
-        assert!(!info.description.is_none());
+        assert!(!info.recommended_use_cases.is_empty());
+        assert!(!info.description.is_empty());
     }
 
     #[test]
@@ -284,10 +284,10 @@ mod tests {
 
             // All fields should be populated
             assert!(!info.name.is_none());
-            assert!(!info.description.is_none());
+            assert!(!info.description.is_empty());
             assert!(!info.serialization.is_none());
             assert!(!info.performance_profile.is_none());
-            assert!(!info.recommended_use_cases.is_none());
+            assert!(!info.recommended_use_cases.is_empty());
 
             // batch_native should always be true for new strategies
             assert!(info.batch_native);

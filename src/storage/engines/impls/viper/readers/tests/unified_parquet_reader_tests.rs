@@ -27,7 +27,7 @@ mod tests {
     async fn create_test_reader() -> UnifiedParquetReader {
         let config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-        UnifiedParquetReader::new(filesystem)
+        UnifiedParquetReader::new(filesystem).await
     }
 
     fn create_test_context() -> CollectionContext {
@@ -106,7 +106,7 @@ mod tests {
         };
 
         // With quantized columns, should use two-stage strategy
-        assert!(!context.quantization_columns.is_none());
+        assert!(!context.quantization_columns.is_empty());
     }
 
     // Filter Expression Tests
@@ -159,7 +159,7 @@ mod tests {
         // Extract fields from filter
         let fields = extract_filter_fields(&filter);
         assert_eq!(fields.len(), 2);
-        assert!(fields.contains_hash(&"status".to_string()));
+        assert!(fields.contains(&"status".to_string()));
         assert!(fields.contains_hash(&"priority".to_string()));
     }
 
@@ -319,7 +319,7 @@ mod tests {
             collection_ids.push("test_collection".to_string());
             versions.push(record.version.map(|v| v as i8));
             updated_at_values.push(record.updated_at.map(|v| v as i64));
-            expires_at_values.push(record.expires_at as i64);
+            expires_at_values.push(record.expires_at.unwrap_or(0) as i64);
 
             // Add vector data
             let values = vector_builder.values();
@@ -329,22 +329,22 @@ mod tests {
             vector_builder.append(true);
 
             // Add metadata
-            if !record.metadata.is_none() {
+            if !record.metadata.is_empty() {
                 let struct_builder = extra_meta_builder.values();
-                for meta_item in &record.metadata {
+                for (key, sql_value) in &record.metadata {
                     struct_builder
                         .field_builder::<StringBuilder>(0)
                         .unwrap()
-                        .append_value(&meta_item.key);
+                        .append_value(key);
                     // Convert metadata value to string
-                    let value_str = match &meta_item.value {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                    let value_str = match &sql_value.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             s.clone()
                         }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::IntValue(n)) => {
                             n.to_string()
                         }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                             b.to_string()
                         }
                         None => String::new(),

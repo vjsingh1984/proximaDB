@@ -45,7 +45,7 @@ async fn create_test_app() -> (Router, TempDir) {
     
     // Create services using test utilities
     let direct_vector_service = Arc::new(
-        proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+        proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService")
     );

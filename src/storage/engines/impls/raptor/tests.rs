@@ -11,19 +11,43 @@ mod tests {
             rowgroup_size: 100,
             compression: config::CompressionCodec::Snappy,
             enable_statistics: true,
-            enable_bloom_filters: false, // Simplified for tests
+            enable_bloom_filters: false,
             bloom_fpp: 0.01,
-            enable_simd: false, // Simplified for tests
+            enable_simd: false,
             cache_size_mb: 10,
             enable_prefetching: false,
             enable_range_reads: false,
             compaction_threshold_files: 5,
+            // Add missing required fields
+            buffer_pool_size_mb: 10,
+            cache_eviction_policy: config::EvictionPolicy::Lru,
+            clustering_config: None,
+            compression_level: 3,
+            use_fastlanes_encoding: false,
+            simd_lanes: 8,
+            prefetch_size_mb: 1,
+            enable_clustering: false,
+            num_clusters: None,
+            target_rowgroup_size: None,
+            use_component_boosting: false,
+            enable_complex_types: false,
+            dimension: 4,
+            compaction_config: None,
+            compaction_min_size_mb: 10,
         };
+
+        let cache = Arc::new(
+            crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(
+                crate::storage::cache::config::CacheConfig::default(),
+            )
+            .await?,
+        );
 
         let engine = RaptorEngine::new(
             "test_collection".to_string(),
             "/tmp/raptor_test".to_string(),
             config,
+            cache,
         )
         .await?;
 
@@ -69,7 +93,16 @@ mod tests {
         };
 
         // Insert vector (using internal method)
-        engine.insert_batch_internal(vec![vector.clone()]).await?;
+        // Use flush instead of insert_batch
+        let flush_params = crate::storage::traits::FlushParameters {
+            collection_id: Some("test_collection".to_string()),
+            vector_records: vec![vector.clone()],
+            force: true,
+            synchronous: true,
+            collection_config: None,
+            ..Default::default()
+        };
+        engine.do_flush(&flush_params).await?;
 
         // Retrieve vector
         let retrieved = engine.vector_by_id("test_collection", "test_vec_1").await?;
@@ -89,46 +122,56 @@ mod tests {
         // Insert test vectors
         let vectors = vec![
             VectorRecord {
-                id: Some("vec1".to_string()),
+                id: "vec1".to_string(),
                 vector: vec![1.0, 0.0, 0.0, 0.0],
                 metadata: HashMap::new(),
                 version: Some(1),
-                timestamp: Some(1234567890),
+                timestamp: 1234567890,
                 ..Default::default()
             },
             VectorRecord {
-                id: Some("vec2".to_string()),
+                id: "vec2".to_string(),
                 vector: vec![0.0, 1.0, 0.0, 0.0],
                 metadata: HashMap::new(),
                 version: Some(1),
-                timestamp: Some(1234567891),
+                timestamp: 1234567891,
                 ..Default::default()
             },
             VectorRecord {
-                id: Some("vec3".to_string()),
+                id: "vec3".to_string(),
                 vector: vec![0.0, 0.0, 1.0, 0.0],
                 metadata: HashMap::new(),
                 version: Some(1),
-                timestamp: Some(1234567892),
+                timestamp: 1234567892,
                 ..Default::default()
             },
         ];
 
-        engine.insert_batch_internal(vectors).await?;
+        // Use flush instead of insert_batch
+        let flush_params = crate::storage::traits::FlushParameters {
+            collection_id: Some("test_collection".to_string()),
+            vector_records: vectors,
+            force: true,
+            synchronous: true,
+            collection_config: None,
+            ..Default::default()
+        };
+        engine.do_flush(&flush_params).await?;
 
         // Search for similar vectors
         let query = vec![1.0, 0.0, 0.0, 0.0];
+        let search_params = std::sync::Arc::new(crate::core::search::SearchParams::default());
+        let collection = std::sync::Arc::new(crate::proto::proximadb_v1::Collection {
+            id: "test_collection".to_string(),
+            ..Default::default()
+        });
+        let query_context = crate::storage::traits::StorageQueryContext {
+            search_params,
+            collection,
+            metadata: crate::storage::traits::StorageQueryMetadata::default(),
+        };
         let results = engine
-            .search_vectors_unified(
-                "test_collection",
-                "/tmp/raptor_test",
-                &query,
-                2,
-                &crate::compute::distance_computation::DistanceMetric::Cosine,
-                None,
-                false,
-                false,
-            )
+            .search_vectors_unified(&query_context)
             .await?;
 
         assert!(!results.is_empty());
@@ -148,16 +191,25 @@ mod tests {
         // Insert some vectors
         let vectors = (0..10)
             .map(|i| VectorRecord {
-                id: Some(format!("flush_vec_{}", i)),
+                id: format!("flush_vec_{}", i),
                 vector: vec![i as f32 * 0.1; 4],
                 metadata: HashMap::new(),
                 version: Some(1),
-                timestamp: Some(1234567890 + i),
+                timestamp: 1234567890 + i,
                 ..Default::default()
             })
             .collect();
 
-        engine.insert_batch_internal(vectors).await?;
+        // Use flush instead of insert_batch
+        let flush_params = crate::storage::traits::FlushParameters {
+            collection_id: Some("test_collection".to_string()),
+            vector_records: vectors,
+            force: true,
+            synchronous: true,
+            collection_config: None,
+            ..Default::default()
+        };
+        engine.do_flush(&flush_params).await?;
 
         // Perform flush
         let flush_params = crate::storage::traits::FlushParameters {
@@ -328,6 +380,7 @@ mod tests {
             "cloud_test".to_string(),
             "s3://test-bucket/raptor".to_string(),
             cloud_config,
+            None, // metadata_store_url
         )
         .await?;
 
@@ -397,9 +450,12 @@ mod tests {
                     vector[1] = i as f32;
 
                     let record = crate::proto::proximadb_v1::VectorRecord {
-                        id: Some(format!("vec_{}_{}", rg_idx, i)),
+                        id: format!("vec_{}_{}", rg_idx, i),
                         vector,
-                        ..Default::default()
+                        metadata: std::collections::HashMap::new(),
+                        timestamp: 0,
+                        quantized_vector: vec![],
+                        source: None,
                     };
 
                     writer.write_vector(&record).await?;

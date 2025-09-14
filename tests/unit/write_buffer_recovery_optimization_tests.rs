@@ -158,7 +158,7 @@ mod recovery_tests {
         
         // Create VectorOperationsService and trigger recovery
         // Use test helper since old constructor signature is incompatible
-        let service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+        let service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService");
         
@@ -202,7 +202,7 @@ mod recovery_tests {
         
         // Recovery should skip corrupted file but process valid ones
         // Use test helper since old constructor signature is incompatible
-        let service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+        let service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService");
         
@@ -273,7 +273,7 @@ mod recovery_tests {
         // Measure recovery time
         let start = std::time::Instant::now();
         // Use test helper since old constructor signature is incompatible
-        let service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+        let service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService");
         let recovery_time = start.elapsed();
@@ -336,7 +336,7 @@ mod recovery_tests {
         
         // Should recover from all directories
         // Use test helper since old constructor signature is incompatible
-        let service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+        let service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService");
         

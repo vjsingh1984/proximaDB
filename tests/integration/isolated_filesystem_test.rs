@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
 mod common {
     include!("../common/mod.rs");
 }
-use common::unified_test_utils::UnifiedTestEnvironment as IsolatedTestEnvironment;
+use common::integration_test_helpers::UnifiedTestEnvironment as IsolatedTestEnvironment;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 #[tokio::test]

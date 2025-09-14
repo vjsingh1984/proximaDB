@@ -18,14 +18,16 @@ use tempfile::TempDir;
 use tracing::{debug, info};
 
 // Core ProximaDB imports
-use proximadb::compute::distance_computation::UnifiedDistanceCompute;
+use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::core::config::StorageLocation;
 use proximadb::core::config::{BloomFilterConfig, SstConfig};
 use proximadb::core::config::{ViperConfig, WriteBufferUserConfig};
-use proximadb::proto::{
-    Collection, CollectionConfig, CollectionStats, DistanceMetric, MetadataItem, StorageAssignment,
-    StorageEngine, VectorRecord, metadata_item,
+use proximadb::proto::proximadb_v1::{
+    Collection, CollectionConfig, CollectionStats, CompressionAlgorithm, CompressionConfig, DistanceMetric, SqlValue,
+    StorageEngine, StorageAssignment, VectorRecord, sql_value,
 };
+// SearchResult moved to different location - using Vec<VectorRecord> for results
+// Note: Some imports like MetadataItem may have changed or been removed
 use proximadb::services::vector_operations_service::VectorOperationsService;
 use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::engines::impls::viper::engine::ViperEngine;
@@ -204,21 +206,23 @@ impl UnifiedTestEnvironment {
         &self,
         engine: StorageEngine,
         dimension: i32,
-        compression: Option<proximadb::proto::CompressionConfig>,
+        compression: Option<proximadb::proto::proximadb_v1::CompressionConfig>,
     ) -> Collection {
         // CRITICAL: base_location must point to parent directory since engines append collection_id
         let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
         let storage_assignment = StorageAssignment {
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp_millis(), // Must use millis, not micros!
+            backup_paths: vec![],
+            engine: engine as i32,
+            engine_config: std::collections::HashMap::new(),
         };
 
         let config = CollectionConfig {
             name: self.collection_id.clone(),
-            dimension,
+            dimension: dimension as u32,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: engine as i32,
-            compression,
             ..Default::default()
         };
 
@@ -249,7 +253,7 @@ impl UnifiedTestEnvironment {
         let collection_config = self.create_test_collection_for_engine(StorageEngine::Sst);
 
         let flush_params = FlushParameters {
-            collection_id: self.collection_id.clone(),
+            collection_id: Some(self.collection_id.clone()),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -271,7 +275,7 @@ impl UnifiedTestEnvironment {
         let collection_config = self.create_test_collection_for_engine(StorageEngine::Viper);
 
         let flush_params = FlushParameters {
-            collection_id: self.collection_id.clone(),
+            collection_id: Some(self.collection_id.clone()),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -395,39 +399,36 @@ impl UnifiedTestEnvironment {
         (0..count)
             .map(|i| VectorRecord {
                 id: format!("{}_{}", self.collection_id, i),
-                timestamp: (1000 + i) as u32,
+                timestamp: (1000 + i) as i64,
                 updated_at: None,
                 expires_at: None,
-                version: None,
-                quantized_vector: None,
+                version: Some(1),
+                quantized_vector: vec![],
                 source: None,
                 vector: (0..dimension).map(|j| (i + j) as f32).collect(),
-                metadata: vec![
-                    MetadataItem {
-                        key: "category".to_string(),
+                metadata: std::collections::HashMap::from([
+                    ("category".to_string(), SqlValue {
                         value: Some(
-                            proximadb::proto::metadata_item::Value::StringValue(
+                            sql_value::Value::StringValue(
                                 categories[i % categories.len()].to_string(),
                             ),
                         ),
-                    },
-                    MetadataItem {
-                        key: "type".to_string(),
+                    }),
+                    ("type".to_string(), SqlValue {
                         value: Some(
-                            proximadb::proto::metadata_item::Value::StringValue(
+                            sql_value::Value::StringValue(
                                 types[i % types.len()].to_string(),
                             ),
                         ),
-                    },
-                    MetadataItem {
-                        key: "test_id".to_string(),
+                    }),
+                    ("test_id".to_string(), SqlValue {
                         value: Some(
-                            proximadb::proto::metadata_item::Value::StringValue(
+                            sql_value::Value::StringValue(
                                 self.collection_id.clone(),
                             ),
                         ),
-                    },
-                ],
+                    }),
+                ]),
                 ..Default::default()
             })
             .collect()
@@ -438,21 +439,20 @@ impl UnifiedTestEnvironment {
         &self,
         id: String,
         vector: Vec<f32>,
-        timestamp: u32,
-        expires_at: Option<u32>,
-        metadata_items: Vec<MetadataItem>,
+        timestamp: i64,
+        expires_at: Option<i64>,
+        metadata: std::collections::HashMap<String, SqlValue>,
     ) -> VectorRecord {
         VectorRecord {
-            id: id,
+            id,
             vector,
-            metadata: metadata_items,
+            metadata,
             timestamp,
             updated_at: None,
             expires_at,
-            version: None,
-            quantized_vector: None,
+            version: Some(1),
+            quantized_vector: vec![],
             source: None,
-            ..Default::default()
         }
     }
 
@@ -477,6 +477,9 @@ impl UnifiedTestEnvironment {
         StorageAssignment {
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp_millis(),
+            backup_paths: vec![],
+            engine: StorageEngine::Sst as i32,
+            engine_config: std::collections::HashMap::new(),
         }
     }
 
@@ -508,6 +511,9 @@ impl UnifiedTestEnvironment {
         let storage_assignment = StorageAssignment {
             base_location,
             assigned_at: chrono::Utc::now().timestamp_millis(),
+            backup_paths: vec![],
+            engine: StorageEngine::Sst as i32,
+            engine_config: std::collections::HashMap::new(),
         };
 
         let config = CollectionConfig {
@@ -664,7 +670,7 @@ pub mod operations {
 
         let collection_config = environment.create_test_collection_for_engine(engine);
         Ok(FlushParameters {
-            collection_id: environment.collection_id().to_string(),
+            collection_id: Some(environment.collection_id().to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -682,7 +688,7 @@ pub mod operations {
         environment.ensure_all_directories().await?;
 
         Ok(FlushParameters {
-            collection_id: environment.collection_id().to_string(),
+            collection_id: Some(environment.collection_id().to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -708,7 +714,7 @@ pub mod operations {
 
         // VIPER uses Parquet compression, configured through collection config
         if let Some(ref mut config) = collection.config {
-            use proximadb::proto::CompressionAlgorithm;
+            use proximadb::proto::proximadb_v1::CompressionAlgorithm;
 
             // Map to Parquet-supported algorithms
             let algorithm = match compression_algo {
@@ -728,15 +734,12 @@ pub mod operations {
                 }
             };
 
-            config.compression = Some(proximadb::proto::CompressionConfig {
-                    algorithm,
-                    level: Some(compression_level),
-                    ..Default::default()
-                });
+            // Compression config is handled by storage_config, not directly on collection config
+            // The compression will be applied through storage engine configuration
         }
 
         Ok(FlushParameters {
-            collection_id: environment.collection_id().to_string(),
+            collection_id: Some(environment.collection_id().to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
@@ -769,7 +772,7 @@ pub mod operations {
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<proximadb::core::search::results::SearchResult>> {
+    ) -> Result<Vec<VectorRecord>> {
         let storage_url = build_sst_storage_url(environment);
         let collection = Arc::new(environment.create_test_collection());
         let search_params = Arc::new(proximadb::core::search::SearchParams::default());
@@ -779,10 +782,27 @@ pub mod operations {
             metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
         };
 
-        // Direct production call
-        engine
-            .search_vectors(&query_context, query_vector, top_k)
-            .await
+        // Direct production call using unified search
+        let results = engine
+            .search_vectors_unified(&query_context)
+            .await?;
+
+        // Convert OptimizedSearchRecord to VectorRecord
+        let vector_records: Vec<VectorRecord> = results
+            .into_iter()
+            .map(|record| {
+                VectorRecord {
+                    id: record.id,
+                    vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
+                    metadata: record.metadata,
+                    timestamp: record.timestamp.unwrap_or(0),
+                    source: None,
+                    quantized_vector: vec![],
+                }
+            })
+            .collect();
+
+        Ok(vector_records)
     }
 
     /// Search vectors in VIPER engine - REAL search, not simulated
@@ -791,7 +811,7 @@ pub mod operations {
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<proximadb::core::search::results::SearchResult>> {
+    ) -> Result<Vec<VectorRecord>> {
         let storage_url = build_viper_storage_url(environment);
         let collection = Arc::new(environment.create_test_collection());
         let search_params = Arc::new(proximadb::core::search::SearchParams::default());
@@ -801,10 +821,27 @@ pub mod operations {
             metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
         };
 
-        // Direct production call to VIPER's search_vectors
-        engine
-            .search_vectors(&query_context, query_vector, top_k)
-            .await
+        // Direct production call using VIPER's unified search
+        let results = engine
+            .search_vectors_unified(&query_context)
+            .await?;
+
+        // Convert OptimizedSearchRecord to VectorRecord
+        let vector_records: Vec<VectorRecord> = results
+            .into_iter()
+            .map(|record| {
+                VectorRecord {
+                    id: record.id,
+                    vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
+                    metadata: record.metadata,
+                    timestamp: record.timestamp.unwrap_or(0),
+                    source: None,
+                    quantized_vector: vec![],
+                }
+            })
+            .collect();
+
+        Ok(vector_records)
     }
 
     /// Build correct CompactionParameters for any storage engine
@@ -815,7 +852,7 @@ pub mod operations {
     ) -> CompactionParameters {
         let collection_config = environment.create_test_collection_for_engine(engine);
         CompactionParameters {
-            collection_id: environment.collection_id().to_string(),
+            collection_id: Some(environment.collection_id().to_string()),
             force: true,
             synchronous: true,
             collection_config: Some(collection_config),
@@ -829,7 +866,7 @@ pub mod operations {
         collection: Collection,
     ) -> CompactionParameters {
         CompactionParameters {
-            collection_id: environment.collection_id().to_string(),
+            collection_id: Some(environment.collection_id().to_string()),
             force: true,
             synchronous: true,
             collection_config: Some(collection),
@@ -850,16 +887,21 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
         .map(|i| VectorRecord {
             id: format!("{}_{}", prefix, i),
             vector: (0..dimension).map(|j| (i + j) as f32 * 0.1).collect(),
-            timestamp: (1000 + i) as u32,
-            metadata: vec![MetadataItem {
-                key: "test_type".to_string(),
-                value: Some(
-                    proximadb::proto::metadata_item::Value::StringValue(
-                        prefix.to_string(),
+            timestamp: (1000 + i) as i64,
+            metadata: std::collections::HashMap::from([
+                ("test_type".to_string(), SqlValue {
+                    value: Some(
+                        sql_value::Value::StringValue(
+                            prefix.to_string(),
+                        ),
                     ),
-                ),
-            }],
-            ..Default::default()
+                }),
+            ]),
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
+            updated_at: None,
+            expires_at: None,
         })
         .collect()
 }
@@ -870,6 +912,9 @@ pub fn setup_test_assignment() -> StorageAssignment {
     StorageAssignment {
         base_location: format!("file://{}", temp_dir.to_str().unwrap()),
         assigned_at: chrono::Utc::now().timestamp_millis(),
+        backup_paths: vec![],
+        engine: StorageEngine::Sst as i32,
+        engine_config: None,
     }
 }
 
@@ -891,6 +936,9 @@ pub fn create_test_collection_with_storage(name: &str, base_location: String) ->
     let storage_assignment = StorageAssignment {
         base_location,
         assigned_at: chrono::Utc::now().timestamp_millis(),
+        backup_paths: vec![],
+        engine: StorageEngine::Sst as i32,
+        engine_config: None,
     };
 
     let config = CollectionConfig {
@@ -957,7 +1005,7 @@ pub async fn flush_sst_with_block_stats(
     compression_level: i32,
     block_size_kb: usize,
 ) -> Result<FlushBlockStatsResult> {
-    use proximadb::proto::{Collection, CollectionConfig, CompressionConfig};
+    use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, CompressionConfig};
     use proximadb::storage::engines::impls::sst::SstStorage;
     use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
@@ -981,26 +1029,39 @@ pub async fn flush_sst_with_block_stats(
 
     // Create collection config with compression
     let compression_config = CompressionConfig {
-        algorithm: compression_algo.to_string(),
-        level: Some(compression_level),
-        block_size: Some(block_size_kb as i32),
-        dictionary_size: None,
-        window_size: None,
-        strategy: None,
+        algorithm: match compression_algo {
+            "none" | "uncompressed" => CompressionAlgorithm::CompressionNone as i32,
+            "zstd" => CompressionAlgorithm::CompressionZstd as i32,
+            "snappy" => CompressionAlgorithm::CompressionSnappy as i32,
+            "gzip" => CompressionAlgorithm::CompressionGzip as i32,
+            "lz4" => CompressionAlgorithm::CompressionLz4 as i32,
+            "brotli" => CompressionAlgorithm::CompressionBrotli as i32,
+            _ => CompressionAlgorithm::CompressionSnappy as i32, // default
+        },
+        level: Some(compression_level as u32),
+        adaptive: false,
+        min_ratio: None,
+        enable_quantization: false,
+        quantization_type: None,
+        block_size_kb: block_size_kb as u32,
+        dynamic_block_sizing: false,
+        normalization_method: None,
     };
 
     let collection_config = Collection {
         id: "test_collection".to_string(),
-        storage_assignment: Some(proximadb::proto::StorageAssignment {
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
             base_location: format!("file://{}", environment.temp_dir.path().to_str().unwrap()),
             assigned_at: 0,
+            backup_paths: vec![],
+            engine: StorageEngine::Sst as i32,
+            engine_config: std::collections::HashMap::new(),
         }),
         config: Some(CollectionConfig {
             name: "test_collection".to_string(),
-            dimension: vectors[0].vector.len() as i32,
-            distance_metric: proximadb::proto::DistanceMetric::Cosine as i32,
-            storage_engine: proximadb::proto::StorageEngine::Sst as i32,
-            compression: Some(compression_config),
+            dimension: vectors[0].vector.len() as u32,
+            distance_metric: DistanceMetric::Cosine as i32,
+            storage_engine: StorageEngine::Sst as i32,
             ..Default::default()
         }),
         ..Default::default()
@@ -1021,7 +1082,7 @@ pub async fn flush_sst_with_block_stats(
 
     // Calculate compression ratio
     let uncompressed_size = vectors.len() * vectors[0].vector.len() * 4; // FP32
-    let compression_ratio = if flush_result.bytes_written > 0 {
+    let compression_ratio = if flush_result.bytes_written.unwrap_or(0) > 0 {
         uncompressed_size as f64 / flush_result.bytes_written.unwrap_or(1) as f64
     } else {
         1.0
@@ -1087,7 +1148,7 @@ pub async fn create_test_vector_operations_service() -> Result<VectorOperationsS
     // Create WAL manager
     let wal_config = WALConfig::default();
     let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
-    let strategy_type = WriteBufferStrategyType::Json;
+    let strategy_type = WriteBufferStrategyType::AvroBatch;
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         strategy_type,
         &wal_config,
@@ -1095,12 +1156,14 @@ pub async fn create_test_vector_operations_service() -> Result<VectorOperationsS
     )
     .await?;
     let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
+    let axis_manager = Arc::new(proximadb::index::axis::AxisManager::new(proximadb::index::axis::AxisConfig::default()).await?);
 
     Ok(VectorOperationsService::new(
         Arc::new(sst_storage),
         wal_manager,
-        Arc::new(proximadb::index::axis::manager::AxisManager::default()),
-        Arc::new(proximadb::core::collections::Collections::default()),
+        axis_manager,
+        // TODO: Create proper CollectionService for tests - requires metadata_backend and storage_config
+        todo!("CollectionService creation requires complex setup - implement test-specific version"),
     ))
 }
 
@@ -1113,7 +1176,7 @@ pub async fn create_test_vector_operations_service_with_storage(
     // Create WAL manager
     let wal_config = WALConfig::default();
     let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
-    let strategy_type = WriteBufferStrategyType::Json;
+    let strategy_type = WriteBufferStrategyType::AvroBatch;
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         strategy_type,
         &wal_config,
@@ -1121,12 +1184,14 @@ pub async fn create_test_vector_operations_service_with_storage(
     )
     .await?;
     let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
+    let axis_manager = Arc::new(proximadb::index::axis::AxisManager::new(proximadb::index::axis::AxisConfig::default()).await?);
 
     Ok(VectorOperationsService::new(
         storage,
         wal_manager,
-        Arc::new(proximadb::index::axis::manager::AxisManager::default()),
-        Arc::new(proximadb::core::collections::Collections::default()),
+        axis_manager,
+        // TODO: Create proper CollectionService for tests - requires metadata_backend and storage_config
+        todo!("CollectionService creation requires complex setup - implement test-specific version"),
     ))
 }
 

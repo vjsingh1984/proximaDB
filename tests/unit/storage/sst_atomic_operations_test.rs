@@ -14,7 +14,7 @@ use tracing::{debug, error, info, warn};
 mod common {
     include!("../../common/mod.rs");
 }
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use common::unique_collection_id;
 use proximadb::proto::proximadb::StorageEngine;
 use tempfile::TempDir;
@@ -222,7 +222,7 @@ async fn test_sst_sequential_flush_within_collection() {
 async fn test_concurrent_flushes_across_collections() {
     // This test models concurrent flushes across different collections
     // which is a realistic scenario in multi-tenant environments
-    use common::unified_test_utils::MultiUnifiedEnvironmentTest;
+    use common::integration_test_helpers::MultiUnifiedEnvironmentTest;
 
     // Create multiple isolated environments for concurrent testing
     let multi_env = MultiUnifiedEnvironmentTest::new(5).await.unwrap();

@@ -9,7 +9,7 @@
 mod common {
     include!("../common/mod.rs");
 }
-use common::unified_test_utils::UnifiedTestEnvironment;
+use common::integration_test_helpers::UnifiedTestEnvironment;
 
 use anyhow::Result;
 use proximadb::StorageEngine;
@@ -85,7 +85,7 @@ async fn test_engine_compression(
             );
 
             let flush_params =
-                common::unified_test_utils::operations::build_sst_flush_params_with_collection(
+                common::integration_test_helpers::operations::build_sst_flush_params_with_collection(
                     &env_uncompressed,
                     vectors.clone(),
                     collection_uncompressed,
@@ -125,7 +125,7 @@ async fn test_engine_compression(
             );
 
             let flush_params =
-                common::unified_test_utils::operations::build_sst_flush_params_with_collection(
+                common::integration_test_helpers::operations::build_sst_flush_params_with_collection(
                     &env_compressed,
                     vectors.clone(),
                     collection_compressed,
@@ -158,7 +158,7 @@ async fn test_engine_compression(
             .await?;
 
             let flush_params =
-                common::unified_test_utils::operations::build_viper_flush_params_with_compression(
+                common::integration_test_helpers::operations::build_viper_flush_params_with_compression(
                     &env_uncompressed,
                     vectors.clone(),
                     "none",
@@ -196,7 +196,7 @@ async fn test_engine_compression(
             };
 
             let flush_params =
-                common::unified_test_utils::operations::build_viper_flush_params_with_compression(
+                common::integration_test_helpers::operations::build_viper_flush_params_with_compression(
                     &env_compressed,
                     vectors.clone(),
                     algorithm,
