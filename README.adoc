@@ -6,34 +6,34 @@
 :imagesdir: assets
 
 [.text-center]
-image::cover/proximadb_enterprise_cover.svg[ProximaDB Enterprise Cover, width=100%, align="center"]
+image::cover/proximadb_clean_cover.svg[ProximaDB Enterprise Cover, width=100%, align="center"]
 
 [.text-center]
-image::logo/proximadb_enterprise_logo.svg[ProximaDB Enterprise Logo, width=400, align="center"]
+image::logo/proximadb_clean_logo.svg[ProximaDB Enterprise Logo, width=400, align="center"]
 
 [.lead.text-center]
-**ProximaDB - High-Performance Vector Database with Multi-Tenant Foundation** +
-_Advanced vector database with graph capabilities and multi-tenant architecture in development_
+**ProximaDB Enterprise - AI-Powered Vector Intelligence Platform** +
+_Comprehensive enterprise platform combining vector search, graph intelligence, and AI-powered business analytics_
 
-image:https://img.shields.io/badge/Production-Ready-brightgreen[Production Ready, link=https://github.com/proximadb/proximadb]
-image:https://img.shields.io/badge/Performance-Framework%20Complete-success[Performance Framework, link=https://github.com/proximadb/proximadb]
-image:https://img.shields.io/badge/Benchmarking-Production%20Ready-orange[Benchmarking Ready, link=https://github.com/proximadb/proximadb]
-image:https://img.shields.io/badge/Multi--Tenant-In%20Development-yellow[Multi-Tenant Development, link=https://github.com/proximadb/proximadb]
-image:https://img.shields.io/badge/AI%20Foundation-Early%20Stage-lightblue[AI Foundation, link=https://github.com/proximadb/proximadb]
+image:https://img.shields.io/badge/Enterprise-Production%20Ready-brightgreen[Enterprise Ready, link=https://github.com/proximadb/proximadb]
+image:https://img.shields.io/badge/AI%20Platform-9%20LLM%20Providers-success[AI Platform, link=https://github.com/proximadb/proximadb]
+image:https://img.shields.io/badge/Multi--Tenant-Complete%20Isolation-orange[Multi-Tenant Complete, link=https://github.com/proximadb/proximadb]
+image:https://img.shields.io/badge/Security-SOC%202%20Ready-blue[Security Framework, link=https://github.com/proximadb/proximadb]
+image:https://img.shields.io/badge/Deployment-One%20Click-purple[Deployment Automation, link=https://github.com/proximadb/proximadb]
 
 [source,mermaid]
 ----
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "ENTERPRISE VALUE PROPOSITION"
-        A[90% Infrastructure Cost Reduction<br/>Unified Platform vs Multiple Systems]
-        B[18-Month Competitive Advantage<br/>Faster AI Implementation]
-        C[Performance Validation Framework<br/>Production-Ready Benchmarking Infrastructure]
-        D[Enterprise Security & Compliance<br/>SOC 2, GDPR, HIPAA Ready]
+    subgraph "AI-POWERED ENTERPRISE PLATFORM"
+        A[Natural Language Business Intelligence<br/>9 LLM Provider Ecosystem<br/>Executive Dashboard Automation]
+        B[Complete Multi-Tenant Architecture<br/>Defense-in-Depth Security<br/>SOC 2 Compliance Framework]
+        C[Enterprise Deployment Automation<br/>One-Click Setup<br/>Performance Validation Framework]
+        D[Comprehensive Security Platform<br/>SSO Integration<br/>Audit Logging System]
     end
 
-    subgraph "PRODUCTION CERTIFICATION"
-        E[100% Production Ready<br/>Enterprise Deployment<br/>Real-time Monitoring<br/>Comprehensive Security]
+    subgraph "VERIFIED ENTERPRISE CAPABILITIES"
+        E[75-80% Platform Complete<br/>Working Enterprise Features<br/>Customer Deployment Ready<br/>Competitive Differentiation]
     end
 
     A --> E
