@@ -7,6 +7,7 @@ pub mod analytics;
 pub mod natural_language_api;
 pub mod llm_integration;
 pub mod natural_language;
+pub mod business_intelligence;
 
 pub use llm::{LLMIntegrationEngine, AIIntelligenceFoundation};
 pub use nlp::{EnterpriseNLPEngine, BusinessIntent};
@@ -14,6 +15,8 @@ pub use insights::{AutomatedInsightEngine, BusinessInsightsGenerator};
 pub use analytics::{PredictiveAnalyticsEngine, ConversationalAnalyticsEngine, GovernanceAnalyticsEngine};
 pub use natural_language_api::{NaturalLanguageBusinessIntelligenceAPI, ConversationalBusinessAnswer};
 pub use llm_integration::{LLMIntegrationEngine as ModernLLMEngine, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMConfig};
+pub use natural_language::{NLQueryTranslator, TranslationResult, SchemaContext};
+pub use business_intelligence::{BusinessIntelligenceEngine, ExecutiveDashboard, BusinessInsight};
 
 use anyhow::Result;
 use std::sync::Arc;
