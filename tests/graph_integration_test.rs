@@ -32,7 +32,7 @@ async fn test_node_crud_operations() {
 
     // Create a test node
     let node = Node {
-        id: "user_123".to_string(),
+        id: &"user_123".to_string().to_string(),
         labels: vec!["User".to_string(), "Person".to_string()],
         properties: HashMap::from([
             (
@@ -55,20 +55,20 @@ async fn test_node_crud_operations() {
             ),
         ]),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     // Test create
     let created_node = service.create_node(node.clone()).unwrap();
-    assert_eq!(created_node.id, "user_123");
+    assert_eq!(created_node.id, &"user_123".to_string());
     assert_eq!(created_node.labels.len(), 2);
     assert!(created_node.labels.contains(&"User".to_string()));
     assert!(created_node.labels.contains(&"Person".to_string()));
 
     // Test read
-    let retrieved_node = service.get_node("user_123").unwrap().unwrap();
-    assert_eq!(retrieved_node.id, "user_123");
+    let retrieved_node = service.get_node(&"user_123".to_string()).unwrap().unwrap();
+    assert_eq!(retrieved_node.id, &"user_123".to_string());
     assert_eq!(retrieved_node.properties.len(), 3);
 
     // Test update
@@ -84,11 +84,11 @@ async fn test_node_crud_operations() {
     assert_eq!(updated.properties.len(), 4);
 
     // Test delete
-    let deleted = service.delete_node("user_123").unwrap().unwrap();
-    assert_eq!(deleted.id, "user_123");
+    let deleted = service.delete_node(&"user_123".to_string()).unwrap().unwrap();
+    assert_eq!(deleted.id, &"user_123".to_string());
 
     // Verify deletion
-    let missing = service.get_node("user_123").unwrap();
+    let missing = service.get_node(&"user_123".to_string()).unwrap();
     assert!(missing.is_none());
 }
 
@@ -108,8 +108,8 @@ async fn test_edge_crud_operations() {
             },
         )]),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     let node2 = Node {
@@ -122,8 +122,8 @@ async fn test_edge_crud_operations() {
             },
         )]),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     service.create_node(node1).unwrap();
@@ -142,8 +142,8 @@ async fn test_edge_crud_operations() {
             },
         )]),
         weight: Some(1.0),
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     // Test create
@@ -421,8 +421,8 @@ async fn test_operation_modes() {
         labels: vec!["Test".to_string()],
         properties: HashMap::new(),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     let created = service.create_node(node).unwrap();
@@ -439,8 +439,8 @@ async fn test_operation_modes() {
         labels: vec!["Test".to_string()],
         properties: HashMap::new(),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     let result = service.create_node(node2);

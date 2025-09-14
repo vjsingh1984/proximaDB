@@ -13,7 +13,6 @@ mod tests {
             enable_statistics: true,
             enable_bloom_filters: false, // Simplified for tests
             bloom_fpp: 0.01,
-            enable_hnsw: false, // Simplified for tests
             enable_simd: false, // Simplified for tests
             cache_size_mb: 10,
             enable_prefetching: false,
@@ -51,15 +50,22 @@ mod tests {
 
         // Create test vector
         let vector = VectorRecord {
-            id: Some("test_vec_1".to_string()),
+            id: "test_vec_1".to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4],
             metadata: HashMap::from([
-                ("category".to_string(), "test".to_string()),
-                ("version".to_string(), "1".to_string()),
+                ("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string())),
+                }),
+                ("version".to_string(), crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("1".to_string())),
+                }),
             ]),
             version: Some(1),
-            timestamp: Some(1234567890),
-            ..Default::default()
+            timestamp: 1234567890,
+            updated_at: None,
+            expires_at: None,
+            quantized_vector: vec![],
+            source: None,
         };
 
         // Insert vector (using internal method)
@@ -194,43 +200,43 @@ mod tests {
         // Test S3 detection
         assert_eq!(
             RaptorEngine::determine_storage_tier("s3://bucket/path"),
-            crate::storage::persistence::filesystem::StorageTier::S3Standard
+            crate::storage::persistence::filesystem::FileStorageTier::S3Standard
         );
 
         // Test S3 Express detection
         assert_eq!(
             RaptorEngine::determine_storage_tier("s3://express-bucket/path"),
-            crate::storage::persistence::filesystem::StorageTier::S3Express
+            crate::storage::persistence::filesystem::FileStorageTier::S3Express
         );
 
         // Test GCS detection
         assert_eq!(
             RaptorEngine::determine_storage_tier("gs://bucket/path"),
-            crate::storage::persistence::filesystem::StorageTier::GcsSSD
+            crate::storage::persistence::filesystem::FileStorageTier::GcsSSD
         );
 
         // Test Azure detection
         assert_eq!(
             RaptorEngine::determine_storage_tier("azure://container/path"),
-            crate::storage::persistence::filesystem::StorageTier::AzurePremium
+            crate::storage::persistence::filesystem::FileStorageTier::AzurePremium
         );
 
         // Test NVMe detection
         assert_eq!(
             RaptorEngine::determine_storage_tier("/mnt/nvme/data"),
-            crate::storage::persistence::filesystem::StorageTier::NVMe
+            crate::storage::persistence::filesystem::FileStorageTier::NVMe
         );
 
         // Test SSD detection
         assert_eq!(
             RaptorEngine::determine_storage_tier("/mnt/ssd/data"),
-            crate::storage::persistence::filesystem::StorageTier::SSD
+            crate::storage::persistence::filesystem::FileStorageTier::SSD
         );
 
         // Default to HDD
         assert_eq!(
             RaptorEngine::determine_storage_tier("/var/data"),
-            crate::storage::persistence::filesystem::StorageTier::HDD
+            crate::storage::persistence::filesystem::FileStorageTier::HDD
         );
     }
 
@@ -348,10 +354,26 @@ mod tests {
             .to_string();
 
         let config = RaptorConfig {
-            target_rowgroup_size: 50,
+            rowgroup_size: 100,
+            compression: crate::storage::engines::impls::raptor::config::CompressionCodec::Snappy,
+            compression_level: 3,
+            use_fastlanes_encoding: false,
+            enable_simd: false,
+            simd_lanes: 8,
+            enable_range_reads: false,
+            prefetch_size_mb: 1,
+            cache_size_mb: 10,
+            cache_eviction_policy: crate::storage::engines::impls::raptor::config::EvictionPolicy::LRU,
             enable_clustering: true,
-            min_vectors_for_clustering: Some(10),
-            ..Default::default()
+            num_clusters: None,
+            target_rowgroup_size: Some(50),
+            use_component_boosting: false,
+            enable_complex_types: false,
+            bloom_fpp: 0.01,
+            enable_statistics: true,
+            enable_bloom_filters: false,
+            enable_prefetching: false,
+            compaction_threshold_files: 5,
         };
 
         let dimension = 64;

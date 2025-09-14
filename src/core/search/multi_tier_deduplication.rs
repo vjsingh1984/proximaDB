@@ -11,7 +11,8 @@
 //! - Records without IDs are included without deduplication
 
 use crate::core::search::mvcc_resolution::MvccResolver;
-use crate::core::{MetadataQuery, MetadataQueryEngine, VectorRecord};
+use crate::core::{MetadataQuery, MetadataQueryEngine};
+use crate::proto::proximadb_v1::VectorRecord;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
@@ -466,16 +467,15 @@ mod tests {
         // Add compacted result
         let compacted_result = TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: Some("vector_1".to_string()),
+                id: "vector_1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: vec![],
-                timestamp: now.timestamp() as u32,
-                updated_at: Some(now.timestamp() as u32),
+                metadata: HashMap::new(),
+                timestamp: now.timestamp(),
+                updated_at: Some(now.timestamp()),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             },
             similarity: 0.5,
             tier: DataFreshnessTier::Compacted,
@@ -488,16 +488,15 @@ mod tests {
         // Add flushed result (should override compacted)
         let flushed_result = TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: Some("vector_1".to_string()),
+                id: "vector_1".to_string(),
                 vector: vec![1.1, 2.1, 3.1],
-                metadata: vec![],
-                timestamp: now.timestamp() as u32,
-                updated_at: Some(now.timestamp() as u32),
+                metadata: HashMap::new(),
+                timestamp: now.timestamp(),
+                updated_at: Some(now.timestamp()),
                 expires_at: None,
                 version: Some(2),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             },
             similarity: 0.4,
             tier: DataFreshnessTier::Flushed,
@@ -510,16 +509,15 @@ mod tests {
         // Add unflushed result (should override flushed)
         let unflushed_result = TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: Some("vector_1".to_string()),
+                id: "vector_1".to_string(),
                 vector: vec![1.2, 2.2, 3.2],
-                metadata: vec![],
-                timestamp: now.timestamp() as u32,
-                updated_at: Some(now.timestamp() as u32),
+                metadata: HashMap::new(),
+                timestamp: now.timestamp(),
+                updated_at: Some(now.timestamp()),
                 expires_at: None,
                 version: Some(3),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             },
             similarity: 0.3,
             tier: DataFreshnessTier::Unflushed,
@@ -538,7 +536,7 @@ mod tests {
         assert_eq!(final_results.len(), 1);
         assert_eq!(final_results[0].tier, DataFreshnessTier::Unflushed);
         assert_eq!(final_results[0].vector_record.version, Some(3));
-        assert_eq!(final_results[0].score, 0.3);
+        assert_eq!(final_results[0].similarity, 0.3);
     }
 
     #[test]
@@ -549,16 +547,15 @@ mod tests {
         // Add two unflushed results with same sequence but different versions
         let unflushed_v1 = TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: Some("vector_1".to_string()),
+                id: "vector_1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: vec![],
-                timestamp: now.timestamp() as u32,
-                updated_at: Some(now.timestamp() as u32),
+                metadata: HashMap::new(),
+                timestamp: now.timestamp(),
+                updated_at: Some(now.timestamp()),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             },
             similarity: 0.5,
             tier: DataFreshnessTier::Unflushed,
@@ -570,16 +567,15 @@ mod tests {
 
         let unflushed_v2 = TieredSearchCandidate {
             vector_record: VectorRecord {
-                id: Some("vector_1".to_string()),
+                id: "vector_1".to_string(),
                 vector: vec![1.1, 2.1, 3.1],
-                metadata: vec![],
-                timestamp: now.timestamp() as u32,
-                updated_at: Some(now.timestamp() as u32),
+                metadata: HashMap::new(),
+                timestamp: now.timestamp(),
+                updated_at: Some(now.timestamp()),
                 expires_at: None,
                 version: Some(2), // Higher version
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             },
             similarity: 0.4,
             tier: DataFreshnessTier::Unflushed,
@@ -597,7 +593,7 @@ mod tests {
 
         assert_eq!(final_results.len(), 1);
         assert_eq!(final_results[0].vector_record.version, Some(2)); // v2 should win
-        assert_eq!(final_results[0].score, 0.4);
+        assert_eq!(final_results[0].similarity, 0.4);
     }
 
     #[test]
@@ -612,11 +608,11 @@ mod tests {
         for i in 0..5 {
             candidates.push(TieredSearchCandidate {
                 vector_record: VectorRecord {
-                    id: Some(format!("vector_{}", i)),
+                    id: format!("vector_{}", i),
                     vector: vec![i as f32, 0.0, 0.0],
-                    metadata: vec![],
-                    timestamp: now.timestamp() as u32,
-                    updated_at: Some(now.timestamp() as u32),
+                    metadata: HashMap::new(),
+                    timestamp: now.timestamp(),
+                    updated_at: Some(now.timestamp()),
                     expires_at: None,
                     version: Some(1),
                     // rank removed -  None,
@@ -657,11 +653,11 @@ mod tests {
         for i in 0..5 {
             candidates.push(TieredSearchCandidate {
                 vector_record: VectorRecord {
-                    id: Some(format!("vector_{}", i)),
+                    id: format!("vector_{}", i),
                     vector: vec![i as f32, 0.0, 0.0],
-                    metadata: vec![],
-                    timestamp: now.timestamp() as u32,
-                    updated_at: Some(now.timestamp() as u32),
+                    metadata: HashMap::new(),
+                    timestamp: now.timestamp(),
+                    updated_at: Some(now.timestamp()),
                     expires_at: None,
                     version: Some(1),
                     // rank removed -  None,
@@ -687,7 +683,7 @@ mod tests {
 
         // Should have best 2 results (highest scores with descending sort)
         assert_eq!(final_results.len(), 2);
-        assert_eq!(final_results[0].score, 5.0); // vector_0 has score 5
-        assert_eq!(final_results[1].score, 4.0); // vector_1 has score 4
+        assert_eq!(final_results[0].similarity, 5.0); // vector_0 has similarity 5
+        assert_eq!(final_results[1].similarity, 4.0); // vector_1 has similarity 4
     }
 }

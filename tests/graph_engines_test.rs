@@ -22,7 +22,7 @@ use proximadb::graph::PropertyValue;
 use proximadb::graph::engines::pulsar::PulsarConfig;
 use proximadb::graph::engines::quasar::QuasarConfig;
 use proximadb::graph::{
-    Edge, GraphEngine, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node,
+    Edge, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node,
     PulsarGraphEngine, QuasarGraphEngine,
 };
 use proximadb::proto::proximadb_v1::property_value::Value;
@@ -50,23 +50,23 @@ async fn test_pulsar_engine_basic_operations() {
             },
         )]),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
-    let inserted = engine.insert_node(node).unwrap();
+    let inserted = engine.add_node(node).unwrap();
     assert_eq!(inserted.id, "test_node_pulsar");
 
     // Wait for async operations
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Test node retrieval
-    let retrieved = engine.get_node("test_node_pulsar").unwrap().unwrap();
+    let retrieved = engine.get_node_by_id("test_node_pulsar").unwrap().unwrap();
     assert_eq!(retrieved.id, "test_node_pulsar");
     assert_eq!(retrieved.labels, vec!["TestNode"]);
 
     // Test node count
-    assert_eq!(engine.node_count().unwrap(), 1);
+    assert_eq!(engine.get_node_count().unwrap(), 1);
 
     // Test statistics
     let stats = engine.get_stats().await;
@@ -96,20 +96,20 @@ async fn test_quasar_engine_basic_operations() {
             },
         )]),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
-    let inserted = engine.insert_node(node).unwrap();
+    let inserted = engine.add_node(node).unwrap();
     assert_eq!(inserted.id, "test_node_quasar");
 
     // Test node retrieval
-    let retrieved = engine.get_node("test_node_quasar").unwrap().unwrap();
+    let retrieved = engine.get_node_by_id("test_node_quasar").unwrap().unwrap();
     assert_eq!(retrieved.id, "test_node_quasar");
     assert_eq!(retrieved.labels, vec!["TestNode"]);
 
     // Test node count
-    assert_eq!(engine.node_count().unwrap(), 1);
+    assert_eq!(engine.get_node_count().unwrap(), 1);
 
     // Test statistics
     let stats = engine.get_stats().await;
@@ -128,8 +128,8 @@ async fn test_pulsar_edge_operations() {
         labels: vec!["Person".to_string()],
         properties: HashMap::new(),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     let node2 = Node {
@@ -137,12 +137,12 @@ async fn test_pulsar_edge_operations() {
         labels: vec!["Person".to_string()],
         properties: HashMap::new(),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
-    engine.insert_node(node1).unwrap();
-    engine.insert_node(node2).unwrap();
+    engine.add_node(node1).unwrap();
+    engine.add_node(node2).unwrap();
 
     // Create edge
     let edge = Edge {
@@ -152,27 +152,27 @@ async fn test_pulsar_edge_operations() {
         edge_type: "KNOWS".to_string(),
         properties: HashMap::new(),
         weight: Some(1.0),
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
-    let inserted_edge = engine.insert_edge(edge).unwrap();
+    let inserted_edge = engine.add_edge(edge).unwrap();
     assert_eq!(inserted_edge.id, "edge1");
 
     // Wait for async operations
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Test edge retrieval
-    let retrieved_edge = engine.get_edge("edge1").unwrap().unwrap();
+    let retrieved_edge = engine.get_edge_by_id("edge1").unwrap().unwrap();
     assert_eq!(retrieved_edge.edge_type, "KNOWS");
 
     // Test outgoing edges
-    let outgoing = engine.get_outgoing_edges("node1", None).unwrap();
+    let outgoing = engine.get_edges_from_node("node1", None).unwrap();
     assert_eq!(outgoing.len(), 1);
     assert_eq!(outgoing[0].to_node_id, "node2");
 
     // Test neighbors
-    let neighbors = engine.get_neighbors("node1", None).unwrap();
+    let neighbors = engine.get_connected_nodes("node1", None).unwrap();
     assert_eq!(neighbors.len(), 1);
     assert_eq!(neighbors[0].id, "node2");
 }
@@ -195,11 +195,11 @@ async fn test_quasar_tiering_behavior() {
             labels: vec!["TestNode".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
 
-        engine.insert_node(node).unwrap();
+        engine.add_node(node).unwrap();
     }
 
     // Wait for background migration
@@ -211,7 +211,7 @@ async fn test_quasar_tiering_behavior() {
     // Verify access works across tiers
     for i in 0..5 {
         let node_id = format!("node_{}", i);
-        let retrieved = engine.get_node(&node_id).unwrap();
+        let retrieved = engine.get_node_by_id(&node_id).unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, node_id);
     }
@@ -295,23 +295,23 @@ async fn test_pulsar_cross_shard_operations() {
             labels: vec!["Person".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: None,
+            updated_at_ms: None,
         };
-        engine.insert_node(node).unwrap();
+        engine.add_node(node).unwrap();
     }
 
     // Wait for async operations
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
     // Test cross-shard traversal
-    let nodes = engine.cross_shard_traversal("alice", 2).await.unwrap();
+    let nodes = engine.cross_shard_traversal(&"alice".to_string(), 2).await.unwrap();
 
     // Should return at least the starting node
     assert!(nodes.len() >= 1);
 
     // Test nodes by label (cross-shard query)
-    let person_nodes = engine.get_nodes_by_label("Person").unwrap();
+    let person_nodes = engine.get_nodes_with_label("Person").unwrap();
     assert_eq!(person_nodes.len(), 5);
 
     let stats = engine.get_stats().await;
@@ -335,15 +335,15 @@ async fn test_quasar_access_pattern_tracking() {
         labels: vec!["TrackedNode".to_string()],
         properties: HashMap::new(),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
     };
 
     engine.insert_node(node).unwrap();
 
     // Access the node multiple times to build access pattern
     for _ in 0..5 {
-        let _ = engine.get_node("tracked_node").unwrap();
+        let _ = engine.get_node_by_id("tracked_node").unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 

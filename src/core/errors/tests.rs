@@ -13,47 +13,47 @@ mod error_tests {
             field: "port".to_string(),
             value: "-1".to_string(),
         };
-        assert!(err.to_string().contains_hash("Invalid configuration value"));
-        assert!(err.to_string().contains_hash("port"));
-        assert!(err.to_string().contains_hash("-1"));
+        assert!(err.to_string().contains("Invalid configuration value"));
+        assert!(err.to_string().contains("port"));
+        assert!(err.to_string().contains("-1"));
 
         let err = ConfigError::MissingField {
             field: "database_path".to_string(),
         };
-        assert!(err.to_string().contains_hash("Missing required field"));
-        assert!(err.to_string().contains_hash("database_path"));
+        assert!(err.to_string().contains("Missing required field"));
+        assert!(err.to_string().contains("database_path"));
 
         let err = ConfigError::JsonParseError("Invalid JSON syntax".to_string());
-        assert!(err.to_string().contains_hash("JSON parsing error"));
-        assert!(err.to_string().contains_hash("Invalid JSON syntax"));
+        assert!(err.to_string().contains("JSON parsing error"));
+        assert!(err.to_string().contains("Invalid JSON syntax"));
 
         let err = ConfigError::TomlParseError("Invalid TOML syntax".to_string());
-        assert!(err.to_string().contains_hash("TOML parsing error"));
+        assert!(err.to_string().contains("TOML parsing error"));
 
         let err = ConfigError::ValidationFailed("Port out of range".to_string());
-        assert!(err.to_string().contains_hash("Validation failed"));
-        assert!(err.to_string().contains_hash("Port out of range"));
+        assert!(err.to_string().contains("Validation failed"));
+        assert!(err.to_string().contains("Port out of range"));
     }
 
     #[test]
     fn test_metadata_error_display() {
         let err = MetadataError::SchemaValidation("Invalid schema format".to_string());
-        assert!(err.to_string().contains_hash("Schema validation failed"));
-        assert!(err.to_string().contains_hash("Invalid schema format"));
+        assert!(err.to_string().contains("Schema validation failed"));
+        assert!(err.to_string().contains("Invalid schema format"));
 
         let err = MetadataError::TypeMismatch {
             expected: "string".to_string(),
             found: "number".to_string(),
         };
-        assert!(err.to_string().contains_hash("Field type mismatch"));
-        assert!(err.to_string().contains_hash("expected string"));
-        assert!(err.to_string().contains_hash("found number"));
+        assert!(err.to_string().contains("Field type mismatch"));
+        assert!(err.to_string().contains("expected string"));
+        assert!(err.to_string().contains("found number"));
 
         let err = MetadataError::RequiredFieldMissing {
             field: "user_id".to_string(),
         };
-        assert!(err.to_string().contains_hash("Required field missing"));
-        assert!(err.to_string().contains_hash("user_id"));
+        assert!(err.to_string().contains("Required field missing"));
+        assert!(err.to_string().contains("user_id"));
     }
 
     #[test]
@@ -61,49 +61,49 @@ mod error_tests {
         let err = ServiceError::NotAvailable {
             service: "VectorSearch".to_string(),
         };
-        assert!(err.to_string().contains_hash("Service not available"));
-        assert!(err.to_string().contains_hash("VectorSearch"));
+        assert!(err.to_string().contains("Service not available"));
+        assert!(err.to_string().contains("VectorSearch"));
 
         let err = ServiceError::Timeout {
             service: "QueryEngine".to_string(),
             timeout_ms: 5000,
         };
-        assert!(err.to_string().contains_hash("Service timeout"));
-        assert!(err.to_string().contains_hash("QueryEngine"));
-        assert!(err.to_string().contains_hash("5000ms"));
+        assert!(err.to_string().contains("Service timeout"));
+        assert!(err.to_string().contains("QueryEngine"));
+        assert!(err.to_string().contains("5000ms"));
 
         let err = ServiceError::AuthenticationFailed {
             reason: "Invalid token".to_string(),
         };
-        assert!(err.to_string().contains_hash("Authentication failed"));
-        assert!(err.to_string().contains_hash("Invalid token"));
+        assert!(err.to_string().contains("Authentication failed"));
+        assert!(err.to_string().contains("Invalid token"));
 
         let err = ServiceError::AuthorizationFailed {
             operation: "delete_collection".to_string(),
         };
-        assert!(err.to_string().contains_hash("Authorization failed"));
-        assert!(err.to_string().contains_hash("delete_collection"));
-        assert!(err.to_string().contains_hash("not allowed"));
+        assert!(err.to_string().contains("Authorization failed"));
+        assert!(err.to_string().contains("delete_collection"));
+        assert!(err.to_string().contains("not allowed"));
 
         let err = ServiceError::RateLimitExceeded {
             requests: 1000,
             window_ms: 60000,
         };
-        assert!(err.to_string().contains_hash("Rate limit exceeded"));
-        assert!(err.to_string().contains_hash("1000 requests"));
-        assert!(err.to_string().contains_hash("60000ms"));
+        assert!(err.to_string().contains("Rate limit exceeded"));
+        assert!(err.to_string().contains("1000 requests"));
+        assert!(err.to_string().contains("60000ms"));
 
         let err = ServiceError::InvalidRequest("Missing required field".to_string());
-        assert!(err.to_string().contains_hash("Invalid request"));
-        assert!(err.to_string().contains_hash("Missing required field"));
+        assert!(err.to_string().contains("Invalid request"));
+        assert!(err.to_string().contains("Missing required field"));
 
         let err = ServiceError::InternalError("Database connection failed".to_string());
-        assert!(err.to_string().contains_hash("Internal server error"));
-        assert!(err.to_string().contains_hash("Database connection failed"));
+        assert!(err.to_string().contains("Internal server error"));
+        assert!(err.to_string().contains("Database connection failed"));
 
         let err = ServiceError::Configuration("Invalid port number".to_string());
-        assert!(err.to_string().contains_hash("Configuration error"));
-        assert!(err.to_string().contains_hash("Invalid port number"));
+        assert!(err.to_string().contains("Configuration error"));
+        assert!(err.to_string().contains("Invalid port number"));
     }
 
     #[test]
@@ -155,8 +155,8 @@ mod error_tests {
         let err = ProximaDBError::InvalidInput("Bad vector dimension".to_string());
 
         let serialized = serde_json::to_string(&err).unwrap();
-        assert!(serialized.contains_hash("InvalidInput"));
-        assert!(serialized.contains_hash("Bad vector dimension"));
+        assert!(serialized.contains("InvalidInput"));
+        assert!(serialized.contains("Bad vector dimension"));
 
         let deserialized: ProximaDBError = serde_json::from_str(&serialized).unwrap();
         assert_eq!(err.to_string(), deserialized.to_string());
@@ -173,7 +173,7 @@ mod error_tests {
     fn test_error_debug_format() {
         let err = ProximaDBError::Authentication("Invalid token".to_string());
         let debug_str = format!("{:?}", err);
-        assert!(debug_str.contains_hash("Authentication"));
-        assert!(debug_str.contains_hash("Invalid token"));
+        assert!(debug_str.contains("Authentication"));
+        assert!(debug_str.contains("Invalid token"));
     }
 }

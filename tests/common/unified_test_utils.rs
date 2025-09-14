@@ -10,7 +10,7 @@
 //! This replaces the fragmented test utilities scattered across different modules
 //! and provides a consistent, reliable test infrastructure.
 
-use crate::utils::uuid::Uuid;
+use uuid::Uuid;
 use anyhow::Result;
 use std::path::PathBuf;
 use std::sync::{Arc, Once};
@@ -22,7 +22,7 @@ use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::config::StorageLocation;
 use proximadb::core::config::{BloomFilterConfig, SstConfig};
 use proximadb::core::config::{ViperConfig, WriteBufferUserConfig};
-use proximadb::proto::proximadb::{
+use proximadb::proto::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric, MetadataItem, StorageAssignment,
     StorageEngine, VectorRecord, metadata_item,
 };
@@ -204,7 +204,7 @@ impl UnifiedTestEnvironment {
         &self,
         engine: StorageEngine,
         dimension: i32,
-        compression: Option<proximadb::proto::proximadb::CompressionConfig>,
+        compression: Option<proximadb::proto::CompressionConfig>,
     ) -> Collection {
         // CRITICAL: base_location must point to parent directory since engines append collection_id
         let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
@@ -303,7 +303,7 @@ impl UnifiedTestEnvironment {
 
         debug!(
             "✅ SST flush successful: {} entries flushed, {} files created",
-            flush_result.entries_flushed, flush_result.files_created
+            flush_result.entries_flushed.unwrap_or(0), flush_result.files_created.unwrap_or(0)
         );
 
         // Find created SST files
@@ -406,7 +406,7 @@ impl UnifiedTestEnvironment {
                     MetadataItem {
                         key: "category".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                            proximadb::proto::metadata_item::Value::StringValue(
                                 categories[i % categories.len()].to_string(),
                             ),
                         ),
@@ -414,7 +414,7 @@ impl UnifiedTestEnvironment {
                     MetadataItem {
                         key: "type".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                            proximadb::proto::metadata_item::Value::StringValue(
                                 types[i % types.len()].to_string(),
                             ),
                         ),
@@ -422,7 +422,7 @@ impl UnifiedTestEnvironment {
                     MetadataItem {
                         key: "test_id".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                            proximadb::proto::metadata_item::Value::StringValue(
                                 self.collection_id.clone(),
                             ),
                         ),
@@ -573,6 +573,9 @@ impl UnifiedTestEnvironment {
             mmap_enabled: false,
             prefetch_enabled: false,
             prefetch_size_kb: 0,
+
+            // Compaction config
+            compaction_config: Default::default(),
         }
     }
 
@@ -591,6 +594,7 @@ impl UnifiedTestEnvironment {
             enable_statistics: true,
             data_directory: base_path.join("data").to_str().unwrap().to_string(),
             cache_size_mb: 64,
+            compaction_config: Default::default(),
         }
     }
 
@@ -704,7 +708,7 @@ pub mod operations {
 
         // VIPER uses Parquet compression, configured through collection config
         if let Some(ref mut config) = collection.config {
-            use proximadb::proto::proximadb::CompressionAlgorithm;
+            use proximadb::proto::CompressionAlgorithm;
 
             // Map to Parquet-supported algorithms
             let algorithm = match compression_algo {
@@ -724,8 +728,7 @@ pub mod operations {
                 }
             };
 
-            config.as_ref().and_then(|s| s.compression.as_ref()) =
-                Some(proximadb::proto::proximadb::CompressionConfig {
+            config.compression = Some(proximadb::proto::CompressionConfig {
                     algorithm,
                     level: Some(compression_level),
                     ..Default::default()
@@ -766,7 +769,7 @@ pub mod operations {
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<proximadb::core::search::results::InternalSearchResult>> {
+    ) -> Result<Vec<proximadb::core::search::results::SearchResult>> {
         let storage_url = build_sst_storage_url(environment);
         let collection = Arc::new(environment.create_test_collection());
         let search_params = Arc::new(proximadb::core::search::SearchParams::default());
@@ -778,7 +781,7 @@ pub mod operations {
 
         // Direct production call
         engine
-            .search_vectors(&query_context, query_vector, top_k, None)
+            .search_vectors(&query_context, query_vector, top_k)
             .await
     }
 
@@ -788,7 +791,7 @@ pub mod operations {
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<proximadb::core::search::results::InternalSearchResult>> {
+    ) -> Result<Vec<proximadb::core::search::results::SearchResult>> {
         let storage_url = build_viper_storage_url(environment);
         let collection = Arc::new(environment.create_test_collection());
         let search_params = Arc::new(proximadb::core::search::SearchParams::default());
@@ -800,7 +803,7 @@ pub mod operations {
 
         // Direct production call to VIPER's search_vectors
         engine
-            .search_vectors(&query_context, query_vector, top_k, None)
+            .search_vectors(&query_context, query_vector, top_k)
             .await
     }
 
@@ -851,7 +854,7 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
             metadata: vec![MetadataItem {
                 key: "test_type".to_string(),
                 value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                    proximadb::proto::metadata_item::Value::StringValue(
                         prefix.to_string(),
                     ),
                 ),
@@ -954,14 +957,14 @@ pub async fn flush_sst_with_block_stats(
     compression_level: i32,
     block_size_kb: usize,
 ) -> Result<FlushBlockStatsResult> {
-    use proximadb::proto::proximadb::{Collection, CollectionConfig, CompressionConfig};
+    use proximadb::proto::{Collection, CollectionConfig, CompressionConfig};
     use proximadb::storage::engines::impls::sst::SstStorage;
     use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
     // Create SST config with specified block size
     let mut sst_config = environment.sst_config.clone();
     sst_config.block_size_kb = block_size_kb as u32;
-    sst_config.as_ref().and_then(|s| s.compression.as_ref()) = compression_algo.to_string();
+    sst_config.compression = compression_algo.to_string();
     sst_config.compression_level = compression_level;
 
     // Create SST storage
@@ -988,21 +991,15 @@ pub async fn flush_sst_with_block_stats(
 
     let collection_config = Collection {
         id: "test_collection".to_string(),
-        name: "test_collection".to_string(),
-        dimension: vectors[0].vector.len() as u32,
-        distance_metric: "cosine".to_string(),
-        storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+        storage_assignment: Some(proximadb::proto::StorageAssignment {
             base_location: format!("file://{}", environment.temp_dir.path().to_str().unwrap()),
-            assignment_id: "test".to_string(),
-            tier: "hot".to_string(),
-            region: "local".to_string(),
-            rack_id: None,
-            node_id: None,
-            device_id: None,
-            created_at: 0,
-            last_modified: 0,
+            assigned_at: 0,
         }),
         config: Some(CollectionConfig {
+            name: "test_collection".to_string(),
+            dimension: vectors[0].vector.len() as i32,
+            distance_metric: proximadb::proto::DistanceMetric::Cosine as i32,
+            storage_engine: proximadb::proto::StorageEngine::Sst as i32,
             compression: Some(compression_config),
             ..Default::default()
         }),
@@ -1011,7 +1008,7 @@ pub async fn flush_sst_with_block_stats(
 
     // Create flush parameters - production SST will handle quantization internally
     let flush_params = FlushParameters {
-        collection_id: "test_collection".to_string(),
+        collection_id: Some("test_collection".to_string()),
         vector_records: vectors.clone(),
         collection_config: Some(collection_config),
         force: true,
@@ -1025,7 +1022,7 @@ pub async fn flush_sst_with_block_stats(
     // Calculate compression ratio
     let uncompressed_size = vectors.len() * vectors[0].vector.len() * 4; // FP32
     let compression_ratio = if flush_result.bytes_written > 0 {
-        uncompressed_size as f64 / flush_result.bytes_written as f64
+        uncompressed_size as f64 / flush_result.bytes_written.unwrap_or(1) as f64
     } else {
         1.0
     };
@@ -1047,8 +1044,8 @@ pub async fn flush_sst_with_block_stats(
     Ok(FlushBlockStatsResult {
         success: true,
         entries_flushed: vectors.len(),
-        bytes_written: flush_result.bytes_written as usize,
-        files_created: flush_result.files_created as usize,
+        bytes_written: flush_result.bytes_written.unwrap_or(0) as usize,
+        files_created: flush_result.files_created.unwrap_or(0) as usize,
         blocks_created,
         compression_ratio,
         vectors_per_block,
@@ -1090,7 +1087,7 @@ pub async fn create_test_vector_operations_service() -> Result<VectorOperationsS
     // Create WAL manager
     let wal_config = WALConfig::default();
     let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
-    let strategy_type = WriteBufferStrategyType::Bincode;
+    let strategy_type = WriteBufferStrategyType::Json;
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         strategy_type,
         &wal_config,
@@ -1102,6 +1099,8 @@ pub async fn create_test_vector_operations_service() -> Result<VectorOperationsS
     Ok(VectorOperationsService::new(
         Arc::new(sst_storage),
         wal_manager,
+        Arc::new(proximadb::index::axis::manager::AxisManager::default()),
+        Arc::new(proximadb::core::collections::Collections::default()),
     ))
 }
 
@@ -1114,7 +1113,7 @@ pub async fn create_test_vector_operations_service_with_storage(
     // Create WAL manager
     let wal_config = WALConfig::default();
     let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
-    let strategy_type = WriteBufferStrategyType::Bincode;
+    let strategy_type = WriteBufferStrategyType::Json;
     let strategy = WALBatchFactory::create_batch_serialization_strategy(
         strategy_type,
         &wal_config,
@@ -1123,7 +1122,12 @@ pub async fn create_test_vector_operations_service_with_storage(
     .await?;
     let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
 
-    Ok(VectorOperationsService::new(storage, wal_manager))
+    Ok(VectorOperationsService::new(
+        storage,
+        wal_manager,
+        Arc::new(proximadb::index::axis::manager::AxisManager::default()),
+        Arc::new(proximadb::core::collections::Collections::default()),
+    ))
 }
 
 #[cfg(test)]

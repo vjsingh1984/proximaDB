@@ -7,14 +7,13 @@
 //! - Data integrity during compaction
 //! - Concurrent access during compaction
 
-use anyhow::Result;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
-use tracing::{debug, error, warn};
+use tracing::{debug, warn, error};
+use std::collections::HashMap;
 
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::{VectorRecord, sql_value::Value};
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 // CompactionStrategy is not needed - it's part of CompactionParameters
@@ -76,17 +75,22 @@ fn create_test_collection(
                 ..Default::default()
             }),
             storage_config: None,
-            primary_index: String::new(),
-            auto_index_selection: false,
             description: None,
             tags: vec![],
-            owner: None,
+            embedding_models: vec![],
+            primary_index: "default".to_string(),
+            auto_index_selection: true,
+            owner: Some("test".to_string()),
         }),
         stats: None,
-        timestamp: chrono::Utc::now().timestamp(),
+        created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
-            base_location: format!("file://{}", base_path),
+            primary_path: format!("file://{}", base_path),
+            backup_paths: vec![],
+            engine: 1, // VIPER enum value
+            engine_config: HashMap::new(),
+            base_location: base_path.to_string(),
             assigned_at: chrono::Utc::now().timestamp(),
         }),
     }
@@ -94,24 +98,26 @@ fn create_test_collection(
 
 /// Create test vector
 fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "compaction_test".to_string(),
+        crate::proto::proximadb_v1::SqlValue {
+            value: Some(Value::StringValue("true".to_string())),
+        },
+    );
+
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: (0..dimension)
             .map(|i| (i as f32) / (dimension as f32))
             .collect(),
-        metadata: vec![MetadataItem {
-            key: "compaction_test".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue("true".to_string()),
-            ),
-        }],
-        timestamp: chrono::Utc::now().timestamp() as u32,
-        updated_at: Some(chrono::Utc::now().timestamp() as u32),
+        metadata,
+        timestamp: chrono::Utc::now().timestamp(),
+        updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
 
@@ -160,7 +166,7 @@ async fn test_insert_flush_compact_flow() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
+        estimated_size: 1024 * 1024, // 1MB estimated
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
@@ -173,7 +179,7 @@ async fn test_insert_flush_compact_flow() {
         .expect("Failed to flush");
     debug!(
         "  ✅ Flush complete: {} files created, {} entries flushed",
-        flush_result.files_created, flush_result.entries_flushed
+        flush_result.files_created.unwrap_or(0), flush_result.entries_flushed.unwrap_or(0)
     );
 
     // List files after flush
@@ -202,7 +208,7 @@ async fn test_insert_flush_compact_flow() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
-
+        estimated_input_size: 1024 * 1024, // 1MB estimated
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
@@ -215,25 +221,25 @@ async fn test_insert_flush_compact_flow() {
         .expect("Compaction failed");
     debug!(
         "  ✅ Compaction complete: {} entries processed, {} input files -> {} output files",
-        compact_result.entries_processed, compact_result.input_files, compact_result.output_files
+        compact_result.entries_processed.unwrap_or(0), compact_result.input_files.unwrap_or(0), compact_result.output_files.unwrap_or(0)
     );
 
     // CRITICAL: Verify compaction doesn't duplicate data
     // We inserted 40 vectors total (4 batches × 10 vectors)
     let expected_entries = 40u64;
     assert!(
-        compact_result.entries_processed <= expected_entries,
+        compact_result.entries_processed.unwrap_or(0) <= expected_entries,
         "❌ Compaction processed {} entries but we only inserted {}! This indicates data duplication.",
-        compact_result.entries_processed,
+        compact_result.entries_processed.unwrap_or(0),
         expected_entries
     );
 
     // Allow up to 20% overhead for versioning/metadata/deduplication
     let max_allowed = (expected_entries as f64 * 1.2) as u64;
     assert!(
-        compact_result.entries_processed <= max_allowed,
+        compact_result.entries_processed.unwrap_or(0) <= max_allowed,
         "❌ Compaction processed {} entries, exceeding 20% threshold of {} (max allowed: {})",
-        compact_result.entries_processed,
+        compact_result.entries_processed.unwrap_or(0),
         expected_entries,
         max_allowed
     );
@@ -329,7 +335,7 @@ async fn test_basic_compaction() {
     // Extract the actual filesystem path for debugging
     if data_url.starts_with("file://") {
         let fs_path = data_url.strip_prefix("file://");
-        debug!("📍 Filesystem path: {}", fs_path);
+        debug!("📍 Filesystem path: {}", fs_path.unwrap_or("unknown"));
     }
 
     // Create multiple small files
@@ -353,7 +359,7 @@ async fn test_basic_compaction() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-
+            estimated_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
                 temp_dir.path().to_str().unwrap(),
@@ -362,11 +368,11 @@ async fn test_basic_compaction() {
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
         debug!(
             "📄 Batch {} flush result: {} files created, {} entries flushed",
-            batch, flush_result.files_created, flush_result.entries_flushed
+            batch, flush_result.files_created.unwrap_or(0), flush_result.entries_flushed.unwrap_or(0)
         );
 
         // Debug: Check if the flush actually created files
-        if flush_result.files_created == 0 {
+        if flush_result.files_created.unwrap_or(0) == 0 {
             debug!("  ⚠️ WARNING: No files created during flush!");
         }
     }
@@ -414,7 +420,7 @@ async fn test_basic_compaction() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
-
+        estimated_input_size: 1024 * 1024, // 1MB estimated
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
@@ -428,7 +434,7 @@ async fn test_basic_compaction() {
 
     debug!(
         "📊 Compaction result: success={}, entries_processed={}, input_files={}, output_files={}",
-        result.success, result.entries_processed, result.input_files, result.output_files
+        result.success, result.entries_processed.unwrap_or(0), result.input_files.unwrap_or(0), result.output_files.unwrap_or(0)
     );
 
     assert!(result.success);
@@ -437,26 +443,26 @@ async fn test_basic_compaction() {
     // We inserted 4 batches × 10 vectors = 40 vectors total
     let expected_entries = 40u64;
     assert!(
-        result.entries_processed <= expected_entries,
+        result.entries_processed.unwrap_or(0) <= expected_entries,
         "❌ Compaction processed {} entries but we only inserted {}! This indicates data duplication.",
-        result.entries_processed,
+        result.entries_processed.unwrap_or(0),
         expected_entries
     );
 
     // Allow up to 20% overhead for versioning/metadata/deduplication
     let max_allowed = (expected_entries as f64 * 1.2) as u64;
     assert!(
-        result.entries_processed <= max_allowed,
+        result.entries_processed.unwrap_or(0) <= max_allowed,
         "❌ Compaction processed {} entries, exceeding 20% threshold of {} (max allowed: {})",
-        result.entries_processed,
+        result.entries_processed.unwrap_or(0),
         expected_entries,
         max_allowed
     );
     // For now, let's check if files were processed instead of entries
     assert!(
-        result.input_files > 0,
+        result.input_files.unwrap_or(0) > 0,
         "Expected input files to be processed, got {}",
-        result.input_files
+        result.input_files.unwrap_or(0)
     );
 
     // Small delay to ensure filesystem operations complete
@@ -511,7 +517,7 @@ async fn test_basic_compaction() {
         }
     }
 
-    if all_parquet_files.is_none() {
+    if all_parquet_files.is_empty() {
         debug!("  ❌ No parquet files found in data directory!");
 
         // Check ___temp directory
@@ -585,23 +591,27 @@ async fn test_basic_compaction() {
         .await
         .unwrap();
 
+    let total_results: usize = search_results.iter().map(|sr| sr.results.len()).sum();
     debug!(
-        "🔍 Search results after compaction: {} results",
-        search_results.len()
+        "🔍 Search results after compaction: {} search result objects with {} total individual results",
+        search_results.len(),
+        total_results
     );
-    for result in &search_results {
-        debug!("  - ID: {}, Score: {:?}", result.id, result.score);
+    for search_result in &search_results {
+        for result in &search_result.results {
+            debug!("  - ID: {}, Score: {:?}", result.id, result.score);
+        }
     }
 
     // Check if all vectors are present
     for batch in 0..4 {
         for i in 0..10 {
             let id = format!("batch_{}_vec_{}", batch, i);
-            let found = search_results.iter().any(|r| r.id == id);
+            let found = search_results.iter().any(|sr| sr.results.iter().any(|r| r.id == id));
             if !found {
                 error!("❌ Missing vector: {}", id);
             }
-            assert!(found, "Vector {} missing after compaction_info", id);
+            assert!(found, "Vector {} missing after compaction", id);
         }
     }
 }
@@ -648,7 +658,7 @@ async fn test_concurrent_compaction_and_reads() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
+        estimated_size: 1024 * 1024, // 1MB estimated
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
@@ -673,7 +683,7 @@ async fn test_concurrent_compaction_and_reads() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-
+            estimated_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
                 temp_dir.path().to_str().unwrap(),
@@ -693,7 +703,7 @@ async fn test_concurrent_compaction_and_reads() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
-
+            estimated_input_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
                 &temp_dir_path_for_compact,
@@ -739,10 +749,10 @@ async fn test_concurrent_compaction_and_reads() {
 
                         // Check if it's a file access error (expected during compaction)
                         let error_str = e.to_string().to_lowercase();
-                        if error_str.contains_hash("no such file")
-                            || error_str.contains_hash("file not found")
-                            || error_str.contains_hash("no valid parquet files")
-                            || error_str.contains_hash("compaction_info")
+                        if error_str.contains("no such file")
+                            || error_str.contains("file not found")
+                            || error_str.contains("no valid parquet files")
+                            || error_str.contains("compaction_info")
                         {
                             // Expected during compaction - files being replaced
                             debug!("Expected file access error during compaction_info");
@@ -760,7 +770,7 @@ async fn test_concurrent_compaction_and_reads() {
             // During compaction, it's normal to have some failures
             assert!(
                 successful_reads > 0,
-                "Task {} had no successful reads during compaction_info",
+                "Task {} had no successful reads during compaction",
                 task_id
             );
 
@@ -822,6 +832,7 @@ async fn test_concurrent_compaction_across_collections() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
+            estimated_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(collection.clone()),
         };
         engine.do_flush(&flush_params).await.unwrap();
@@ -845,6 +856,7 @@ async fn test_concurrent_compaction_across_collections() {
                 hints: std::collections::HashMap::new(),
                 timeout_ms: None,
                 trigger_compaction: false,
+                estimated_size: 1024 * 1024, // 1MB estimated
                 collection_config: Some(collection.clone()),
             };
             engine.do_flush(&flush_params).await.unwrap();
@@ -869,6 +881,7 @@ async fn test_concurrent_compaction_across_collections() {
                 hints: std::collections::HashMap::new(),
                 timeout_ms: None,
                 priority: crate::storage::traits::OperationPriority::Medium,
+                estimated_input_size: 1024 * 1024, // 1MB estimated
                 collection_config: Some(collection),
             };
 
@@ -947,6 +960,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
+        estimated_size: 1024 * 1024, // 1MB estimated
         collection_config: Some(collection.clone()),
     };
     debug!(
@@ -959,7 +973,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         Ok(result) => {
             debug!(
                 "✅ Flush succeeded: {} entries flushed, success: {}",
-                result.entries_flushed, result.success
+                result.entries_flushed.unwrap_or(0), result.success
             );
         }
         Err(e) => {
@@ -995,6 +1009,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
             hints: std::collections::HashMap::new(),
             timeout_ms: Some(5000), // 5 second timeout
             priority: crate::storage::traits::OperationPriority::Medium,
+            estimated_input_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(collection1),
         };
 
@@ -1006,7 +1021,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         match &result {
             Ok(res) => debug!(
                 "🥇 First compaction result: success={}, entries_processed={}",
-                res.success, res.entries_processed
+                res.success, res.entries_processed.unwrap_or(0)
             ),
             Err(e) => debug!("🥇 First compaction failed: {}", e),
         }
@@ -1033,6 +1048,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
             hints: std::collections::HashMap::new(),
             timeout_ms: Some(1000), // 1 second timeout - should fail
             priority: crate::storage::traits::OperationPriority::Medium,
+            estimated_input_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(collection2),
         };
 
@@ -1044,7 +1060,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         match &result {
             Ok(res) => debug!(
                 "🥈 Second compaction result: success={}, entries_processed={}",
-                res.success, res.entries_processed
+                res.success, res.entries_processed.unwrap_or(0)
             ),
             Err(e) => debug!("🥈 Second compaction failed (expected): {}", e),
         }
@@ -1070,11 +1086,11 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
             debug!("Second compaction failed as expected: {}", e);
             // Should be a lock/coordination error
             assert!(
-                e.to_string().contains_hash("lock")
-                    || e.to_string().contains_hash("timeout")
-                    || e.to_string().contains_hash("operation")
-                    || e.to_string().contains_hash("in progress")
-                    || e.to_string().contains_hash("Failed to read input file"),
+                e.to_string().contains("lock")
+                    || e.to_string().contains("timeout")
+                    || e.to_string().contains("operation")
+                    || e.to_string().contains("in progress")
+                    || e.to_string().contains("Failed to read input file"),
                 "Expected lock/timeout/file error, got: {}",
                 e
             );
@@ -1123,7 +1139,7 @@ async fn test_size_tiered_compaction_strategy() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-
+            estimated_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
                 temp_dir.path().to_str().unwrap(),
@@ -1140,7 +1156,7 @@ async fn test_size_tiered_compaction_strategy() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
-
+        estimated_input_size: 1024 * 1024, // 1MB estimated
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
@@ -1200,14 +1216,12 @@ async fn test_compaction_with_metadata_filtering() {
         let mut vectors = Vec::new();
         for i in 0..20 {
             let mut vector = create_test_vector(&format!("meta_{}_{}", category, i), 128);
-            vector.metadata.push(MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        category.to_string(),
-                    ),
-                ),
-            });
+            vector.metadata.insert(
+                "category".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(Value::StringValue(category.to_string())),
+                },
+            );
             vectors.push(vector);
         }
 
@@ -1221,7 +1235,7 @@ async fn test_compaction_with_metadata_filtering() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-
+            estimated_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
                 temp_dir.path().to_str().unwrap(),
@@ -1238,7 +1252,7 @@ async fn test_compaction_with_metadata_filtering() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
-
+        estimated_input_size: 1024 * 1024, // 1MB estimated
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
@@ -1264,12 +1278,12 @@ async fn test_compaction_with_metadata_filtering() {
 
         let category_count = search_results
             .iter()
-            .filter(|r| r.metadata.get(key).and_then(|v| v.as_deref()) == Some(category))
+            .filter(|r| r.metadata.get("category").and_then(|v| v.as_deref()) == Some(category))
             .count();
 
         assert_eq!(
             category_count, 20,
-            "Category {} vectors missing after compaction_info",
+            "Category {} vectors missing after compaction",
             category
         );
     }
@@ -1315,7 +1329,7 @@ async fn test_incremental_compaction() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-
+            estimated_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
                 temp_dir.path().to_str().unwrap(),
@@ -1333,7 +1347,7 @@ async fn test_incremental_compaction() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
-
+            estimated_input_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
                 temp_dir.path().to_str().unwrap(),

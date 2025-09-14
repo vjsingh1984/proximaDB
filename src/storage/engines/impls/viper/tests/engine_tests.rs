@@ -9,11 +9,12 @@
 
 use std::sync::Arc;
 use tempfile::TempDir;
-use tracing::{debug, error, info};
+use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::SqlValue;
+use std::collections::HashMap;
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
@@ -69,23 +70,25 @@ fn create_test_collection(
             dimension: 128,
             distance_metric: 0,            // Cosine
             storage_engine: 0,             // VIPER
-            primary_indexing_algorithm: 0, // HNSW
+            tags: vec![],
+            description: None,
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
+            storage_config: None,
             primary_index: String::new(),
             auto_index_selection: false,
-            description: None,
-            tags: vec![],
             owner: None,
-            compression: None,
-            storage_location: None,
-            optimization_hints: None,
+            embedding_models: vec![],
         }),
         stats: None,
-        timestamp: chrono::Utc::now().timestamp(),
+        created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
+            primary_path: format!("file://{}", base_path),
+            backup_paths: vec![],
+            engine: 0,
+            engine_config: std::collections::HashMap::new(),
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp(),
         }),
@@ -94,35 +97,35 @@ fn create_test_collection(
 
 /// Create test vector with metadata
 fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "category".to_string(),
+        SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!(
+                "cat_{}",
+                (value * 10.0) as i32 % 5
+            ))),
+        },
+    );
+    metadata.insert(
+        "timestamp".to_string(),
+        SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                chrono::Utc::now().timestamp().to_string(),
+            )),
+        },
+    );
+
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: vec![value; dimension],
-        metadata: vec![
-            MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
-                        "cat_{}",
-                        (value * 10.0) as i32 % 5
-                    )),
-                ),
-            },
-            MetadataItem {
-                key: "timestamp".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        chrono::Utc::now().timestamp().to_string(),
-                    ),
-                ),
-            },
-        ],
-        timestamp: chrono::Utc::now().timestamp() as u32,
-        updated_at: Some(chrono::Utc::now().timestamp() as u32),
+        metadata,
+        timestamp: chrono::Utc::now().timestamp(),
+        updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: Some(value),
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
 
@@ -178,8 +181,8 @@ async fn test_single_vector_operations() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
         collection_config: Some(collection),
+        estimated_size: 1024, // Default size estimate for testing
     };
     engine
         .do_flush(&flush_params)
@@ -271,11 +274,11 @@ async fn test_batch_insertion_and_flush() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
+        estimated_size: 4096, // Test size estimate
     };
 
     let flush_result = engine
@@ -327,11 +330,11 @@ async fn test_similarity_search() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
+        estimated_size: 4096, // Test size estimate
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
@@ -404,11 +407,11 @@ async fn test_collection_operations() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
+        estimated_size: 4096, // Test size estimate
     };
     engine.do_flush(&flush_params).await.unwrap();
 
@@ -488,6 +491,7 @@ async fn test_compaction() {
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
+        estimated_size: 4096, // Test size estimate
     };
 
     let compacted = engine
@@ -693,12 +697,13 @@ async fn test_search_vectors_unified() {
     for (id, vector_data, key, value) in vectors_data {
         let mut vector = create_test_vector(id, 3, 0.0);
         vector.vector = vector_data;
-        vector.metadata = vec![MetadataItem {
-            key: key.to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(value.to_string()),
-            ),
-        }];
+        vector.metadata.clear();
+        vector.metadata.insert(
+            key.to_string(),
+            SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value.to_string())),
+            },
+        );
         vectors_to_flush.push(vector);
     }
 
@@ -712,11 +717,11 @@ async fn test_search_vectors_unified() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
+        estimated_size: 4096, // Test size estimate
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
@@ -762,7 +767,7 @@ async fn test_search_vectors_unified() {
             while let Some(entry) = entries.next_entry().await.unwrap() {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("parquet")
-                    && !path.to_str().unwrap().contains_hash("__")
+                    && !path.to_str().unwrap().contains("__")
                 {
                     parquet_file = format!("file://{}", path.display());
                     debug!("Found parquet file: {}", parquet_file);
@@ -771,7 +776,7 @@ async fn test_search_vectors_unified() {
             }
         }
 
-        if !parquet_file.is_none() {
+        if !parquet_file.is_empty() {
             let search_params = SearchParams {
                 query_vectors: Some(vec![vec![1.0, 0.0, 0.0]]),
                 top_k: Some(10),
@@ -811,7 +816,7 @@ async fn test_search_vectors_unified() {
     {
         use arrow_array::Array;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-        use tracing::{debug, error, info};
+        use tracing::debug;
 
         // Find the parquet file again
         let mut parquet_path = String::new();
@@ -819,7 +824,7 @@ async fn test_search_vectors_unified() {
             while let Some(entry) = entries.next_entry().await.unwrap() {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("parquet")
-                    && !path.to_str().unwrap().contains_hash("__")
+                    && !path.to_str().unwrap().contains("__")
                 {
                     parquet_path = path.to_str().unwrap().to_string();
                     debug!("\nTesting with raw arrow reader: {}", parquet_path);
@@ -828,7 +833,7 @@ async fn test_search_vectors_unified() {
             }
         }
 
-        if !parquet_path.is_none() {
+        if !parquet_path.is_empty() {
             match std::fs::read(&parquet_path) {
                 Ok(data) => {
                     match ParquetRecordBatchReaderBuilder::try_new(bytes::Bytes::from(data)) {
@@ -1018,10 +1023,10 @@ async fn test_search_vectors_unified() {
         .await
         .expect("Failed to search");
 
-    assert!(!minimal_results.is_none());
+    assert!(!minimal_results.is_empty());
     // Vectors and metadata should not be populated when include flags are false
     for result in &minimal_results {
-        assert!(result.vector.is_none() || result.vector.as_ref().unwrap().is_none());
+        assert!(result.vector.is_empty());
     }
 }
 
@@ -1093,11 +1098,11 @@ async fn test_concurrent_operations() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
+        estimated_size: 4096, // Test size estimate
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");

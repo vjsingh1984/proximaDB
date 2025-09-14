@@ -122,6 +122,7 @@ pub struct Entity {
     #[prost(string, tag = "8")]
     pub collection_id: ::prost::alloc::string::String,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EmbeddingVersion {
@@ -2636,6 +2637,7 @@ pub struct FilterCondition {
     pub value: ::core::option::Option<MetadataValue>,
 }
 /// Index configurations
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HnswConfig {
@@ -2656,6 +2658,7 @@ pub struct HnswConfig {
     #[prost(bool, tag = "8")]
     pub lazy_loading: bool,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IvfConfig {
@@ -2674,6 +2677,7 @@ pub struct IvfConfig {
     #[prost(uint32, tag = "7")]
     pub min_train_size: u32,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LshConfig {

@@ -56,12 +56,12 @@ mod write_ahead_log_batch_strategy_tests {
 
         async fn get_unflushed_batches(&self, collection_id: &str) -> Result<Vec<WALVectorBatch>> {
             let collections = self.collections.read().await;
-            Ok(collections.get(key).cloned().clone())
+            Ok(collections.get(collection_id).cloned().unwrap_or_default())
         }
 
         async fn clear_flushed(&self, collection_id: &str) -> Result<usize> {
             let mut collections = self.collections.write().await;
-            let count = collections.get(key).map(|v| v.len());
+            let count = collections.get(collection_id).map(|v| v.len()).unwrap_or(0);
             collections.remove(collection_id);
             Ok(count)
         }
@@ -191,10 +191,10 @@ mod write_ahead_log_batch_strategy_tests {
             Ok(crate::storage::traits::FlushResult {
                 success: true,
                 collections_affected: vec![],
-                entries_flushed: 0,
-                bytes_written: 0,
-                files_created: 0,
-                duration_ms: 0,
+                entries_flushed: Some(0),
+                bytes_written: Some(0),
+                files_created: Some(0),
+                duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
                 compaction_triggered: false,
@@ -240,7 +240,7 @@ mod write_ahead_log_batch_strategy_tests {
         async fn get_collection_stats(&self, collection_id: &str) -> Result<WALStats> {
             if let Some(behavior) = &self.wal_behavior {
                 let all_stats = behavior.stats().await?;
-                if let Some(collection_stat) = all_stats.get(key) {
+                if let Some(collection_stat) = all_stats.get(collection_id) {
                     let mut collection_stats = HashMap::new();
                     collection_stats.insert(collection_id.to_string(), collection_stat.clone());
 

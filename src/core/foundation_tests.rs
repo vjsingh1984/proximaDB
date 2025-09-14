@@ -7,7 +7,7 @@ mod base_traits_tests {
     use std::collections::HashMap;
 
     // Test implementation of BaseConfig
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestConfig {
         pub name: String,
         pub value: i32,
@@ -15,7 +15,7 @@ mod base_traits_tests {
 
     impl BaseConfig for TestConfig {
         fn validate(&self) -> Result<(), String> {
-            if self.name.is_none() {
+            if self.name.is_empty() {
                 return Err("Name cannot be empty".to_string());
             }
             if self.value < 0 {
@@ -25,7 +25,7 @@ mod base_traits_tests {
         }
 
         fn apply_defaults(&mut self) {
-            if self.name.is_none() {
+            if self.name.is_empty() {
                 self.name = "default".to_string();
             }
             if self.value < 0 {
@@ -42,7 +42,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseMetadata
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestMetadata {
         pub id: String,
         pub version: u64,
@@ -60,7 +60,7 @@ mod base_traits_tests {
         }
 
         fn created_at(&self) -> DateTime<Utc> {
-            self.created_at
+            self.timestamp
         }
 
         fn updated_at(&self) -> DateTime<Utc> {
@@ -69,7 +69,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseStats
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestStats {
         pub count: u64,
         pub sum: f64,
@@ -95,7 +95,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseResult
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestResult {
         pub success: bool,
         pub data: Option<String>,
