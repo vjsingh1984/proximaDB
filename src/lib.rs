@@ -122,6 +122,9 @@ pub mod deployment;
 /// Enterprise revenue engine for billing and customer success
 pub mod revenue;
 
+/// Sales enablement platform for customer-facing sales automation
+pub mod sales_enablement;
+
 /// Executive intelligence platform for C-level strategic analytics
 pub mod executive;
 
