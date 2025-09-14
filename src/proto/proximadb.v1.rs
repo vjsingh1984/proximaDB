@@ -123,7 +123,7 @@ pub struct Entity {
     pub collection_id: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EmbeddingVersion {
     #[prost(string, tag = "1")]
     pub model_id: ::prost::alloc::string::String,
@@ -2637,7 +2637,7 @@ pub struct FilterCondition {
 }
 /// Index configurations
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HnswConfig {
     #[prost(uint32, tag = "1")]
     pub m: u32,
@@ -2657,7 +2657,7 @@ pub struct HnswConfig {
     pub lazy_loading: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IvfConfig {
     #[prost(uint32, tag = "1")]
     pub n_lists: u32,
@@ -2675,7 +2675,7 @@ pub struct IvfConfig {
     pub min_train_size: u32,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
-#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LshConfig {
     #[prost(uint32, tag = "1")]
     pub n_hash_tables: u32,

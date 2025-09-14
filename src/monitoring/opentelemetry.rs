@@ -329,6 +329,11 @@ pub fn start_global_span(operation_name: &str, attributes: HashMap<String, Strin
     }
 }
 
+/// Get reference to the global OpenTelemetry manager
+pub fn global_opentelemetry_manager() -> Option<std::sync::MutexGuard<'static, Option<OpenTelemetryManager>>> {
+    GLOBAL_OTEL_MANAGER.lock().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
