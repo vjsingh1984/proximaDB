@@ -116,6 +116,9 @@ pub mod audit;
 /// AI-powered intelligence for Release 2 enterprise platform
 pub mod ai;
 
+/// Enterprise deployment automation for one-click setup
+pub mod deployment;
+
 /// Executive intelligence platform for C-level strategic analytics
 pub mod executive;
 
