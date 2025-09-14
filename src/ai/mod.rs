@@ -8,6 +8,7 @@ pub mod natural_language_api;
 pub mod llm_integration;
 pub mod natural_language;
 pub mod business_intelligence;
+pub mod executive_dashboard;
 
 pub use llm::{LLMIntegrationEngine, AIIntelligenceFoundation};
 pub use nlp::{EnterpriseNLPEngine, BusinessIntent};
@@ -17,6 +18,7 @@ pub use natural_language_api::{NaturalLanguageBusinessIntelligenceAPI, Conversat
 pub use llm_integration::{LLMIntegrationEngine as ModernLLMEngine, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMConfig};
 pub use natural_language::{NLQueryTranslator, TranslationResult, SchemaContext};
 pub use business_intelligence::{BusinessIntelligenceEngine, ExecutiveDashboard, BusinessInsight};
+pub use executive_dashboard::{AIExecutiveDashboard, ExecutiveDashboardRequest, AIExecutiveDashboardResponse};
 
 use anyhow::Result;
 use std::sync::Arc;
