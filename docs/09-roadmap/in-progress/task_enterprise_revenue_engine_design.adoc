@@ -1,0 +1,785 @@
+= Task #1: Enterprise Revenue Engine - Complete Implementation Specification
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+
+[.lead]
+**Complete implementation specification for Enterprise Revenue Engine** - Critical for scaling to $50M+ ARR with automated enterprise billing and customer success.
+
+== Executive Summary
+
+=== Business Critical Importance
+* **Revenue Potential**: $50M+ ARR blocked without enterprise billing infrastructure
+* **Market Requirement**: Enterprise customers require sophisticated usage metering and subscription billing
+* **Competitive Advantage**: Advanced revenue operations vs. simple per-seat pricing competitors
+* **Scaling Enabler**: Cannot efficiently scale to 100+ enterprise customers without automated revenue engine
+
+=== Current Implementation Gap
+* **No Enterprise Billing**: Manual billing vs. automated subscription management
+* **No Usage Metering**: Cannot track and bill for actual platform usage
+* **No Customer Success Automation**: Manual customer health tracking vs. automated expansion identification
+* **No Revenue Operations**: Manual processes vs. automated enterprise revenue optimization
+
+=== Implementation Outcome
+**Complete enterprise revenue platform** enabling automated billing, usage optimization, customer success automation, and revenue scaling to support $50M+ ARR growth.
+
+== Technical Architecture
+
+=== Enterprise Revenue Engine Architecture
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "USAGE METERING LAYER"
+        A[Usage Tracking Engine<br/>Real-time event capture<br/>Multi-dimensional metering]
+        B[Metering Aggregation<br/>Time-based rollups<br/>Customer usage analytics]
+        C[Cost Calculation<br/>Dynamic pricing rules<br/>Usage-based billing]
+    end
+
+    subgraph "SUBSCRIPTION MANAGEMENT"
+        D[Plan Management<br/>Enterprise tier definitions<br/>Feature entitlements]
+        E[Billing Automation<br/>Automated invoicing<br/>Payment processing]
+        F[Revenue Recognition<br/>SaaS accounting compliance<br/>Financial reporting]
+    end
+
+    subgraph "CUSTOMER SUCCESS AUTOMATION"
+        G[Health Monitoring<br/>Usage pattern analysis<br/>Risk detection automation]
+        H[Expansion Detection<br/>Growth opportunity identification<br/>Upselling automation]
+        I[Success Metrics<br/>Customer value tracking<br/>ROI measurement]
+    end
+
+    A --> D
+    B --> E
+    C --> F
+    A --> G
+    B --> H
+    C --> I
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style H fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
+    style I fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+----
+
+== Implementation Plan
+
+=== Phase 1: Usage Metering Engine (Weeks 1-4)
+
+==== Directory Structure
+```
+src/revenue/
+├── metering/
+│   ├── engine.rs              # Main usage tracking engine
+│   ├── events.rs              # Usage event definitions
+│   ├── aggregation.rs         # Time-based usage aggregation
+│   └── pricing.rs             # Dynamic pricing calculations
+├── subscriptions/
+│   ├── manager.rs             # Subscription lifecycle management
+│   ├── plans.rs               # Enterprise plan definitions
+│   └── billing.rs             # Automated billing engine
+├── customer_success/
+│   ├── health_monitor.rs      # Customer health scoring
+│   ├── expansion_detector.rs  # Growth opportunity detection
+│   └── success_metrics.rs     # Customer value measurement
+└── mod.rs                     # Revenue module exports
+```
+
+==== Core Usage Metering Implementation
+[source,rust]
+----
+// File: src/revenue/metering/engine.rs
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use chrono::{DateTime, Utc, Duration};
+use uuid::Uuid;
+
+/// Enterprise usage metering engine for real-time billing
+#[derive(Debug, Clone)]
+pub struct UsageMeteringEngine {
+    /// Real-time usage event storage
+    usage_events: Arc<RwLock<HashMap<String, Vec<UsageEvent>>>>,
+    /// Aggregated usage metrics per tenant
+    usage_aggregates: Arc<RwLock<HashMap<String, UsageAggregate>>>,
+    /// Pricing configuration
+    pricing_config: Arc<PricingConfig>,
+    /// Billing integration
+    billing_integration: Option<Arc<dyn BillingProvider>>,
+}
+
+/// Usage event for enterprise metering
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageEvent {
+    pub event_id: String,
+    pub tenant_id: String,
+    pub user_id: String,
+    pub event_type: UsageEventType,
+    pub timestamp: DateTime<Utc>,
+    pub resource_consumed: ResourceConsumption,
+    pub cost_impact: Option<f64>,
+    pub metadata: HashMap<String, String>,
+}
+
+/// Types of billable usage events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum UsageEventType {
+    VectorSearch { k: usize, dimensions: usize },
+    VectorInsertion { count: usize, dimensions: usize },
+    CollectionCreation { estimated_size: u64 },
+    AIQuery { provider: String, tokens: u32 },
+    DataStorage { bytes: u64 },
+    ComputeTime { milliseconds: u64 },
+    DataTransfer { bytes: u64 },
+}
+
+/// Resource consumption metrics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceConsumption {
+    pub cpu_milliseconds: u64,
+    pub memory_bytes: u64,
+    pub storage_bytes: u64,
+    pub network_bytes: u64,
+    pub ai_tokens: u32,
+    pub custom_metrics: HashMap<String, f64>,
+}
+
+/// Aggregated usage for billing periods
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageAggregate {
+    pub tenant_id: String,
+    pub billing_period_start: DateTime<Utc>,
+    pub billing_period_end: DateTime<Utc>,
+    pub total_searches: u64,
+    pub total_insertions: u64,
+    pub total_ai_queries: u64,
+    pub total_storage_bytes: u64,
+    pub total_compute_ms: u64,
+    pub total_cost: f64,
+    pub usage_by_day: HashMap<String, DailyUsage>,
+}
+
+/// Daily usage breakdown for analytics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyUsage {
+    pub date: String,
+    pub searches: u64,
+    pub insertions: u64,
+    pub ai_queries: u64,
+    pub cost: f64,
+    pub peak_qps: f64,
+}
+
+impl UsageMeteringEngine {
+    /// Create new usage metering engine
+    pub async fn new(pricing_config: PricingConfig) -> Result<Self, anyhow::Error> {
+        Ok(Self {
+            usage_events: Arc::new(RwLock::new(HashMap::new())),
+            usage_aggregates: Arc::new(RwLock::new(HashMap::new())),
+            pricing_config: Arc::new(pricing_config),
+            billing_integration: None,
+        })
+    }
+
+    /// Record billable usage event
+    pub async fn record_usage_event(&self, event: UsageEvent) -> Result<(), anyhow::Error> {
+        tracing::debug!("💰 Recording usage event: {:?} for tenant {}", event.event_type, event.tenant_id);
+
+        // Calculate cost impact
+        let cost = self.calculate_event_cost(&event).await?;
+        let mut enriched_event = event;
+        enriched_event.cost_impact = Some(cost);
+
+        // Store event
+        let mut events = self.usage_events.write().await;
+        events.entry(enriched_event.tenant_id.clone())
+            .or_insert_with(Vec::new)
+            .push(enriched_event.clone());
+
+        // Update aggregates
+        self.update_usage_aggregates(&enriched_event).await?;
+
+        // Trigger billing if threshold reached
+        self.check_billing_threshold(&enriched_event.tenant_id).await?;
+
+        tracing::info!("✅ Usage event recorded: ${:.4} cost for tenant {}", cost, enriched_event.tenant_id);
+        Ok(())
+    }
+
+    /// Calculate cost for specific usage event
+    async fn calculate_event_cost(&self, event: &UsageEvent) -> Result<f64, anyhow::Error> {
+        let pricing = &self.pricing_config;
+
+        let cost = match &event.event_type {
+            UsageEventType::VectorSearch { k, dimensions } => {
+                pricing.search_cost_per_1k * (*k as f64 / 1000.0) * pricing.dimension_multiplier(*dimensions)
+            }
+            UsageEventType::VectorInsertion { count, dimensions } => {
+                pricing.insertion_cost_per_1k * (*count as f64 / 1000.0) * pricing.dimension_multiplier(*dimensions)
+            }
+            UsageEventType::CollectionCreation { estimated_size } => {
+                pricing.collection_creation_base_cost + (pricing.storage_cost_per_gb * (*estimated_size as f64 / 1_073_741_824.0))
+            }
+            UsageEventType::AIQuery { provider: _, tokens } => {
+                pricing.ai_cost_per_1k_tokens * (*tokens as f64 / 1000.0)
+            }
+            UsageEventType::DataStorage { bytes } => {
+                pricing.storage_cost_per_gb * (*bytes as f64 / 1_073_741_824.0)
+            }
+            UsageEventType::ComputeTime { milliseconds } => {
+                pricing.compute_cost_per_hour * (*milliseconds as f64 / 3_600_000.0)
+            }
+            UsageEventType::DataTransfer { bytes } => {
+                pricing.transfer_cost_per_gb * (*bytes as f64 / 1_073_741_824.0)
+            }
+        };
+
+        Ok(cost)
+    }
+
+    /// Update usage aggregates for billing
+    async fn update_usage_aggregates(&self, event: &UsageEvent) -> Result<(), anyhow::Error> {
+        let mut aggregates = self.usage_aggregates.write().await;
+        let tenant_aggregate = aggregates.entry(event.tenant_id.clone())
+            .or_insert_with(|| UsageAggregate::new_for_tenant(&event.tenant_id));
+
+        // Update aggregate counters
+        match &event.event_type {
+            UsageEventType::VectorSearch { .. } => tenant_aggregate.total_searches += 1,
+            UsageEventType::VectorInsertion { count, .. } => tenant_aggregate.total_insertions += *count as u64,
+            UsageEventType::AIQuery { .. } => tenant_aggregate.total_ai_queries += 1,
+            UsageEventType::DataStorage { bytes } => tenant_aggregate.total_storage_bytes += *bytes,
+            UsageEventType::ComputeTime { milliseconds } => tenant_aggregate.total_compute_ms += *milliseconds,
+            _ => {}
+        }
+
+        // Update total cost
+        tenant_aggregate.total_cost += event.cost_impact.unwrap_or(0.0);
+
+        // Update daily usage
+        let date_key = event.timestamp.format("%Y-%m-%d").to_string();
+        let daily_usage = tenant_aggregate.usage_by_day.entry(date_key.clone())
+            .or_insert_with(|| DailyUsage::new(&date_key));
+
+        match &event.event_type {
+            UsageEventType::VectorSearch { .. } => daily_usage.searches += 1,
+            UsageEventType::VectorInsertion { count, .. } => daily_usage.insertions += *count as u64,
+            UsageEventType::AIQuery { .. } => daily_usage.ai_queries += 1,
+            _ => {}
+        }
+
+        daily_usage.cost += event.cost_impact.unwrap_or(0.0);
+
+        Ok(())
+    }
+
+    /// Check if billing threshold is reached
+    async fn check_billing_threshold(&self, tenant_id: &str) -> Result<(), anyhow::Error> {
+        let aggregates = self.usage_aggregates.read().await;
+
+        if let Some(aggregate) = aggregates.get(tenant_id) {
+            // Trigger billing if cost exceeds threshold or time period elapsed
+            if aggregate.total_cost > self.pricing_config.billing_threshold ||
+               (Utc::now() - aggregate.billing_period_start).num_days() >= self.pricing_config.billing_frequency_days as i64 {
+
+                // Trigger billing process
+                if let Some(ref billing_provider) = self.billing_integration {
+                    billing_provider.process_billing(tenant_id, aggregate).await?;
+                    tracing::info!("💳 Billing triggered for tenant {}: ${:.2}", tenant_id, aggregate.total_cost);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get usage summary for customer dashboard
+    pub async fn get_usage_summary(&self, tenant_id: &str, period: BillingPeriod) -> Result<UsageSummary, anyhow::Error> {
+        let aggregates = self.usage_aggregates.read().await;
+
+        if let Some(aggregate) = aggregates.get(tenant_id) {
+            Ok(UsageSummary {
+                tenant_id: tenant_id.to_string(),
+                period: period.clone(),
+                total_cost: aggregate.total_cost,
+                usage_breakdown: self.calculate_usage_breakdown(aggregate),
+                trending: self.calculate_usage_trends(aggregate),
+                recommendations: self.generate_cost_optimization_recommendations(aggregate).await?,
+            })
+        } else {
+            Err(anyhow::anyhow!("No usage data found for tenant: {}", tenant_id))
+        }
+    }
+}
+
+/// Pricing configuration for enterprise billing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PricingConfig {
+    pub search_cost_per_1k: f64,          // Cost per 1000 vector searches
+    pub insertion_cost_per_1k: f64,       // Cost per 1000 vector insertions
+    pub ai_cost_per_1k_tokens: f64,       // Cost per 1000 AI tokens
+    pub storage_cost_per_gb: f64,         // Monthly cost per GB storage
+    pub compute_cost_per_hour: f64,       // Cost per compute hour
+    pub transfer_cost_per_gb: f64,        // Cost per GB data transfer
+    pub collection_creation_base_cost: f64, // Base cost for collection creation
+    pub billing_threshold: f64,           // Trigger billing at this cost amount
+    pub billing_frequency_days: u32,      // Bill every N days
+    pub enterprise_discount_tiers: Vec<DiscountTier>,
+}
+
+/// Discount tiers for enterprise customers
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscountTier {
+    pub name: String,
+    pub min_monthly_spend: f64,
+    pub discount_percentage: f64,
+    pub additional_benefits: Vec<String>,
+}
+
+impl PricingConfig {
+    /// Calculate dimension-based pricing multiplier
+    pub fn dimension_multiplier(&self, dimensions: usize) -> f64 {
+        match dimensions {
+            0..=128 => 1.0,
+            129..=384 => 1.2,
+            385..=768 => 1.5,
+            769..=1536 => 2.0,
+            _ => 2.5, // Very high dimensional vectors cost more
+        }
+    }
+
+    /// Get enterprise pricing (default)
+    pub fn enterprise_default() -> Self {
+        Self {
+            search_cost_per_1k: 0.001,        // $0.001 per 1000 searches
+            insertion_cost_per_1k: 0.002,     // $0.002 per 1000 insertions
+            ai_cost_per_1k_tokens: 0.02,      // $0.02 per 1000 AI tokens
+            storage_cost_per_gb: 0.10,        // $0.10 per GB per month
+            compute_cost_per_hour: 0.05,      // $0.05 per compute hour
+            transfer_cost_per_gb: 0.01,       // $0.01 per GB transfer
+            collection_creation_base_cost: 0.50, // $0.50 per collection
+            billing_threshold: 100.0,         // Bill at $100
+            billing_frequency_days: 30,       // Monthly billing
+            enterprise_discount_tiers: vec![
+                DiscountTier {
+                    name: "Growth".to_string(),
+                    min_monthly_spend: 1000.0,
+                    discount_percentage: 10.0,
+                    additional_benefits: vec!["Priority support".to_string()],
+                },
+                DiscountTier {
+                    name: "Scale".to_string(),
+                    min_monthly_spend: 10000.0,
+                    discount_percentage: 20.0,
+                    additional_benefits: vec!["Dedicated CSM".to_string(), "Custom SLA".to_string()],
+                },
+                DiscountTier {
+                    name: "Enterprise".to_string(),
+                    min_monthly_spend: 50000.0,
+                    discount_percentage: 30.0,
+                    additional_benefits: vec!["24/7 support".to_string(), "Custom deployment".to_string()],
+                },
+            ],
+        }
+    }
+}
+----
+
+=== Phase 2: Subscription Management (Weeks 3-6)
+
+==== Subscription Manager Implementation
+[source,rust]
+----
+// File: src/revenue/subscriptions/manager.rs
+use super::plans::{EnterprisePlan, PlanFeatures, PlanLimits};
+use crate::revenue::metering::{UsageAggregate, UsageEvent};
+
+/// Enterprise subscription management
+#[derive(Debug, Clone)]
+pub struct SubscriptionManager {
+    active_subscriptions: Arc<RwLock<HashMap<String, EnterpriseSubscription>>>,
+    plan_catalog: Arc<PlanCatalog>,
+    billing_engine: Arc<BillingEngine>,
+}
+
+/// Enterprise subscription details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnterpriseSubscription {
+    pub subscription_id: String,
+    pub tenant_id: String,
+    pub plan: EnterprisePlan,
+    pub status: SubscriptionStatus,
+    pub billing_cycle: BillingCycle,
+    pub current_period_start: DateTime<Utc>,
+    pub current_period_end: DateTime<Utc>,
+    pub usage_limits: PlanLimits,
+    pub feature_entitlements: PlanFeatures,
+    pub custom_pricing: Option<CustomPricing>,
+}
+
+/// Subscription status tracking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SubscriptionStatus {
+    Active,
+    PastDue,
+    Cancelled,
+    Suspended,
+    Trial,
+}
+
+/// Billing cycle options
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BillingCycle {
+    Monthly,
+    Quarterly,
+    Annual,
+    Custom { days: u32 },
+}
+
+impl SubscriptionManager {
+    /// Create new subscription for enterprise tenant
+    pub async fn create_enterprise_subscription(
+        &self,
+        tenant_id: &str,
+        plan: EnterprisePlan,
+        custom_pricing: Option<CustomPricing>,
+    ) -> Result<EnterpriseSubscription, anyhow::Error> {
+        let subscription = EnterpriseSubscription {
+            subscription_id: Uuid::new_v4().to_string(),
+            tenant_id: tenant_id.to_string(),
+            plan: plan.clone(),
+            status: SubscriptionStatus::Active,
+            billing_cycle: BillingCycle::Monthly,
+            current_period_start: Utc::now(),
+            current_period_end: Utc::now() + Duration::days(30),
+            usage_limits: plan.limits.clone(),
+            feature_entitlements: plan.features.clone(),
+            custom_pricing,
+        };
+
+        let mut subscriptions = self.active_subscriptions.write().await;
+        subscriptions.insert(tenant_id.to_string(), subscription.clone());
+
+        tracing::info!("✅ Created enterprise subscription for tenant {}: {:?}", tenant_id, plan.tier);
+        Ok(subscription)
+    }
+
+    /// Process billing for subscription
+    pub async fn process_subscription_billing(&self, tenant_id: &str, usage: &UsageAggregate) -> Result<Invoice, anyhow::Error> {
+        let subscriptions = self.active_subscriptions.read().await;
+
+        let subscription = subscriptions.get(tenant_id)
+            .ok_or_else(|| anyhow::anyhow!("No subscription found for tenant: {}", tenant_id))?;
+
+        // Calculate total bill: base subscription + usage overage
+        let base_cost = subscription.plan.base_monthly_cost;
+        let usage_cost = self.calculate_usage_overage(usage, &subscription.usage_limits)?;
+        let subtotal = base_cost + usage_cost;
+
+        // Apply discounts
+        let discount = self.calculate_subscription_discount(subtotal, &subscription.plan)?;
+        let total_cost = subtotal - discount;
+
+        // Generate invoice
+        let invoice = Invoice {
+            invoice_id: Uuid::new_v4().to_string(),
+            tenant_id: tenant_id.to_string(),
+            subscription_id: subscription.subscription_id.clone(),
+            billing_period_start: usage.billing_period_start,
+            billing_period_end: usage.billing_period_end,
+            base_subscription_cost: base_cost,
+            usage_cost,
+            discount_amount: discount,
+            total_amount: total_cost,
+            currency: "USD".to_string(),
+            due_date: Utc::now() + Duration::days(30),
+            line_items: self.generate_invoice_line_items(usage, subscription)?,
+        };
+
+        tracing::info!("💵 Generated invoice for tenant {}: ${:.2} (base: ${:.2}, usage: ${:.2})",
+                      tenant_id, total_cost, base_cost, usage_cost);
+
+        Ok(invoice)
+    }
+}
+----
+
+=== Phase 3: Customer Success Automation (Weeks 5-8)
+
+==== Customer Health Monitoring Implementation
+[source,rust]
+----
+// File: src/revenue/customer_success/health_monitor.rs
+use crate::revenue::metering::UsageAggregate;
+
+/// Customer health monitoring and success automation
+#[derive(Debug, Clone)]
+pub struct CustomerHealthMonitor {
+    health_scores: Arc<RwLock<HashMap<String, CustomerHealthScore>>>,
+    success_metrics: Arc<RwLock<HashMap<String, CustomerSuccessMetrics>>>,
+    config: HealthMonitoringConfig,
+}
+
+/// Customer health score with risk indicators
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomerHealthScore {
+    pub tenant_id: String,
+    pub overall_health: f64,                    // 0.0 to 1.0 score
+    pub usage_health: f64,                      // Usage pattern health
+    pub engagement_health: f64,                 // Platform engagement
+    pub support_health: f64,                    // Support interaction health
+    pub growth_trajectory: GrowthTrajectory,
+    pub risk_factors: Vec<RiskFactor>,
+    pub expansion_opportunities: Vec<ExpansionOpportunity>,
+    pub last_updated: DateTime<Utc>,
+}
+
+/// Growth trajectory analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum GrowthTrajectory {
+    Expanding,      // Growing usage and engagement
+    Stable,         // Consistent usage patterns
+    Declining,      // Decreasing usage or engagement
+    Churning,       // High risk of cancellation
+}
+
+/// Risk factors for customer success
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RiskFactor {
+    pub risk_type: RiskType,
+    pub severity: RiskSeverity,
+    pub description: String,
+    pub mitigation_actions: Vec<String>,
+}
+
+/// Types of customer risks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RiskType {
+    UsageDecline,
+    SupportIssues,
+    PaymentProblems,
+    EngagementDrop,
+    CompetitorEvaluation,
+}
+
+/// Risk severity levels
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RiskSeverity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl CustomerHealthMonitor {
+    /// Calculate comprehensive customer health score
+    pub async fn calculate_health_score(&self, tenant_id: &str, usage: &UsageAggregate) -> Result<CustomerHealthScore, anyhow::Error> {
+        // Usage health (40% weight)
+        let usage_health = self.calculate_usage_health(usage).await?;
+
+        // Engagement health (30% weight)
+        let engagement_health = self.calculate_engagement_health(tenant_id).await?;
+
+        // Support health (30% weight)
+        let support_health = self.calculate_support_health(tenant_id).await?;
+
+        // Overall weighted health score
+        let overall_health = (usage_health * 0.4) + (engagement_health * 0.3) + (support_health * 0.3);
+
+        // Determine growth trajectory
+        let growth_trajectory = self.analyze_growth_trajectory(usage).await?;
+
+        // Identify risk factors
+        let risk_factors = self.identify_risk_factors(tenant_id, overall_health, &growth_trajectory).await?;
+
+        // Identify expansion opportunities
+        let expansion_opportunities = self.identify_expansion_opportunities(usage, &growth_trajectory).await?;
+
+        let health_score = CustomerHealthScore {
+            tenant_id: tenant_id.to_string(),
+            overall_health,
+            usage_health,
+            engagement_health,
+            support_health,
+            growth_trajectory,
+            risk_factors,
+            expansion_opportunities,
+            last_updated: Utc::now(),
+        };
+
+        // Store for tracking
+        let mut scores = self.health_scores.write().await;
+        scores.insert(tenant_id.to_string(), health_score.clone());
+
+        tracing::info!("📊 Updated health score for tenant {}: {:.2} ({})",
+                      tenant_id, overall_health, self.health_rating(overall_health));
+
+        Ok(health_score)
+    }
+
+    /// Calculate usage pattern health
+    async fn calculate_usage_health(&self, usage: &UsageAggregate) -> Result<f64, anyhow::Error> {
+        let mut health_score = 0.5; // Start at neutral
+
+        // Positive indicators
+        if usage.total_searches > 1000 { health_score += 0.2; }
+        if usage.total_ai_queries > 100 { health_score += 0.2; }
+        if usage.usage_by_day.len() >= 7 { health_score += 0.1; } // Regular usage
+
+        // Growth indicators
+        let recent_usage = self.get_recent_usage_trend(usage);
+        if recent_usage > 1.1 { health_score += 0.2; } // 10%+ growth
+
+        Ok(health_score.min(1.0))
+    }
+
+    /// Identify expansion opportunities
+    async fn identify_expansion_opportunities(&self, usage: &UsageAggregate, trajectory: &GrowthTrajectory) -> Result<Vec<ExpansionOpportunity>, anyhow::Error> {
+        let mut opportunities = Vec::new();
+
+        // High usage expansion
+        if usage.total_searches > 10000 {
+            opportunities.push(ExpansionOpportunity {
+                opportunity_type: ExpansionType::HigherTier,
+                description: "Customer shows high search volume - candidate for enterprise tier upgrade".to_string(),
+                estimated_revenue_impact: 5000.0,
+                probability: 0.8,
+                recommended_actions: vec![
+                    "Reach out with enterprise tier benefits".to_string(),
+                    "Offer volume discount and advanced features".to_string(),
+                ],
+            });
+        }
+
+        // AI usage expansion
+        if usage.total_ai_queries > 500 {
+            opportunities.push(ExpansionOpportunity {
+                opportunity_type: ExpansionType::AIFeatures,
+                description: "Heavy AI usage indicates opportunity for advanced AI features".to_string(),
+                estimated_revenue_impact: 2000.0,
+                probability: 0.7,
+                recommended_actions: vec![
+                    "Demo advanced AI capabilities".to_string(),
+                    "Offer AI-focused enterprise plan".to_string(),
+                ],
+            });
+        }
+
+        // Growth trajectory expansion
+        if matches!(trajectory, GrowthTrajectory::Expanding) {
+            opportunities.push(ExpansionOpportunity {
+                opportunity_type: ExpansionType::AdditionalSeats,
+                description: "Expanding usage pattern suggests team growth".to_string(),
+                estimated_revenue_impact: 3000.0,
+                probability: 0.6,
+                recommended_actions: vec![
+                    "Offer team expansion packages".to_string(),
+                    "Provide multi-user training and onboarding".to_string(),
+                ],
+            });
+        }
+
+        Ok(opportunities)
+    }
+
+    fn health_rating(&self, score: f64) -> &'static str {
+        match score {
+            s if s >= 0.8 => "Excellent",
+            s if s >= 0.6 => "Good",
+            s if s >= 0.4 => "Fair",
+            s if s >= 0.2 => "Poor",
+            _ => "Critical",
+        }
+    }
+}
+----
+
+== Testing Strategy
+
+=== Revenue Engine Testing Framework
+[cols="3,2,3", options="header"]
+|===
+| Test Category | Priority | Test Coverage
+
+| **Usage Metering Accuracy**
+| Critical
+| Verify all billable events are captured and calculated correctly
+
+| **Billing Automation**
+| Critical
+| Test automated invoice generation and payment processing
+
+| **Customer Health Scoring**
+| High
+| Validate health score calculations and risk factor identification
+
+| **Revenue Operations**
+| High
+| Test expansion opportunity detection and customer success automation
+|===
+
+=== Integration Testing
+* **Multi-Tenant Revenue**: Validate per-tenant billing isolation
+* **Usage Event Accuracy**: Verify all ProximaDB operations generate correct usage events
+* **Pricing Calculation**: Test complex pricing scenarios with discounts and tiers
+* **Customer Success Automation**: Validate automated health monitoring and expansion detection
+
+== Success Metrics
+
+=== Revenue Metrics
+* **ARR Growth**: Target $50M+ ARR within 12 months
+* **Customer LTV**: Increase average customer lifetime value by 300%
+* **Revenue Per Customer**: Optimize to $100K+ annual revenue per enterprise customer
+* **Billing Accuracy**: 99.9%+ accuracy in usage metering and billing
+
+=== Operational Metrics
+* **Billing Automation**: 95%+ of billing processes automated
+* **Customer Health**: 90%+ accuracy in churn prediction and expansion identification
+* **Revenue Operations**: 80% reduction in manual revenue management tasks
+* **Customer Success**: 50%+ improvement in customer retention and expansion rates
+
+== Implementation Notes for Future Sessions
+
+=== Critical Context for Session Continuity
+* **Revenue Engine Priority**: This task unlocks $50M+ ARR potential with ProximaDB's existing capabilities
+* **Technical Foundation**: ProximaDB's comprehensive platform ready for revenue optimization
+* **Market Timing**: Enterprise customers require sophisticated billing for $1M+ annual contracts
+* **Competitive Advantage**: Advanced revenue operations vs. simple pricing of competitors
+
+=== Implementation File Structure
+```
+src/revenue/
+├── metering/engine.rs          # Usage tracking and cost calculation
+├── subscriptions/manager.rs    # Enterprise subscription management
+├── customer_success/health_monitor.rs # Customer health and expansion
+├── billing/automation.rs      # Automated billing and invoicing
+└── analytics/revenue_ops.rs   # Revenue operations and optimization
+```
+
+=== Configuration Template
+```toml
+[revenue]
+enable_usage_metering = true
+enable_automated_billing = true
+billing_frequency_days = 30
+billing_threshold_usd = 100.0
+
+[revenue.pricing]
+search_cost_per_1k = 0.001
+insertion_cost_per_1k = 0.002
+ai_cost_per_1k_tokens = 0.02
+storage_cost_per_gb_monthly = 0.10
+
+[revenue.enterprise_tiers]
+growth_tier_min_spend = 1000.0
+scale_tier_min_spend = 10000.0
+enterprise_tier_min_spend = 50000.0
+```
+
+This specification provides complete implementation guidance for building enterprise revenue infrastructure that enables ProximaDB to scale to $50M+ ARR through automated billing, customer success automation, and revenue optimization.

@@ -394,6 +394,14 @@ Important Cargo feature flags (use with `--features`):
 - `/data/collections/`: Per-collection engine-specific files
 - `/data/viper_data/`: VIPER engine columnar storage
 
+### Multi-Region Strategy
+ProximaDB leverages **cloud-native multi-region capabilities** through:
+- **IntelligentFilesystem**: Multi-cloud abstraction handles S3 Cross-Region Replication, Azure Geo-Redundancy, GCS Multi-Region buckets
+- **Asynchronous Storage Replication**: Cloud providers handle data replication automatically
+- **Application Coordination**: ProximaDB coordinates cross-region access through intelligent routing
+- **On-Premises**: Incremental rsync for data synchronization between sites
+- **No Custom Replication**: Relies on proven cloud provider replication rather than custom implementation
+
 ## Important Architecture Concepts
 
 ### Quantization System
