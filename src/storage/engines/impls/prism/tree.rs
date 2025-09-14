@@ -110,7 +110,7 @@ impl PrismTree {
         accuracy_threshold: f64,
         max_results: usize,
     ) -> Result<Vec<SearchResult>> {
-        let mut results = Vec::new();
+        let mut results: Vec<SearchResult> = Vec::new();
         let mut current_accuracy = 0.0;
         
         // Start with binary quantization for speed

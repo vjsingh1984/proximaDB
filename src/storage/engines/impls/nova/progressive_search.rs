@@ -370,7 +370,12 @@ impl ProgressiveColumnarSearch {
             // Use zone map intersection for pruning
             if superblock.can_contain_candidates(
                 query_vector,
-                self.distance_metric,
+                match self.distance_metric {
+                    DistanceMetric::Cosine => "cosine".to_string(),
+                    DistanceMetric::Euclidean => "euclidean".to_string(),
+                    DistanceMetric::DotProduct => "dot".to_string(),
+                    _ => "euclidean".to_string(),
+                },
                 f32::INFINITY, // For now, don't use distance threshold
             ) {
                 relevant_blocks.push(superblock.clone());

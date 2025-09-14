@@ -310,7 +310,9 @@ impl SstCompactor {
 
         // Send AXIS update notifications if there are changes
         if !stats.deleted_vector_ids.is_empty() || !stats.updated_vector_ids.is_empty() {
-            self.notify_axis_of_changes(&stats).await;
+            // Extract collection_id from output file path or use placeholder
+            let collection_id = output_file.split('/').nth(1).unwrap_or("unknown");
+            self.notify_axis_of_changes(&stats, collection_id, &output_file).await;
         }
 
         Ok(stats)

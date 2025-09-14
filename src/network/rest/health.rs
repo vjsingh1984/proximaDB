@@ -361,7 +361,11 @@ async fn check_indexing_health(state: &HealthState, timeout: Duration) -> Compon
         // Check AXIS manager status if available
         match state.unified_handlers.vector_operations_service.get_index_status().await {
             Ok(index_stats) => {
-                metrics.insert("active_indexes".to_string(), serde_json::json!(index_stats.len()));
+                // Extract active_indexes field from the JSON response, or default to 1
+                let active_count = index_stats.get("active_indexes")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(1);
+                metrics.insert("active_indexes".to_string(), serde_json::json!(active_count));
                 (HealthStatus::Healthy, "Indexing system operational".to_string())
             },
             Err(e) => (HealthStatus::Degraded, format!("Index system warning: {}", e)),

@@ -424,7 +424,7 @@ impl StreamingSearchEngine {
 
                     let intersects = superblock.can_contain_candidates(
                         query_vector,
-                        DistanceMetric::Euclidean,
+                        "euclidean".to_string(),
                         f32::INFINITY,
                     );
 

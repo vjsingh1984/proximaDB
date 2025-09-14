@@ -309,7 +309,7 @@ pub struct StorageConfig {
 }
 
 /// Storage location configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageLocation {
     /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb")
     pub url: String,
@@ -336,7 +336,7 @@ impl Default for StorageLocation {
 }
 
 /// Assignment configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssignmentConfig {
     /// Assignment strategy: "hash", "round-robin", "weighted"
     pub strategy: String,
@@ -362,7 +362,7 @@ impl Default for AssignmentConfig {
 }
 
 /// Metadata backend configuration for cloud and local storage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataBackendConfig {
     /// Backend type (filestore, memory)
     pub backend_type: String,
@@ -391,7 +391,7 @@ impl Default for MetadataBackendConfig {
 }
 
 /// Cloud storage configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudStorageConfig {
     /// AWS S3 configuration
     pub s3_config: Option<S3Config>,
@@ -404,7 +404,7 @@ pub struct CloudStorageConfig {
 }
 
 /// AWS S3 configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S3Config {
     pub region: String,
     pub bucket: String,
@@ -415,7 +415,7 @@ pub struct S3Config {
 }
 
 /// Azure Blob Storage configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AzureConfig {
     pub account_name: String,
     pub container: String,
@@ -425,7 +425,7 @@ pub struct AzureConfig {
 }
 
 /// Google Cloud Storage configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GcsConfig {
     pub project_id: String,
     pub bucket: String,
@@ -434,7 +434,7 @@ pub struct GcsConfig {
 }
 
 /// Filesystem configuration for performance optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemOptimizationConfig {
     /// Enable write strategy caching
     pub enable_write_strategy_cache: bool,
@@ -460,7 +460,7 @@ pub enum TempStrategy {
 }
 
 /// Atomic operations configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionalOperationsConfig {
     /// Enable atomic writes for local filesystem
     pub enable_local_atomic: bool,
@@ -531,7 +531,7 @@ impl StorageConfig {
 /// User-facing write buffer configuration (from TOML files)
 /// This is the simple configuration that users specify in their config files.
 /// It gets converted to the internal WALConfig for the engine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WriteBufferUserConfig {
     /// Total write buffer size across all collections in MB
     pub write_buffer_size_mb: u64,
@@ -645,7 +645,7 @@ impl Default for CompactionConfig {
 }
 
 /// SST (Sorted String Table) engine configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstConfig {
     /// Number of levels in the SST tree
     pub level_count: u8,
@@ -704,7 +704,7 @@ pub struct SstConfig {
 }
 
 /// VIPER (columnar storage) engine configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperConfig {
     /// Parquet file configuration
     pub row_group_size: usize,

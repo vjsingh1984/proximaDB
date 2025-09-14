@@ -6,9 +6,8 @@
 use super::*;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::specialized::{
-    BitmapFilterCache, IndexNodeCache, MetadataStore, VectorStore,
+    BitmapFilterCache, IndexNodeCache, MetadataStore,
     index_node_cache::{MetadataStats, SstIndexEntry, SstableIndex},
-    vector_store::{CompressedBlock, CompressionType, SstBlockKey},
 };
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -608,7 +608,7 @@ impl ColdStorageBackend {
                     model_version: "1".to_string(),
                     vector: values,
                     dimension,
-                    created_at: None,
+                    created_at_ms: 0,
                     model_params: std::collections::HashMap::new(),
                     modality: crate::proto::proximadb_v1::Modality::Text.into(),
                 }

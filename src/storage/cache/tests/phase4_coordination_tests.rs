@@ -3,7 +3,7 @@
 use super::super::orchestrator::*;
 use super::super::specialized::{
     bitmap_filter_cache::BitmapFilterCache, index_node_cache::IndexNodeCache,
-    metadata_store::MetadataStore, query_cache::QueryCache, vector_store::VectorStore,
+    metadata_store::MetadataStore, query_cache::QueryCache,
 };
 use super::super::*;
 use std::collections::HashMap;

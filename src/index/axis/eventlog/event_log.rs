@@ -21,7 +21,7 @@ use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 /// Index event for async processing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexEvent {
     /// Unique event ID
     pub event_id: String,

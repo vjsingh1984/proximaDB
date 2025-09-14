@@ -351,3 +351,297 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorRecord {
         deserializer.deserialize_struct("VectorRecord", &["id", "vector", "metadata", "timestamp", "updated_at", "expires_at"], VectorRecordVisitor)
     }
 }
+
+// Custom serde for Collection
+impl Serialize for crate::proto::proximadb_v1::Collection {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Collection", 5)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("config", &self.config)?;
+        state.serialize_field("stats", &self.stats)?;
+        state.serialize_field("created_at", &self.created_at)?;
+        state.serialize_field("updated_at", &self.updated_at)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Collection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Id,
+            Config,
+            Stats,
+            CreatedAt,
+            UpdatedAt,
+        }
+
+        struct CollectionVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for CollectionVisitor {
+            type Value = crate::proto::proximadb_v1::Collection;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct Collection")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::Collection, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut id = None;
+                let mut config = None;
+                let mut stats = None;
+                let mut created_at = None;
+                let mut updated_at = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Id => {
+                            if id.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id = Some(map.next_value()?);
+                        }
+                        Field::Config => {
+                            if config.is_some() {
+                                return Err(serde::de::Error::duplicate_field("config"));
+                            }
+                            config = Some(map.next_value()?);
+                        }
+                        Field::Stats => {
+                            if stats.is_some() {
+                                return Err(serde::de::Error::duplicate_field("stats"));
+                            }
+                            stats = Some(map.next_value()?);
+                        }
+                        Field::CreatedAt => {
+                            if created_at.is_some() {
+                                return Err(serde::de::Error::duplicate_field("created_at"));
+                            }
+                            created_at = Some(map.next_value()?);
+                        }
+                        Field::UpdatedAt => {
+                            if updated_at.is_some() {
+                                return Err(serde::de::Error::duplicate_field("updated_at"));
+                            }
+                            updated_at = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let id = id.ok_or_else(|| serde::de::Error::missing_field("id"))?;
+                let created_at = created_at.ok_or_else(|| serde::de::Error::missing_field("created_at"))?;
+                let updated_at = updated_at.ok_or_else(|| serde::de::Error::missing_field("updated_at"))?;
+
+                Ok(crate::proto::proximadb_v1::Collection {
+                    id,
+                    config,
+                    stats,
+                    created_at,
+                    updated_at,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("Collection", &["id", "config", "stats", "created_at", "updated_at"], CollectionVisitor)
+    }
+}
+
+// Custom serde for CollectionConfig
+impl Serialize for crate::proto::proximadb_v1::CollectionConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("CollectionConfig", 5)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("dimension", &self.dimension)?;
+        state.serialize_field("distance_metric", &self.distance_metric)?;
+        state.serialize_field("storage_engine", &self.storage_engine)?;
+        state.serialize_field("tags", &self.tags)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Name,
+            Dimension,
+            DistanceMetric,
+            StorageEngine,
+            Tags,
+        }
+
+        struct CollectionConfigVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for CollectionConfigVisitor {
+            type Value = crate::proto::proximadb_v1::CollectionConfig;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct CollectionConfig")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::CollectionConfig, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut name = None;
+                let mut dimension = None;
+                let mut distance_metric = None;
+                let mut storage_engine = None;
+                let mut tags = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Name => {
+                            if name.is_some() {
+                                return Err(serde::de::Error::duplicate_field("name"));
+                            }
+                            name = Some(map.next_value()?);
+                        }
+                        Field::Dimension => {
+                            if dimension.is_some() {
+                                return Err(serde::de::Error::duplicate_field("dimension"));
+                            }
+                            dimension = Some(map.next_value()?);
+                        }
+                        Field::DistanceMetric => {
+                            if distance_metric.is_some() {
+                                return Err(serde::de::Error::duplicate_field("distance_metric"));
+                            }
+                            distance_metric = Some(map.next_value()?);
+                        }
+                        Field::StorageEngine => {
+                            if storage_engine.is_some() {
+                                return Err(serde::de::Error::duplicate_field("storage_engine"));
+                            }
+                            storage_engine = Some(map.next_value()?);
+                        }
+                        Field::Tags => {
+                            if tags.is_some() {
+                                return Err(serde::de::Error::duplicate_field("tags"));
+                            }
+                            tags = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let name = name.ok_or_else(|| serde::de::Error::missing_field("name"))?;
+                let dimension = dimension.ok_or_else(|| serde::de::Error::missing_field("dimension"))?;
+                let distance_metric = distance_metric.ok_or_else(|| serde::de::Error::missing_field("distance_metric"))?;
+                let storage_engine = storage_engine.ok_or_else(|| serde::de::Error::missing_field("storage_engine"))?;
+                let tags = tags.unwrap_or_default();
+
+                Ok(crate::proto::proximadb_v1::CollectionConfig {
+                    name,
+                    dimension,
+                    distance_metric,
+                    storage_engine,
+                    tags,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("CollectionConfig", &["name", "dimension", "distance_metric", "storage_engine", "tags"], CollectionConfigVisitor)
+    }
+}
+
+// Custom serde for CollectionStats
+impl Serialize for crate::proto::proximadb_v1::CollectionStats {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("CollectionStats", 3)?;
+        state.serialize_field("vector_count", &self.vector_count)?;
+        state.serialize_field("index_size_bytes", &self.index_size_bytes)?;
+        state.serialize_field("data_size_bytes", &self.data_size_bytes)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionStats {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            VectorCount,
+            IndexSizeBytes,
+            DataSizeBytes,
+        }
+
+        struct CollectionStatsVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for CollectionStatsVisitor {
+            type Value = crate::proto::proximadb_v1::CollectionStats;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct CollectionStats")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::CollectionStats, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut vector_count = None;
+                let mut index_size_bytes = None;
+                let mut data_size_bytes = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::VectorCount => {
+                            if vector_count.is_some() {
+                                return Err(serde::de::Error::duplicate_field("vector_count"));
+                            }
+                            vector_count = Some(map.next_value()?);
+                        }
+                        Field::IndexSizeBytes => {
+                            if index_size_bytes.is_some() {
+                                return Err(serde::de::Error::duplicate_field("index_size_bytes"));
+                            }
+                            index_size_bytes = Some(map.next_value()?);
+                        }
+                        Field::DataSizeBytes => {
+                            if data_size_bytes.is_some() {
+                                return Err(serde::de::Error::duplicate_field("data_size_bytes"));
+                            }
+                            data_size_bytes = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let vector_count = vector_count.ok_or_else(|| serde::de::Error::missing_field("vector_count"))?;
+                let index_size_bytes = index_size_bytes.ok_or_else(|| serde::de::Error::missing_field("index_size_bytes"))?;
+                let data_size_bytes = data_size_bytes.ok_or_else(|| serde::de::Error::missing_field("data_size_bytes"))?;
+
+                Ok(crate::proto::proximadb_v1::CollectionStats {
+                    vector_count,
+                    index_size_bytes,
+                    data_size_bytes,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("CollectionStats", &["vector_count", "index_size_bytes", "data_size_bytes"], CollectionStatsVisitor)
+    }
+}

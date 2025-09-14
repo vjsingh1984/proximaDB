@@ -297,7 +297,7 @@ pub fn sort_by_hilbert(records: &mut [VectorRecord], hilbert_keys: &[HilbertKey]
 
 #[cfg(test)]
 mod tests {
-    use super::hilbert_curve::HilbertCurve;
+    use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
     use super::*;
 
     #[test]

@@ -180,7 +180,7 @@ pub enum ExecutionStrategy {
 }
 
 /// Query execution plan generated from internal AST
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionPlan {
     pub execution_strategy: ExecutionStrategy,
     pub operations: Vec<ExecutionOperation>,

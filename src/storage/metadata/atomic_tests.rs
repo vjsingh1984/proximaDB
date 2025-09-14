@@ -358,13 +358,13 @@ mod tests {
         // Test initial state
         assert_eq!(transaction.state, TransactionState::Active);
         assert_eq!(transaction.isolation_level, isolation_level);
-        assert!(transaction.operations.is_none());
+        assert!(transaction.operations.is_empty());
         assert!(!transaction.is_expired()); // Should not be expired immediately
 
         // Test timeout calculation
         let now = Utc::now();
         assert!(transaction.timeout_at > now);
-        assert!(transaction.created_at <= now);
+        assert!(transaction.timestamp <= now);
     }
 
     #[test]
@@ -467,7 +467,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains_hash("Transaction not found")
+                .contains("Transaction not found")
         );
     }
 
@@ -508,7 +508,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains_hash("Transaction not found")
+                .contains("Transaction not found")
         );
     }
 
@@ -576,7 +576,7 @@ mod tests {
 
         // Should retrieve collection
         let retrieved = store
-            .collection("test_collection")
+            .get_collection("test_collection")
             .await
             .expect("Failed to get collection");
 
@@ -593,7 +593,7 @@ mod tests {
 
         // Should return None for non-existent collection
         let result = store
-            .collection("nonexistent")
+            .get_collection("nonexistent")
             .await
             .expect("Get collection should not fail");
 
@@ -744,7 +744,7 @@ mod tests {
             .await
             .expect("Failed to get system metadata_info");
 
-        assert!(!system_metadata.node_id.is_none());
+        assert!(!system_metadata.node_id.is_empty());
 
         // Should update system metadata (currently no-op)
         store
@@ -759,7 +759,7 @@ mod tests {
 
         // Should get storage stats
         let stats = store
-            .get_storage_stats()
+            .get_stats()
             .await
             .expect("Failed to get storage stats");
 
@@ -811,7 +811,7 @@ mod tests {
             },
             MetadataOperation::UpdateAccessPattern {
                 collection_id: "multi_op_collection".to_string(),
-                pattern: AccessPattern::Hot,
+                access_pattern: "Hot".to_string(),
             },
             MetadataOperation::UpdateTags {
                 collection_id: "multi_op_collection".to_string(),
@@ -844,6 +844,6 @@ mod tests {
         assert_eq!(tx1, tx2);
 
         let tx_str = format!("{}", tx1);
-        assert!(!tx_str.is_none());
+        assert!(!tx_str.is_empty());
     }
 }

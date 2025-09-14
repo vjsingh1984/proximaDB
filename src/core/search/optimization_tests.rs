@@ -10,7 +10,7 @@ mod tests {
         PipelineConfig, UnifiedProgressiveSearchPipeline,
     };
     use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-    use crate::storage::cache::specialized::{MetadataStore, QueryCache, VectorStore};
+    use crate::storage::cache::specialized::{MetadataStore, QueryCache};
     use crate::storage::persistence::write_ahead_log::parallel_search::ParallelWALSearch;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -222,7 +222,6 @@ mod tests {
 
     #[tokio::test]
     // Removed outdated integrated search optimization end-to-end test
-    #[tokio::test]
     async fn test_zero_copy_operations() {
         init_test_environment();
 
@@ -251,7 +250,6 @@ mod tests {
         assert!(buffer2.is_ok());
     }
 
-    #[tokio::test]
     // Removed performance benchmark test from unit tests to avoid flakiness and outdated APIs
 
     // Helper functions

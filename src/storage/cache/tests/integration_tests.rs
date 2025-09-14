@@ -4,7 +4,7 @@ use super::super::config::{AlertThresholds, CacheConfig};
 use super::super::orchestrator::{CacheType as OrchestratorCacheType, CrossCacheOrchestrator};
 use super::super::specialized::{
     bitmap_filter_cache::BitmapFilterCache, index_node_cache::IndexNodeCache,
-    metadata_store::MetadataStore, query_cache::QueryCache, vector_store::VectorStore,
+    metadata_store::MetadataStore, query_cache::QueryCache,
 };
 use super::super::*;
 // use super::super::monitoring::{CacheMonitoringDashboard, AlertManager};

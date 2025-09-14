@@ -306,7 +306,7 @@ pub struct MetricProperties {
 }
 
 /// Result of a similarity computation with semantic meaning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SimilarityResult {
     /// The computed distance value (always normalized: lower = more similar)
     pub distance: f32,

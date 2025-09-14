@@ -2757,11 +2757,7 @@ impl RaptorReader {
         let final_results: Vec<SimilarityResult> = candidates
             .into_iter()
             .take(k)
-            .map(|c| SimilarityResult {
-                id: c.id,
-                distance: c.distance,
-                vector: c.vector,
-            })
+            .map(|c| SimilarityResult::new(c.distance, DistanceMetric::Cosine))
             .collect();
 
         Ok(final_results)

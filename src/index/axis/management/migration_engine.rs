@@ -413,7 +413,7 @@ impl IndexMigrationEngine {
             new_strategy: to.clone(),
             duration_ms: total_duration.as_millis() as u64,
             vectors_migrated,
-            performance_improvement: self.calculate_performance_improvement(&from, &to, total_duration).await,
+            performance_improvement: self.calculate_performance_improvement(&from, &to, total_duration).await as f32,
             errors,
         };
 
