@@ -144,6 +144,10 @@ pub struct VectorOperationsService {
     collection_service: Arc<crate::services::collection::manager::CollectionService>,
     /// Optional global cache orchestrator for richer cache stats/prefetch
     orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
+
+    // NEW: Multi-tenant integration
+    tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
+    rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 }
 
 impl VectorOperationsService {
@@ -162,6 +166,13 @@ impl VectorOperationsService {
             collection_service,
         );
         svc.orchestrator = ctx.orchestrator.clone();
+        // Add tenant integration from context if available
+        if let Some(ref tenant_manager) = ctx.tenant_manager {
+            svc.tenant_manager = Some(tenant_manager.clone());
+        }
+        if let Some(ref rbac_enforcer) = ctx.rbac_enforcer {
+            svc.rbac_enforcer = Some(rbac_enforcer.clone());
+        }
         svc
     }
     /// Expose the unified storage engine as a trait object for integration points
@@ -426,7 +437,23 @@ impl VectorOperationsService {
             axis_index_manager,
             collection_service,
             orchestrator: None,
+
+            // NEW: Multi-tenant integration (initially None, set via builder methods)
+            tenant_manager: None,
+            rbac_enforcer: None,
         }
+    }
+
+    /// Set tenant manager for multi-tenant support (builder-style)
+    pub fn with_tenant_manager(mut self, tenant_manager: Arc<crate::storage::tenant::TenantManager>) -> Self {
+        self.tenant_manager = Some(tenant_manager);
+        self
+    }
+
+    /// Set RBAC enforcer for permission validation (builder-style)
+    pub fn with_rbac_enforcer(mut self, rbac_enforcer: Arc<crate::storage::tenant::EnhancedRBACManager>) -> Self {
+        self.rbac_enforcer = Some(rbac_enforcer);
+        self
     }
 
     /// Attach orchestrator (builder-style)

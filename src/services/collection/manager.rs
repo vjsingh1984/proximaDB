@@ -92,6 +92,10 @@ pub struct CollectionService {
     /// Using dashmap for lock-free concurrent access
     index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::IndexConfig>>,
     storage_config: StorageConfig,
+
+    // NEW: Multi-tenant integration
+    tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
+    rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 }
 
 impl CollectionService {
@@ -121,14 +125,38 @@ impl CollectionService {
             filesystem_factory,
             index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
+            tenant_manager: None, // Will be set via with_tenant_manager()
+            rbac_enforcer: None,  // Will be set via with_rbac_enforcer()
         })
+    }
+
+    /// Set tenant manager for multi-tenant support
+    pub fn with_tenant_manager(mut self, tenant_manager: Arc<crate::storage::tenant::TenantManager>) -> Self {
+        self.tenant_manager = Some(tenant_manager);
+        self
+    }
+
+    /// Set RBAC enforcer for permission validation
+    pub fn with_rbac_enforcer(mut self, rbac_enforcer: Arc<crate::storage::tenant::EnhancedRBACManager>) -> Self {
+        self.rbac_enforcer = Some(rbac_enforcer);
+        self
     }
 
     /// Create collection - single method for all handlers (REST, gRPC, etc)
     /// Takes native types directly, no proto/avro conversions needed
+    /// NOW WITH MULTI-TENANT SUPPORT
     pub async fn create_collection(
         &self,
         config: &crate::proto::proximadb_v1::CollectionConfig,
+    ) -> Result<CollectionServiceResponse> {
+        self.create_collection_with_tenant_context(config, None).await
+    }
+
+    /// Create collection with tenant context validation
+    pub async fn create_collection_with_tenant_context(
+        &self,
+        config: &crate::proto::proximadb_v1::CollectionConfig,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<CollectionServiceResponse> {
         debug!(
             "🆕 Creating collection: {} with distance_metric={}",
@@ -136,8 +164,60 @@ impl CollectionService {
         );
         let start_time = std::time::Instant::now();
 
+        // NEW: Multi-tenant validation if tenant manager is available
+        if let Some(ref tenant_manager) = self.tenant_manager {
+            if let Some(tenant_ctx) = tenant_context {
+                // Step 1: Validate tenant access and resource limits
+                let resource_check = tenant_manager
+                    .check_collection_creation_limits(&tenant_ctx.tenant_id, config)
+                    .await
+                    .context("Failed to check tenant resource limits")?;
+
+                if !resource_check.allowed {
+                    return Ok(CollectionServiceResponse::error(
+                        format!("Tenant resource limit exceeded: {}",
+                            resource_check.reason.unwrap_or_else(|| "Unknown limit exceeded".to_string())),
+                        Some("TENANT_RESOURCE_LIMIT_EXCEEDED".to_string())
+                    ));
+                }
+
+                // Step 2: RBAC permission validation if enforcer is available
+                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                    let permission_result = rbac_enforcer
+                        .check_permission(&tenant_ctx.user_context, "collection", "create")
+                        .await
+                        .context("Failed to check RBAC permissions")?;
+
+                    if !permission_result.allowed {
+                        return Ok(CollectionServiceResponse::error(
+                            format!("Permission denied: {}", permission_result.reason),
+                            Some("RBAC_PERMISSION_DENIED".to_string())
+                        ));
+                    }
+                }
+
+                debug!("✅ Tenant validation passed for collection creation: tenant={}", tenant_ctx.tenant_id);
+            }
+        }
+
         // Resolve compression and storage configuration
         let mut enriched_config = config.clone();
+
+        // NEW: Add tenant metadata to collection if tenant context is provided
+        if let Some(tenant_ctx) = tenant_context {
+            // Add tenant ID to collection metadata
+            if enriched_config.metadata.is_none() {
+                enriched_config.metadata = Some(std::collections::HashMap::new());
+            }
+
+            if let Some(ref mut metadata) = enriched_config.metadata {
+                metadata.insert("tenant_id".to_string(), tenant_ctx.tenant_id.clone());
+                metadata.insert("tenant_isolated".to_string(), "true".to_string());
+                metadata.insert("created_by".to_string(), tenant_ctx.user_context.user_id.clone());
+            }
+
+            debug!("✅ Added tenant metadata to collection: tenant_id={}", tenant_ctx.tenant_id);
+        }
 
         // Ensure storage_config exists and set compression within it
         if enriched_config.storage_config.is_none() {
