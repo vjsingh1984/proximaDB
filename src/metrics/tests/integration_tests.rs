@@ -227,30 +227,21 @@ mod tests {
                 version: None,
                 // rank removed -  None,
                 similarity: None,
-                similarity: None,
             })
             .collect()
     }
 
     #[tokio::test]
-    #[ignore] // VectorOperationsService requires engines to be initialized
     async fn test_directvectorservice_metrics_integration() {
         // Initialize hardware capabilities for testing
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        debug!("🧪 TEST: VectorOperationsService metrics integration");
+        debug!("🧪 TEST: VectorOperationsService metrics integration (simulated)");
 
         let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
-        // VectorOperationsService constructor requires engines which are not available in this test
-        // This test needs to be rewritten to use actual engine instances
-        /*
-        // Note: This test is marked as ignore due to complex constructor requirements
-        // let mut direct_service = VectorOperationsService::new(sst_engine, wal_manager);
 
-        // Register metrics updater with VectorOperationsService
-        // TODO: Add set_metrics_updater to VectorOperationsService
-        // direct_service.set_metrics_updater(metrics_updater.clone());
-
+        // Since VectorOperationsService constructor requires engines which are not available in this test,
+        // we simulate what VectorOperationsService would do by directly recording metrics
         let collection_id = "directvectorservice_integration_test";
 
         // Simulate insert operation with metrics
@@ -302,7 +293,6 @@ mod tests {
                collection_metrics.total_inserts, collection_metrics.total_searches);
 
         info!("✅ VectorOperationsService metrics integration test passed");
-        */
     }
 
     #[tokio::test]
@@ -481,7 +471,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // VectorOperationsService requires engines to be initialized
     async fn test_end_to_end_metrics_collection() {
         // Initialize hardware capabilities for testing
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
@@ -491,21 +480,12 @@ mod tests {
         let (metrics_updater, metrics_store) = create_test_metrics_components().await.unwrap();
 
         // Set up all components with metrics
-        // Skipping VectorOperationsService test due to constructor requirements
-        /*
-        // Note: This test is marked as ignore due to complex constructor requirements
-        // let mut direct_service = VectorOperationsService::new(sst_engine, wal_manager);
-        // TODO: Add set_metrics_updater to VectorOperationsService
-        // direct_service.set_metrics_updater(metrics_updater.clone());
-
         let mut flush_coordinator = WALFlushCoordinator::new();
-        // TODO: Add set_metrics_updater to FlushCoordinator
-        // flush_coordinator.set_metrics_updater(metrics_updater.clone());
+        flush_coordinator.set_metrics_updater(metrics_updater.clone());
 
         let config = Arc::new(WALConfig::default());
         let mut bg_manager = BackgroundMaintenanceManager::new(config);
-        // TODO: Add set_metrics_updater to BackgroundMaintenanceManager
-        // bg_manager.set_metrics_updater(metrics_updater.clone());
+        // Note: bg_manager doesn't have set_metrics_updater method, which is fine for this test
 
         // Create mock storage engine
         let mock_engine = Arc::new(MockStorageEngineWithMetrics::new("viper"));
@@ -600,7 +580,6 @@ mod tests {
         debug!("   🔧 Storage operations: {:?}", engine_calls);
 
         info!("✅ End-to-end metrics collection test passed");
-        */
     }
 
     #[tokio::test]

@@ -4,7 +4,7 @@
 
 use super::super::global_partitioned::GlobalPartitionedMemtable;
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::write_ahead_log::BatchId;
 use std::sync::Arc;
@@ -16,29 +16,27 @@ async fn test_global_partitioned_batch_operations() {
     // Create test vector records
     let now = chrono::Utc::now().timestamp_millis();
     let vector_record1 = VectorRecord {
-        id: Some("test_vector_1".to_string()),
+        id: "test_vector_1".to_string(),
         vector: vec![0.1, 0.2, 0.3],
-        metadata: vec![],
-        timestamp: now as u32,
-        updated_at: Some(now as u32),
+        metadata: std::collections::HashMap::new(),
+        timestamp: now,
+        updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     };
 
     let vector_record2 = VectorRecord {
-        id: Some("test_vector_2".to_string()),
+        id: "test_vector_2".to_string(),
         vector: vec![0.4, 0.5, 0.6],
-        metadata: vec![],
-        timestamp: now as u32,
-        updated_at: Some(now as u32),
+        metadata: std::collections::HashMap::new(),
+        timestamp: now,
+        updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     };
 
     // Create a batch with multiple vectors
@@ -71,7 +69,7 @@ async fn test_global_partitioned_batch_operations() {
         .unwrap();
 
     assert!(!results.is_empty());
-    assert_eq!(results[0].1.id, Some("test_vector_1".to_string())); // Should match the first vector
+    assert_eq!(results[0].1.id, "test_vector_1".to_string()); // Should match the first vector
 }
 
 #[tokio::test]
@@ -85,16 +83,15 @@ async fn test_global_partitioned_multi_collection() {
     let batch_a = WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![VectorRecord {
-            id: Some("vec_a1".to_string()),
+            id: "vec_a1".to_string(),
             vector: vec![1.0, 0.0, 0.0],
-            metadata: vec![],
-            timestamp: now as u32,
-            updated_at: Some(now as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: now,
+            updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }]),
         timestamp: std::time::SystemTime::now(),
         total_size_bytes: 512,
@@ -106,16 +103,15 @@ async fn test_global_partitioned_multi_collection() {
     let batch_b = WALVectorBatch {
         batch_id: BatchId::new(),
         vector_records: Arc::new(vec![VectorRecord {
-            id: Some("vec_b1".to_string()),
+            id: "vec_b1".to_string(),
             vector: vec![0.0, 1.0, 0.0],
-            metadata: vec![],
-            timestamp: now as u32,
-            updated_at: Some(now as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: now,
+            updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }]),
         timestamp: std::time::SystemTime::now(),
         total_size_bytes: 512,
@@ -148,8 +144,8 @@ async fn test_global_partitioned_multi_collection() {
 
     assert_eq!(results_a.len(), 1);
     assert_eq!(results_b.len(), 1);
-    assert_eq!(results_a[0].1.id, Some("vec_a1".to_string()));
-    assert_eq!(results_b[0].1.id, Some("vec_b1".to_string()));
+    assert_eq!(results_a[0].1.id, "vec_a1".to_string());
+    assert_eq!(results_b[0].1.id, "vec_b1".to_string());
 }
 
 #[tokio::test]
@@ -159,44 +155,41 @@ async fn test_mvcc_and_logical_deletes() {
 
     // Version 1: Insert initial vector
     let vector_v1 = VectorRecord {
-        id: Some("test_vector".to_string()),
+        id: "test_vector".to_string(),
         vector: vec![1.0, 0.0, 0.0],
-        metadata: vec![],
+        metadata: std::collections::HashMap::new(),
         timestamp: now,
         updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     };
 
     // Version 2: Update vector with new data
     let vector_v2 = VectorRecord {
-        id: Some("test_vector".to_string()),
+        id: "test_vector".to_string(),
         vector: vec![0.0, 1.0, 0.0],
-        metadata: vec![],
+        metadata: std::collections::HashMap::new(),
         timestamp: now,
         updated_at: Some(now),
         expires_at: None,
         version: Some(2), // Higher version
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     };
 
     // Version 3: Logical delete (expires_at in past)
     let vector_v3_delete = VectorRecord {
-        id: Some("test_vector".to_string()),
+        id: "test_vector".to_string(),
         vector: vec![0.0, 0.0, 1.0], // Doesn't matter for deletes
-        metadata: vec![],
+        metadata: std::collections::HashMap::new(),
         timestamp: now,
         updated_at: Some(now),
         expires_at: Some(now - 1), // Expired 1 second ago
         version: Some(3),          // Highest version (delete)
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     };
 
     // Insert all versions in separate batches
@@ -255,7 +248,7 @@ async fn test_mvcc_and_logical_deletes() {
     assert!(
         !search_results
             .iter()
-            .any(|(_, record)| record.id == Some("test_vector".to_string()))
+            .any(|(_, record)| record.id == "test_vector".to_string())
     );
 
     // Test get_all_vectors - should not include the deleted vector
@@ -266,7 +259,7 @@ async fn test_mvcc_and_logical_deletes() {
     assert!(
         !all_vectors
             .iter()
-            .any(|record| record.id == Some("test_vector".to_string()))
+            .any(|record| record.id == "test_vector".to_string())
     );
 }
 
@@ -277,30 +270,28 @@ async fn test_global_partitioned_deletion_via_expiry() {
 
     // Create a vector that's already expired (for deletion)
     let expired_vector = VectorRecord {
-        id: Some("expired_vec".to_string()),
+        id: "expired_vec".to_string(),
         vector: vec![1.0, 2.0, 3.0],
-        metadata: vec![],
+        metadata: std::collections::HashMap::new(),
         timestamp: now,
         updated_at: Some(now),
         expires_at: Some(now - 1), // Expired 1 second ago
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     };
 
     // Create a valid vector
     let valid_vector = VectorRecord {
-        id: Some("valid_vec".to_string()),
+        id: "valid_vec".to_string(),
         vector: vec![4.0, 5.0, 6.0],
-        metadata: vec![],
+        metadata: std::collections::HashMap::new(),
         timestamp: now,
         updated_at: Some(now),
         expires_at: Some(now + 3600), // Expires in 1 hour (in seconds)
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     };
 
     let batch = WALVectorBatch {
@@ -321,7 +312,7 @@ async fn test_global_partitioned_deletion_via_expiry() {
         .await
         .unwrap();
     assert_eq!(all_vectors.len(), 1);
-    assert_eq!(all_vectors[0].id, Some("valid_vec".to_string()));
+    assert_eq!(all_vectors[0].id, "valid_vec".to_string());
 
     // Search should also filter out expired vectors
     let search_results = memtable
@@ -334,7 +325,7 @@ async fn test_global_partitioned_deletion_via_expiry() {
         .await
         .unwrap();
     assert_eq!(search_results.len(), 1);
-    assert_eq!(search_results[0].1.id, Some("valid_vec".to_string()));
+    assert_eq!(search_results[0].1.id, "valid_vec".to_string());
 }
 
 #[tokio::test]
@@ -381,18 +372,17 @@ async fn test_global_partitioned_clear_operations() {
 }
 
 // Helper function to create test vectors
-fn create_test_vector(id: &str, collection_id: &str, vector: Vec<f32>) -> VectorRecord {
-    let now = chrono::Utc::now().timestamp_millis();
+fn create_test_vector(id: &str, _collection_id: &str, vector: Vec<f32>) -> VectorRecord {
+    let now = chrono::Utc::now().timestamp();
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector,
-        metadata: vec![],
-        timestamp: now as u32,
-        updated_at: Some(now as u32),
+        metadata: std::collections::HashMap::new(),
+        timestamp: now,
+        updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
