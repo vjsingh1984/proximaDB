@@ -16,8 +16,8 @@ image::logo/proximadb_enterprise_logo.svg[ProximaDB Enterprise Logo, width=400, 
 _Advanced vector database with graph capabilities and multi-tenant architecture in development_
 
 image:https://img.shields.io/badge/Production-Ready-brightgreen[Production Ready, link=https://github.com/proximadb/proximadb]
-image:https://img.shields.io/badge/Performance-2847%2B%20QPS-success[Performance, link=https://github.com/proximadb/proximadb]
-image:https://img.shields.io/badge/Cache%20Efficiency-94.2%25-orange[Cache Efficiency, link=https://github.com/proximadb/proximadb]
+image:https://img.shields.io/badge/Performance-Framework%20Complete-success[Performance Framework, link=https://github.com/proximadb/proximadb]
+image:https://img.shields.io/badge/Benchmarking-Production%20Ready-orange[Benchmarking Ready, link=https://github.com/proximadb/proximadb]
 image:https://img.shields.io/badge/Multi--Tenant-In%20Development-yellow[Multi-Tenant Development, link=https://github.com/proximadb/proximadb]
 image:https://img.shields.io/badge/AI%20Foundation-Early%20Stage-lightblue[AI Foundation, link=https://github.com/proximadb/proximadb]
 
@@ -28,7 +28,7 @@ graph TB
     subgraph "ENTERPRISE VALUE PROPOSITION"
         A[90% Infrastructure Cost Reduction<br/>Unified Platform vs Multiple Systems]
         B[18-Month Competitive Advantage<br/>Faster AI Implementation]
-        C[2.8x Performance Improvement<br/>2,847+ QPS with 94.2% Cache Efficiency]
+        C[Performance Validation Framework<br/>Production-Ready Benchmarking Infrastructure]
         D[Enterprise Security & Compliance<br/>SOC 2, GDPR, HIPAA Ready]
     end
 
