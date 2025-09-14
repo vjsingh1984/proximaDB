@@ -27,6 +27,7 @@
 
 use std::fmt;
 use std::sync::{Arc, RwLock};
+use serde::{Deserialize, Serialize};
 
 /// Information about a node stored on disk
 #[derive(Debug, Clone)]
@@ -66,7 +67,7 @@ impl fmt::Display for BTreeError {
 impl std::error::Error for BTreeError {}
 
 /// B+ tree node types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum Node {
     /// Internal node containing keys and child pointers
     Internal(InternalNode),
@@ -116,11 +117,12 @@ impl Node {
 }
 
 /// Internal node structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct InternalNode {
     /// Keys for navigation (one less than children)
     keys: Vec<Vec<u8>>,
     /// Child node pointers
+    #[serde(skip)]
     children: Vec<NodeRef>,
 }
 
@@ -181,11 +183,12 @@ impl InternalNode {
 }
 
 /// Leaf node structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LeafNode {
     /// Key-value pairs stored in sorted order
     entries: Vec<(Vec<u8>, Vec<u8>)>,
     /// Pointer to next leaf node (for range queries)
+    #[serde(skip)]
     next: Option<NodeRef>,
 }
 
@@ -289,13 +292,16 @@ impl LeafNode {
 }
 
 /// Node reference type for managing nodes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum NodeRef {
     /// In-memory node reference
+    #[serde(skip)]
     InMemory(Arc<RwLock<Node>>),
     /// Disk-based node reference (for future disk storage)
     OnDisk(u64), // Page ID
 }
+
+// NodeRef serde handled by derive macro
 
 impl NodeRef {
     fn new_internal(node: InternalNode) -> Self {
@@ -310,14 +316,15 @@ impl NodeRef {
     fn read(&self) -> Result<std::sync::RwLockReadGuard<Node>, BTreeError> {
         match self {
             NodeRef::InMemory(node) => node.read().map_err(|_| BTreeError::LockError),
-            NodeRef::OnDisk(disk_info) => {
+            NodeRef::OnDisk(page_id) => {
                 // Implement disk-based node loading using filesystem infrastructure
-                match self.load_disk_node(disk_info) {
-                    Ok(node) => node.read().map_err(|_| BTreeError::LockError),
-                    Err(e) => Err(BTreeError::TreeCorrupted(
-                        format!("Failed to load disk node: {}", e)
-                    ))
-                }
+                let disk_info = DiskNodeInfo {
+                    file_path: format!("btree_page_{}.node", page_id),
+                    offset: 0,
+                    size: 4096, // Default page size
+                };
+                // For now, return an error for disk-based nodes since we can't return references to temporaries
+                Err(BTreeError::TreeCorrupted("Disk-based nodes not fully implemented".to_string()))
             }
         }
     }
@@ -326,14 +333,15 @@ impl NodeRef {
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<Node>, BTreeError> {
         match self {
             NodeRef::InMemory(node) => node.write().map_err(|_| BTreeError::LockError),
-            NodeRef::OnDisk(disk_info) => {
+            NodeRef::OnDisk(page_id) => {
                 // Implement disk-based node loading using filesystem infrastructure
-                match self.load_disk_node(disk_info) {
-                    Ok(node) => node.read().map_err(|_| BTreeError::LockError),
-                    Err(e) => Err(BTreeError::TreeCorrupted(
-                        format!("Failed to load disk node: {}", e)
-                    ))
-                }
+                let disk_info = DiskNodeInfo {
+                    file_path: format!("btree_page_{}.node", page_id),
+                    offset: 0,
+                    size: 4096, // Default page size
+                };
+                // For now, return an error for disk-based nodes since we can't return references to temporaries
+                Err(BTreeError::TreeCorrupted("Disk-based nodes not fully implemented".to_string()))
             }
         }
     }

@@ -57,6 +57,7 @@ pub struct CertificateStatus {
 }
 
 /// Certificate manager for automated TLS certificate handling
+#[derive(Debug, Clone)]
 pub struct CertificateManager {
     config: CertificateConfig,
     cert_dir: PathBuf,
@@ -232,7 +233,7 @@ impl CertificateManager {
                            MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n\
                            (Generated private key)\n\
                            -----END PRIVATE KEY-----\n";
-        Ok(key_template.into_bytes())
+        Ok(key_template.as_bytes().to_vec())
     }
 
     /// Start background certificate renewal task

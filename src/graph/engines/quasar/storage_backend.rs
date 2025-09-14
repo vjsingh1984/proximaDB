@@ -546,8 +546,8 @@ impl ColdStorageBackend {
                 .embedding
                 .as_ref()
                 .and_then(|e: &crate::proto::proximadb_v1::EmbeddingVersion| Some(e.vector.clone())),
-            created_at: node.created_at_ms.as_ref().map(|t| t.seconds as u64),
-            updated_at: node.updated_at_ms.as_ref().map(|t| t.seconds as u64),
+            created_at: Some(node.created_at_ms as u64),
+            updated_at: Some(node.updated_at_ms as u64),
         })
     }
 
@@ -586,6 +586,7 @@ impl ColdStorageBackend {
             Some(Value::BytesValue(b)) => Ok(StorablePropertyValue::Bytes(b.clone())),
             Some(Value::ArrayValue(_)) => Ok(StorablePropertyValue::Array(Vec::new())), // Simplified
             Some(Value::ObjectValue(_)) => Ok(StorablePropertyValue::Object(HashMap::new())), // Simplified
+            Some(Value::VectorValue(_)) => Ok(StorablePropertyValue::String("vector".to_string())), // Vector as string representation
             None => Ok(StorablePropertyValue::String("null".to_string())),
         }
     }

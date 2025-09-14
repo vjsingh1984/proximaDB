@@ -183,7 +183,7 @@ impl SearchParams {
 }
 
 /// Complex filter expression for advanced metadata filtering
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum FilterExpression {
     /// Single comparison operation
     Comparison {
@@ -200,7 +200,7 @@ pub enum FilterExpression {
 }
 
 /// Comparison operators for metadata filtering
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ComparisonOperator {
     Equals,
     NotEquals,

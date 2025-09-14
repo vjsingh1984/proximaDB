@@ -63,13 +63,14 @@ pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
 
 use crate::core::error::ProximaDBError;
 use crate::graph::{EdgeId, NodeId};
+use serde::Serialize;
 use std::collections::HashMap;
 
 /// Result type for query operations
 pub type QueryResult<T> = std::result::Result<T, ProximaDBError>;
 
 /// Query execution statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct QueryStats {
     /// Planning time in microseconds
     pub planning_time_us: u64,

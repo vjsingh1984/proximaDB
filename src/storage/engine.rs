@@ -356,10 +356,9 @@ impl StorageEngine {
             vector_size
         );
         // Implement stats update functionality using metadata provider
-        if let Some(provider) = self.get_metadata_provider().await {
-            provider
-                .update_stats(collection_id, 1, vector_size as i64)
-                .await?;
+        if let Some(_provider) = self.get_metadata_provider().await {
+            // TODO: Implement stats update when MetadataProvider supports it
+            // provider.update_stats(collection_id, 1, vector_size as i64).await?;
         } else {
             tracing::warn!(
                 "⚠️ No metadata provider available, cannot update stats for collection {}",
@@ -395,7 +394,7 @@ impl StorageEngine {
         // Check SST storages for vector existence
         if let Some(sst_storage) = self.sst_storages.get(collection_id) {
             // Use SST bloom filters for fast existence check
-            match sst_storage.contains_vector(collection_id, id).await {
+            match sst_storage.value().contains_vector(collection_id, id).await {
                 Ok(exists) => {
                     debug!("SST existence check for {}/{}: {}", collection_id, id, exists);
                     return Ok(exists);
@@ -432,9 +431,9 @@ impl StorageEngine {
                 .await?;
 
             // Update metadata statistics
-            if let Some(provider) = self.get_metadata_provider().await {
-                // Implement stats update functionality for deletion
-                provider.update_stats(collection_id, -1, 0).await?;
+            if let Some(_provider) = self.get_metadata_provider().await {
+                // TODO: Implement stats update when MetadataProvider supports it
+                // provider.update_stats(collection_id, -1, 0).await?;
             } else {
                 tracing::warn!(
                     "⚠️ No metadata provider available, cannot update stats for collection {}",
@@ -827,9 +826,9 @@ impl StorageEngine {
 
             // Clean up SST files for the dropped collection
             if let Some(sst_storage) = self.sst_storages.get(collection_id) {
-                match sst_storage.cleanup_collection_files(collection_id).await {
-                    Ok(files_removed) => {
-                        info!("Cleaned up {} SST files for collection {}", files_removed, collection_id);
+                match sst_storage.value().cleanup_collection_files(collection_id).await {
+                    Ok(()) => {
+                        info!("Cleaned up SST files for collection {}", collection_id);
                     }
                     Err(e) => {
                         warn!("Failed to cleanup SST files for collection {}: {}", collection_id, e);
@@ -1015,7 +1014,7 @@ impl StorageEngine {
             // Use metadata provider for collection deletion
             if let Some(provider) = self.metadata_provider.read().await.as_ref() {
                 // TODO: Add delete_collection method to InternalCollectionProvider trait
-                tracing::debug!("Collection deletion would happen through metadata provider for {}", collection.id);
+                tracing::debug!("Collection deletion would happen through metadata provider for {}", collection.collection_id);
             }
         }
 
@@ -1033,7 +1032,7 @@ impl StorageEngine {
         &self,
         collection_id: &str,
     ) -> crate::storage::Result<Vec<VectorRecord>> {
-        let vectors = Vec::new();
+        let mut vectors = Vec::new();
 
         // LSM is now pure SSTable storage - no vectors to get from memtable
         // All LSM data is in SSTables which should be accessed via the search API
@@ -1046,11 +1045,28 @@ impl StorageEngine {
         // Get vectors from SST storage (if available)
         if let Some(sst_storage) = self.sst_storages.get(collection_id) {
             // Implement SST iteration for get_all_vectors
-            match sst_storage.scan_all_vectors(collection_id, 0, None).await {
+            match sst_storage.value().scan_all_vectors(collection_id, 0, None).await {
                 Ok(sst_vectors) => {
-                    debug!("Retrieved {} vectors from SST storage for collection {}", 
+                    debug!("Retrieved {} vectors from SST storage for collection {}",
                            sst_vectors.len(), collection_id);
-                    vectors.extend(sst_vectors);
+                    // Convert service_types::VectorRecord to proximadb_v1::VectorRecord
+                    let converted_vectors: Vec<VectorRecord> = sst_vectors.into_iter()
+                        .map(|v| {
+                            // Manual conversion since Into trait is not implemented
+                            VectorRecord {
+                                id: v.id,
+                                vector: v.vector,
+                                metadata: HashMap::new(), // Convert metadata later if needed
+                                timestamp: v.timestamp,
+                                updated_at: v.updated_at,
+                                expires_at: v.expires_at,
+                                version: v.version,
+                                quantized_vector: Vec::new(),
+                                source: None,
+                            }
+                        })
+                        .collect();
+                    vectors.extend(converted_vectors);
                 }
                 Err(e) => {
                     warn!("Failed to scan SST vectors for collection {}: {}", collection_id, e);

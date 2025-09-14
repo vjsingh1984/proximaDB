@@ -19,6 +19,7 @@ pub struct AccessEvent {
     /// Type of query that triggered the access
     pub query_type: QueryType,
     /// When the access occurred
+    #[serde(skip)]
     pub timestamp: Instant,
     /// Result of the access optimization
     pub result_type: String,
@@ -30,8 +31,10 @@ pub struct AccessStats {
     /// Total number of accesses
     pub total_accesses: u64,
     /// Last access time
+    #[serde(skip)]
     pub last_accessed: Instant,
     /// First access time
+    #[serde(skip)]
     pub first_accessed: Instant,
     /// Access frequency (accesses per hour)
     pub access_frequency: f64,
@@ -46,7 +49,7 @@ pub struct AccessStats {
 }
 
 /// Timing pattern classification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum TimingPattern {
     /// Random access times
     Random,

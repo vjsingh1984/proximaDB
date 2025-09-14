@@ -34,12 +34,20 @@ pub struct CachedDistanceTable {
 }
 
 /// Distance table cache for PQ operations using unified cache infrastructure
-#[derive(Debug)]
 pub struct DistanceTableCache {
     /// Unified cache orchestrator
     cache_orchestrator: Arc<CrossCacheOrchestrator>,
     /// Cache configuration
     config: CacheConfig,
+}
+
+impl std::fmt::Debug for DistanceTableCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DistanceTableCache")
+            .field("cache_orchestrator", &"<CrossCacheOrchestrator>")
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 /// Cache statistics
@@ -79,7 +87,7 @@ impl DistanceTableCache {
         let cache_key = self.create_cache_key(&key);
         
         // Check unified cache first
-        if let Ok(Some(cached_data)) = self.cache_orchestrator.get(&CacheType::DistanceTable, &cache_key) {
+        if let Ok(Some(cached_data)) = self.cache_orchestrator.get(&CacheType::DistanceTable, &cache_key).await {
             if let Ok(cached_table) = serde_json::from_slice::<CachedDistanceTable>(&cached_data) {
                 trace!("Cache hit for distance table");
                 
@@ -161,7 +169,7 @@ impl DistanceTableCache {
             let cache_key = self.create_cache_key(&key);
             
             // Skip if already cached
-            if let Ok(Some(_)) = self.cache_orchestrator.get(&CacheType::DistanceTable, &cache_key) {
+            if let Ok(Some(_)) = self.cache_orchestrator.get(&CacheType::DistanceTable, &cache_key).await {
                 continue;
             }
             
@@ -190,7 +198,7 @@ impl DistanceTableCache {
             let cache_key = self.create_cache_key(&related_key);
             
             // Check if already cached to avoid unnecessary work
-            if let Ok(None) = self.cache_orchestrator.get(&CacheType::DistanceTable, &cache_key) {
+            if let Ok(None) = self.cache_orchestrator.get(&CacheType::DistanceTable, &cache_key).await {
                 // Could implement predictive computation here based on patterns
                 trace!("Could prefetch related key: {:?}", related_key);
             }

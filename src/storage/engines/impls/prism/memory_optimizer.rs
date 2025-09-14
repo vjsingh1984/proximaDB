@@ -465,17 +465,17 @@ impl MemoryOptimizedStorage {
                             true // Match any value
                         } else if expected_value.ends_with('*') {
                             let prefix = &expected_value[..expected_value.len()-1];
-                            actual_value.starts_with(prefix)
+                            actual_value.iter().any(|s| s.starts_with(prefix))
                         } else if expected_value.starts_with('*') {
                             let suffix = &expected_value[1..];
-                            actual_value.ends_with(suffix)
+                            actual_value.iter().any(|s| s.ends_with(suffix))
                         } else {
                             // More complex patterns - fall back to contains check
-                            actual_value.contains(expected_value)
+                            actual_value.iter().any(|s| s.contains(expected_value))
                         }
                     } else {
                         // Exact string matching - check if vector contains the value
-                        actual_value.contains(expected_value)
+                        actual_value.iter().any(|s| s == expected_value)
                     };
                     
                     if !matches {

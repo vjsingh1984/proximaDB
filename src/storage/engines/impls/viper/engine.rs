@@ -79,7 +79,6 @@ use anyhow::Context;
 /// - **Optimization**: Analytics/batch vs OLTP/real-time
 /// - **Compression**: 5-10x vs 3-5x
 /// - **Query Pattern**: Scan/aggregate vs point lookup
-#[derive(Debug)]
 pub struct ViperEngine {
     /// Configuration (internal engine config)
     /// Contains batch sizes, compression levels, quantization settings
@@ -143,6 +142,26 @@ pub struct ViperEngine {
     /// Optional Cross-Cache Orchestrator for metadata/footer tracking
     orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 }
+
+impl std::fmt::Debug for ViperEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ViperEngine")
+            .field("config", &self.config)
+            .field("core_config", &self.core_config)
+            .field("collection_service", &"<CollectionService>")
+            .field("filesystem", &"<FilesystemFactory>")
+            .field("flush_manager", &"<Flush>")
+            .field("memtable", &"<Memtable>")
+            .field("wal", &"<WAL>")
+            .field("quantizer", &"<UniversalQuantizationEngine>")
+            .field("compactor", &"<Compactor>")
+            .field("distance_compute", &"<UnifiedDistanceCompute>")
+            .field("universal_optimizer", &self.universal_optimizer)
+            .field("orchestrator", &"<CrossCacheOrchestrator>")
+            .finish()
+    }
+}
+
 impl ViperEngine {
     /// Attach orchestrator via context (future-proof DI)
     pub fn with_context(

@@ -65,7 +65,7 @@ impl IndexNodeCache {
 // ========================================================================================
 
 /// SSTable index entry with block metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstIndexEntry {
     pub key: String,
     pub block_offset: u64,
@@ -77,7 +77,7 @@ pub struct SstIndexEntry {
 }
 
 /// Complete SSTable index structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstableIndex {
     pub file_path: String,
     pub entries: Vec<SstIndexEntry>,
@@ -87,7 +87,7 @@ pub struct SstableIndex {
 }
 
 /// Metadata statistics for predicate pushdown
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetadataStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,

@@ -581,7 +581,7 @@ mod tests {
 // ============================================================================
 
 /// Stats for bloom filter usage
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct BloomFilterStats {
     pub key_count: u64,
     pub metadata_columns: u64,

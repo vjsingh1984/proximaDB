@@ -209,7 +209,7 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
             id: native.id,
             score: native.score as f64,
             vector: native.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
-            metadata: convert_serde_json_to_sql_value_map(native.metadata),
+            metadata: native.metadata,
             version: native.version.map(|v| v as i64),
             similarity: native.similarity,
             timestamp: native.timestamp.map(|t| t as i64),
@@ -254,8 +254,8 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
                 .as_ref()
                 .map(|stats| {
                     std::collections::HashMap::from_iter([
-                        ("strategy".to_string(), stats.strategy_used.clone()),
-                        ("bytes_read".to_string(), stats.bytes_read.to_string()),
+                        ("vectors_scanned".to_string(), stats.vectors_scanned.to_string()),
+                        ("io_operations".to_string(), stats.io_operations.to_string()),
                         ("cache_hits".to_string(), stats.cache_hits.to_string()),
                     ])
                 })
@@ -271,7 +271,7 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
             id: native.id.clone(),
             score: native.score as f64,
             vector: native.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
-            metadata: convert_serde_json_to_sql_value_map(native.metadata.clone()),
+            metadata: native.metadata.clone(),
             version: native.version.map(|v| v as i64),
             similarity: native.similarity,
             timestamp: native.timestamp.map(|t| t as i64),
@@ -316,8 +316,8 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
                 .as_ref()
                 .map(|stats| {
                     std::collections::HashMap::from_iter([
-                        ("strategy".to_string(), stats.strategy_used.clone()),
-                        ("bytes_read".to_string(), stats.bytes_read.to_string()),
+                        ("vectors_scanned".to_string(), stats.vectors_scanned.to_string()),
+                        ("io_operations".to_string(), stats.io_operations.to_string()),
                         ("cache_hits".to_string(), stats.cache_hits.to_string()),
                     ])
                 })

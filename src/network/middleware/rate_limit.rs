@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Rate limiting configuration - consolidated from network module
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RateLimitConfig {
     /// Enable rate limiting (if false, all requests pass through)
     pub enabled: bool,

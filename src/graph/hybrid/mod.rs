@@ -225,7 +225,7 @@ pub struct FusionConfig {
 }
 
 /// Weights for fusion
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FusionWeights {
     /// Weight for vector similarity score
     pub vector_weight: f32,
@@ -1453,6 +1453,15 @@ impl HybridQueryEngine {
                 Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(_)) => {
                     // Skip binary data in metadata conversion
                     continue;
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => {
+                    "array".to_string()
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
+                    "object".to_string()
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
+                    "vector".to_string()
                 }
                 None => "null".to_string(),
             };

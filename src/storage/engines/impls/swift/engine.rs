@@ -480,7 +480,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         let swift_file = SwiftFile::new(
             collection_id.to_string(),
             dimension as usize,
-            DistanceMetric::Euclidean,
+            "euclidean".to_string(),
         );
 
         // Build blocks from vectors (would come from memtable in production)

@@ -274,7 +274,8 @@ impl OpenTelemetryManager {
 }
 
 /// Global OpenTelemetry manager instance
-static mut GLOBAL_OTEL_MANAGER: Option<OpenTelemetryManager> = None;
+use std::sync::Mutex;
+static GLOBAL_OTEL_MANAGER: Mutex<Option<OpenTelemetryManager>> = Mutex::new(None);
 static OTEL_INIT: std::sync::Once = std::sync::Once::new();
 
 /// Initialize global OpenTelemetry manager
@@ -282,8 +283,8 @@ pub fn initialize_opentelemetry(config: OpenTelemetryConfig) -> Result<()> {
     OTEL_INIT.call_once(|| {
         let mut manager = OpenTelemetryManager::new(config);
         // Note: Can't use async in Once::call_once, so we defer initialization
-        unsafe {
-            GLOBAL_OTEL_MANAGER = Some(manager);
+        if let Ok(mut global_manager) = GLOBAL_OTEL_MANAGER.lock() {
+            *global_manager = Some(manager);
         }
     });
 
@@ -291,25 +292,46 @@ pub fn initialize_opentelemetry(config: OpenTelemetryConfig) -> Result<()> {
     Ok(())
 }
 
-/// Get global OpenTelemetry manager
-pub fn global_opentelemetry_manager() -> Option<&'static OpenTelemetryManager> {
-    unsafe { GLOBAL_OTEL_MANAGER.as_ref() }
+/// Check if global OpenTelemetry manager is available
+pub fn is_opentelemetry_initialized() -> bool {
+    if let Ok(guard) = GLOBAL_OTEL_MANAGER.lock() {
+        guard.is_some()
+    } else {
+        false
+    }
 }
 
 /// Convenience function to export metrics via global manager
 pub async fn export_global_metrics(metrics: &crate::metrics::SystemMetrics) -> Result<()> {
-    if let Some(manager) = global_opentelemetry_manager() {
-        manager.export_metrics(metrics).await
+    if let Ok(guard) = GLOBAL_OTEL_MANAGER.lock() {
+        if let Some(ref manager) = *guard {
+            manager.export_metrics(metrics).await
+        } else {
+            debug!("OpenTelemetry not initialized, skipping metrics export");
+            Ok(())
+        }
     } else {
-        debug!("OpenTelemetry not initialized, skipping metrics export");
+        debug!("Failed to acquire lock for OpenTelemetry manager");
         Ok(())
     }
 }
 
 /// Convenience function to start span via global manager
 pub fn start_global_span(operation_name: &str, attributes: HashMap<String, String>) -> Option<SpanData> {
-    global_opentelemetry_manager()
-        .and_then(|manager| manager.start_span(operation_name, attributes))
+    if let Ok(guard) = GLOBAL_OTEL_MANAGER.lock() {
+        if let Some(ref manager) = *guard {
+            manager.start_span(operation_name, attributes)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Get reference to the global OpenTelemetry manager
+pub fn global_opentelemetry_manager() -> Option<std::sync::MutexGuard<'static, Option<OpenTelemetryManager>>> {
+    GLOBAL_OTEL_MANAGER.lock().ok()
 }
 
 #[cfg(test)]

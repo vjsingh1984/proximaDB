@@ -524,7 +524,7 @@ impl AdvancedZoneMap {
         for zone in self.hierarchical_zones.iter().rev() {
             let intersects = zone
                 .zone_map
-                .intersects_query(query, distance_metric, max_similarity);
+                .intersects_query(query, distance_metric.clone(), max_similarity);
 
             if !intersects {
                 result.intersects = false;
@@ -595,6 +595,7 @@ impl AdvancedZoneMap {
     ) {
         if let Some(scaled_zone) = self.multi_scale_zones.get(&distance_metric) {
             // Use metric-specific optimized bounds
+            let distance_metric_clone = distance_metric.clone();
             let transformed_query = Self::transform_vector_for_metric(query, distance_metric);
 
             // Check intersection with transformed bounds
@@ -606,7 +607,7 @@ impl AdvancedZoneMap {
 
             result.intersects = intersects;
             result.confidence = scaled_zone.approximation_quality;
-            result.pruning_strategy = PruningStrategy::MultiScale(distance_metric);
+            result.pruning_strategy = PruningStrategy::MultiScale(distance_metric_clone);
         } else {
             result.intersects = true;
             result.confidence = 0.5;
@@ -625,6 +626,7 @@ impl AdvancedZoneMap {
 
         // Try hierarchical
         let mut hierarchical_result = AdvancedIntersectionResult::default();
+        let distance_metric_clone = distance_metric.clone();
         self.check_hierarchical_intersection(
             query,
             distance_metric,
@@ -637,7 +639,7 @@ impl AdvancedZoneMap {
         let mut multi_scale_result = AdvancedIntersectionResult::default();
         self.check_multi_scale_intersection(
             query,
-            distance_metric,
+            distance_metric_clone,
             max_similarity,
             &mut multi_scale_result,
         );

@@ -250,7 +250,7 @@ impl Default for NetworkConfig {
 }
 
 /// Authentication configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AuthConfig {
     /// Enable authentication
     pub enabled: bool,

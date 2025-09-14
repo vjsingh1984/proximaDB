@@ -227,7 +227,7 @@ pub struct FastLanesBlockMetadata {
 }
 
 /// Column statistics for optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ColumnStatistics {
     pub name: String,
     pub null_count: u32,
@@ -249,7 +249,7 @@ pub enum ColumnData {
 }
 
 /// Quantization statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QuantizationStatistics {
     pub has_binary: bool,
     pub has_int8: bool,

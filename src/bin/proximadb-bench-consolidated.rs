@@ -15,7 +15,7 @@ use tracing::{info, warn};
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::index::axis::indexes::{
     hnsw_index::{AxisHnswConfig, AxisHnswIndex, create_hnsw_index},
     lsh_index::{AxisLshConfig, AxisLshIndex},
@@ -79,8 +79,8 @@ fn benchmark_distance_metrics(
     iterations: usize,
 ) -> Result<HashMap<(usize, DistanceMetric), f64>> {
     println!("Starting Distance Computation Benchmarks");
-    info!("Starting Distance Computation Benchmarks");
-    info!("Dimensions: {:?}, Iterations: {}", dimensions, iterations);
+    println!("Starting Distance Computation Benchmarks");
+    println!("Dimensions: {:?}, Iterations: {}", dimensions, iterations);
 
     let mut results = HashMap::new();
     let metrics = vec![
@@ -105,7 +105,7 @@ fn benchmark_distance_metrics(
 
     for &dim in dimensions {
         println!("Testing dimension: {}", dim);
-        info!("\nTesting dimension: {}", dim);
+        println!("\nTesting dimension: {}", dim);
 
         // Pre-allocate vectors outside the metric loop
         let vec1: Vec<f32> = (0..dim).map(|i| (i as f32) * 0.1).collect();
@@ -143,7 +143,7 @@ fn benchmark_distance_metrics(
                 ops_per_sec,
                 (elapsed * 1000.0) as u64
             );
-            info!("  {:?} @ {}D: {:.0} ops/sec", metric, dim, ops_per_sec);
+            println!("  {:?} @ {}D: {:.0} ops/sec", metric, dim, ops_per_sec);
             results.insert((dim, *metric), ops_per_sec);
         }
     }
@@ -154,8 +154,8 @@ fn benchmark_distance_metrics(
 // ============= Vector Operations Benchmarks =============
 
 fn benchmark_vector_operations(dimensions: &[usize], num_vectors: usize) -> Result<()> {
-    info!("Starting Vector Operations Benchmarks");
-    info!("Dimensions: {:?}, Vectors: {}", dimensions, num_vectors);
+    println!("Starting Vector Operations Benchmarks");
+    println!("Dimensions: {:?}, Vectors: {}", dimensions, num_vectors);
 
     // Limit vectors to prevent stack overflow
     let safe_num_vectors = std::cmp::min(num_vectors, 1000);
@@ -167,7 +167,7 @@ fn benchmark_vector_operations(dimensions: &[usize], num_vectors: usize) -> Resu
     }
 
     for &dimension in dimensions {
-        info!("\nTesting dimension: {}", dimension);
+        println!("\nTesting dimension: {}", dimension);
 
         // Generate test vectors with chunked processing
         let chunk_size = 100;
@@ -179,12 +179,12 @@ fn benchmark_vector_operations(dimensions: &[usize], num_vectors: usize) -> Resu
                 .map(|i| VectorRecord {
                     id: format!("vec_{}", i),
                     vector: (0..dimension).map(|j| ((i + j) as f32) * 0.1).collect(),
-                    metadata: vec![],
+                    metadata: HashMap::new(),
                     timestamp: 0,
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: None,
+                    quantized_vector: vec![],
                     source: None,
                 })
                 .collect();
@@ -196,13 +196,13 @@ fn benchmark_vector_operations(dimensions: &[usize], num_vectors: usize) -> Resu
             let ops_per_sec = (chunk_end - chunk_start) as f64 / creation_time.as_secs_f64();
             total_ops += ops_per_sec;
 
-            info!(
+            println!(
                 "  Chunk [{}-{}] creation: {:?} ({:.0} vectors/sec)",
                 chunk_start, chunk_end, creation_time, ops_per_sec
             );
         }
 
-        info!(
+        println!(
             "  Average creation rate: {:.0} vectors/sec",
             total_ops / (safe_num_vectors / chunk_size) as f64
         );
@@ -218,14 +218,14 @@ async fn benchmark_index_operations(
     num_vectors: usize,
     index_types: Option<Vec<String>>,
 ) -> Result<()> {
-    info!("Starting Index Operations Benchmarks");
-    info!("Dimensions: {:?}, Vectors: {}", dimensions, num_vectors);
+    println!("Starting Index Operations Benchmarks");
+    println!("Dimensions: {:?}, Vectors: {}", dimensions, num_vectors);
 
     let all_types = vec!["hnsw".to_string(), "lsh".to_string()];
     let types_to_test = index_types.unwrap_or(all_types);
 
     for &dimension in dimensions {
-        info!("\n=== Testing dimension: {} ===", dimension);
+        println!("\n=== Testing dimension: {} ===", dimension);
 
         // Generate test vectors
         let vectors: Vec<Vec<f32>> = (0..num_vectors)
@@ -245,7 +245,7 @@ async fn benchmark_index_operations(
 }
 
 async fn benchmark_hnsw(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
-    info!("  HNSW Index:");
+    println!("  HNSW Index:");
 
     let config = AxisHnswConfig {
         m: 16,
@@ -263,7 +263,7 @@ async fn benchmark_hnsw(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
         index.add(format!("vec_{}", i), vec.clone()).await?;
     }
     let insert_time = start.elapsed();
-    info!(
+    println!(
         "    Insert time: {:?} ({:.0} vectors/sec)",
         insert_time,
         vectors.len() as f64 / insert_time.as_secs_f64()
@@ -277,7 +277,7 @@ async fn benchmark_hnsw(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
         let _ = index.search(query, 10, None).await;
     }
     let search_time = start.elapsed();
-    info!(
+    println!(
         "    Search time: {:?} ({:.0} searches/sec)",
         search_time,
         num_searches as f64 / search_time.as_secs_f64()
@@ -287,7 +287,7 @@ async fn benchmark_hnsw(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
 }
 
 async fn benchmark_lsh(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
-    info!("  LSH Index:");
+    println!("  LSH Index:");
 
     let config = AxisLshConfig {
         n_tables: 8,
@@ -308,7 +308,7 @@ async fn benchmark_lsh(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
             .await?;
     }
     let insert_time = start.elapsed();
-    info!(
+    println!(
         "    Insert time: {:?} ({:.0} vectors/sec)",
         insert_time,
         vectors.len() as f64 / insert_time.as_secs_f64()
@@ -322,7 +322,7 @@ async fn benchmark_lsh(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
         let _ = index.search(query, 10, None).await;
     }
     let search_time = start.elapsed();
-    info!(
+    println!(
         "    Search time: {:?} ({:.0} searches/sec)",
         search_time,
         num_searches as f64 / search_time.as_secs_f64()
@@ -349,8 +349,8 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     println!("CLI parsed");
 
-    info!("ProximaDB Unified Benchmark Suite");
-    info!("==================================");
+    println!("ProximaDB Unified Benchmark Suite");
+    println!("==================================");
 
     match &cli.command {
         Some(Commands::All) | None => {
@@ -371,7 +371,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    info!("\nBenchmark suite completed successfully!");
+    println!("\nBenchmark suite completed successfully!");
 
     Ok(())
 }

@@ -103,7 +103,7 @@ lazy_static::lazy_static! {
 /// Unified vector record - single source of truth, generated from Avro schema
 /// This replaces ALL previous VectorRecord implementations across the codebase
 /// Aligned with proto: no created_at, optional fields where appropriate
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VectorRecord {
     pub id: String,
     pub collection_id: String,

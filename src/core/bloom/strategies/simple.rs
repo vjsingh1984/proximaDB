@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Simple bloom filter using boolean array - fast for small datasets
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimpleBloomFilter {
     /// Direct boolean array for simplicity
     bits: Vec<bool>,

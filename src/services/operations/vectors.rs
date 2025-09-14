@@ -2181,7 +2181,17 @@ impl VectorOperationsService {
     ) -> crate::proto::proximadb_v1::SearchResult {
         let records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = optimized_results
             .iter()
-            .map(|result| result.to_search_vector_record_v1(include_vectors, include_metadata))
+            .map(|result| {
+                let mut record: crate::proto::proximadb_v1::SearchVectorRecord = result.into();
+                // Apply include/exclude parameters
+                if !include_vectors {
+                    record.vector = Vec::new();
+                }
+                if !include_metadata {
+                    record.metadata = HashMap::new();
+                }
+                record
+            })
             .collect();
         crate::proto::proximadb_v1::SearchResult {
             results: records,

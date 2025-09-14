@@ -155,7 +155,7 @@ async fn test_global_partitioned_multi_collection() {
 #[tokio::test]
 async fn test_mvcc_and_logical_deletes() {
     let memtable = GlobalPartitionedMemtable::new();
-    let now = chrono::Utc::now().timestamp() as u32; // Current time in seconds
+    let now = chrono::Utc::now().timestamp(); // Current time in seconds
 
     // Version 1: Insert initial vector
     let vector_v1 = VectorRecord {
@@ -273,7 +273,7 @@ async fn test_mvcc_and_logical_deletes() {
 #[tokio::test]
 async fn test_global_partitioned_deletion_via_expiry() {
     let memtable = GlobalPartitionedMemtable::new();
-    let now = chrono::Utc::now().timestamp() as u32; // Current time in seconds
+    let now = chrono::Utc::now().timestamp(); // Current time in seconds
 
     // Create a vector that's already expired (for deletion)
     let expired_vector = VectorRecord {

@@ -271,8 +271,9 @@ impl UniversalDistanceAdapter {
         );
 
         // Initialize distance table cache
+        let cache_orchestrator = Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
         let distance_cache = Arc::new(
-            DistanceTableCache::new(&config.cache_config)
+            DistanceTableCache::new(&config.cache_config, cache_orchestrator)
                 .await
                 .map_err(|e| AdapterError::Cache(e.to_string()))?,
         );

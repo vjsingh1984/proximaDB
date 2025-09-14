@@ -481,7 +481,7 @@ pub struct ColumnStats {
     pub uncompressed_size: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ColumnEncoding {
     Dictionary { num_entries: usize },
     Integer { bits: usize },
@@ -504,7 +504,7 @@ pub struct MetadataColumn {
     pub size: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MetadataData {
     Boolean,
     Integer,
@@ -611,7 +611,7 @@ pub struct LocalityClusterInfo {
     pub vector_count: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FieldDescriptor {
     pub name: String,
     pub data_type: MetadataData,
@@ -668,14 +668,14 @@ pub struct SearchResult {
 
 // ====== Predicates for filtering ======
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Predicate {
     pub field: String,
     pub op: PredicateOp,
     pub value: MetadataValue,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PredicateOp {
     Eq,
     Ne,

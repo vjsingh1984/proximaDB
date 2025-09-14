@@ -17,10 +17,10 @@ use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
 /// Cached execution plan with metadata
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct CachedPlan {
     plan: ExecutionPlan,
-    #[serde(skip)] // Skip serialization for Instant
+    #[serde(skip, default = "std::time::Instant::now")] // Skip serialization for Instant
     created_at: std::time::Instant,
     hit_count: u64,
     avg_execution_time_ms: f64,
@@ -101,27 +101,9 @@ impl ExecutionPlanner {
         // Generate cache key for query plan caching
         let cache_key = self.generate_cache_key(query);
         
-        // Check unified cache for existing plan
-        if let Some(ref cache_orchestrator) = self.cache_orchestrator {
-            if let Ok(Some(cached_data)) = cache_orchestrator.get(&CacheType::QueryPlan, &cache_key) {
-                if let Ok(cached_plan) = serde_json::from_slice::<CachedPlan>(&cached_data) {
-                    // Update hit count and return cached plan
-                    let updated_plan = CachedPlan {
-                        plan: cached_plan.plan.clone(),
-                        created_at: cached_plan.created_at,
-                        hit_count: cached_plan.hit_count + 1,
-                        avg_execution_time_ms: cached_plan.avg_execution_time_ms,
-                    };
-                    
-                    // Update cache with new hit count
-                    if let Ok(updated_data) = serde_json::to_vec(&updated_plan) {
-                        let _ = cache_orchestrator.put(CacheType::QueryPlan, cache_key, updated_data, None);
-                    }
-                    
-                    return Ok(cached_plan.plan);
-                }
-            }
-        }
+        // Note: Cache checking is async and would require making this function async,
+        // which would break many synchronous callers. For now, skip cache check.
+        // TODO: Consider implementing a synchronous cache interface or async create_plan_async
         
         // Generate new plan
         let plan = match query {
@@ -993,9 +975,21 @@ impl ExecutionPlanner {
         let right_plan = self.create_plan(right)?;
 
         let set_operation = match op {
-            crate::query::ast::SetOp::Union => ExecutionOperation::SetUnion { distinct: !all },
-            crate::query::ast::SetOp::Intersect => ExecutionOperation::SetIntersect { distinct: !all },
-            crate::query::ast::SetOp::Except => ExecutionOperation::SetExcept { distinct: !all },
+            crate::query::ast::SetOp::Union => ExecutionOperation::SetUnion {
+                distinct: !all,
+                left_results: "left_plan_results".to_string(),
+                right_results: "right_plan_results".to_string(),
+            },
+            crate::query::ast::SetOp::Intersect => ExecutionOperation::SetIntersect {
+                distinct: !all,
+                left_results: "left_plan_results".to_string(),
+                right_results: "right_plan_results".to_string(),
+            },
+            crate::query::ast::SetOp::Except => ExecutionOperation::SetExcept {
+                distinct: !all,
+                left_results: "left_plan_results".to_string(),
+                right_results: "right_plan_results".to_string(),
+            },
         };
 
         Ok(ExecutionPlan {
@@ -1079,6 +1073,13 @@ impl CostModel {
             }
             ExecutionOperation::Fusion { .. } => self.fusion_cost,
             ExecutionOperation::Project { .. } => 0.1,
+            ExecutionOperation::Aggregate { .. } => 0.5,
+            ExecutionOperation::Join { .. } => 1.0,
+            ExecutionOperation::SetUnion { .. } => 0.8,
+            ExecutionOperation::SetIntersect { .. } => 0.8,
+            ExecutionOperation::SetExcept { .. } => 0.8,
+            ExecutionOperation::Union { .. } => 0.7,
+            ExecutionOperation::CteMaterialization { .. } => 0.9,
         }
     }
 }

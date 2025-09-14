@@ -137,7 +137,7 @@ pub struct SwiftFile {
 pub const SWIFT_MAGIC: [u8; 4] = *b"SWFT";
 
 /// SWIFT header - all metadata in one place
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SwiftHeader {
     // File identification
     pub magic: [u8; 4],
@@ -150,7 +150,7 @@ pub struct SwiftHeader {
 
     // Vector configuration
     pub dimension: usize,
-    pub distance_metric: DistanceMetric,
+    pub distance_metric: String,
     pub quantization: QuantizationConfig,
 
     // Record counts
@@ -182,7 +182,7 @@ impl Default for SwiftHeader {
             timestamp: 0,
             compaction_level: 0,
             dimension: 0,
-            distance_metric: DistanceMetric::Cosine,
+            distance_metric: "cosine".to_string(), // TODO: Use proper enum conversion
             quantization: QuantizationConfig::default(),
             total_records: 0,
             deleted_records: 0,
@@ -443,23 +443,13 @@ impl SwiftFile {
             let block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
 
             // Build quantized representations for the block
-            // Note: quantize_batch requires owned vectors for now
+            // Note: Quantization is handled by the unified quantization system
+            // This method should receive quantization parameters like build_blocks_from_records_with_adapters
             let vectors: Vec<Vec<f32>> = chunk.iter().map(|r| r.vector.clone()).collect();
-            // Implement quantization using unified engine
-            if let Some(ref quantization_engine) = self.quantization_engine {
-                let config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
-                match quantization_engine.quantize_batch(&vectors, &config) {
-                    Ok(quantized_data) => {
-                        // Store quantized data in block
-                        // block.quantized_section = Some(quantized_data);
-                        debug!("Successfully quantized {} vectors in block {}", vectors.len(), block_id);
-                    }
-                    Err(e) => {
-                        warn!("Quantization failed for block {}: {}", block_id, e);
-                        // Continue without quantization
-                    }
-                }
-            }
+
+            // TODO: Add quantization support by passing quantization_engine and config as parameters
+            // For now, store vectors without quantization
+            debug!("Stored {} vectors in block {} (quantization TODO)", vectors.len(), block_id);
 
             // Update ID index
             for (idx, record) in chunk.iter().enumerate() {
@@ -549,7 +539,7 @@ impl SwiftFile {
     }
 
     /// Create a new SWIFT file - clean slate, no legacy
-    pub fn new(collection_id: String, dimension: usize, distance_metric: DistanceMetric) -> Self {
+    pub fn new(collection_id: String, dimension: usize, distance_metric: String) -> Self {
         let header = SwiftHeader {
             magic: SWIFT_MAGIC,
             version: 1,

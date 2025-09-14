@@ -376,7 +376,8 @@ impl GraphEngine for PulsarGraphEngine {
 
     fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         let rt = tokio::runtime::Handle::current();
-        rt.block_on(self.execute_with_consistency(id, |shard| shard.get_node(id)))
+        let id_cloned = id.clone();
+        rt.block_on(self.execute_with_consistency(id, move |shard| shard.get_node(&id_cloned)))
     }
 
     fn update_node(&self, node: Node) -> Result<Arc<Node>> {
@@ -384,14 +385,14 @@ impl GraphEngine for PulsarGraphEngine {
         let rt = tokio::runtime::Handle::current();
 
         rt.block_on(
-            self.execute_with_consistency(&node_id, |shard| shard.update_node(node.clone())),
+            self.execute_with_consistency(&node_id, move |shard| shard.update_node(node.clone())),
         )
     }
 
     fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         let rt = tokio::runtime::Handle::current();
-        let result =
-            rt.block_on(self.execute_with_consistency(id, |shard| shard.delete_node(id)))?;
+        let id_cloned = id.clone();
+        let result = rt.block_on(self.execute_with_consistency(id, move |shard| shard.delete_node(&id_cloned)))?;
 
         // Update stats
         if result.is_some() {

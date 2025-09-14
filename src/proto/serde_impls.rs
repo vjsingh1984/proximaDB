@@ -341,9 +341,9 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorRecord {
                     timestamp,
                     updated_at,
                     expires_at,
-                    quantized_vector: None,
-                    source: String::new(),
-                    version: 0,
+                    quantized_vector: Vec::new(),
+                    source: Some(String::new()),
+                    version: Some(0),
                 })
             }
         }
@@ -448,6 +448,7 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Collection {
                     stats,
                     created_at,
                     updated_at,
+                    storage_assignment: None, // TODO: Implement storage assignment
                 })
             }
         }
@@ -554,6 +555,15 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
                     distance_metric,
                     storage_engine,
                     tags,
+                    description: Some(String::new()), // TODO: Implement description
+                    filterable_columns: Vec::new(), // TODO: Implement filterable columns
+                    index_configs: Vec::new(), // TODO: Implement index configs
+                    quantization: None, // TODO: Implement quantization
+                    storage_config: None, // TODO: Implement storage config
+                    primary_index: String::new(), // Default empty string instead of None
+                    auto_index_selection: false, // TODO: Implement auto index selection
+                    owner: None, // TODO: Implement owner
+                    embedding_models: Vec::new(), // Default empty vec instead of None
                 })
             }
         }
@@ -645,3 +655,918 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionStats {
         deserializer.deserialize_struct("CollectionStats", &["vector_count", "index_size_bytes", "data_size_bytes"], CollectionStatsVisitor)
     }
 }
+
+// Custom serde for Entity
+impl Serialize for crate::proto::proximadb_v1::Entity {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Entity", 6)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("embeddings", &self.embeddings)?;
+        state.serialize_field("typed_metadata", &self.typed_metadata)?;
+        state.serialize_field("flexible_metadata", &self.flexible_metadata)?;
+        state.serialize_field("provenance", &self.provenance)?;
+        state.serialize_field("relations", &self.relations)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Entity {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Id,
+            Embeddings,
+            TypedMetadata,
+            FlexibleMetadata,
+            Provenance,
+            Relations,
+        }
+
+        struct EntityVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for EntityVisitor {
+            type Value = crate::proto::proximadb_v1::Entity;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct Entity")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::Entity, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut id = None;
+                let mut embeddings = None;
+                let mut typed_metadata = None;
+                let mut flexible_metadata = None;
+                let mut provenance = None;
+                let mut relations = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Id => {
+                            if id.is_some() {
+                                return Err(serde::de::Error::duplicate_field("id"));
+                            }
+                            id = Some(map.next_value()?);
+                        }
+                        Field::Embeddings => {
+                            if embeddings.is_some() {
+                                return Err(serde::de::Error::duplicate_field("embeddings"));
+                            }
+                            embeddings = Some(map.next_value()?);
+                        }
+                        Field::TypedMetadata => {
+                            if typed_metadata.is_some() {
+                                return Err(serde::de::Error::duplicate_field("typed_metadata"));
+                            }
+                            typed_metadata = Some(map.next_value()?);
+                        }
+                        Field::FlexibleMetadata => {
+                            if flexible_metadata.is_some() {
+                                return Err(serde::de::Error::duplicate_field("flexible_metadata"));
+                            }
+                            flexible_metadata = Some(map.next_value()?);
+                        }
+                        Field::Provenance => {
+                            if provenance.is_some() {
+                                return Err(serde::de::Error::duplicate_field("provenance"));
+                            }
+                            provenance = Some(map.next_value()?);
+                        }
+                        Field::Relations => {
+                            if relations.is_some() {
+                                return Err(serde::de::Error::duplicate_field("relations"));
+                            }
+                            relations = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let id = id.ok_or_else(|| serde::de::Error::missing_field("id"))?;
+                let embeddings = embeddings.unwrap_or_default();
+                let flexible_metadata = flexible_metadata.unwrap_or_default();
+                let relations = relations.unwrap_or_default();
+
+                Ok(crate::proto::proximadb_v1::Entity {
+                    id,
+                    embeddings,
+                    typed_metadata,
+                    flexible_metadata,
+                    provenance,
+                    relations,
+                    collection_id: String::new(), // TODO: Implement collection_id
+                    temporal: None, // TODO: Implement temporal
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("Entity", &["id", "embeddings", "typed_metadata", "flexible_metadata", "provenance", "relations"], EntityVisitor)
+    }
+}
+
+// Custom serde for EntityResult
+impl Serialize for crate::proto::proximadb_v1::EntityResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("EntityResult", 3)?;
+        state.serialize_field("entity", &self.entity)?;
+        state.serialize_field("score", &self.score)?;
+        state.serialize_field("debug_info", &self.debug_info)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::EntityResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Entity,
+            Score,
+            DebugInfo,
+        }
+
+        struct EntityResultVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for EntityResultVisitor {
+            type Value = crate::proto::proximadb_v1::EntityResult;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct EntityResult")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::EntityResult, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut entity = None;
+                let mut score = None;
+                let mut debug_info = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Entity => {
+                            if entity.is_some() {
+                                return Err(serde::de::Error::duplicate_field("entity"));
+                            }
+                            entity = Some(map.next_value()?);
+                        }
+                        Field::Score => {
+                            if score.is_some() {
+                                return Err(serde::de::Error::duplicate_field("score"));
+                            }
+                            score = Some(map.next_value()?);
+                        }
+                        Field::DebugInfo => {
+                            if debug_info.is_some() {
+                                return Err(serde::de::Error::duplicate_field("debug_info"));
+                            }
+                            debug_info = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let score = score.ok_or_else(|| serde::de::Error::missing_field("score"))?;
+                let debug_info = debug_info.unwrap_or_default();
+
+                Ok(crate::proto::proximadb_v1::EntityResult {
+                    entity,
+                    score,
+                    debug_info,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("EntityResult", &["entity", "score", "debug_info"], EntityResultVisitor)
+    }
+}
+
+// Custom serde for VectorOperationResponse
+impl Serialize for crate::proto::proximadb_v1::VectorOperationResponse {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("VectorOperationResponse", 5)?;
+        state.serialize_field("success", &self.success)?;
+        state.serialize_field("operation", &self.operation)?;
+        state.serialize_field("metrics", &self.metrics)?;
+        state.serialize_field("results", &self.results)?;
+        // warnings field doesn't exist in VectorOperationResponse - removing this line
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorOperationResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Success,
+            Operation,
+            Metrics,
+            Results,
+            Warnings,
+        }
+
+        struct VectorOperationResponseVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for VectorOperationResponseVisitor {
+            type Value = crate::proto::proximadb_v1::VectorOperationResponse;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct VectorOperationResponse")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::VectorOperationResponse, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut success = None;
+                let mut operation = None;
+                let mut metrics = None;
+                let mut results = None;
+                let mut warnings: Option<Vec<String>> = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Success => {
+                            if success.is_some() {
+                                return Err(serde::de::Error::duplicate_field("success"));
+                            }
+                            success = Some(map.next_value()?);
+                        }
+                        Field::Operation => {
+                            if operation.is_some() {
+                                return Err(serde::de::Error::duplicate_field("operation"));
+                            }
+                            operation = Some(map.next_value()?);
+                        }
+                        Field::Metrics => {
+                            if metrics.is_some() {
+                                return Err(serde::de::Error::duplicate_field("metrics"));
+                            }
+                            metrics = Some(map.next_value()?);
+                        }
+                        Field::Results => {
+                            if results.is_some() {
+                                return Err(serde::de::Error::duplicate_field("results"));
+                            }
+                            results = Some(map.next_value()?);
+                        }
+                        Field::Warnings => {
+                            if warnings.is_some() {
+                                return Err(serde::de::Error::duplicate_field("warnings"));
+                            }
+                            let _: serde::de::IgnoredAny = map.next_value()?; // Ignore warnings field since it's !
+                        }
+                    }
+                }
+
+                let success = success.ok_or_else(|| serde::de::Error::missing_field("success"))?;
+                let operation = operation.ok_or_else(|| serde::de::Error::missing_field("operation"))?;
+                let warnings = warnings; // Remove unwrap_or_default() since warnings is Option<!> which can't have Default
+
+                Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                    success,
+                    operation,
+                    metrics,
+                    results,
+                    vector_ids: Vec::new(), // TODO: Implement vector_ids
+                    error_message: None, // TODO: Implement error_message
+                    error_code: None, // TODO: Implement error_code
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("VectorOperationResponse", &["success", "operation", "metrics", "results", "warnings"], VectorOperationResponseVisitor)
+    }
+}
+
+// Custom serde for CollectionResponse
+impl Serialize for crate::proto::proximadb_v1::CollectionResponse {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("CollectionResponse", 5)?;
+        state.serialize_field("success", &self.success)?;
+        state.serialize_field("collection", &self.collection)?;
+        state.serialize_field("collections", &self.collections)?;
+        state.serialize_field("error_message", &self.error_message)?;
+        state.serialize_field("error_code", &self.error_code)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionResponse {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Success,
+            Collection,
+            Collections,
+            ErrorMessage,
+            ErrorCode,
+        }
+
+        struct CollectionResponseVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for CollectionResponseVisitor {
+            type Value = crate::proto::proximadb_v1::CollectionResponse;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct CollectionResponse")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::CollectionResponse, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut success = None;
+                let mut collection = None;
+                let mut collections = None;
+                let mut error_message = None;
+                let mut error_code = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Success => {
+                            if success.is_some() {
+                                return Err(serde::de::Error::duplicate_field("success"));
+                            }
+                            success = Some(map.next_value()?);
+                        }
+                        Field::Collection => {
+                            if collection.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collection"));
+                            }
+                            collection = Some(map.next_value()?);
+                        }
+                        Field::Collections => {
+                            if collections.is_some() {
+                                return Err(serde::de::Error::duplicate_field("collections"));
+                            }
+                            collections = Some(map.next_value()?);
+                        }
+                        Field::ErrorMessage => {
+                            if error_message.is_some() {
+                                return Err(serde::de::Error::duplicate_field("error_message"));
+                            }
+                            error_message = Some(map.next_value()?);
+                        }
+                        Field::ErrorCode => {
+                            if error_code.is_some() {
+                                return Err(serde::de::Error::duplicate_field("error_code"));
+                            }
+                            error_code = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let success = success.ok_or_else(|| serde::de::Error::missing_field("success"))?;
+                let collections = collections.unwrap_or_default();
+
+                Ok(crate::proto::proximadb_v1::CollectionResponse {
+                    success,
+                    collection,
+                    collections,
+                    error_message,
+                    error_code,
+                    operation: 0, // TODO: Implement operation
+                    affected_count: 0, // TODO: Implement affected_count
+                    total_count: 0, // TODO: Implement total_count
+                    metadata: std::collections::HashMap::new(), // TODO: Implement metadata
+                    processing_time_us: 0, // TODO: Implement processing_time_us
+                })
+            }
+        }
+
+        deserializer.deserialize_struct("CollectionResponse", &["success", "collection", "collections", "error_message", "error_code"], CollectionResponseVisitor)
+    }
+}
+
+// Implement Serialize for sql_value::Value enum
+impl Serialize for crate::proto::proximadb_v1::sql_value::Value {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        match self {
+            Value::StringValue(v) => ("string_value", v).serialize(serializer),
+            Value::NumberValue(v) => ("number_value", v).serialize(serializer),
+            Value::BoolValue(v) => ("bool_value", v).serialize(serializer),
+            Value::Int64Value(v) => ("int64_value", v).serialize(serializer),
+            Value::BytesValue(v) => ("bytes_value", base64_encode(v)).serialize(serializer),
+            Value::NullValue(v) => ("null_value", v).serialize(serializer),
+            Value::ArrayValue(v) => ("array_value", v).serialize(serializer),
+            Value::ObjectValue(v) => ("object_value", v).serialize(serializer),
+        }
+    }
+}
+
+// Implement Serialize for filter_clause::Value enum
+impl Serialize for crate::proto::proximadb_v1::filter_clause::Value {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use crate::proto::proximadb_v1::filter_clause::Value;
+        match self {
+            Value::StringValue(v) => ("string_value", v).serialize(serializer),
+            Value::IntValue(v) => ("int_value", v).serialize(serializer),
+            Value::DoubleValue(v) => ("double_value", v).serialize(serializer),
+            Value::BoolValue(v) => ("bool_value", v).serialize(serializer),
+        }
+    }
+}
+
+// Add more basic proto implementations
+impl Serialize for crate::proto::proximadb_v1::TypedMetadata {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("TypedMetadata", 1)?;
+        // Serialize fields as HashMap with TypedField serde support
+        let mut fields_map: std::collections::HashMap<String, TypedFieldDef> = std::collections::HashMap::new();
+        for (k, v) in &self.fields {
+            fields_map.insert(k.clone(), TypedFieldDef {
+                indexed: v.indexed,
+                filterable: v.filterable,
+                value: v.value.as_ref().map(|val| match val {
+                    crate::proto::proximadb_v1::typed_field::Value::StringValue(s) => typed_field_def::Value::StringValue(s.clone()),
+                    crate::proto::proximadb_v1::typed_field::Value::IntValue(i) => typed_field_def::Value::IntValue(*i),
+                    crate::proto::proximadb_v1::typed_field::Value::DoubleValue(f) => typed_field_def::Value::FloatValue(*f),
+                    crate::proto::proximadb_v1::typed_field::Value::BoolValue(b) => typed_field_def::Value::BoolValue(*b),
+                    crate::proto::proximadb_v1::typed_field::Value::StringArray(arr) => typed_field_def::Value::ListValue(arr.values.iter().map(|s| {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
+                        }
+                    }).collect()),
+                    crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs(ts) => typed_field_def::Value::IntValue(*ts),
+                }),
+            });
+        }
+        state.serialize_field("fields", &fields_map)?;
+        state.end()
+    }
+}
+
+impl Serialize for crate::proto::proximadb_v1::Provenance {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Provenance", 6)?;
+        state.serialize_field("source_id", &self.source_id)?;
+        state.serialize_field("chunk_id", &self.chunk_id)?;
+        state.serialize_field("chunk_position", &self.chunk_position)?;
+        state.serialize_field("extraction_method", &self.extraction_method)?;
+        state.serialize_field("extracted_at_ms", &self.extracted_at_ms)?;
+        state.serialize_field("metadata", &self.metadata)?;
+        state.end()
+    }
+}
+
+// Custom serde for MetadataFilter
+impl Serialize for crate::proto::proximadb_v1::MetadataFilter {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("MetadataFilter", 2)?;
+        state.serialize_field("clauses", &self.clauses)?;
+        state.serialize_field("op", &self.op)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataFilter {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field {
+            Clauses,
+            Op,
+        }
+
+        struct MetadataFilterVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for MetadataFilterVisitor {
+            type Value = crate::proto::proximadb_v1::MetadataFilter;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("struct MetadataFilter")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::MetadataFilter, V::Error>
+            where
+                V: serde::de::MapAccess<'de>,
+            {
+                let mut clauses = None;
+                let mut op = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Clauses => {
+                            if clauses.is_some() {
+                                return Err(serde::de::Error::duplicate_field("clauses"));
+                            }
+                            // Deserialize as Vec<FilterClauseDef> and convert
+                            let clause_defs: Vec<FilterClauseDef> = map.next_value()?;
+                            clauses = Some(clause_defs.into_iter().map(|def| crate::proto::proximadb_v1::FilterClause {
+                                field: def.field,
+                                op: def.op,
+                                value: def.value.map(|val| match val {
+                                    filter_clause_def::Value::StringValue(s) => crate::proto::proximadb_v1::filter_clause::Value::StringValue(s),
+                                    filter_clause_def::Value::IntValue(i) => crate::proto::proximadb_v1::filter_clause::Value::IntValue(i),
+                                    filter_clause_def::Value::FloatValue(f) => crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f),
+                                    filter_clause_def::Value::BoolValue(b) => crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b),
+                                }),
+                            }).collect());
+                        }
+                        Field::Op => {
+                            if op.is_some() {
+                                return Err(serde::de::Error::duplicate_field("op"));
+                            }
+                            op = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let clauses = clauses.unwrap_or_default();
+                let op = op.ok_or_else(|| serde::de::Error::missing_field("op"))?;
+
+                Ok(crate::proto::proximadb_v1::MetadataFilter { clauses, op })
+            }
+        }
+
+        deserializer.deserialize_struct("MetadataFilter", &["clauses", "op"], MetadataFilterVisitor)
+    }
+}
+
+// Add missing Serialize/Deserialize implementations
+// Note: Serialize and Deserialize are already imported at the top of the file
+
+// Add Serialize/Deserialize for Relation
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "crate::proto::proximadb_v1::Relation")]
+struct RelationDef {
+    source_entity_id: String,
+    target_entity_id: String,
+    relation_type: String,
+    weight: f32,
+    created_at_ms: i64,
+    properties: std::collections::HashMap<String, String>,
+}
+
+impl Serialize for crate::proto::proximadb_v1::Relation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        RelationDef::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Relation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        RelationDef::deserialize(deserializer)
+    }
+}
+
+// Add Serialize/Deserialize for TypedMetadata
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::TypedMetadata {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TypedMetadataHelper {
+            fields: std::collections::HashMap<String, TypedFieldDef>,
+        }
+
+        let helper = TypedMetadataHelper::deserialize(deserializer)?;
+        let mut converted_fields = std::collections::HashMap::new();
+        for (k, def) in helper.fields {
+            converted_fields.insert(k, crate::proto::proximadb_v1::TypedField {
+                indexed: def.indexed,
+                filterable: def.filterable,
+                value: def.value.map(|val| match val {
+                    typed_field_def::Value::StringValue(s) => crate::proto::proximadb_v1::typed_field::Value::StringValue(s),
+                    typed_field_def::Value::IntValue(i) => crate::proto::proximadb_v1::typed_field::Value::IntValue(i),
+                    typed_field_def::Value::FloatValue(f) => crate::proto::proximadb_v1::typed_field::Value::DoubleValue(f),
+                    typed_field_def::Value::BoolValue(b) => crate::proto::proximadb_v1::typed_field::Value::BoolValue(b),
+                    typed_field_def::Value::ListValue(l) => {
+                        let string_values: Vec<String> = l.iter().filter_map(|sql_val| {
+                            match &sql_val.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => Some(s.clone()),
+                                _ => None,
+                            }
+                        }).collect();
+                        crate::proto::proximadb_v1::typed_field::Value::StringArray(crate::proto::proximadb_v1::StringArray { values: string_values })
+                    },
+                    typed_field_def::Value::MapValue(_) => {
+                        // For now, convert maps to timestamp (this is a temporary fix)
+                        crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs(0)
+                    },
+                }),
+            });
+        }
+        Ok(crate::proto::proximadb_v1::TypedMetadata {
+            fields: converted_fields,
+        })
+    }
+}
+
+// Add Serialize/Deserialize for Provenance
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Provenance {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct ProvenanceHelper {
+            source_id: String,
+            chunk_id: String,
+            chunk_position: u32,
+            extraction_method: String,
+            extracted_at_ms: i64,
+            metadata: std::collections::HashMap<String, String>,
+        }
+
+        let helper = ProvenanceHelper::deserialize(deserializer)?;
+        Ok(crate::proto::proximadb_v1::Provenance {
+            source_id: helper.source_id,
+            chunk_id: helper.chunk_id,
+            chunk_position: helper.chunk_position,
+            extraction_method: helper.extraction_method,
+            extracted_at_ms: helper.extracted_at_ms,
+            metadata: helper.metadata,
+        })
+    }
+}
+
+// Add Serialize/Deserialize for OperationMetrics
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "crate::proto::proximadb_v1::OperationMetrics")]
+struct OperationMetricsDef {
+    #[serde(default)]
+    total_processed: i64,
+    #[serde(default)]
+    successful_count: i64,
+    #[serde(default)]
+    failed_count: i64,
+    #[serde(default)]
+    updated_count: i64,
+    #[serde(default)]
+    processing_time_us: i64,
+    #[serde(default)]
+    wal_write_time_us: i64,
+    #[serde(default)]
+    index_update_time_us: i64,
+}
+
+impl Serialize for crate::proto::proximadb_v1::OperationMetrics {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        OperationMetricsDef::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::OperationMetrics {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        OperationMetricsDef::deserialize(deserializer)
+    }
+}
+
+// Helper struct for SearchResult serialization (not using remote)
+#[derive(Serialize, Deserialize)]
+struct SearchResultHelper {
+    #[serde(default)]
+    results: Vec<SearchVectorRecordDef>,
+    #[serde(default)]
+    total_found: i64,
+    #[serde(default)]
+    collection_id: Option<String>,
+}
+
+// SearchVectorRecord implementations
+impl Serialize for crate::proto::proximadb_v1::SearchVectorRecord {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        SearchVectorRecordDef {
+            id: self.id.clone(),
+            score: self.score,
+            vector: self.vector.clone(),
+            metadata: self.metadata.clone(),
+            version: self.version,
+            similarity: self.similarity,
+            timestamp: self.timestamp,
+            source: self.source.clone(),
+            expanded_context: self.expanded_context.clone(),
+            semantic_similarity: self.semantic_similarity,
+            quantization_info: self.quantization_info.clone(),
+            engine_stats: self.engine_stats.clone(),
+            index_path: self.index_path.clone(),
+        }.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::SearchVectorRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let def = SearchVectorRecordDef::deserialize(deserializer)?;
+        Ok(crate::proto::proximadb_v1::SearchVectorRecord {
+            id: def.id,
+            score: def.score,
+            vector: def.vector,
+            metadata: def.metadata,
+            version: def.version,
+            similarity: def.similarity,
+            timestamp: def.timestamp,
+            source: def.source,
+            expanded_context: def.expanded_context,
+            semantic_similarity: def.semantic_similarity,
+            quantization_info: def.quantization_info,
+            engine_stats: def.engine_stats,
+            index_path: def.index_path,
+        })
+    }
+}
+
+impl Serialize for crate::proto::proximadb_v1::SearchResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        SearchResultHelper {
+            results: self.results.iter().map(|r| SearchVectorRecordDef {
+                id: r.id.clone(),
+                score: r.score,
+                vector: r.vector.clone(),
+                metadata: r.metadata.clone(),
+                version: r.version,
+                similarity: r.similarity,
+                timestamp: r.timestamp,
+                source: r.source.clone(),
+                expanded_context: r.expanded_context.clone(),
+                semantic_similarity: r.semantic_similarity,
+                quantization_info: r.quantization_info.clone(),
+                engine_stats: r.engine_stats.clone(),
+                index_path: r.index_path.clone(),
+            }).collect(),
+            total_found: self.total_found,
+            collection_id: self.collection_id.clone(),
+        }.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::SearchResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let def = SearchResultHelper::deserialize(deserializer)?;
+        Ok(crate::proto::proximadb_v1::SearchResult {
+            results: def.results.into_iter().map(|def| crate::proto::proximadb_v1::SearchVectorRecord {
+                id: def.id,
+                score: def.score,
+                vector: def.vector,
+                metadata: def.metadata,
+                version: def.version,
+                similarity: def.similarity,
+                timestamp: def.timestamp,
+                source: def.source,
+                expanded_context: def.expanded_context,
+                semantic_similarity: def.semantic_similarity,
+                quantization_info: def.quantization_info,
+                engine_stats: def.engine_stats,
+                index_path: def.index_path,
+            }).collect(),
+            total_found: def.total_found,
+            collection_id: def.collection_id,
+        })
+    }
+}
+
+// TypedField serde support structures
+#[derive(Serialize, Deserialize)]
+struct TypedFieldDef {
+    indexed: bool,
+    filterable: bool,
+    value: Option<typed_field_def::Value>,
+}
+
+pub mod typed_field_def {
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(tag = "type", content = "value")]
+    pub enum Value {
+        #[serde(rename = "string")]
+        StringValue(String),
+        #[serde(rename = "int")]
+        IntValue(i64),
+        #[serde(rename = "float")]
+        FloatValue(f64),
+        #[serde(rename = "bool")]
+        BoolValue(bool),
+        #[serde(rename = "list")]
+        ListValue(Vec<crate::proto::proximadb_v1::SqlValue>),
+        #[serde(rename = "map")]
+        MapValue(std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>),
+    }
+}
+
+// FilterClause serde support structures
+#[derive(Serialize, Deserialize)]
+struct FilterClauseDef {
+    field: String,
+    op: i32,
+    value: Option<filter_clause_def::Value>,
+}
+
+pub mod filter_clause_def {
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(tag = "type", content = "value")]
+    pub enum Value {
+        #[serde(rename = "string")]
+        StringValue(String),
+        #[serde(rename = "int")]
+        IntValue(i64),
+        #[serde(rename = "float")]
+        FloatValue(f64),
+        #[serde(rename = "bool")]
+        BoolValue(bool),
+    }
+}
+
+// SearchVectorRecord serde support structures
+#[derive(Serialize, Deserialize)]
+struct SearchVectorRecordDef {
+    id: String,
+    score: f64,
+    #[serde(default)]
+    vector: Vec<f32>,
+    #[serde(default)]
+    metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    version: Option<i64>,
+    similarity: Option<f32>,
+    timestamp: Option<i64>,
+    source: Option<String>,
+    #[serde(default)]
+    expanded_context: Vec<String>,
+    semantic_similarity: Option<f32>,
+    quantization_info: Option<String>,
+    #[serde(default)]
+    engine_stats: std::collections::HashMap<String, String>,
+    index_path: Option<String>,
+}
+

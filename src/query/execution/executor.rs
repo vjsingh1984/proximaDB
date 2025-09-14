@@ -147,14 +147,15 @@ impl QueryExecutor {
             Vec::new()
         }
     }
-    /// Create new query executor with service integrations
-    pub fn new(
+    /// Create new query executor with service integrations (non-optional vector service)
+    pub fn with_services(
         vector_service: Arc<VectorOperationsService>,
         graph_service: Arc<GraphService>,
     ) -> Self {
         Self {
             vector_service: Some(vector_service),
             graph_service,
+            memory_pool: VectorPool::new(),
         }
     }
 
@@ -163,6 +164,7 @@ impl QueryExecutor {
         Self {
             vector_service: None,
             graph_service,
+            memory_pool: VectorPool::new(),
         }
     }
 
@@ -1317,7 +1319,7 @@ impl QueryExecutor {
                     crate::query::execution::ProjectionTransform::ExtractMetadata { field } => {
                         // Extract specific metadata field with HashMap.get() optimization
                         // O(1) access pattern vs O(n) linear scan
-                        if let Some(metadata_value) = row.fields.get(&field) {
+                        if let Some(metadata_value) = row.fields.get(field) {
                             // Clone the value for the specific field extraction
                             row.fields.insert(format!("extracted_{}", field), metadata_value.clone());
                         } else {

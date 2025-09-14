@@ -40,7 +40,7 @@ impl QueryEngine {
         );
 
         let executor = crate::query::execution::executor::QueryExecutor::new(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
         );
 
@@ -64,7 +64,7 @@ impl QueryEngine {
             params,
         );
         let executor = crate::query::execution::executor::QueryExecutor::new(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
         );
         Self {
@@ -91,7 +91,7 @@ impl QueryEngine {
         planner.set_seeding_strategy(seeding_strategy.clone());
         planner.set_fusion_weights(fusion_weights);
         let executor = crate::query::execution::executor::QueryExecutor::new(
-            vector_service.clone(),
+            Some(vector_service.clone()),
             graph_service.clone(),
         );
         Self {
@@ -167,7 +167,7 @@ impl QueryEngine {
 }
 
 /// Execution strategy determined by query analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ExecutionStrategy {
     /// Vector-only queries (similarity search, metadata filtering)
     VectorOnly,
@@ -193,7 +193,7 @@ pub struct ExecutionPlan {
 }
 
 /// Individual operation in the execution plan
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ExecutionOperation {
     /// Vector search operation with HashMap metadata filtering
     VectorSearch {
@@ -327,7 +327,7 @@ impl ExecutionOperation {
 }
 
 /// Seeding strategy for hybrid graph→vector path
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SeedingStrategy {
     /// Average seed embeddings into a single query vector
     Average,
@@ -338,7 +338,7 @@ pub enum SeedingStrategy {
 }
 
 /// Fusion strategies for hybrid queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum FusionStrategy {
     /// Simple additive score combination
     Additive,
@@ -351,7 +351,7 @@ pub enum FusionStrategy {
 }
 
 /// Projection transformations for result formatting
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ProjectionTransform {
     /// Extract metadata field with HashMap optimization
     ExtractMetadata { field: String },
@@ -362,14 +362,14 @@ pub enum ProjectionTransform {
 }
 
 /// Aggregate specification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AggregateSpec {
     pub alias: String,
     pub func: AggregateFunc,
     pub field: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AggregateFunc {
     Count,
     Sum,
@@ -378,7 +378,7 @@ pub enum AggregateFunc {
     Max,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum JoinKind {
     Inner,
     Left,
