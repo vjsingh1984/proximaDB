@@ -3,8 +3,10 @@
 //! Main engine for AI-powered business intelligence, implementing
 //! automated insight generation and executive dashboard creation.
 
-use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMRequestContext};
-use crate::ai::natural_language::{NLQueryTranslator, UserContext};
+use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest};
+use crate::ai::llm_integration::types::LLMRequestContext;
+use crate::ai::natural_language::NLQueryTranslator;
+use crate::ai::natural_language::translator::UserContext;
 use super::insight_generator::{InsightGenerator, BusinessInsight};
 use super::report_generator::{ReportGenerator, ExecutiveReport};
 use super::trend_analyzer::{TrendAnalyzer, TrendAnalysis};

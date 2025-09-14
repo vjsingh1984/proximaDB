@@ -30,7 +30,7 @@ impl PromptBuilder {
         // Secure SQL translation template
         templates.insert(
             PromptTemplate::SecureTranslation,
-            include_str!("../../../prompts/secure_sql_translation.txt").to_string()
+            include_str!("../../prompts/secure_sql_translation.txt").to_string()
         );
 
         // Fallback templates if files don't exist

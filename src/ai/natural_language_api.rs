@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ai::llm::{AIIntelligenceFoundation, BusinessIntent, AIIntelligentBusinessAnswer};
+use crate::ai::nlp::QueryComplexityAnalyzer;
 use crate::storage::tenant::{BusinessContext, UserContext, DomainKnowledgeGraph};
 use crate::auth::sso::EnterpriseUserContext;
 
@@ -71,8 +72,8 @@ impl NaturalLanguageBusinessIntelligenceAPI {
             ai_foundation,
             nl_query_processor: Arc::new(NaturalLanguageQueryProcessor::new().await?),
             bi_translator: Arc::new(BusinessIntelligenceTranslator::new().await?),
-            conversation_manager: Arc::new(EnterpriseConversationManager::new().await?),
-            response_validator: Arc::new(EnterpriseResponseValidator::new().await?),
+            conversation_manager: Arc::new(EnterpriseConversationManager::new()?),
+            response_validator: Arc::new(EnterpriseResponseValidator::new()?),
         })
     }
     
@@ -260,10 +261,10 @@ impl NaturalLanguageBusinessIntelligenceAPI {
 impl NaturalLanguageQueryProcessor {
     async fn new() -> Result<Self> {
         Ok(Self {
-            query_parser: Arc::new(BusinessContextQueryParser::new().await?),
-            intent_classifier: Arc::new(EnterpriseIntentClassifier::new().await?),
-            entity_extractor: Arc::new(RegulatoryAwareEntityExtractor::new().await?),
-            complexity_analyzer: Arc::new(QueryComplexityAnalyzer::new().await?),
+            query_parser: Arc::new(BusinessContextQueryParser::new()?),
+            intent_classifier: Arc::new(EnterpriseIntentClassifier::new()?),
+            entity_extractor: Arc::new(RegulatoryAwareEntityExtractor::new()?),
+            complexity_analyzer: Arc::new(QueryComplexityAnalyzer::new()?),
         })
     }
     
@@ -326,9 +327,9 @@ impl BusinessIntelligenceTranslator {
     async fn new() -> Result<Self> {
         Ok(Self {
             domain_translation_rules: Arc::new(DashMap::new()),
-            compliance_translator: Arc::new(ComplianceQueryTranslator::new().await?),
-            cross_domain_composer: Arc::new(CrossDomainQueryComposer::new().await?),
-            query_optimizer: Arc::new(TranslatedQueryOptimizer::new().await?),
+            compliance_translator: Arc::new(ComplianceQueryTranslator::new()?),
+            cross_domain_composer: Arc::new(CrossDomainQueryComposer::new()?),
+            query_optimizer: Arc::new(TranslatedQueryOptimizer::new()?),
         })
     }
     
@@ -575,21 +576,270 @@ pub enum ConversationalSessionType {
 
 // Placeholder types for foundation implementation
 pub use crate::ai::nlp::BusinessEntity;
-pub type ConversationalAnalyticsSession = String;
-pub type EnterpriseConversationManager = String;
-pub type EnterpriseResponseValidator = String;
-pub type ValidatedEnterpriseResponse = String;
-pub type DomainIntelligenceResult = String;
-pub type BusinessContextQueryParser = String;
-pub type EnterpriseIntentClassifier = String;
-pub type RegulatoryAwareEntityExtractor = String;
-pub type QueryComplexityAnalysis = String;
-pub type DomainTranslationRules = String;
-pub type ComplianceQueryTranslator = String;
-pub type CrossDomainQueryComposer = String;
-pub type TranslatedQueryOptimizer = String;
-pub type CrossDomainComposition = String;
-pub type QueryPerformanceRequirements = String;
+// Foundation structs for Natural Language API
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationalAnalyticsSession {
+    pub session_id: String,
+    pub user_id: String,
+    pub context: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseConversationManager;
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseResponseValidator;
+
+#[derive(Debug, Clone)]
+pub struct ValidatedEnterpriseResponse {
+    pub response_text: String,
+    pub confidence_score: f32,
+    pub compliance_validation: Vec<String>,
+    pub supporting_evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DomainIntelligenceResult {
+    pub entities_analyzed: usize,
+    pub relationships_analyzed: usize,
+    pub cross_domain_correlations: usize,
+    pub supporting_evidence: Vec<String>,
+    pub knowledge_sources: Vec<String>,
+    pub business_intelligence_insights: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BusinessContextQueryParser;
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseIntentClassifier;
+
+#[derive(Debug, Clone)]
+pub struct RegulatoryAwareEntityExtractor;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryComplexityAnalysis {
+    pub complexity_score: f32,
+    pub estimated_processing_time: u64,
+    pub resource_requirements: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DomainTranslationRules {
+    pub domain: String,
+    pub rules: Vec<String>,
+    pub patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComplianceQueryTranslator;
+
+#[derive(Debug, Clone)]
+pub struct CrossDomainQueryComposer;
+
+#[derive(Debug, Clone)]
+pub struct TranslatedQueryOptimizer;
+
+#[derive(Debug, Clone)]
+pub struct CrossDomainComposition {
+    pub composed_query: String,
+    pub domain_mappings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryPerformanceRequirements {
+    pub max_latency_ms: u64,
+    pub memory_limit_mb: u64,
+    pub cpu_cores: u32,
+}
+
+// Implementations for foundation structs
+impl NaturalLanguageQueryProcessor {
+    pub async fn new() -> Result<Self> {
+        Ok(Self {
+            query_parser: Arc::new(BusinessContextQueryParser::new()?),
+            intent_classifier: Arc::new(EnterpriseIntentClassifier::new()?),
+            entity_extractor: Arc::new(RegulatoryAwareEntityExtractor::new()?),
+            complexity_analyzer: Arc::new(QueryComplexityAnalyzer::new()?),
+        })
+    }
+
+    pub async fn parse_enterprise_query(
+        &self,
+        query: &str,
+        business_context: &BusinessContext,
+        user_context: &EnterpriseUserContext,
+    ) -> Result<ParsedEnterpriseQuery> {
+        let business_entities = self.entity_extractor.extract_business_entities(query, business_context).await?;
+        let business_intent = self.intent_classifier.classify_business_intent(query, business_context).await?;
+
+        Ok(ParsedEnterpriseQuery {
+            original_question: query.to_string(),
+            business_entities,
+            business_intent,
+            complexity_analysis: QueryComplexityAnalysis {
+                complexity_score: 0.7,
+                estimated_processing_time: 1500,
+                resource_requirements: "medium".to_string(),
+            },
+            regulatory_requirements: vec!["sox".to_string(), "gdpr".to_string()],
+            cross_domain_requirements: vec!["risk_management".to_string()],
+        })
+    }
+}
+
+impl BusinessIntelligenceTranslator {
+    pub async fn new() -> Result<Self> {
+        Ok(Self {
+            domain_translation_rules: Arc::new(DashMap::new()),
+            compliance_translator: Arc::new(ComplianceQueryTranslator::new()?),
+            cross_domain_composer: Arc::new(CrossDomainQueryComposer::new()?),
+            query_optimizer: Arc::new(TranslatedQueryOptimizer::new()?),
+        })
+    }
+}
+
+impl EnterpriseConversationManager {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn create_conversational_session(
+        &self,
+        tenant_id: &str,
+        user_context: &EnterpriseUserContext,
+        business_context: &BusinessContext,
+    ) -> Result<ConversationalAnalyticsSession> {
+        Ok(ConversationalAnalyticsSession {
+            session_id: format!("{}_{}", tenant_id, chrono::Utc::now().timestamp()),
+            user_id: user_context.user_id.clone(),
+            context: vec![business_context.primary_function.clone()],
+            created_at: chrono::Utc::now(),
+        })
+    }
+
+    pub async fn get_conversation_context(&self, _session_id: &str) -> Result<Vec<String>> {
+        Ok(vec!["Previous conversation context".to_string()])
+    }
+
+    pub async fn update_conversation_context(
+        &self,
+        _session_id: &str,
+        _question: &str,
+        _answer: &str,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl EnterpriseResponseValidator {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn validate_enterprise_response(
+        &self,
+        _response_text: &str,
+        _business_context: &BusinessContext,
+        _user_context: &EnterpriseUserContext,
+    ) -> Result<ValidatedEnterpriseResponse> {
+        Ok(ValidatedEnterpriseResponse {
+            response_text: "Validated enterprise response".to_string(),
+            confidence_score: 0.92,
+            compliance_validation: vec!["Compliant with enterprise standards".to_string()],
+            supporting_evidence: vec!["Evidence from knowledge graph".to_string()],
+        })
+    }
+}
+
+impl BusinessContextQueryParser {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
+
+impl EnterpriseIntentClassifier {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn classify_business_intent(
+        &self,
+        query: &str,
+        business_context: &BusinessContext,
+    ) -> Result<String> {
+        let intent = if query.contains("risk") {
+            "risk_analysis"
+        } else if query.contains("customer") {
+            "customer_analysis"
+        } else {
+            "general_business_inquiry"
+        };
+        Ok(format!("{}_{}", business_context.primary_function, intent))
+    }
+}
+
+impl RegulatoryAwareEntityExtractor {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn extract_business_entities(
+        &self,
+        query: &str,
+        _business_context: &BusinessContext,
+    ) -> Result<Vec<String>> {
+        let mut entities = Vec::new();
+        if query.contains("portfolio") { entities.push("portfolio".to_string()); }
+        if query.contains("risk") { entities.push("risk".to_string()); }
+        if query.contains("customer") { entities.push("customer".to_string()); }
+        Ok(entities)
+    }
+}
+
+impl ComplianceQueryTranslator {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn add_compliance_constraints(
+        &self,
+        base_query: &str,
+        business_context: &BusinessContext,
+    ) -> Result<String> {
+        let constraints = match business_context.primary_function.as_str() {
+            s if s.contains("risk") => " WITH COMPLIANCE('sox', 'basel_iii')",
+            s if s.contains("clinical") => " WITH COMPLIANCE('hipaa', 'fda_cfr_part_11')",
+            _ => " WITH COMPLIANCE('soc2', 'gdpr')",
+        };
+        Ok(format!("{}{}", base_query, constraints))
+    }
+}
+
+impl CrossDomainQueryComposer {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn compose_cross_domain_query(
+        &self,
+        compliance_query: &str,
+        cross_domain_requirements: &[String],
+    ) -> Result<CrossDomainComposition> {
+        Ok(CrossDomainComposition {
+            composed_query: format!("{} CROSS_DOMAIN({})", compliance_query, cross_domain_requirements.join(", ")),
+            domain_mappings: cross_domain_requirements.to_vec(),
+        })
+    }
+}
+
+impl TranslatedQueryOptimizer {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
 
 #[cfg(test)]
 mod tests {

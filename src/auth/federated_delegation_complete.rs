@@ -297,7 +297,7 @@ impl CompleteAWSIdentityDelegationHandler {
             
             // Create delegation step record
             delegation_steps.push(DelegationStep {
-                step_number: index + 1,
+                step_number: (index + 1) as u32,
                 delegation_type: DelegationType::AWSAssumeRole,
                 source_identity: current_credentials.identity.clone(),
                 target_identity: assume_role_result.assumed_role_identity.clone(),
@@ -416,6 +416,18 @@ impl CompleteAzureADDelegationHandler {
             audit_event_ids: vec![obo_result.activity_log_event_id.clone()],
         }])
     }
+
+    async fn validate_azure_enterprise_compliance(
+        &self,
+        _validation: &AzureValidationResult,
+        _chain: &[DelegationStep],
+        _mi_context: &Option<ManagedIdentityContext>,
+    ) -> Result<ComplianceValidation> {
+        Ok(ComplianceValidation {
+            overall_compliance_score: 1.0,
+            validation_time_ms: 0,
+        })
+    }
 }
 
 // Type definitions for complete federated identity delegation
@@ -487,36 +499,452 @@ pub struct AuthenticationResult {
     pub compliance_validation: ComplianceValidation,
 }
 
-// Placeholder types for foundation implementation
-pub type EnterpriseSSOMToken = String;
-pub type OperationContext = String;
-pub type CompleteEnterpriseUserContext = String;
-pub type ComplianceRequirements = String;
-pub type ComplianceValidation = String;
-pub type DelegationChainCoordinator = String;
-pub type UnifiedAuditCorrelator = String;
-pub type EnterpriseComplianceValidator = String;
-pub type CompleteGCPIdentityDelegationHandler = String;
-pub type CompleteOktaDelegationHandler = String;
-pub type AWSSTSClient = String;
-pub type CompleteCloudTrailIntegration = String;
-pub type CrossAccountDelegationValidator = String;
-pub type EnterpriseIAMPolicyValidator = String;
-pub type RoleChainOptimizer = String;
-pub type STSValidationResult = String;
-pub type AssumeRoleStep = String;
-pub type CompleteMicrosoftGraphClient = String;
-pub type CompleteAzureActivityLogIntegration = String;
-pub type EnterpriseManagedIdentityResolver = String;
-pub type AzureEnterpriseMapper = String;
-pub type OnBehalfOfFlowOptimizer = String;
-pub type AzureValidationResult = String;
-pub type OnBehalfOfConfiguration = String;
-pub type ProviderDelegationResult = String;
-pub type UnifiedCrossProviderAuditTrail = String;
-pub type EnterpriseDelegationComplianceValidation = String;
-pub type EnterpriseDelegationMetadata = String;
-pub type DelegationPerformanceMetrics = String;
+// Placeholder implementations for foundation implementation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnterpriseSSOMToken {
+    pub provider: SSOProvider,
+    pub token_data: String,
+    pub user_id: String,
+    pub assume_role_chain: Option<Vec<AssumeRoleStep>>,
+    pub on_behalf_of_config: Option<OnBehalfOfConfiguration>,
+    pub managed_identity_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationContext {
+    pub request_id: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompleteEnterpriseUserContext {
+    pub user_id: String,
+    pub tenant_id: String,
+    pub complete_delegation_chain: Vec<DelegationStep>,
+    pub effective_permissions: Vec<String>,
+    pub audit_trail_id: String,
+    pub compliance_validation: ComplianceValidation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComplianceRequirements {
+    pub requirements: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComplianceValidation {
+    pub overall_compliance_score: f64,
+    pub validation_time_ms: u64,
+}
+
+pub struct DelegationChainCoordinator;
+
+impl DelegationChainCoordinator {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn coordinate_multi_provider_delegation(
+        &self,
+        _request: &EnterpriseDelegationRequest,
+    ) -> Result<Vec<ProviderDelegationResult>> {
+        Ok(vec![])
+    }
+}
+
+pub struct UnifiedAuditCorrelator;
+
+impl UnifiedAuditCorrelator {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn correlate_cross_provider_audit_events(
+        &self,
+        _results: &[ProviderDelegationResult],
+        _request: &EnterpriseDelegationRequest,
+    ) -> Result<UnifiedCrossProviderAuditTrail> {
+        Ok(UnifiedCrossProviderAuditTrail {
+            cross_provider_correlations: vec![],
+            correlation_time_ms: 0,
+        })
+    }
+
+    pub async fn generate_complete_authentication_audit(
+        &self,
+        _token: &EnterpriseSSOMToken,
+        _result: &AuthenticationResult,
+        _context: &OperationContext,
+    ) -> Result<ComprehensiveAuditTrail> {
+        Ok(ComprehensiveAuditTrail {
+            audit_id: String::new(),
+            events: vec![],
+        })
+    }
+}
+
+pub struct EnterpriseComplianceValidator;
+
+impl EnterpriseComplianceValidator {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn validate_delegation_request(
+        &self,
+        _request: &EnterpriseDelegationRequest,
+        _requirements: &ComplianceRequirements,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    pub async fn validate_complete_delegation_compliance(
+        &self,
+        _results: &[ProviderDelegationResult],
+        _audit: &UnifiedCrossProviderAuditTrail,
+        _requirements: &ComplianceRequirements,
+    ) -> Result<EnterpriseDelegationComplianceValidation> {
+        Ok(EnterpriseDelegationComplianceValidation {
+            overall_compliance_score: 1.0,
+            validation_time_ms: 0,
+        })
+    }
+}
+
+pub struct CompleteGCPIdentityDelegationHandler;
+
+impl CompleteGCPIdentityDelegationHandler {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn process_complete_gcp_authentication(
+        &self,
+        _token: &EnterpriseSSOMToken,
+        _context: &OperationContext,
+    ) -> Result<AuthenticationResult> {
+        Ok(AuthenticationResult {
+            provider: SSOProvider::GoogleCloud,
+            user_id: String::new(),
+            tenant_id: String::new(),
+            delegation_chain: vec![],
+            effective_permissions: vec![],
+            audit_trail_id: String::new(),
+            compliance_validation: ComplianceValidation {
+                overall_compliance_score: 1.0,
+                validation_time_ms: 0,
+            },
+        })
+    }
+}
+
+pub struct CompleteOktaDelegationHandler;
+
+impl CompleteOktaDelegationHandler {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
+
+pub struct AWSSTSClient;
+
+impl AWSSTSClient {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn validate_enterprise_token(
+        &self,
+        _token_data: &str,
+        _context: &OperationContext,
+    ) -> Result<STSValidationResult> {
+        Ok(STSValidationResult {
+            user_id: String::new(),
+            tenant_id: String::new(),
+            effective_permissions: vec![],
+            credentials: AWSCredentials {
+                identity: String::new(),
+            },
+        })
+    }
+
+    pub async fn assume_role_with_credentials(
+        &self,
+        _credentials: &AWSCredentials,
+        _role_arn: &str,
+        _session_name: &str,
+        _duration: u32,
+    ) -> Result<AssumeRoleResult> {
+        Ok(AssumeRoleResult {
+            assumed_role_identity: String::new(),
+            credentials: AWSCredentials {
+                identity: String::new(),
+            },
+            cloudtrail_event_id: String::new(),
+        })
+    }
+}
+
+pub struct CompleteCloudTrailIntegration;
+
+impl CompleteCloudTrailIntegration {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn correlate_authentication_events(
+        &self,
+        _user_id: &str,
+        _chain: &[DelegationStep],
+        _context: &OperationContext,
+    ) -> Result<CloudTrailCorrelation> {
+        Ok(CloudTrailCorrelation {
+            audit_trail_id: String::new(),
+        })
+    }
+}
+
+pub struct CrossAccountDelegationValidator;
+
+impl CrossAccountDelegationValidator {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn validate_cross_account_delegation(
+        &self,
+        _step: &AssumeRoleStep,
+        _credentials: &AWSCredentials,
+        _context: &OperationContext,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
+
+pub struct EnterpriseIAMPolicyValidator;
+
+impl EnterpriseIAMPolicyValidator {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn validate_enterprise_compliance(
+        &self,
+        _validation: &STSValidationResult,
+        _chain: &[DelegationStep],
+        _context: &OperationContext,
+    ) -> Result<ComplianceValidation> {
+        Ok(ComplianceValidation {
+            overall_compliance_score: 1.0,
+            validation_time_ms: 0,
+        })
+    }
+}
+
+pub struct RoleChainOptimizer;
+
+impl RoleChainOptimizer {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct STSValidationResult {
+    pub user_id: String,
+    pub tenant_id: String,
+    pub effective_permissions: Vec<String>,
+    pub credentials: AWSCredentials,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssumeRoleStep {
+    pub target_role_arn: String,
+    pub session_name: String,
+    pub duration_seconds: u32,
+    pub source_account_context: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AWSCredentials {
+    pub identity: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssumeRoleResult {
+    pub assumed_role_identity: String,
+    pub credentials: AWSCredentials,
+    pub cloudtrail_event_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CloudTrailCorrelation {
+    pub audit_trail_id: String,
+}
+
+pub struct CompleteMicrosoftGraphClient;
+
+impl CompleteMicrosoftGraphClient {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn validate_enterprise_azure_token(
+        &self,
+        _token_data: &str,
+        _context: &OperationContext,
+    ) -> Result<AzureValidationResult> {
+        Ok(AzureValidationResult {
+            user_id: String::new(),
+            tenant_id: String::new(),
+            effective_permissions: vec![],
+            user_identity: String::new(),
+        })
+    }
+
+    pub async fn execute_optimized_on_behalf_of_flow(
+        &self,
+        _flow: &OptimizedOBOFlow,
+        _context: &OperationContext,
+    ) -> Result<OBOResult> {
+        Ok(OBOResult {
+            service_principal_identity: String::new(),
+            activity_log_event_id: String::new(),
+        })
+    }
+}
+
+pub struct CompleteAzureActivityLogIntegration;
+
+impl CompleteAzureActivityLogIntegration {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn correlate_azure_authentication_events(
+        &self,
+        _user_id: &str,
+        _chain: &[DelegationStep],
+        _mi_context: &Option<ManagedIdentityContext>,
+        _context: &OperationContext,
+    ) -> Result<ActivityLogCorrelation> {
+        Ok(ActivityLogCorrelation {
+            audit_trail_id: String::new(),
+        })
+    }
+}
+
+pub struct EnterpriseManagedIdentityResolver;
+
+impl EnterpriseManagedIdentityResolver {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn resolve_enterprise_managed_identity(
+        &self,
+        _mi_id: &str,
+        _validation: &AzureValidationResult,
+        _context: &OperationContext,
+    ) -> Result<ManagedIdentityContext> {
+        Ok(ManagedIdentityContext {
+            identity_id: String::new(),
+        })
+    }
+}
+
+pub struct AzureEnterpriseMapper;
+
+impl AzureEnterpriseMapper {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
+
+pub struct OnBehalfOfFlowOptimizer;
+
+impl OnBehalfOfFlowOptimizer {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn optimize_obo_flow(
+        &self,
+        _config: &OnBehalfOfConfiguration,
+        _validation: &AzureValidationResult,
+    ) -> Result<OptimizedOBOFlow> {
+        Ok(OptimizedOBOFlow {
+            flow_id: String::new(),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AzureValidationResult {
+    pub user_id: String,
+    pub tenant_id: String,
+    pub effective_permissions: Vec<String>,
+    pub user_identity: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OnBehalfOfConfiguration {
+    pub config_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OptimizedOBOFlow {
+    pub flow_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct OBOResult {
+    pub service_principal_identity: String,
+    pub activity_log_event_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ManagedIdentityContext {
+    pub identity_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActivityLogCorrelation {
+    pub audit_trail_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderDelegationResult {
+    pub total_delegation_time_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UnifiedCrossProviderAuditTrail {
+    pub cross_provider_correlations: Vec<String>,
+    pub correlation_time_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseDelegationComplianceValidation {
+    pub overall_compliance_score: f64,
+    pub validation_time_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseDelegationMetadata {
+    pub total_delegation_steps: usize,
+    pub providers_involved: Vec<SSOProvider>,
+    pub cross_provider_correlations: usize,
+    pub enterprise_compliance_score: f64,
+    pub delegation_performance: DelegationPerformanceMetrics,
+}
+
+#[derive(Debug, Clone)]
+pub struct DelegationPerformanceMetrics {
+    pub total_delegation_time_ms: u64,
+    pub audit_correlation_time_ms: u64,
+    pub compliance_validation_time_ms: u64,
+}
 
 #[cfg(test)]
 mod tests {

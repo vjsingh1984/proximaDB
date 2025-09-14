@@ -2,7 +2,8 @@
 //!
 //! Generates automated business insights from data analysis using AI.
 
-use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMRequestContext};
+use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest};
+use crate::ai::llm_integration::types::LLMRequestContext;
 use crate::ai::business_intelligence::engine::{BusinessMetrics, QueryResult};
 use super::trend_analyzer::TrendAnalysis;
 use serde::{Deserialize, Serialize};

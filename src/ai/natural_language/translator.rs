@@ -3,7 +3,8 @@
 //! Implements natural language to SQL translation using LLM providers
 //! with security validation and tenant isolation.
 
-use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMResponse, LLMError, LLMRequestContext};
+use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMResponse, LLMError};
+use crate::ai::llm_integration::types::LLMRequestContext;
 use super::schema_context::{SchemaContext, SchemaContextBuilder};
 use super::sql_validator::{SQLValidator, ValidationResult};
 use super::prompt_builder::{PromptBuilder, PromptTemplate};

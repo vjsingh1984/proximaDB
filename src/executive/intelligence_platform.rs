@@ -9,6 +9,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tracing::{info, debug, warn};
+use std::fmt;
 use chrono::{DateTime, Utc, Duration};
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +53,28 @@ pub struct RealTimeStrategicAnalyticsEngine {
     executive_alert_system: Arc<ExecutiveAlertSystem>,
 }
 
+impl RealTimeStrategicAnalyticsEngine {
+    pub async fn new() -> Result<Self> {
+        Ok(Self {
+            strategic_kpi_calculators: Arc::new(DashMap::new()),
+            business_intelligence_aggregator: Arc::new(BusinessIntelligenceAggregator),
+            strategic_trend_analyzer: Arc::new(StrategicTrendAnalyzer),
+            executive_alert_system: Arc::new(ExecutiveAlertSystem),
+        })
+    }
+
+    pub async fn generate_real_time_analytics(
+        &self,
+        _tenant_id: &str,
+        _role: &ExecutiveRole,
+        _context: &ExecutiveUserContext,
+    ) -> Result<RealTimeStrategicAnalytics> {
+        Ok(RealTimeStrategicAnalytics {
+            analytics_id: String::new(),
+        })
+    }
+}
+
 /// Automated board reporting system
 pub struct AutomatedBoardReportingSystem {
     /// Board report templates by industry
@@ -65,6 +88,17 @@ pub struct AutomatedBoardReportingSystem {
     
     /// Executive summary generator
     executive_summary_generator: Arc<ExecutiveSummaryGenerator>,
+}
+
+impl AutomatedBoardReportingSystem {
+    pub async fn new() -> Result<Self> {
+        Ok(Self {
+            board_report_templates: Arc::new(DashMap::new()),
+            governance_analytics_engine: Arc::new(GovernanceAnalyticsEngine),
+            regulatory_compliance_reporter: Arc::new(RegulatoryComplianceReporter),
+            executive_summary_generator: Arc::new(ExecutiveSummaryGenerator),
+        })
+    }
 }
 
 impl ExecutiveIntelligencePlatform {
@@ -260,6 +294,23 @@ impl ExecutiveIntelligencePlatform {
             },
         ])
     }
+
+    async fn generate_scenario_based_recommendations(
+        &self,
+        _results: &ScenarioResults,
+        _context: &ExecutiveUserContext,
+    ) -> Result<Vec<String>> {
+        Ok(vec!["Strategic recommendation".to_string()])
+    }
+
+    async fn assess_scenario_risks(
+        &self,
+        _results: &ScenarioResults,
+    ) -> Result<RiskAssessment> {
+        Ok(RiskAssessment {
+            assessment_id: String::new(),
+        })
+    }
 }
 
 // Executive role enumeration
@@ -271,6 +322,19 @@ pub enum ExecutiveRole {
     CTO,         // Chief Technology Officer
     COO,         // Chief Operating Officer
     BoardMember, // Board of Directors
+}
+
+impl fmt::Display for ExecutiveRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExecutiveRole::CEO => write!(f, "CEO"),
+            ExecutiveRole::CFO => write!(f, "CFO"),
+            ExecutiveRole::CRO => write!(f, "CRO"),
+            ExecutiveRole::CTO => write!(f, "CTO"),
+            ExecutiveRole::COO => write!(f, "COO"),
+            ExecutiveRole::BoardMember => write!(f, "Board Member"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -296,24 +360,261 @@ pub struct AutomatedBoardReport {
 }
 
 // Additional type definitions for executive intelligence
-pub type ExecutiveDashboardRequirements = String;
-pub type ExecutiveDashboardGenerator = String;
-pub type RealTimeStrategicAnalytics = String;
-pub type ExecutiveDashboardContent = String;
-pub type RealTimeUpdateConfiguration = String;
-pub type BoardReportingPeriod = String;
-pub type BoardReportRequirements = String;
-pub type GovernanceAnalytics = String;
-pub type ComplianceSummary = String;
-pub type ExecutiveSummary = String;
-pub type BoardStrategicRecommendation = String;
-pub type BoardReportMetadata = String;
-pub type BusinessScenario = String;
-pub type ScenarioModelingRequirements = String;
-pub type StrategicScenarioAnalysis = String;
-pub type BoardRecommendationCategory = String;
-pub type BusinessCase = String;
-pub type StakeholderImpact = String;
+#[derive(Debug, Clone)]
+pub struct ExecutiveDashboardRequirements {
+    pub mobile_enabled: bool,
+    pub email_digest_enabled: bool,
+}
+
+pub struct ExecutiveDashboardGenerator;
+
+impl ExecutiveDashboardGenerator {
+    pub async fn new_for_role(_role: ExecutiveRole) -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn generate_executive_dashboard(
+        &self,
+        _tenant_id: &str,
+        _analytics: &RealTimeStrategicAnalytics,
+        _requirements: &ExecutiveDashboardRequirements,
+        _context: &ExecutiveUserContext,
+    ) -> Result<ExecutiveDashboardContent> {
+        Ok(ExecutiveDashboardContent {
+            content_id: String::new(),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RealTimeStrategicAnalytics {
+    pub analytics_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutiveDashboardContent {
+    pub content_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RealTimeUpdateConfiguration {
+    pub update_frequency_seconds: u32,
+    pub priority_alerts_enabled: bool,
+    pub mobile_notifications_enabled: bool,
+    pub email_digest_enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoardReportingPeriod {
+    pub period_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoardReportRequirements {
+    pub compliance_frameworks: Vec<String>,
+    pub approval_workflow_required: bool,
+    pub distribution_list: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GovernanceAnalytics {
+    pub analytics_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComplianceSummary {
+    pub summary_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutiveSummary {
+    pub summary_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoardStrategicRecommendation {
+    pub recommendation_category: BoardRecommendationCategory,
+    pub title: String,
+    pub description: String,
+    pub business_case: BusinessCase,
+    pub implementation_timeline: u32,
+    pub board_approval_required: bool,
+    pub stakeholder_impact: StakeholderImpact,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoardReportMetadata {
+    pub report_id: String,
+    pub generated_at: DateTime<Utc>,
+    pub generated_by: String,
+    pub approval_workflow_enabled: bool,
+    pub distribution_list: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BusinessScenario {
+    pub scenario_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScenarioModelingRequirements {
+    pub requirements_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct StrategicScenarioAnalysis {
+    pub scenario_results: ScenarioResults,
+    pub competitive_analysis: CompetitiveAnalysis,
+    pub strategic_recommendations: Vec<String>,
+    pub risk_assessment: RiskAssessment,
+}
+
+#[derive(Debug, Clone)]
+pub enum BoardRecommendationCategory {
+    StrategicDirection,
+    OperationalExcellence,
+    RiskManagement,
+    TechnologyInvestment,
+}
+
+#[derive(Debug, Clone)]
+pub struct BusinessCase {
+    pub investment_required: f64,
+    pub expected_roi: f64,
+    pub payback_period_months: u32,
+    pub risk_assessment: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct StakeholderImpact {
+    pub customer_impact: String,
+    pub employee_impact: String,
+    pub shareholder_impact: String,
+    pub regulatory_impact: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScenarioResults {
+    pub results_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompetitiveAnalysis {
+    pub analysis_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RiskAssessment {
+    pub assessment_id: String,
+}
+
+pub struct ExecutiveUserContext {
+    pub user_id: String,
+}
+
+// Additional supporting structs
+pub struct ExecutiveMobileIntelligenceInterface;
+
+impl ExecutiveMobileIntelligenceInterface {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
+
+pub struct StrategicScenarioModelingEngine;
+
+impl StrategicScenarioModelingEngine {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn model_business_scenarios(
+        &self,
+        _tenant_id: &str,
+        _scenarios: &[BusinessScenario],
+        _requirements: &ScenarioModelingRequirements,
+        _context: &ExecutiveUserContext,
+    ) -> Result<ScenarioResults> {
+        Ok(ScenarioResults {
+            results_id: String::new(),
+        })
+    }
+}
+
+pub struct CompetitiveIntelligenceSystem;
+
+impl CompetitiveIntelligenceSystem {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn analyze_competitive_implications(
+        &self,
+        _results: &ScenarioResults,
+        _requirements: &ScenarioModelingRequirements,
+    ) -> Result<CompetitiveAnalysis> {
+        Ok(CompetitiveAnalysis {
+            analysis_id: String::new(),
+        })
+    }
+}
+
+pub struct StrategicKPICalculator;
+
+pub struct BusinessIntelligenceAggregator;
+
+pub struct StrategicTrendAnalyzer;
+
+pub struct ExecutiveAlertSystem;
+
+pub struct BoardReportTemplate {
+    pub template_id: String,
+}
+
+pub struct GovernanceAnalyticsEngine;
+
+impl GovernanceAnalyticsEngine {
+    pub async fn generate_governance_analytics(
+        &self,
+        _tenant_id: &str,
+        _period: &BoardReportingPeriod,
+        _context: &ExecutiveUserContext,
+    ) -> Result<GovernanceAnalytics> {
+        Ok(GovernanceAnalytics {
+            analytics_id: String::new(),
+        })
+    }
+}
+
+pub struct RegulatoryComplianceReporter;
+
+impl RegulatoryComplianceReporter {
+    pub async fn generate_compliance_summary(
+        &self,
+        _tenant_id: &str,
+        _period: &BoardReportingPeriod,
+        _frameworks: &[String],
+    ) -> Result<ComplianceSummary> {
+        Ok(ComplianceSummary {
+            summary_id: String::new(),
+        })
+    }
+}
+
+pub struct ExecutiveSummaryGenerator;
+
+impl ExecutiveSummaryGenerator {
+    pub async fn generate_executive_summary(
+        &self,
+        _analytics: &GovernanceAnalytics,
+        _compliance: &ComplianceSummary,
+        _requirements: &BoardReportRequirements,
+    ) -> Result<ExecutiveSummary> {
+        Ok(ExecutiveSummary {
+            summary_id: String::new(),
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

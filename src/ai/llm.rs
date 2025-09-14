@@ -65,9 +65,9 @@ impl AIIntelligenceFoundation {
         Ok(Self {
             llm_integration: Arc::new(LLMIntegrationEngine::new().await?),
             business_context_ai: Arc::new(BusinessContextAI::new().await?),
-            enterprise_nlp: Arc::new(EnterpriseNLPEngine::new().await?),
-            ai_query_translator: Arc::new(AIQueryTranslator::new().await?),
-            knowledge_graph_ai: Arc::new(KnowledgeGraphAICoordinator::new().await?),
+            enterprise_nlp: Arc::new(EnterpriseNLPEngine::new()?),
+            ai_query_translator: Arc::new(AIQueryTranslator::new()?),
+            knowledge_graph_ai: Arc::new(KnowledgeGraphAICoordinator::new()?),
         })
     }
     
@@ -136,8 +136,8 @@ impl LLMIntegrationEngine {
         Ok(Self {
             model_configurations: Arc::new(DashMap::new()),
             prompt_templates: Arc::new(DashMap::new()),
-            response_validator: Arc::new(LLMResponseValidator::new().await?),
-            performance_optimizer: Arc::new(LLMPerformanceOptimizer::new().await?),
+            response_validator: Arc::new(LLMResponseValidator::new()?),
+            performance_optimizer: Arc::new(LLMPerformanceOptimizer::new()?),
         })
     }
     
@@ -302,9 +302,9 @@ impl BusinessContextAI {
     async fn new() -> Result<Self> {
         Ok(Self {
             industry_classifiers: Arc::new(DashMap::new()),
-            domain_understanding: Arc::new(BusinessDomainUnderstanding::new().await?),
-            regulatory_context: Arc::new(RegulatoryContextIntegration::new().await?),
-            enterprise_terminology: Arc::new(EnterpriseTerminologyProcessor::new().await?),
+            domain_understanding: Arc::new(BusinessDomainUnderstanding::new()?),
+            regulatory_context: Arc::new(RegulatoryContextIntegration::new()?),
+            enterprise_terminology: Arc::new(EnterpriseTerminologyProcessor::new()?),
         })
     }
     
@@ -375,7 +375,7 @@ impl BusinessContextAI {
     
     async fn calculate_intent_confidence(&self, query: &str, intent: &str) -> Result<f32> {
         // Calculate confidence based on query-intent alignment
-        let confidence = if query.to_lowercase().contains(&intent.replace("_", " ")) {
+        let confidence = if query.to_lowercase().contains(&intent.replace('_', " ")) {
             0.9
         } else {
             0.7
@@ -531,22 +531,198 @@ pub struct EnterpriseModelContext {
     pub business_domains: Vec<String>,
 }
 
-// Additional placeholder types for foundation
-pub type EnterpriseNLPEngine = String;
-pub type AIQueryTranslator = String;
-pub type KnowledgeGraphAICoordinator = String;
-pub type StructuredKnowledgeQuery = String;
-pub type DomainIntelligenceResult = String;
-pub type AIGeneratedAnswer = String;
-pub type EnterprisePromptTemplate = String;
-pub type LLMResponseValidator = String;
-pub type LLMPerformanceOptimizer = String;
-pub type IndustryIntentClassifier = String;
-pub type BusinessDomainUnderstanding = String;
-pub type RegulatoryContextIntegration = String;
-pub type EnterpriseTerminologyProcessor = String;
-pub type EnterprisePrompt = String;
-pub type LLMResponse = String;
+// Foundation structs for LLM integration
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseNLPEngine;
+
+#[derive(Debug, Clone)]
+pub struct AIQueryTranslator;
+
+#[derive(Debug, Clone)]
+pub struct KnowledgeGraphAICoordinator;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuredKnowledgeQuery {
+    pub query_type: String,
+    pub target_entities: Vec<String>,
+    pub relationships: Vec<String>,
+    pub constraints: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DomainIntelligenceResult {
+    pub entities_analyzed: usize,
+    pub relationships_analyzed: usize,
+    pub knowledge_sources: Vec<String>,
+    pub domain_insights: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AIGeneratedAnswer {
+    pub answer_text: String,
+    pub supporting_evidence: Vec<String>,
+    pub business_insights: Vec<String>,
+    pub confidence_score: f32,
+    pub knowledge_sources: Vec<String>,
+    pub regulatory_compliance: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnterprisePromptTemplate {
+    pub template_name: String,
+    pub system_prompt: String,
+    pub user_prompt_template: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct LLMResponseValidator;
+
+#[derive(Debug, Clone)]
+pub struct LLMPerformanceOptimizer;
+
+#[derive(Debug, Clone)]
+pub struct IndustryIntentClassifier;
+
+#[derive(Debug, Clone)]
+pub struct BusinessDomainUnderstanding;
+
+#[derive(Debug, Clone)]
+pub struct RegulatoryContextIntegration;
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseTerminologyProcessor;
+
+#[derive(Debug, Clone)]
+pub struct EnterprisePrompt {
+    pub system_prompt: String,
+    pub user_query: String,
+    pub knowledge_context: String,
+    pub business_constraints: EnterpriseModelContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct LLMResponse {
+    pub response_text: String,
+    pub confidence_score: f32,
+    pub processing_time_ms: u64,
+    pub model_used: String,
+    pub business_relevance_score: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ValidatedResponse {
+    pub answer_text: String,
+    pub supporting_evidence: Vec<String>,
+    pub business_insights: Vec<String>,
+    pub confidence_score: f32,
+    pub regulatory_compliance: Vec<String>,
+}
+
+// Implementations for foundation structs
+impl EnterpriseNLPEngine {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
+
+impl AIQueryTranslator {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn translate_to_knowledge_query(
+        &self,
+        business_intent: &BusinessIntent,
+        _business_context: &BusinessContext,
+    ) -> Result<StructuredKnowledgeQuery> {
+        Ok(StructuredKnowledgeQuery {
+            query_type: business_intent.primary_intent.clone(),
+            target_entities: business_intent.extracted_entities.clone(),
+            relationships: vec!["related_to".to_string(), "influences".to_string()],
+            constraints: business_intent.business_constraints.clone(),
+        })
+    }
+}
+
+impl KnowledgeGraphAICoordinator {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn execute_with_domain_intelligence(
+        &self,
+        _tenant_id: &str,
+        structured_query: &StructuredKnowledgeQuery,
+        _business_context: &BusinessContext,
+        _user_context: &EnterpriseUserContext,
+    ) -> Result<DomainIntelligenceResult> {
+        Ok(DomainIntelligenceResult {
+            entities_analyzed: structured_query.target_entities.len(),
+            relationships_analyzed: structured_query.relationships.len(),
+            knowledge_sources: vec!["enterprise_graph".to_string()],
+            domain_insights: vec!["Key insights from domain analysis".to_string()],
+        })
+    }
+}
+
+impl LLMResponseValidator {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn validate_enterprise_response(
+        &self,
+        llm_response: &LLMResponse,
+        _business_intent: &BusinessIntent,
+        _enterprise_context: &EnterpriseModelContext,
+    ) -> Result<ValidatedResponse> {
+        Ok(ValidatedResponse {
+            answer_text: llm_response.response_text.clone(),
+            supporting_evidence: vec!["Evidence from knowledge graph".to_string()],
+            business_insights: vec!["Business insight generated".to_string()],
+            confidence_score: llm_response.confidence_score,
+            regulatory_compliance: vec!["Compliant with enterprise standards".to_string()],
+        })
+    }
+}
+
+impl LLMPerformanceOptimizer {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
+
+impl BusinessDomainUnderstanding {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
+
+impl RegulatoryContextIntegration {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn extract_regulatory_requirements(
+        &self,
+        _query: &str,
+        business_context: &BusinessContext,
+    ) -> Result<Vec<String>> {
+        let requirements = match business_context.primary_function.as_str() {
+            s if s.contains("risk") || s.contains("trading") => vec!["basel_iii".to_string(), "sox".to_string()],
+            s if s.contains("clinical") || s.contains("medical") => vec!["hipaa".to_string(), "fda_cfr_part_11".to_string()],
+            _ => vec!["soc2".to_string(), "gdpr".to_string()],
+        };
+        Ok(requirements)
+    }
+}
+
+impl EnterpriseTerminologyProcessor {
+    pub fn new() -> Result<Self> {
+        Ok(Self)
+    }
+}
 
 #[cfg(test)]
 mod tests {

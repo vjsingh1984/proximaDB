@@ -62,7 +62,7 @@ impl EnterpriseNLPEngine {
             entity_recognizer: Arc::new(BusinessEntityRecognizer::new().await?),
             intent_classifier: Arc::new(EnterpriseIntentClassifier::new().await?),
             terminology_processor: Arc::new(IndustryTerminologyProcessor::new().await?),
-            complexity_analyzer: Arc::new(QueryComplexityAnalyzer::new().await?),
+            complexity_analyzer: Arc::new(QueryComplexityAnalyzer::new()?),
             context_integrator: Arc::new(BusinessContextIntegrator::new().await?),
         })
     }
@@ -398,7 +398,14 @@ pub type TerminologyAnalysis = String;
 pub type QueryComplexityAnalysis = String;
 pub type BusinessContextIntegration = String;
 pub type IndustryTerminologyProcessor = String;
-pub type QueryComplexityAnalyzer = String;
+#[derive(Debug, Clone)]
+pub struct QueryComplexityAnalyzer;
+
+impl QueryComplexityAnalyzer {
+    pub fn new() -> anyhow::Result<Self> {
+        Ok(Self)
+    }
+}
 pub type BusinessContextIntegrator = String;
 pub type IntentModel = String;
 pub type OperationClassifier = String;

@@ -557,24 +557,147 @@ pub struct CollectionBridgeConfig {
 }
 
 // Additional type definitions for foundation
-pub type BusinessIntelligenceRule = String;
-pub type QueryOptimizationRule = String;
-pub type MappingRule = String;
-pub type MetadataExtractionRule = String;
-pub type RelationshipInferenceRule = String;
-pub type DomainPatternAnalyzer = String;
-pub type EntityBusinessAnalysis = String;
-pub type QueryBusinessAnalysis = String;
-pub type OptimizationMetadata = String;
-pub type CrossDomainCompositionQuery = String;
-pub type ComposedKnowledgeResult = String;
-pub type DomainCompositionResult = String;
-pub type CrossDomainBusinessIntelligence = String;
-pub type CompositionMetadata = String;
-pub type CorrelationAnalysis = String;
-pub type BusinessInsights = String;
-pub type CrossDomainPerformanceMetadata = String;
-pub type DomainInsights = String;
+#[derive(Debug, Clone)]
+pub struct BusinessIntelligenceRule {
+    pub rule_name: String,
+    pub rule_logic: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryOptimizationRule {
+    pub rule_name: String,
+    pub optimization_type: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MappingRule {
+    pub rule_name: String,
+    pub rule_logic: String,
+    pub business_context: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetadataExtractionRule {
+    pub rule_name: String,
+    pub extraction_pattern: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RelationshipInferenceRule {
+    pub rule_name: String,
+    pub inference_logic: String,
+}
+
+pub struct DomainPatternAnalyzer;
+
+impl DomainPatternAnalyzer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub async fn analyze_entity_patterns(&self, _entity: &Entity) -> Result<EntityPatternAnalysis> {
+        Ok(EntityPatternAnalysis {
+            relevance_score: 0.8,
+            domain_fit: 0.9,
+            insights: vec!["Pattern analysis complete".to_string()],
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityPatternAnalysis {
+    pub relevance_score: f64,
+    pub domain_fit: f64,
+    pub insights: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntityBusinessAnalysis {
+    pub entity_id: String,
+    pub business_relevance_score: f64,
+    pub domain_fit_score: f64,
+    pub intelligence_insights: Vec<String>,
+    pub analyzed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryBusinessAnalysis {
+    pub entity_count: usize,
+    pub business_relevance_scores: HashMap<String, f64>,
+    pub domain_insights: DomainInsights,
+    pub analyzed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct OptimizationMetadata {
+    pub query_optimization_applied: bool,
+    pub business_context_used: bool,
+    pub performance_improvement: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CrossDomainCompositionQuery {
+    pub query_type: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ComposedKnowledgeResult {
+    pub primary_domain: String,
+    pub composed_results: Vec<DomainCompositionResult>,
+    pub business_intelligence: CrossDomainBusinessIntelligence,
+    pub composition_metadata: CompositionMetadata,
+}
+
+#[derive(Debug, Clone)]
+pub struct DomainCompositionResult {
+    pub domain_id: String,
+    pub entities: Vec<Entity>,
+    pub business_context: BusinessContext,
+}
+
+#[derive(Debug, Clone)]
+pub struct CrossDomainBusinessIntelligence {
+    pub correlation_analysis: CorrelationAnalysis,
+    pub business_insights: BusinessInsights,
+    pub performance_metadata: CrossDomainPerformanceMetadata,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompositionMetadata {
+    pub domains_involved: usize,
+    pub entities_analyzed: usize,
+    pub business_context_applied: bool,
+    pub composition_timestamp: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CorrelationAnalysis {
+    pub cross_domain_correlations: Vec<String>,
+    pub correlation_strength: f64,
+    pub business_impact_score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BusinessInsights {
+    pub key_insights: Vec<String>,
+    pub recommendations: Vec<String>,
+    pub confidence_score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct CrossDomainPerformanceMetadata {
+    pub domains_processed: usize,
+    pub total_entities_analyzed: usize,
+    pub composition_time_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DomainInsights {
+    pub primary_patterns: Vec<String>,
+    pub business_recommendations: Vec<String>,
+    pub confidence_level: f64,
+}
 
 #[derive(Debug, Clone)]
 struct OptimizationResult {

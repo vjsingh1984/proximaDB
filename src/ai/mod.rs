@@ -17,7 +17,8 @@ pub use analytics::{PredictiveAnalyticsEngine, ConversationalAnalyticsEngine, Go
 pub use natural_language_api::{NaturalLanguageBusinessIntelligenceAPI, ConversationalBusinessAnswer};
 pub use llm_integration::{LLMIntegrationEngine as ModernLLMEngine, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMConfig};
 pub use natural_language::{NLQueryTranslator, TranslationResult, SchemaContext};
-pub use business_intelligence::{BusinessIntelligenceEngine, ExecutiveDashboard, BusinessInsight};
+pub use business_intelligence::{BusinessIntelligenceEngine, BusinessInsight};
+pub use business_intelligence::engine::ExecutiveDashboard;
 pub use executive_dashboard::{AIExecutiveDashboard, ExecutiveDashboardRequest, AIExecutiveDashboardResponse};
 
 use anyhow::Result;

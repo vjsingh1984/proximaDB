@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc, Duration};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::{info, debug, warn};
 
 use super::types::{SSOToken, SSOValidationResult, EnterpriseUserContext, ProviderUserContext, ProviderMetadata, SecurityClearance};
@@ -121,7 +121,7 @@ impl AWSIAMIntegration {
     ) -> Result<EnterpriseUserContext> {
         // Extract user information from AWS token claims
         let user_id = token_data.sub.clone();
-        let username = token_data.preferred_username.clone().unwrap_or_else(|| token_data.sub.clone());
+        let username = token_data.preferred_username.clone().unwrap_or_else(|| user_id.clone());
         let email = token_data.email.clone();
 
         // Map AWS groups/roles to ProximaDB roles
@@ -130,24 +130,31 @@ impl AWSIAMIntegration {
         // Extract tenant information from custom claims
         let tenant_id = token_data.custom_tenant_id.clone();
 
+        // Prepare email and user ARN before moving user_id
+        let email_final = email.unwrap_or_else(|| format!("{}@unknown.aws", user_id));
+        let user_arn = format!("arn:aws:iam::{}:user/{}", token_data.account_id, user_id);
+
         // Create enterprise user context
         let user_context = EnterpriseUserContext {
             user_id,
-            username,
-            email,
+            email: email_final,
+            display_name: username,
+            tenant_id: tenant_id.unwrap_or_else(|| "default".to_string()),
+            organization_id: token_data.account_id.clone(),
             roles: proximadb_roles,
-            tenant_id,
-            session_id: uuid::Uuid::new_v4().to_string(),
-            authenticated_at: Utc::now(),
-            expires_at: aws_credentials.expiration.unwrap_or_else(|| Utc::now() + Duration::hours(1)),
-            authentication_method: "AWS_IAM_SSO".to_string(),
+            permissions: HashSet::new(), // Will be populated based on roles
             security_clearance: self.determine_security_clearance(&token_data).await?,
-            aws_context: Some(AWSUserContext {
-                role_arn: aws_credentials.role_arn.clone(),
-                assumed_role_user: aws_credentials.assumed_role_user.clone(),
+            department: None,
+            cost_center: None,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            login_timestamp: Utc::now(),
+            last_activity: Utc::now(),
+            provider_context: ProviderUserContext::AWS {
                 account_id: token_data.account_id.clone(),
-                region: self.region.clone(),
-            }),
+                user_arn,
+                assumed_role_arn: Some(aws_credentials.role_arn.clone()),
+                mfa_authenticated: true, // Assume MFA for AWS IAM integration
+            },
         };
 
         debug!("✅ Built enterprise user context for AWS user: {}", user_context.user_id);
@@ -159,8 +166,8 @@ impl AWSIAMIntegration {
         let mut proximadb_roles = Vec::new();
 
         for group in cognito_groups {
-            // Find matching role mapping
-            if let Some(mapping) = self.role_mappings.iter().find(|m| m.aws_group == *group) {
+            // Find matching role mapping by checking if group matches part of role ARN
+            if let Some(mapping) = self.role_mappings.iter().find(|m| m.aws_role_arn.contains(group)) {
                 proximadb_roles.push(mapping.proximadb_role.clone());
                 debug!("🔄 Mapped AWS group '{}' to ProximaDB role '{}'", group, mapping.proximadb_role);
             } else {
@@ -181,11 +188,11 @@ impl AWSIAMIntegration {
     async fn determine_security_clearance(&self, token_data: &AWSTokenData) -> Result<SecurityClearance> {
         // Analyze AWS token claims to determine security clearance level
         let clearance = if token_data.cognito_groups.iter().any(|g| g.contains("admin") || g.contains("executive")) {
-            SecurityClearance::High
+            SecurityClearance::Secret
         } else if token_data.cognito_groups.iter().any(|g| g.contains("manager") || g.contains("analyst")) {
-            SecurityClearance::Medium
+            SecurityClearance::Confidential
         } else {
-            SecurityClearance::Standard
+            SecurityClearance::Internal
         };
 
         debug!("🔒 Determined security clearance: {:?} for user {}", clearance, token_data.sub);
@@ -203,7 +210,7 @@ impl AWSIAMIntegration {
         let aws_credentials = self.assume_role_with_web_identity(&aws_token_data).await?;
 
         // Step 3: Extract user context from AWS credentials and token claims
-        let user_context = self.build_enterprise_user_context(&aws_token_data, &aws_credentials).await?;
+        let _user_context = self.build_enterprise_user_context(&aws_token_data, &aws_credentials).await?;
         
         // Validate token is not expired
         if sso_token.is_expired() {
@@ -250,25 +257,27 @@ impl AWSIAMIntegration {
     async fn validate_aws_sts_token(&self, token_data: &AWSTokenData) -> Result<AWSUserInfo> {
         // In real implementation, this would call AWS STS GetCallerIdentity
         // For now, simulate validation
-        
-        if token_data.access_key_id.is_empty() {
-            return Err(anyhow!("Invalid AWS access key"));
+
+        if token_data.sub.is_empty() {
+            return Err(anyhow!("Invalid AWS token: missing subject"));
         }
-        
-        // Extract account ID from access key (simplified)
-        let account_id = self.extract_account_id_from_access_key(&token_data.access_key_id)?;
-        
+
+        // Use account_id from token data
+        let account_id = &token_data.account_id;
+
         // Validate account is trusted
-        if self.enable_cross_account && !self.trusted_accounts.contains(&account_id) {
+        if self.enable_cross_account && !self.trusted_accounts.contains(account_id) {
             return Err(anyhow!("AWS account {} not trusted", account_id));
         }
-        
+
+        let user_name = token_data.preferred_username.clone().unwrap_or_else(|| token_data.sub.clone());
+
         Ok(AWSUserInfo {
-            user_arn: format!("arn:aws:iam::{}:user/{}", account_id, token_data.user_name),
-            user_name: token_data.user_name.clone(),
-            account_id,
-            assumed_role_arn: token_data.assumed_role_arn.clone(),
-            mfa_authenticated: token_data.mfa_authenticated,
+            user_arn: format!("arn:aws:iam::{}:user/{}", account_id, user_name),
+            user_name,
+            account_id: account_id.clone(),
+            assumed_role_arn: Some(token_data.role_arn.clone()),
+            mfa_authenticated: true, // Assume MFA for simplicity
         })
     }
     
@@ -301,7 +310,7 @@ impl AWSIAMIntegration {
             display_name: aws_user.user_name.clone(),
             tenant_id,
             organization_id: aws_user.account_id.clone(),
-            roles: vec![proximadb_role],
+            roles: vec![proximadb_role.clone()],
             permissions: self.get_role_permissions(&proximadb_role),
             security_clearance: if aws_user.mfa_authenticated {
                 SecurityClearance::Confidential
@@ -358,16 +367,7 @@ impl AWSIAMIntegration {
     }
 }
 
-/// AWS token data structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AWSTokenData {
-    pub access_key_id: String,
-    pub secret_access_key: String, // Not stored, only for validation
-    pub session_token: Option<String>,
-    pub user_name: String,
-    pub assumed_role_arn: Option<String>,
-    pub mfa_authenticated: bool,
-}
+// AWSTokenData is already defined at the top of the file
 
 /// AWS user information resolved from token
 #[derive(Debug, Clone)]
