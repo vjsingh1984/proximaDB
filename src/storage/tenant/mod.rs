@@ -9,6 +9,7 @@ pub mod entity_store;
 pub mod domain;
 pub mod rbac;
 pub mod knowledge_graph;
+pub mod performance;
 
 pub use manager::TenantManager;
 pub use context::{TenantContext, TenantConfig, TenantStatus, BusinessContext, DataSensitivityLevel};
@@ -17,6 +18,7 @@ pub use entity_store::{TenantAwareEntityStore, UserContext};
 pub use domain::{DomainManager, DomainContext, CollectionDomainMapping};
 pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
 pub use knowledge_graph::{DomainKnowledgeGraph, CollectionDomainBridge};
+pub use performance::{TenantPerformanceMonitor, TenantMetrics, TenantSLA, SLACheckResult};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};

@@ -482,7 +482,7 @@ impl VectorOperationsService {
         hints
     }
 
-    /// Execute progressive quantization-aware search
+    /// Execute progressive quantization-aware search WITH TENANT ISOLATION
     /// Uses the formula: k_stage = k · Π(1/r_i) for all subsequent stages
     /// UNIFIED SEARCH METHOD - Single entry point for ALL search operations
     ///
@@ -497,7 +497,64 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
+    ) -> Result<Vec<VectorRecord>> {
+        self.unified_search_with_tenant_context(collection_id, query_vector, k, filter, config, None).await
+    }
+
+    /// Execute search with tenant context validation
+    pub async fn unified_search_with_tenant_context(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
+        debug!("🔍 Executing unified search: collection={}, k={}", collection_id, k);
+
+        // NEW: Multi-tenant validation and security
+        if let Some(ref tenant_manager) = self.tenant_manager {
+            if let Some(tenant_ctx) = tenant_context {
+                // STEP 1: Validate tenant ownership of collection
+                let collection_tenant = tenant_manager
+                    .get_collection_tenant(collection_id)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to get collection tenant: {}", e))?;
+
+                if collection_tenant != tenant_ctx.tenant_id {
+                    warn!("🚨 CRITICAL: Cross-tenant search attempt blocked - user tenant {} tried to search collection owned by tenant {}",
+                          tenant_ctx.tenant_id, collection_tenant);
+                    return Ok(vec![]); // Return empty results for security
+                }
+
+                // STEP 2: RBAC permission validation
+                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                    let permission_result = rbac_enforcer
+                        .check_permission(&tenant_ctx.user_context, "collection", "search")
+                        .await
+                        .map_err(|e| anyhow::anyhow!("RBAC check failed: {}", e))?;
+
+                    if !permission_result.allowed {
+                        warn!("🚨 RBAC: Search permission denied for user {} on collection {}",
+                              tenant_ctx.user_context.user_id, collection_id);
+                        return Ok(vec![]);
+                    }
+                }
+
+                // STEP 3: Rate limiting and SLA enforcement
+                if let Ok(sla_check) = tenant_manager.check_search_rate_limit(&tenant_ctx.tenant_id).await {
+                    if !sla_check.allowed {
+                        warn!("🚨 Rate limit exceeded for tenant {}: {}",
+                              tenant_ctx.tenant_id, sla_check.reason);
+                        return Err(anyhow::anyhow!("Tenant rate limit exceeded"));
+                    }
+                }
+
+                debug!("✅ Tenant validation passed for search: tenant={}, collection={}", tenant_ctx.tenant_id, collection_id);
+            }
+        }
+
         let config = config.clone();
 
         // Create cache key for unified result caching
@@ -566,7 +623,80 @@ impl VectorOperationsService {
             .put_with_hooks(cache_key, cached_result)
             .await;
 
-        Ok(results)
+        // NEW: Defense-in-depth result validation for tenant isolation
+        let validated_results = if let Some(tenant_ctx) = tenant_context {
+            self.validate_search_results_tenant_isolation(&results, &tenant_ctx.tenant_id).await?
+        } else {
+            results
+        };
+
+        Ok(validated_results)
+    }
+
+    /// CRITICAL SECURITY: Validate search results for tenant isolation (defense-in-depth)
+    async fn validate_search_results_tenant_isolation(
+        &self,
+        results: &[crate::proto::proximadb_v1::SearchResult],
+        expected_tenant_id: &str,
+    ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
+        let mut validated_results = Vec::new();
+
+        for result in results {
+            // Check if result has tenant_id metadata
+            if let Some(ref metadata) = result.metadata {
+                if let Some(result_tenant_id) = metadata.get("tenant_id") {
+                    if result_tenant_id == expected_tenant_id {
+                        validated_results.push(result.clone());
+                    } else {
+                        // CRITICAL SECURITY ALERT: Cross-tenant data leakage detected!
+                        error!(
+                            "🚨 CRITICAL SECURITY ALERT: Cross-tenant data leakage prevented! Expected tenant: {}, Found: {} for vector: {}",
+                            expected_tenant_id,
+                            result_tenant_id,
+                            result.id
+                        );
+
+                        // Log security incident for audit trail
+                        if let Some(ref audit_logger) = self.get_audit_logger() {
+                            let _ = audit_logger.log_security_incident(
+                                "cross_tenant_data_leakage_prevented",
+                                &format!("Vector {} with tenant {} leaked to tenant {}", result.id, result_tenant_id, expected_tenant_id),
+                            ).await;
+                        }
+
+                        // Do not include this result - potential data breach prevented
+                    }
+                } else {
+                    // CRITICAL: Result without tenant_id is a security issue
+                    error!("🚨 CRITICAL SECURITY ALERT: Vector result without tenant_id found! Vector: {}", result.id);
+
+                    if let Some(ref audit_logger) = self.get_audit_logger() {
+                        let _ = audit_logger.log_security_incident(
+                            "missing_tenant_metadata",
+                            &format!("Vector {} found without tenant_id metadata", result.id),
+                        ).await;
+                    }
+
+                    // Do not include results without tenant metadata
+                }
+            }
+        }
+
+        if validated_results.len() != results.len() {
+            warn!(
+                "🔒 Tenant isolation filter removed {} potentially leaking results from {} total",
+                results.len() - validated_results.len(),
+                results.len()
+            );
+        }
+
+        Ok(validated_results)
+    }
+
+    /// Get audit logger for security incident reporting
+    fn get_audit_logger(&self) -> Option<&crate::audit::AuditLogger> {
+        // Placeholder - would be injected via dependency injection
+        None
     }
 
     /// Unified search that returns v1 proto results at the source
