@@ -94,7 +94,7 @@ impl Default for MetadataWALConfig {
 }
 
 /// Collection metadata with versioning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VersionedCollectionMetadata {
     pub id: String,
     pub name: String,
@@ -116,7 +116,7 @@ pub struct VersionedCollectionMetadata {
 }
 
 /// Access pattern hints for optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AccessPattern {
     /// Frequently accessed, keep hot
     Hot,
@@ -129,7 +129,7 @@ pub enum AccessPattern {
 }
 
 /// Retention policy for collections
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetentionPolicy {
     pub retain_days: u32,
     pub auto_archive: bool,

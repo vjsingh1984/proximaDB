@@ -54,7 +54,7 @@ pub struct PQColumnInfo {
     pub codebook_id: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct QuantizationStats {
     pub num_vectors: usize,
     pub compression_ratio: f32,

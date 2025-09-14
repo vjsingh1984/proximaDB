@@ -34,12 +34,20 @@ pub struct CachedDistanceTable {
 }
 
 /// Distance table cache for PQ operations using unified cache infrastructure
-#[derive(Debug)]
 pub struct DistanceTableCache {
     /// Unified cache orchestrator
     cache_orchestrator: Arc<CrossCacheOrchestrator>,
     /// Cache configuration
     config: CacheConfig,
+}
+
+impl std::fmt::Debug for DistanceTableCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DistanceTableCache")
+            .field("cache_orchestrator", &"<CrossCacheOrchestrator>")
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 /// Cache statistics

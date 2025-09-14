@@ -1078,6 +1078,8 @@ impl CostModel {
             ExecutionOperation::SetUnion { .. } => 0.8,
             ExecutionOperation::SetIntersect { .. } => 0.8,
             ExecutionOperation::SetExcept { .. } => 0.8,
+            ExecutionOperation::Union { .. } => 0.7,
+            ExecutionOperation::CteMaterialization { .. } => 0.9,
         }
     }
 }

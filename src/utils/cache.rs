@@ -409,7 +409,7 @@ where
             unsafe {
                 let node = &*tail_ptr;
                 let key = node.key.clone();
-                let value = node.key.clone();
+                let value = node.value.clone();
                 self.remove(&key);
                 Some((key, value))
             }
@@ -423,7 +423,7 @@ where
         if let Some(&node_ptr) = self.map.get(key) {
             unsafe {
                 let node = &*node_ptr;
-                let value = node.key.clone();
+                let value = node.value.clone();
                 self.remove(key);
                 Some(value)
             }

@@ -72,11 +72,94 @@ use tracing::{debug, error, info, warn};
 // use base64;
 
 // Use proto types directly with custom serde implementations
-use crate::graph::{
+use crate::proto::proximadb_v1::{
     Edge, EdgeQuery, Node, NodeQuery, TraversalRequest,
 };
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{PropertyValue, EmbeddingVersion};
+
+/// REST-compatible TraversalRequest wrapper for JSON deserialization
+#[derive(Debug, serde::Deserialize)]
+struct RestTraversalRequest {
+    start_node_id: String,
+    max_depth: u32,
+    edge_types: Vec<String>,
+    node_labels: Vec<String>,
+    return_path: bool,
+    algorithm: String,
+}
+
+/// REST-compatible NodeQuery wrapper for JSON deserialization
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RestNodeQuery {
+    labels: Vec<String>,
+    properties: HashMap<String, serde_json::Value>,
+    limit: u32,
+    offset: Option<u32>,
+    continuation_token: Option<String>,
+}
+
+/// REST-compatible EdgeQuery wrapper for JSON deserialization
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RestEdgeQuery {
+    edge_type: String,
+    from_node_id: Option<String>,
+    to_node_id: Option<String>,
+    properties: HashMap<String, serde_json::Value>,
+    limit: u32,
+    offset: Option<u32>,
+    continuation_token: Option<String>,
+}
+
+// Conversion implementations for REST types to Proto types
+impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest {
+    fn from(rest: RestTraversalRequest) -> Self {
+        // Convert algorithm string to enum value (simplified)
+        let algorithm = match rest.algorithm.as_str() {
+            "dfs" => 1, // TraversalAlgorithm::Dfs
+            "bfs" => 2, // TraversalAlgorithm::Bfs
+            _ => 0, // TraversalAlgorithm::Unspecified
+        };
+
+        crate::proto::proximadb_v1::TraversalRequest {
+            start_node_id: rest.start_node_id,
+            max_depth: rest.max_depth,
+            edge_types: rest.edge_types,
+            node_labels: rest.node_labels,
+            filters: vec![], // REST doesn't have filters yet
+            algorithm,
+            limit: None,
+            timeout_ms: None,
+            max_frontier: None,
+        }
+    }
+}
+
+impl From<RestNodeQuery> for crate::proto::proximadb_v1::NodeQuery {
+    fn from(rest: RestNodeQuery) -> Self {
+        crate::proto::proximadb_v1::NodeQuery {
+            labels: rest.labels,
+            filters: vec![], // Convert properties to filters if needed
+            limit: Some(rest.limit),
+            offset: rest.offset,
+            continuation_token: rest.continuation_token,
+        }
+    }
+}
+
+impl From<RestEdgeQuery> for crate::proto::proximadb_v1::EdgeQuery {
+    fn from(rest: RestEdgeQuery) -> Self {
+        crate::proto::proximadb_v1::EdgeQuery {
+            from_node_id: rest.from_node_id,
+            to_node_id: rest.to_node_id,
+            edge_types: vec![rest.edge_type], // Convert single edge_type to vector
+            filters: vec![], // Convert properties to filters if needed
+            limit: Some(rest.limit),
+            offset: rest.offset,
+            continuation_token: rest.continuation_token,
+        }
+    }
+}
 
 /// REST-compatible Node wrapper for JSON serialization
 #[derive(Debug, Serialize, Clone)]
@@ -1083,7 +1166,7 @@ pub async fn delete_edge(
 /// Perform graph traversal
 pub async fn traverse_graph(
     State(app_state): State<AppState>,
-    Json(request): Json<TraversalRequest>,
+    Json(request): Json<RestTraversalRequest>,
 ) -> impl IntoResponse {
     debug!(
         "Starting graph traversal from node: {}",
@@ -1097,7 +1180,7 @@ pub async fn traverse_graph(
     match app_state
         .unified_handlers
         .graph_service
-        .traverse_with_overrides(request, override_enable_prefetch, override_prefetch_budget)
+        .traverse_with_overrides(request.into(), override_enable_prefetch, override_prefetch_budget)
         .await
     {
         Ok(response) => {
@@ -1127,7 +1210,7 @@ pub async fn traverse_graph(
 /// Query nodes by labels and properties
 pub async fn query_nodes(
     State(app_state): State<AppState>,
-    Json(query): Json<NodeQuery>,
+    Json(query): Json<RestNodeQuery>,
 ) -> impl IntoResponse {
     debug!("Querying nodes with labels: {:?}", query.labels);
     let mut q = query;
@@ -1145,16 +1228,15 @@ pub async fn query_nodes(
     match app_state
         .unified_handlers
         .graph_service
-        .query_nodes(q.clone())
+        .query_nodes(q.clone().into())
     {
         Ok(nodes) => {
             info!("Successfully queried {} nodes", nodes.len());
             let mut next_token = None;
-            if let Some(lim) = q.limit {
-                if (nodes.len() as u32) == lim {
-                    let next_off = q.offset.unwrap_or(0).saturating_add(lim);
-                    next_token = Some(format!("offset:{}", next_off));
-                }
+            let lim = q.limit;
+            if (nodes.len() as u32) == lim {
+                let next_off = q.offset.unwrap_or(0).saturating_add(lim);
+                next_token = Some(format!("offset:{}", next_off));
             }
             let rest_nodes: Vec<RestNode> = nodes.into_iter().map(|n| RestNode::from(&*n)).collect();
             Json(GraphQueryResponse {
@@ -1182,7 +1264,7 @@ pub async fn query_nodes(
 /// Query edges by types and properties
 pub async fn query_edges(
     State(app_state): State<AppState>,
-    Json(query): Json<EdgeQuery>,
+    Json(query): Json<RestEdgeQuery>,
 ) -> impl IntoResponse {
     debug!("Querying edges");
     let mut q = query;
@@ -1198,16 +1280,15 @@ pub async fn query_edges(
     match app_state
         .unified_handlers
         .graph_service
-        .query_edges(q.clone())
+        .query_edges(q.clone().into())
     {
         Ok(edges) => {
             info!("Successfully queried {} edges", edges.len());
             let mut next_token = None;
-            if let Some(lim) = q.limit {
-                if (edges.len() as u32) == lim {
-                    let next_off = q.offset.unwrap_or(0).saturating_add(lim);
-                    next_token = Some(format!("offset:{}", next_off));
-                }
+            let lim = q.limit;
+            if (edges.len() as u32) == lim {
+                let next_off = q.offset.unwrap_or(0).saturating_add(lim);
+                next_token = Some(format!("offset:{}", next_off));
             }
             let rest_edges: Vec<RestEdge> = edges.into_iter().map(|e| RestEdge::from(&*e)).collect();
             Json(GraphQueryResponse {

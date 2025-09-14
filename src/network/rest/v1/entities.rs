@@ -11,6 +11,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{Json, IntoResponse},
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -26,7 +27,7 @@ pub struct EntityApiState {
 }
 
 /// Request body for entity upsert
-#[derive(Debug)]
+#[derive(Debug, serde::Deserialize)]
 pub struct UpsertEntityRequest {
     pub entity: Entity,
     pub create_collection_if_missing: Option<bool>,

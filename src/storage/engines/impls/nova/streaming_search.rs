@@ -191,7 +191,7 @@ impl StreamingSearchEngine {
 
         let progressive_search = ProgressiveColumnarSearch::new(
             config.progressive_config.clone(),
-            crate::core::DistanceMetric::Euclidean, // Default metric
+            DistanceMetric::Euclidean, // Default metric
             distance_compute,
             unified_quantization_engine.clone(),
         );

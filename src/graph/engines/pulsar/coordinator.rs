@@ -358,13 +358,13 @@ impl QueryCoordinator {
 
                     for neighbor in neighbors {
                         if !context.visited.contains(&neighbor.id) {
-                            self.execute_distributed_dfs(
+                            Box::pin(self.execute_distributed_dfs(
                                 &neighbor.id,
                                 context,
                                 result_nodes,
                                 current_path,
                                 all_paths,
-                            )
+                            ))
                             .await?;
                         }
                     }

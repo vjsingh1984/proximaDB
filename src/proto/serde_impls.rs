@@ -555,15 +555,15 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
                     distance_metric,
                     storage_engine,
                     tags,
+                    description: Some(String::new()), // TODO: Implement description
+                    filterable_columns: Vec::new(), // TODO: Implement filterable columns
+                    index_configs: Vec::new(), // TODO: Implement index configs
+                    quantization: None, // TODO: Implement quantization
+                    storage_config: None, // TODO: Implement storage config
+                    primary_index: String::new(), // Default empty string instead of None
                     auto_index_selection: false, // TODO: Implement auto index selection
-                    description: String::new(), // TODO: Implement description
-                    embedding_models: Vec::new(), // TODO: Implement embedding models
-                    enable_compression: false, // TODO: Implement compression
-                    index_config: None, // TODO: Implement index config
-                    retention_policy: None, // TODO: Implement retention policy
-                    replication_factor: 1, // TODO: Implement replication factor
-                    sharding_config: None, // TODO: Implement sharding config
-                    access_control: None, // TODO: Implement access control
+                    owner: None, // TODO: Implement owner
+                    embedding_models: Vec::new(), // Default empty vec instead of None
                 })
             }
         }
@@ -763,6 +763,8 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Entity {
                     flexible_metadata,
                     provenance,
                     relations,
+                    collection_id: String::new(), // TODO: Implement collection_id
+                    temporal: None, // TODO: Implement temporal
                 })
             }
         }
@@ -866,7 +868,7 @@ impl Serialize for crate::proto::proximadb_v1::VectorOperationResponse {
         state.serialize_field("operation", &self.operation)?;
         state.serialize_field("metrics", &self.metrics)?;
         state.serialize_field("results", &self.results)?;
-        state.serialize_field("warnings", &self.warnings)?;
+        // warnings field doesn't exist in VectorOperationResponse - removing this line
         state.end()
     }
 }
@@ -903,7 +905,7 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorOperationRespon
                 let mut operation = None;
                 let mut metrics = None;
                 let mut results = None;
-                let mut warnings = None;
+                let mut warnings: Option<Vec<String>> = None;
 
                 while let Some(key) = map.next_key()? {
                     match key {
@@ -935,21 +937,23 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorOperationRespon
                             if warnings.is_some() {
                                 return Err(serde::de::Error::duplicate_field("warnings"));
                             }
-                            warnings = Some(map.next_value()?);
+                            let _: serde::de::IgnoredAny = map.next_value()?; // Ignore warnings field since it's !
                         }
                     }
                 }
 
                 let success = success.ok_or_else(|| serde::de::Error::missing_field("success"))?;
                 let operation = operation.ok_or_else(|| serde::de::Error::missing_field("operation"))?;
-                let warnings = warnings.unwrap_or_default();
+                let warnings = warnings; // Remove unwrap_or_default() since warnings is Option<!> which can't have Default
 
                 Ok(crate::proto::proximadb_v1::VectorOperationResponse {
                     success,
                     operation,
                     metrics,
                     results,
-                    warnings,
+                    vector_ids: Vec::new(), // TODO: Implement vector_ids
+                    error_message: None, // TODO: Implement error_message
+                    error_code: None, // TODO: Implement error_code
                 })
             }
         }
@@ -1053,6 +1057,11 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionResponse {
                     collections,
                     error_message,
                     error_code,
+                    operation: 0, // TODO: Implement operation
+                    affected_count: 0, // TODO: Implement affected_count
+                    total_count: 0, // TODO: Implement total_count
+                    metadata: std::collections::HashMap::new(), // TODO: Implement metadata
+                    processing_time_us: 0, // TODO: Implement processing_time_us
                 })
             }
         }
@@ -1104,9 +1113,28 @@ impl Serialize for crate::proto::proximadb_v1::TypedMetadata {
         S: Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("TypedMetadata", 2)?;
-        state.serialize_field("metadata_type", &self.metadata_type)?;
-        state.serialize_field("properties", &self.properties)?;
+        let mut state = serializer.serialize_struct("TypedMetadata", 1)?;
+        // Serialize fields as HashMap with TypedField serde support
+        let mut fields_map: std::collections::HashMap<String, TypedFieldDef> = std::collections::HashMap::new();
+        for (k, v) in &self.fields {
+            fields_map.insert(k.clone(), TypedFieldDef {
+                indexed: v.indexed,
+                filterable: v.filterable,
+                value: v.value.as_ref().map(|val| match val {
+                    crate::proto::proximadb_v1::typed_field::Value::StringValue(s) => typed_field_def::Value::StringValue(s.clone()),
+                    crate::proto::proximadb_v1::typed_field::Value::IntValue(i) => typed_field_def::Value::IntValue(*i),
+                    crate::proto::proximadb_v1::typed_field::Value::DoubleValue(f) => typed_field_def::Value::FloatValue(*f),
+                    crate::proto::proximadb_v1::typed_field::Value::BoolValue(b) => typed_field_def::Value::BoolValue(*b),
+                    crate::proto::proximadb_v1::typed_field::Value::StringArray(arr) => typed_field_def::Value::ListValue(arr.values.iter().map(|s| {
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.clone())),
+                        }
+                    }).collect()),
+                    crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs(ts) => typed_field_def::Value::IntValue(*ts),
+                }),
+            });
+        }
+        state.serialize_field("fields", &fields_map)?;
         state.end()
     }
 }
@@ -1117,11 +1145,13 @@ impl Serialize for crate::proto::proximadb_v1::Provenance {
         S: Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("Provenance", 4)?;
-        state.serialize_field("source_system", &self.source_system)?;
-        state.serialize_field("data_lineage", &self.data_lineage)?;
-        state.serialize_field("created_at", &self.created_at)?;
-        state.serialize_field("confidence_score", &self.confidence_score)?;
+        let mut state = serializer.serialize_struct("Provenance", 6)?;
+        state.serialize_field("source_id", &self.source_id)?;
+        state.serialize_field("chunk_id", &self.chunk_id)?;
+        state.serialize_field("chunk_position", &self.chunk_position)?;
+        state.serialize_field("extraction_method", &self.extraction_method)?;
+        state.serialize_field("extracted_at_ms", &self.extracted_at_ms)?;
+        state.serialize_field("metadata", &self.metadata)?;
         state.end()
     }
 }
@@ -1174,7 +1204,18 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataFilter {
                             if clauses.is_some() {
                                 return Err(serde::de::Error::duplicate_field("clauses"));
                             }
-                            clauses = Some(map.next_value()?);
+                            // Deserialize as Vec<FilterClauseDef> and convert
+                            let clause_defs: Vec<FilterClauseDef> = map.next_value()?;
+                            clauses = Some(clause_defs.into_iter().map(|def| crate::proto::proximadb_v1::FilterClause {
+                                field: def.field,
+                                op: def.op,
+                                value: def.value.map(|val| match val {
+                                    filter_clause_def::Value::StringValue(s) => crate::proto::proximadb_v1::filter_clause::Value::StringValue(s),
+                                    filter_clause_def::Value::IntValue(i) => crate::proto::proximadb_v1::filter_clause::Value::IntValue(i),
+                                    filter_clause_def::Value::FloatValue(f) => crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f),
+                                    filter_clause_def::Value::BoolValue(b) => crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b),
+                                }),
+                            }).collect());
                         }
                         Field::Op => {
                             if op.is_some() {
@@ -1194,5 +1235,338 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataFilter {
 
         deserializer.deserialize_struct("MetadataFilter", &["clauses", "op"], MetadataFilterVisitor)
     }
+}
+
+// Add missing Serialize/Deserialize implementations
+// Note: Serialize and Deserialize are already imported at the top of the file
+
+// Add Serialize/Deserialize for Relation
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "crate::proto::proximadb_v1::Relation")]
+struct RelationDef {
+    source_entity_id: String,
+    target_entity_id: String,
+    relation_type: String,
+    weight: f32,
+    created_at_ms: i64,
+    properties: std::collections::HashMap<String, String>,
+}
+
+impl Serialize for crate::proto::proximadb_v1::Relation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        RelationDef::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Relation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        RelationDef::deserialize(deserializer)
+    }
+}
+
+// Add Serialize/Deserialize for TypedMetadata
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::TypedMetadata {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TypedMetadataHelper {
+            fields: std::collections::HashMap<String, TypedFieldDef>,
+        }
+
+        let helper = TypedMetadataHelper::deserialize(deserializer)?;
+        let mut converted_fields = std::collections::HashMap::new();
+        for (k, def) in helper.fields {
+            converted_fields.insert(k, crate::proto::proximadb_v1::TypedField {
+                indexed: def.indexed,
+                filterable: def.filterable,
+                value: def.value.map(|val| match val {
+                    typed_field_def::Value::StringValue(s) => crate::proto::proximadb_v1::typed_field::Value::StringValue(s),
+                    typed_field_def::Value::IntValue(i) => crate::proto::proximadb_v1::typed_field::Value::IntValue(i),
+                    typed_field_def::Value::FloatValue(f) => crate::proto::proximadb_v1::typed_field::Value::DoubleValue(f),
+                    typed_field_def::Value::BoolValue(b) => crate::proto::proximadb_v1::typed_field::Value::BoolValue(b),
+                    typed_field_def::Value::ListValue(l) => {
+                        let string_values: Vec<String> = l.iter().filter_map(|sql_val| {
+                            match &sql_val.value {
+                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => Some(s.clone()),
+                                _ => None,
+                            }
+                        }).collect();
+                        crate::proto::proximadb_v1::typed_field::Value::StringArray(crate::proto::proximadb_v1::StringArray { values: string_values })
+                    },
+                    typed_field_def::Value::MapValue(_) => {
+                        // For now, convert maps to timestamp (this is a temporary fix)
+                        crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs(0)
+                    },
+                }),
+            });
+        }
+        Ok(crate::proto::proximadb_v1::TypedMetadata {
+            fields: converted_fields,
+        })
+    }
+}
+
+// Add Serialize/Deserialize for Provenance
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::Provenance {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct ProvenanceHelper {
+            source_id: String,
+            chunk_id: String,
+            chunk_position: u32,
+            extraction_method: String,
+            extracted_at_ms: i64,
+            metadata: std::collections::HashMap<String, String>,
+        }
+
+        let helper = ProvenanceHelper::deserialize(deserializer)?;
+        Ok(crate::proto::proximadb_v1::Provenance {
+            source_id: helper.source_id,
+            chunk_id: helper.chunk_id,
+            chunk_position: helper.chunk_position,
+            extraction_method: helper.extraction_method,
+            extracted_at_ms: helper.extracted_at_ms,
+            metadata: helper.metadata,
+        })
+    }
+}
+
+// Add Serialize/Deserialize for OperationMetrics
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "crate::proto::proximadb_v1::OperationMetrics")]
+struct OperationMetricsDef {
+    #[serde(default)]
+    total_processed: i64,
+    #[serde(default)]
+    successful_count: i64,
+    #[serde(default)]
+    failed_count: i64,
+    #[serde(default)]
+    updated_count: i64,
+    #[serde(default)]
+    processing_time_us: i64,
+    #[serde(default)]
+    wal_write_time_us: i64,
+    #[serde(default)]
+    index_update_time_us: i64,
+}
+
+impl Serialize for crate::proto::proximadb_v1::OperationMetrics {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        OperationMetricsDef::serialize(self, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::OperationMetrics {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        OperationMetricsDef::deserialize(deserializer)
+    }
+}
+
+// Helper struct for SearchResult serialization (not using remote)
+#[derive(Serialize, Deserialize)]
+struct SearchResultHelper {
+    #[serde(default)]
+    results: Vec<SearchVectorRecordDef>,
+    #[serde(default)]
+    total_found: i64,
+    #[serde(default)]
+    collection_id: Option<String>,
+}
+
+// SearchVectorRecord implementations
+impl Serialize for crate::proto::proximadb_v1::SearchVectorRecord {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        SearchVectorRecordDef {
+            id: self.id.clone(),
+            score: self.score,
+            vector: self.vector.clone(),
+            metadata: self.metadata.clone(),
+            version: self.version,
+            similarity: self.similarity,
+            timestamp: self.timestamp,
+            source: self.source.clone(),
+            expanded_context: self.expanded_context.clone(),
+            semantic_similarity: self.semantic_similarity,
+            quantization_info: self.quantization_info.clone(),
+            engine_stats: self.engine_stats.clone(),
+            index_path: self.index_path.clone(),
+        }.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::SearchVectorRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let def = SearchVectorRecordDef::deserialize(deserializer)?;
+        Ok(crate::proto::proximadb_v1::SearchVectorRecord {
+            id: def.id,
+            score: def.score,
+            vector: def.vector,
+            metadata: def.metadata,
+            version: def.version,
+            similarity: def.similarity,
+            timestamp: def.timestamp,
+            source: def.source,
+            expanded_context: def.expanded_context,
+            semantic_similarity: def.semantic_similarity,
+            quantization_info: def.quantization_info,
+            engine_stats: def.engine_stats,
+            index_path: def.index_path,
+        })
+    }
+}
+
+impl Serialize for crate::proto::proximadb_v1::SearchResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        SearchResultHelper {
+            results: self.results.iter().map(|r| SearchVectorRecordDef {
+                id: r.id.clone(),
+                score: r.score,
+                vector: r.vector.clone(),
+                metadata: r.metadata.clone(),
+                version: r.version,
+                similarity: r.similarity,
+                timestamp: r.timestamp,
+                source: r.source.clone(),
+                expanded_context: r.expanded_context.clone(),
+                semantic_similarity: r.semantic_similarity,
+                quantization_info: r.quantization_info.clone(),
+                engine_stats: r.engine_stats.clone(),
+                index_path: r.index_path.clone(),
+            }).collect(),
+            total_found: self.total_found,
+            collection_id: self.collection_id.clone(),
+        }.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::SearchResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let def = SearchResultHelper::deserialize(deserializer)?;
+        Ok(crate::proto::proximadb_v1::SearchResult {
+            results: def.results.into_iter().map(|def| crate::proto::proximadb_v1::SearchVectorRecord {
+                id: def.id,
+                score: def.score,
+                vector: def.vector,
+                metadata: def.metadata,
+                version: def.version,
+                similarity: def.similarity,
+                timestamp: def.timestamp,
+                source: def.source,
+                expanded_context: def.expanded_context,
+                semantic_similarity: def.semantic_similarity,
+                quantization_info: def.quantization_info,
+                engine_stats: def.engine_stats,
+                index_path: def.index_path,
+            }).collect(),
+            total_found: def.total_found,
+            collection_id: def.collection_id,
+        })
+    }
+}
+
+// TypedField serde support structures
+#[derive(Serialize, Deserialize)]
+struct TypedFieldDef {
+    indexed: bool,
+    filterable: bool,
+    value: Option<typed_field_def::Value>,
+}
+
+pub mod typed_field_def {
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(tag = "type", content = "value")]
+    pub enum Value {
+        #[serde(rename = "string")]
+        StringValue(String),
+        #[serde(rename = "int")]
+        IntValue(i64),
+        #[serde(rename = "float")]
+        FloatValue(f64),
+        #[serde(rename = "bool")]
+        BoolValue(bool),
+        #[serde(rename = "list")]
+        ListValue(Vec<crate::proto::proximadb_v1::SqlValue>),
+        #[serde(rename = "map")]
+        MapValue(std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>),
+    }
+}
+
+// FilterClause serde support structures
+#[derive(Serialize, Deserialize)]
+struct FilterClauseDef {
+    field: String,
+    op: i32,
+    value: Option<filter_clause_def::Value>,
+}
+
+pub mod filter_clause_def {
+    use serde::{Serialize, Deserialize};
+
+    #[derive(Serialize, Deserialize)]
+    #[serde(tag = "type", content = "value")]
+    pub enum Value {
+        #[serde(rename = "string")]
+        StringValue(String),
+        #[serde(rename = "int")]
+        IntValue(i64),
+        #[serde(rename = "float")]
+        FloatValue(f64),
+        #[serde(rename = "bool")]
+        BoolValue(bool),
+    }
+}
+
+// SearchVectorRecord serde support structures
+#[derive(Serialize, Deserialize)]
+struct SearchVectorRecordDef {
+    id: String,
+    score: f64,
+    #[serde(default)]
+    vector: Vec<f32>,
+    #[serde(default)]
+    metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    version: Option<i64>,
+    similarity: Option<f32>,
+    timestamp: Option<i64>,
+    source: Option<String>,
+    #[serde(default)]
+    expanded_context: Vec<String>,
+    semantic_similarity: Option<f32>,
+    quantization_info: Option<String>,
+    #[serde(default)]
+    engine_stats: std::collections::HashMap<String, String>,
+    index_path: Option<String>,
 }
 

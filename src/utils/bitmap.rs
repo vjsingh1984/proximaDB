@@ -779,10 +779,10 @@ impl RoaringBitmap {
                 Container::Run(runs) => {
                     bytes.push(2); // Run container type
                     // Serialize run container with start/length pairs
-                    bytes.extend_from_slice(&(runs.len() as u16).to_le_bytes());
-                    for run in runs {
-                        bytes.extend_from_slice(&run.start.to_le_bytes());
-                        bytes.extend_from_slice(&run.length.to_le_bytes());
+                    bytes.extend_from_slice(&(runs.runs.len() as u16).to_le_bytes());
+                    for &(start, length) in &runs.runs {
+                        bytes.extend_from_slice(&start.to_le_bytes());
+                        bytes.extend_from_slice(&length.to_le_bytes());
                     }
                 }
             }

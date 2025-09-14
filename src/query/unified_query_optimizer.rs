@@ -1326,7 +1326,7 @@ impl UnifiedQueryOptimizer {
             filter_selectivity: Some(0.8),
             filters: vec![],
             has_bloom_filters: false,
-            dataset_size: context.collection_config.vector_count.unwrap_or(10000) as usize,
+            dataset_size: context.collection.stats.as_ref().map(|s| s.vector_count as usize).unwrap_or(10000),
             estimated_memory_mb: 64.0, // Reasonable default
             estimated_io_ops: 100, // Default estimate
         })

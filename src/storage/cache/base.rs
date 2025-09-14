@@ -31,6 +31,24 @@ where
     max_entry_size_for_l1: usize,
 }
 
+impl<K, V> std::fmt::Debug for BaseCacheImpl<K, V>
+where
+    K: CacheKey,
+    V: CacheValue,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseCacheImpl")
+            .field("l1_backend", &"<MemoryBackend>")
+            .field("l2_backend", &self.l2_backend.as_ref().map(|_| "<NvmeBackend>"))
+            .field("l3_backend", &self.l3_backend.as_ref().map(|_| "<NetworkBackend>"))
+            .field("eviction_strategy", &"<EvictionStrategy>")
+            .field("metrics", &"<CacheMetrics>")
+            .field("promotion_threshold", &self.promotion_threshold)
+            .field("max_entry_size_for_l1", &self.max_entry_size_for_l1)
+            .finish()
+    }
+}
+
 impl<K, V> BaseCacheImpl<K, V>
 where
     K: CacheKey + Hash,

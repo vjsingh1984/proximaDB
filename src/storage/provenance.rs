@@ -289,11 +289,7 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string()),
             uri: provenance.metadata.get("uri").cloned(),
-            created_at: provenance
-                .extracted_at
-                .as_ref()
-                .map(|t| t.seconds as u64)
-                .unwrap_or(0),
+            created_at: provenance.extracted_at_ms as u64,
             metadata: provenance.metadata.clone(),
         };
 
@@ -320,11 +316,7 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
             step_name: provenance.extraction_method.clone(),
             model_id: provenance.metadata.get("model_id").cloned(),
             parameters: provenance.metadata.clone(),
-            timestamp: provenance
-                .extracted_at
-                .as_ref()
-                .map(|t| t.seconds as u64)
-                .unwrap_or(0),
+            timestamp: provenance.extracted_at_ms as u64,
         };
 
         Ok(ProvenanceLineage {

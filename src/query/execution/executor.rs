@@ -1319,7 +1319,7 @@ impl QueryExecutor {
                     crate::query::execution::ProjectionTransform::ExtractMetadata { field } => {
                         // Extract specific metadata field with HashMap.get() optimization
                         // O(1) access pattern vs O(n) linear scan
-                        if let Some(metadata_value) = row.fields.get(&field) {
+                        if let Some(metadata_value) = row.fields.get(field) {
                             // Clone the value for the specific field extraction
                             row.fields.insert(format!("extracted_{}", field), metadata_value.clone());
                         } else {

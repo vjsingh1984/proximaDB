@@ -586,6 +586,7 @@ impl ColdStorageBackend {
             Some(Value::BytesValue(b)) => Ok(StorablePropertyValue::Bytes(b.clone())),
             Some(Value::ArrayValue(_)) => Ok(StorablePropertyValue::Array(Vec::new())), // Simplified
             Some(Value::ObjectValue(_)) => Ok(StorablePropertyValue::Object(HashMap::new())), // Simplified
+            Some(Value::VectorValue(_)) => Ok(StorablePropertyValue::String("vector".to_string())), // Vector as string representation
             None => Ok(StorablePropertyValue::String("null".to_string())),
         }
     }

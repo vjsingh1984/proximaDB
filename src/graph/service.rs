@@ -1040,6 +1040,9 @@ impl GraphService {
             Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
                 "object".to_string()
             }
+            Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
+                "vector".to_string()
+            }
             None => "null".to_string(),
         }
     }
