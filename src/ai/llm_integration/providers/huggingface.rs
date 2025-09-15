@@ -212,8 +212,9 @@ impl LLMClient for HuggingFaceClient {
                 reason: "Invalid API key".to_string(),
             })
         } else {
+            let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            warn!("HuggingFace authentication test returned {}: {}", response.status(), error_body);
+            warn!("HuggingFace authentication test returned {}: {}", status, error_body);
             Err(LLMError::AuthenticationFailed {
                 provider: LLMProvider::HuggingFace,
                 reason: format!("Authentication test failed: {}", error_body),

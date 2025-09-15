@@ -12,7 +12,7 @@ pub mod executive_dashboard;
 
 pub use llm::{LLMIntegrationEngine, AIIntelligenceFoundation, BusinessIntent};
 pub use nlp::{EnterpriseNLPEngine};
-pub use insights::{AutomatedInsightEngine, BusinessInsightsGenerator};
+pub use insights::{AutomatedInsightEngine, BusinessInsightsGenerator, InsightType};
 pub use analytics::{PredictiveAnalyticsEngine, ConversationalAnalyticsEngine, GovernanceAnalyticsEngine};
 pub use natural_language_api::{NaturalLanguageBusinessIntelligenceAPI, ConversationalBusinessAnswer};
 pub use llm_integration::{LLMIntegrationEngine as ModernLLMEngine, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMConfig};
@@ -49,8 +49,8 @@ impl AIEnterpiseIntelligenceCoordinator {
             ai_foundation: Arc::new(AIIntelligenceFoundation::new().await?),
             nlp_engine: Arc::new(EnterpriseNLPEngine::new().await?),
             insights_engine: Arc::new(AutomatedInsightEngine::new().await?),
-            predictive_analytics: Arc::new(PredictiveAnalyticsEngine::new().await?),
-            conversational_analytics: Arc::new(ConversationalAnalyticsEngine::new().await?),
+            predictive_analytics: Arc::new(PredictiveAnalyticsEngine::new(analytics::PredictiveAnalyticsConfig::default())),
+            conversational_analytics: Arc::new(ConversationalAnalyticsEngine::new(analytics::ConversationalAnalyticsConfig::default())),
         })
     }
     
@@ -63,36 +63,42 @@ impl AIEnterpiseIntelligenceCoordinator {
     ) -> Result<AIEnterpriseIntelligenceResult> {
         match ai_query {
             AIEnterpriseQuery::NaturalLanguage { query, business_context } => {
-                self.ai_foundation.process_natural_language_business_query(
+                let result = self.ai_foundation.process_natural_language_business_query(
                     tenant_id,
                     &query,
                     &business_context,
                     user_context,
-                ).await
+                ).await?;
+                Ok(AIEnterpriseIntelligenceResult::NaturalLanguageAnswer(result.to_string()))
             },
             AIEnterpriseQuery::AutomatedInsights { domains, insight_type } => {
-                self.insights_engine.generate_automated_business_insights(
+                let result = self.insights_engine.generate_automated_business_insights(
                     tenant_id,
                     &domains,
                     &insight_type,
                     user_context,
-                ).await
+                ).await?;
+                Ok(AIEnterpriseIntelligenceResult::AutomatedInsights(format!("{:?}", result)))
             },
             AIEnterpriseQuery::PredictiveAnalytics { business_scenario, prediction_horizon } => {
-                self.predictive_analytics.execute_business_prediction(
+                let tenant_user_context: crate::storage::tenant::UserContext = user_context.clone().into();
+                let result = self.predictive_analytics.execute_business_prediction(
                     tenant_id,
                     &business_scenario,
                     &prediction_horizon,
-                    user_context,
-                ).await
+                    &tenant_user_context,
+                ).await?;
+                Ok(AIEnterpriseIntelligenceResult::PredictiveAnalysis(format!("{:?}", result)))
             },
             AIEnterpriseQuery::ConversationalSession { session_type, context } => {
-                self.conversational_analytics.start_conversational_session(
+                let tenant_user_context: crate::storage::tenant::UserContext = user_context.clone().into();
+                let result = self.conversational_analytics.start_conversational_session(
                     tenant_id,
                     &session_type,
                     &context,
-                    user_context,
-                ).await
+                    &tenant_user_context,
+                ).await?;
+                Ok(AIEnterpriseIntelligenceResult::ConversationalSession(format!("{:?}", result)))
             },
         }
     }
@@ -133,7 +139,6 @@ pub type AIIntelligentBusinessAnswer = String;
 pub type AutomatedBusinessInsights = String;
 pub type PredictiveBusinessAnalysis = String;
 pub type ConversationalAnalyticsSession = String;
-pub type InsightType = String;
 pub type BusinessScenario = String;
 pub type PredictionHorizon = String;
 pub type ConversationalSessionType = String;

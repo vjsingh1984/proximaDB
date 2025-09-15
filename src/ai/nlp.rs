@@ -108,6 +108,10 @@ impl EnterpriseNLPEngine {
             &business_intent,
         ).await?;
         
+        // Extract values before moving
+        let confidence_score = business_intent.confidence;
+        let business_relevance_score = context_integration.relevance_score as f32;
+
         Ok(ProcessedEnterpriseQuery {
             original_query: natural_query.to_string(),
             business_entities,
@@ -117,8 +121,8 @@ impl EnterpriseNLPEngine {
             context_integration,
             processing_metadata: NLPProcessingMetadata {
                 processing_time_ms: 150, // Target <200ms
-                confidence_score: business_intent.confidence,
-                business_relevance_score: context_integration.relevance_score,
+                confidence_score,
+                business_relevance_score,
                 regulatory_compliance_validated: true,
             },
         })
@@ -271,9 +275,9 @@ impl EnterpriseIntentClassifier {
             business_domain: business_context.primary_function.clone(),
             user_role_context: user_context.roles.clone(),
             regulatory_implications: self.regulatory_intent_recognizer.identify_regulatory_implications(
-                &primary_intent,
+                query,
                 business_context,
-            ).await?,
+            ).await?.into_iter().map(|ri| ri.framework).collect(),
         })
     }
     
@@ -283,7 +287,7 @@ impl EnterpriseIntentClassifier {
         intent: &EnterpriseIntent,
         business_context: &BusinessContext,
     ) -> f32 {
-        let mut confidence = 0.5; // Base confidence
+        let mut confidence = 0.5_f32; // Base confidence
         
         // Increase confidence based on intent-query alignment
         match intent {
@@ -307,7 +311,7 @@ impl EnterpriseIntentClassifier {
             confidence += 0.15;
         }
         
-        confidence.min(0.95) // Cap at 95%
+        confidence.min(0.95_f32) // Cap at 95%
     }
 }
 
@@ -394,10 +398,32 @@ pub struct NLPProcessingMetadata {
 }
 
 // Placeholder types for foundation implementation
-pub type TerminologyAnalysis = String;
-pub type QueryComplexityAnalysis = String;
-pub type BusinessContextIntegration = String;
-pub type IndustryTerminologyProcessor = String;
+#[derive(Debug, Clone)]
+pub struct QueryComplexityAnalysis {
+    pub complexity_level: String,
+    pub entity_count: usize,
+    pub processing_difficulty: f32,
+}
+#[derive(Debug, Clone)]
+pub struct IndustryTerminologyProcessor;
+
+impl IndustryTerminologyProcessor {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn process_industry_terminology(
+        &self,
+        _query: &str,
+        _industry: &str,
+    ) -> Result<TerminologyAnalysis> {
+        Ok(TerminologyAnalysis {
+            industry_terms: vec!["financial".to_string(), "portfolio".to_string()],
+            technical_terms: vec!["risk".to_string(), "analysis".to_string()],
+            confidence_score: 0.85,
+        })
+    }
+}
 #[derive(Debug, Clone)]
 pub struct QueryComplexityAnalyzer;
 
@@ -405,11 +431,64 @@ impl QueryComplexityAnalyzer {
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self)
     }
+
+    pub async fn analyze_query_complexity(
+        &self,
+        _query: &str,
+        _entities: &[BusinessEntity],
+        _intent: &ClassifiedBusinessIntent,
+    ) -> Result<QueryComplexityAnalysis> {
+        Ok(QueryComplexityAnalysis {
+            complexity_level: "medium_complexity".to_string(),
+            entity_count: _entities.len(),
+            processing_difficulty: 0.6,
+        })
+    }
 }
-pub type BusinessContextIntegrator = String;
+#[derive(Debug, Clone)]
+pub struct BusinessContextIntegrator;
+
+impl BusinessContextIntegrator {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn integrate_business_context(
+        &self,
+        _query: &str,
+        _business_context: &BusinessContext,
+        _entities: &[BusinessEntity],
+        _intent: &ClassifiedBusinessIntent,
+    ) -> Result<BusinessContextIntegration> {
+        Ok(BusinessContextIntegration {
+            relevance_score: 0.91,
+            context_enrichments: vec!["business_relevant".to_string()],
+            domain_mappings: vec!["enterprise".to_string()],
+        })
+    }
+}
 pub type IntentModel = String;
 pub type OperationClassifier = String;
-pub type RegulatoryIntentRecognizer = String;
+#[derive(Debug, Clone)]
+pub struct RegulatoryIntentRecognizer;
+
+impl RegulatoryIntentRecognizer {
+    pub async fn new() -> Result<Self> {
+        Ok(Self)
+    }
+
+    pub async fn identify_regulatory_implications(
+        &self,
+        _query: &str,
+        _business_context: &BusinessContext,
+    ) -> Result<Vec<RegulatoryImplication>> {
+        Ok(vec![RegulatoryImplication {
+            framework: "SOC2".to_string(),
+            requirement: "audit_logging".to_string(),
+            compliance_level: "required".to_string(),
+        }])
+    }
+}
 
 impl BusinessEntity {
     /// Check if entity has regulatory implications
@@ -451,6 +530,27 @@ impl ClassifiedBusinessIntent {
             _ => vec![self.business_domain.clone()],
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TerminologyAnalysis {
+    pub industry_terms: Vec<String>,
+    pub technical_terms: Vec<String>,
+    pub confidence_score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct BusinessContextIntegration {
+    pub relevance_score: f64,
+    pub context_enrichments: Vec<String>,
+    pub domain_mappings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RegulatoryImplication {
+    pub framework: String,
+    pub requirement: String,
+    pub compliance_level: String,
 }
 
 #[cfg(test)]

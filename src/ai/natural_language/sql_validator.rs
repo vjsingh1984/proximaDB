@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use anyhow::{Result, anyhow};
 use tracing::{debug, warn, error};
+use sqlparser::ast::Query;
 
 /// SQL Validator for security and safety
 #[derive(Debug, Clone)]

@@ -53,7 +53,7 @@ impl EnterpriseAPIHandler {
         sso_token: &SSOToken,
     ) -> Result<EnterpriseApiResponse<TenantCreationResult>> {
         // Authenticate and authorize
-        let enterprise_user = self.auth_manager.sso_manager.validate_and_resolve_token(sso_token).await?;
+        let enterprise_user = self.auth_manager.validate_and_resolve_token(sso_token).await?;
         
         // Validate user can create tenants (system admin only for now)
         if !enterprise_user.has_permission("system_admin") {
@@ -72,18 +72,19 @@ impl EnterpriseAPIHandler {
         
         // Setup standard RBAC roles
         let rbac_manager = crate::storage::tenant::EnhancedRBACManager::new(self.tenant_manager.clone());
-        let standard_roles = rbac_manager.create_standard_roles(&tenant_id, &enterprise_user.into()).await?;
-        
-        info!("Created enterprise tenant {} with {} domains and {} roles", 
+        let standard_roles = rbac_manager.create_standard_roles(&tenant_id, &enterprise_user.clone().into()).await?;
+
+        info!("Created enterprise tenant {} with {} domains and {} roles",
               tenant_id, default_domains.len(), standard_roles.len());
-        
+
+        let created_by = enterprise_user.user_id.clone();
         Ok(EnterpriseApiResponse {
             success: true,
             data: TenantCreationResult {
                 tenant_context,
                 default_domains,
                 standard_roles,
-                created_by: enterprise_user.user_id.clone(),
+                created_by,
             },
             enterprise_metadata: EnterpriseApiMetadata {
                 user_context: enterprise_user,
@@ -102,14 +103,14 @@ impl EnterpriseAPIHandler {
         sso_token: &SSOToken,
     ) -> Result<EnterpriseApiResponse<DomainCreationResult>> {
         // Authenticate and authorize
-        let enterprise_user = self.auth_manager.sso_manager.validate_and_resolve_token(sso_token).await?;
+        let enterprise_user = self.auth_manager.validate_and_resolve_token(sso_token).await?;
         
         // Create domain
         let domain_context = self.domain_manager.create_domain(
             &tenant_id,
             &domain_name,
             business_context.clone(),
-            &enterprise_user.into(),
+            &enterprise_user.clone().into(),
         ).await?;
         
         // Create domain knowledge graph
@@ -120,17 +121,18 @@ impl EnterpriseAPIHandler {
         
         // Store knowledge graph
         let kg_key = format!("{}::{}", tenant_id, domain_name);
+        let kg_key_clone = kg_key.clone();
         self.knowledge_graphs.insert(kg_key, Arc::new(knowledge_graph));
-        
-        info!("Created domain knowledge graph {} in tenant {} with business context: {}", 
+
+        info!("Created domain knowledge graph {} in tenant {} with business context: {}",
               domain_name, tenant_id, business_context.primary_function);
-        
+
         Ok(EnterpriseApiResponse {
             success: true,
             data: DomainCreationResult {
                 domain_context,
                 business_context,
-                knowledge_graph_id: kg_key,
+                knowledge_graph_id: kg_key_clone,
             },
             enterprise_metadata: EnterpriseApiMetadata {
                 user_context: enterprise_user,
@@ -150,7 +152,7 @@ impl EnterpriseAPIHandler {
         sso_token: &SSOToken,
     ) -> Result<EnterpriseApiResponse<CollectionLinkResult>> {
         // Authenticate and authorize
-        let enterprise_user = self.auth_manager.sso_manager.validate_and_resolve_token(sso_token).await?;
+        let enterprise_user = self.auth_manager.validate_and_resolve_token(sso_token).await?;
         
         // Get domain knowledge graph
         let kg_key = format!("{}::{}", tenant_id, domain_name);
@@ -161,12 +163,12 @@ impl EnterpriseAPIHandler {
         let bridge = knowledge_graph.link_collection(
             &collection_id,
             bridge_config,
-            &enterprise_user.into(),
+            &enterprise_user.clone().into(),
         ).await?;
-        
-        info!("Linked collection {} to domain {} in tenant {}", 
+
+        info!("Linked collection {} to domain {} in tenant {}",
               collection_id, domain_name, tenant_id);
-        
+
         Ok(EnterpriseApiResponse {
             success: true,
             data: CollectionLinkResult {

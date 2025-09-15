@@ -4,7 +4,7 @@
 //! with all storage engines (PRISM, NOVA, SWIFT, VIPER, SST) and shows
 //! the PQ and INT8 optimized distance computations with progressive refinement.
 
-use crate::utils::uuid::Uuid;
+use proximadb::utils::Uuid;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -113,7 +113,7 @@ async fn demo_basic_distance_computation(adapter: &UniversalDistanceAdapter) -> 
             max_results: 10,
             enable_acceleration: true,
             quality_threshold: Some(0.8),
-            collection_id: Uuid::new_v4(),
+            collection_id: proximadb::utils::Uuid::new_v4(),
             engine_type,
         };
 
@@ -160,7 +160,7 @@ async fn demo_progressive_refinement(adapter: &UniversalDistanceAdapter) -> Resu
         max_results: 20,
         enable_acceleration: true,
         quality_threshold: Some(0.85),
-        collection_id: Uuid::new_v4(),
+        collection_id: proximadb::utils::Uuid::new_v4(),
         engine_type: EngineType::PRISM,
     };
 
@@ -227,7 +227,7 @@ async fn demo_quantized_computations(adapter: &UniversalDistanceAdapter) -> Resu
             max_results: 10,
             enable_acceleration: true,
             quality_threshold: None,
-            collection_id: Uuid::new_v4(),
+            collection_id: proximadb::utils::Uuid::new_v4(),
             engine_type: EngineType::NOVA,
         };
 
@@ -313,7 +313,7 @@ async fn demo_performance_comparison(adapter: &UniversalDistanceAdapter) -> Resu
                 max_results: 10,
                 enable_acceleration: *enable_acceleration,
                 quality_threshold: None,
-                collection_id: Uuid::new_v4(),
+                collection_id: proximadb::utils::Uuid::new_v4(),
                 engine_type: EngineType::SWIFT,
             };
 
@@ -391,7 +391,7 @@ fn create_demo_candidates(count: usize, dimension: usize) -> Vec<CandidateVector
             .collect();
 
         candidates.push(CandidateVector {
-            id: Uuid::new_v4(),
+            id: proximadb::utils::Uuid::new_v4(),
             data,
             original_vector: Some(vector),
             metadata: Some({

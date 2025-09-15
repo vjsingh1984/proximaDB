@@ -46,7 +46,7 @@ pub struct EnterpriseTrial {
 }
 
 /// Types of enterprise trials
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TrialType {
     AIShowcase,           // Focus on AI and natural language capabilities
     PerformanceTrial,     // Focus on performance and scale
@@ -230,8 +230,9 @@ impl EnterpriseTrialManager {
 
             // Check for milestone completion
             if let Some(milestone) = self.check_milestone_completion(&activity, &trial.evaluation_progress) {
+                let milestone_name = milestone.name.clone();
                 trial.evaluation_progress.complete_milestone(milestone);
-                info!("🎉 Milestone completed for trial {}: {}", trial_id, milestone.name);
+                info!("🎉 Milestone completed for trial {}: {}", trial_id, milestone_name);
             }
 
             // Update completion percentage
@@ -256,6 +257,61 @@ impl EnterpriseTrialManager {
         metrics.dashboard_views > 10 ||
         metrics.total_api_calls > 100 ||
         metrics.unique_features_used > 5
+    }
+
+    /// Check if a milestone should be completed based on customer activity
+    fn check_milestone_completion(
+        &self,
+        activity: &CustomerActivity,
+        progress: &EvaluationProgress
+    ) -> Option<EvaluationMilestone> {
+        // Define milestones based on activity types
+        match activity.activity_type {
+            ActivityType::TrialStarted => {
+                if !progress.milestones_completed.iter().any(|m| m.milestone_id == "onboarding_complete") {
+                    Some(EvaluationMilestone {
+                        milestone_id: "onboarding_complete".to_string(),
+                        name: "Trial Onboarding Complete".to_string(),
+                        description: "Customer successfully started their trial".to_string(),
+                        completed_at: Some(activity.timestamp),
+                        value_demonstrated: "Ease of setup and onboarding".to_string(),
+                    })
+                } else {
+                    None
+                }
+            },
+            ActivityType::DataUploaded => {
+                if !progress.milestones_completed.iter().any(|m| m.milestone_id == "data_ingestion") {
+                    Some(EvaluationMilestone {
+                        milestone_id: "data_ingestion".to_string(),
+                        name: "First Data Successfully Ingested".to_string(),
+                        description: "Customer ingested their first dataset".to_string(),
+                        completed_at: Some(activity.timestamp),
+                        value_demonstrated: "Data ingestion capabilities".to_string(),
+                    })
+                } else {
+                    None
+                }
+            },
+            ActivityType::AIQueryExecuted => {
+                // Check if they've executed enough queries for search milestone
+                let query_count = progress.milestones_completed.iter()
+                    .filter(|m| m.milestone_id == "query_milestone")
+                    .count();
+                if query_count == 0 {
+                    Some(EvaluationMilestone {
+                        milestone_id: "query_milestone".to_string(),
+                        name: "Search Capabilities Demonstrated".to_string(),
+                        description: "Customer successfully executed search queries".to_string(),
+                        completed_at: Some(activity.timestamp),
+                        value_demonstrated: "Search and retrieval performance".to_string(),
+                    })
+                } else {
+                    None
+                }
+            },
+            _ => None, // No milestone for other activity types yet
+        }
     }
 
     /// Trigger sales outreach for high-engagement trial

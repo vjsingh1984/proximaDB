@@ -275,6 +275,40 @@ impl LLMResponse {
                 let output_cost = self.tokens_used.completion_tokens as f64 * 0.000075;
                 input_cost + output_cost
             }
+            LLMProvider::Cohere => {
+                // Cohere pricing estimate
+                let total_tokens = self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
+                total_tokens as f64 * 0.000015
+            }
+            LLMProvider::AWSBedrock => {
+                // AWS Bedrock pricing estimate
+                let total_tokens = self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
+                total_tokens as f64 * 0.00002
+            }
+            LLMProvider::AzureOpenAI => {
+                // Azure OpenAI pricing estimate
+                let prompt_cost = self.tokens_used.prompt_tokens as f64 * 0.00003;
+                let completion_cost = self.tokens_used.completion_tokens as f64 * 0.00006;
+                prompt_cost + completion_cost
+            }
+            LLMProvider::GoogleVertexAI => {
+                // Google Vertex AI pricing estimate
+                let total_tokens = self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
+                total_tokens as f64 * 0.000025
+            }
+            LLMProvider::Ollama => {
+                // Self-hosted Ollama - no direct cost
+                0.0
+            }
+            LLMProvider::VLLM => {
+                // Self-hosted VLLM - no direct cost
+                0.0
+            }
+            LLMProvider::HuggingFace => {
+                // HuggingFace pricing estimate
+                let total_tokens = self.tokens_used.prompt_tokens + self.tokens_used.completion_tokens;
+                total_tokens as f64 * 0.000005
+            }
         }
     }
 }

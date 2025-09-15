@@ -275,13 +275,16 @@ impl DomainKnowledgeGraph {
             &composition_query,
         )?;
         
+        // Calculate entities analyzed before moving composed_results
+        let entities_analyzed: usize = composed_results.iter().map(|r| r.entities.len()).sum();
+
         Ok(ComposedKnowledgeResult {
             primary_domain: self.domain_id.clone(),
             composed_results,
             business_intelligence,
             composition_metadata: CompositionMetadata {
                 domains_involved: target_domains.len() + 1,
-                entities_analyzed: composed_results.iter().map(|r| r.entities.len()).sum(),
+                entities_analyzed,
                 business_context_applied: true,
                 composition_timestamp: Utc::now(),
             },
@@ -391,15 +394,15 @@ impl DomainBusinessIntelligence {
         match self.business_context.primary_function.as_str() {
             "risk_management" => {
                 // Risk management domains require risk-related metadata
-                if !entity.metadata.contains_key("risk_score") && 
-                   !entity.metadata.contains_key("risk_category") {
+                if !entity.flexible_metadata.contains_key("risk_score") &&
+                   !entity.flexible_metadata.contains_key("risk_category") {
                     return Err(anyhow!("Entity missing risk management context"));
                 }
             },
             "customer_intelligence" => {
                 // Customer domains require customer-related context
-                if !entity.metadata.contains_key("customer_id") &&
-                   !entity.metadata.contains_key("customer_segment") {
+                if !entity.flexible_metadata.contains_key("customer_id") &&
+                   !entity.flexible_metadata.contains_key("customer_segment") {
                     return Err(anyhow!("Entity missing customer intelligence context"));
                 }
             },

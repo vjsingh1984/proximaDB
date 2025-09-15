@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc, Duration};
 use uuid::Uuid;
 use anyhow::{Result, anyhow};
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, warn};
 
 /// Comprehensive license management for all deployment scenarios
 #[derive(Debug, Clone)]
@@ -81,6 +81,18 @@ pub enum LicenseTier {
         bespoke_features: Vec<String>,
         dedicated_support: bool,
     },
+}
+
+impl std::fmt::Display for LicenseTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LicenseTier::Free { .. } => write!(f, "Free"),
+            LicenseTier::Developer { .. } => write!(f, "Developer"),
+            LicenseTier::Professional { .. } => write!(f, "Professional"),
+            LicenseTier::Enterprise { .. } => write!(f, "Enterprise"),
+            LicenseTier::CustomEnterprise { .. } => write!(f, "Custom Enterprise"),
+        }
+    }
 }
 
 /// Feature entitlements based on license tier
@@ -160,7 +172,7 @@ pub enum SupportTier {
     Standard,               // Email support
     Priority,               // Priority support with SLA
     Dedicated,              // Dedicated customer success manager
-    White_Glove,           // 24/7 white-glove support
+    WhiteGlove,           // 24/7 white-glove support
 }
 
 /// License status and validation result
@@ -341,7 +353,7 @@ impl LicenseManager {
         });
 
         // Sign token with internal key (for air-gapped validation)
-        let token = base64::encode(token_data.to_string());
+        let token = crate::utils::encoding::base64_encode(token_data.to_string().as_bytes());
         Ok(format!("pt_trial_{}", token))
     }
 
@@ -733,14 +745,14 @@ impl Default for LicenseConfig {
 use super::tier_enforcement::TierEnforcement;
 use super::offline_validation::OfflineLicenseValidator;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeveloperLimits {
     pub max_collections: u32,
     pub max_vectors: u64,
     pub max_api_calls_daily: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfessionalLimits {
     pub max_collections: u32,
     pub max_vectors: u64,

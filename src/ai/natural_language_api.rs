@@ -122,11 +122,14 @@ impl NaturalLanguageBusinessIntelligenceAPI {
             business_context,
             user_context,
         ).await?;
-        
+
+        // Extract values before moving validated_response
+        let confidence_score = validated_response.confidence_score;
+
         Ok(ConversationalBusinessAnswer {
             original_question: question.to_string(),
             business_context: business_context.clone(),
-            ai_answer: validated_response,
+            ai_answer: validated_response.clone(),
             supporting_evidence: domain_intelligence_result.supporting_evidence,
             regulatory_compliance: ComplianceValidation {
                 frameworks_validated: self.extract_compliance_frameworks(business_context),
@@ -137,7 +140,7 @@ impl NaturalLanguageBusinessIntelligenceAPI {
             conversation_metadata: ConversationMetadata {
                 query_complexity: parsed_query.complexity_analysis.complexity_score,
                 processing_time_ms: 2400, // Target <3 seconds
-                confidence_score: validated_response.confidence_score,
+                confidence_score: confidence_score,
                 business_relevance: 0.94,
             },
             generated_at: Utc::now(),

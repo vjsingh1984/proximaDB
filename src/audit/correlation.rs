@@ -106,7 +106,7 @@ pub struct EventSequenceAnalysis {
 }
 
 /// Anomaly detection result
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditAnomaly {
     pub anomaly_id: String,
     pub anomaly_type: String,
@@ -124,7 +124,7 @@ pub struct ComplianceAnalysis {
 }
 
 // Supporting types
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CorrelationStatus {
     Active,
     Completed,

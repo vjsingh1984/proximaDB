@@ -489,6 +489,14 @@ pub struct AIIntelligentBusinessAnswer {
     pub generated_by: String,
 }
 
+impl std::fmt::Display for AIIntelligentBusinessAnswer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AI Business Answer: {} (confidence: {:.2})",
+               self.ai_generated_answer.answer_text,
+               self.confidence_metrics.overall_confidence)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AIConfidenceMetrics {
     pub intent_understanding_confidence: f32,

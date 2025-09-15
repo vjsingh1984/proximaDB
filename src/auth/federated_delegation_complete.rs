@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc, Duration};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::sso::{SSOProvider, EnterpriseUserContext};
-use crate::audit::{AuditCorrelationEngine, ComprehensiveAuditTrail};
+use crate::audit::ComprehensiveAuditTrail;
 
 /// Complete federated identity delegation system for enterprise multi-cloud environments
 pub struct CompleteFederatedIdentityDelegation {
@@ -121,7 +121,14 @@ impl CompleteFederatedIdentityDelegation {
             &unified_audit_trail,
             compliance_requirements,
         ).await?;
-        
+
+        // Calculate performance metrics before moving values
+        let total_delegation_time_ms = delegation_results.iter().map(|r| r.total_delegation_time_ms).sum::<u64>();
+        let audit_correlation_time_ms = unified_audit_trail.correlation_time_ms;
+        let compliance_validation_time_ms = compliance_validation.validation_time_ms;
+        let cross_provider_correlations_count = unified_audit_trail.cross_provider_correlations.len();
+        let overall_compliance_score = compliance_validation.overall_compliance_score;
+
         Ok(CompleteDelegationResult {
             delegation_results,
             unified_audit_trail,
@@ -129,12 +136,12 @@ impl CompleteFederatedIdentityDelegation {
             enterprise_metadata: EnterpriseDelegationMetadata {
                 total_delegation_steps: delegation_request.delegation_steps.len(),
                 providers_involved: self.extract_providers_involved(delegation_request),
-                cross_provider_correlations: unified_audit_trail.cross_provider_correlations.len(),
-                enterprise_compliance_score: compliance_validation.overall_compliance_score,
+                cross_provider_correlations: cross_provider_correlations_count,
+                enterprise_compliance_score: overall_compliance_score,
                 delegation_performance: DelegationPerformanceMetrics {
-                    total_delegation_time_ms: delegation_results.total_delegation_time_ms,
-                    audit_correlation_time_ms: unified_audit_trail.correlation_time_ms,
-                    compliance_validation_time_ms: compliance_validation.validation_time_ms,
+                    total_delegation_time_ms,
+                    audit_correlation_time_ms,
+                    compliance_validation_time_ms,
                 },
             },
         })
@@ -172,17 +179,21 @@ impl CompleteFederatedIdentityDelegation {
         };
         
         // Generate unified enterprise authentication result
+        let audit_trail = self.unified_audit_correlator.generate_complete_authentication_audit(
+            sso_token,
+            &authentication_result,
+            operation_context,
+        ).await?;
+
+        let enterprise_context = self.resolve_complete_enterprise_context(
+            &authentication_result,
+            sso_token,
+        ).await?;
+
         Ok(CompleteEnterpriseAuthentication {
             authentication_result,
-            complete_audit_trail: self.unified_audit_correlator.generate_complete_authentication_audit(
-                sso_token,
-                &authentication_result,
-                operation_context,
-            ).await?,
-            enterprise_user_context: self.resolve_complete_enterprise_context(
-                &authentication_result,
-                sso_token,
-            ).await?,
+            complete_audit_trail: audit_trail,
+            enterprise_user_context: enterprise_context,
         })
     }
     
@@ -196,7 +207,7 @@ impl CompleteFederatedIdentityDelegation {
     async fn resolve_complete_enterprise_context(
         &self,
         auth_result: &AuthenticationResult,
-        sso_token: &EnterpriseSSOMToken,
+        _sso_token: &EnterpriseSSOMToken,
     ) -> Result<CompleteEnterpriseUserContext> {
         Ok(CompleteEnterpriseUserContext {
             user_id: auth_result.user_id.clone(),
@@ -372,7 +383,13 @@ impl CompleteAzureADDelegationHandler {
             &managed_identity_context,
             operation_context,
         ).await?;
-        
+
+        let compliance_validation = self.validate_azure_enterprise_compliance(
+            &azure_validation,
+            &delegation_chain,
+            &managed_identity_context,
+        ).await?;
+
         Ok(AuthenticationResult {
             provider: SSOProvider::AzureAD,
             user_id: azure_validation.user_id,
@@ -380,11 +397,7 @@ impl CompleteAzureADDelegationHandler {
             delegation_chain,
             effective_permissions: azure_validation.effective_permissions,
             audit_trail_id: activity_log_correlation.audit_trail_id,
-            compliance_validation: self.validate_azure_enterprise_compliance(
-                &azure_validation,
-                &delegation_chain,
-                &managed_identity_context,
-            ).await?,
+            compliance_validation,
         })
     }
     
@@ -454,7 +467,7 @@ pub struct DelegationStepRequest {
     pub required_permissions: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DelegationType {
     AWSAssumeRole,
     AzureOnBehalfOf,
@@ -470,7 +483,7 @@ pub struct CompleteDelegationResult {
     pub enterprise_metadata: EnterpriseDelegationMetadata,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegationStep {
     pub step_number: u32,
     pub delegation_type: DelegationType,
@@ -576,10 +589,7 @@ impl UnifiedAuditCorrelator {
         _result: &AuthenticationResult,
         _context: &OperationContext,
     ) -> Result<ComprehensiveAuditTrail> {
-        Ok(ComprehensiveAuditTrail {
-            audit_id: String::new(),
-            events: vec![],
-        })
+        Ok(ComprehensiveAuditTrail::new())
     }
 }
 
@@ -757,7 +767,7 @@ pub struct STSValidationResult {
     pub credentials: AWSCredentials,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssumeRoleStep {
     pub target_role_arn: String,
     pub session_name: String,
@@ -887,7 +897,7 @@ pub struct AzureValidationResult {
     pub user_identity: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnBehalfOfConfiguration {
     pub config_id: String,
 }

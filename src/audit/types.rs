@@ -26,7 +26,7 @@ pub struct AuditEvent {
 }
 
 /// Types of audit events
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuditEventType {
     Authentication,
     Authorization,

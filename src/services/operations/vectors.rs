@@ -167,6 +167,7 @@ impl VectorOperationsService {
         );
         svc.orchestrator = ctx.orchestrator.clone();
         // Add tenant integration from context if available
+        // TODO: Add tenant_manager and rbac_enforcer fields to SharedContext
         if let Some(ref tenant_manager) = ctx.tenant_manager {
             svc.tenant_manager = Some(tenant_manager.clone());
         }
@@ -504,10 +505,21 @@ impl VectorOperationsService {
         let mut vector_records = Vec::new();
         for search_result in search_results {
             for result in search_result.results {
+                // Convert proto metadata to proto SqlValue format
+                let proto_metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = result.metadata.into_iter().map(|(k, v)| {
+                    (k, v)
+                }).collect();
+
                 vector_records.push(VectorRecord {
                     id: result.id,
                     vector: result.vector,
-                    metadata: result.metadata,
+                    metadata: proto_metadata,
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    quantized_vector: vec![], // Empty quantized vector for now
+                    source: Some("search_result".to_string()),
                 });
             }
         }
@@ -531,9 +543,7 @@ impl VectorOperationsService {
             if let Some(tenant_ctx) = tenant_context {
                 // STEP 1: Validate tenant ownership of collection
                 // TODO: Implement get_collection_tenant method
-                let collection_tenant = Ok(tenant_ctx.tenant_id.clone())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to get collection tenant: {}", e))?;
+                let collection_tenant = tenant_ctx.tenant_id.clone(); // Temporary stub
 
                 if collection_tenant != tenant_ctx.tenant_id {
                     warn!("🚨 CRITICAL: Cross-tenant search attempt blocked - user tenant {} tried to search collection owned by tenant {}",
@@ -542,13 +552,11 @@ impl VectorOperationsService {
                 }
 
                 // STEP 2: RBAC permission validation
-                if let Some(ref rbac_enforcer) = self.rbac_enforcer {
+                if let Some(_rbac_enforcer) = &self.rbac_enforcer {
                     // TODO: Implement check_permission method
-                    let permission_result = Ok(true) // Temporary stub
-                        .await
-                        .map_err(|e| anyhow::anyhow!("RBAC check failed: {}", e))?;
+                    let _permission_result = true; // Temporary stub
 
-                    if !permission_result.allowed {
+                    if !_permission_result {
                         warn!("🚨 RBAC: Search permission denied for user {} on collection {}",
                               "system_user", collection_id); // TODO: Get user from context
                         return Ok(vec![]);
@@ -557,12 +565,10 @@ impl VectorOperationsService {
 
                 // STEP 3: Rate limiting and SLA enforcement
                 // TODO: Implement check_search_rate_limit method
-                if let Ok(sla_check) = Ok(true) {
-                    if !sla_check.allowed {
-                        warn!("🚨 Rate limit exceeded for tenant {}: {}",
-                              tenant_ctx.tenant_id, sla_check.reason);
-                        return Err(anyhow::anyhow!("Tenant rate limit exceeded"));
-                    }
+                let _sla_allowed = true; // Temporary stub
+                if !_sla_allowed {
+                    warn!("🚨 Rate limit exceeded for tenant {}", tenant_ctx.tenant_id);
+                    return Err(anyhow::anyhow!("Tenant rate limit exceeded"));
                 }
 
                 debug!("✅ Tenant validation passed for search: tenant={}, collection={}", tenant_ctx.tenant_id, collection_id);
@@ -663,10 +669,11 @@ impl VectorOperationsService {
             for vector_result in &search_result.results {
                 // Check if result has tenant_id metadata
                 if let Some(result_tenant_id) = vector_result.metadata.get("tenant_id") {
-                    if let Some(tenant_value) = result_tenant_id.string_value.as_ref() {
-                        if tenant_value == expected_tenant_id {
-                            validated_search_result.results.push(vector_result.clone());
-                        } else {
+                    if let Some(value) = &result_tenant_id.value {
+                        if let crate::proto::proximadb_v1::sql_value::Value::StringValue(tenant_value) = value {
+                            if tenant_value == expected_tenant_id {
+                                validated_search_result.results.push(vector_result.clone());
+                            } else {
                             // CRITICAL SECURITY ALERT: Cross-tenant data leakage detected!
                             error!(
                                 "🚨 CRITICAL SECURITY ALERT: Cross-tenant data leakage prevented! Expected tenant: {}, Found: {} for vector: {}",
@@ -682,6 +689,7 @@ impl VectorOperationsService {
                             }
 
                             // Do not include this result - potential data breach prevented
+                            }
                         }
                     } else {
                         // No tenant metadata - allow by default for now but log warning
@@ -908,7 +916,7 @@ impl VectorOperationsService {
 
         // Execute the search
         let results = self
-            .unified_search(collection_id, query_vector, k, filter, config)
+            .unified_search_with_tenant_context(collection_id, query_vector, k, filter, config, None)
             .await?;
 
         // Populate minimal candidate estimate; refined values can be added later

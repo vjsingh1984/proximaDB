@@ -11,8 +11,9 @@ use proximadb::proto::proximadb_v1::{
     EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
 };
 use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
-use proximadb::storage::provenance::{InMemoryProvenanceRegistry, ProvenanceRegistry};
-use proximadb::storage::relations::{InMemoryRelationsStore, RelationsStore};
+use proximadb::storage::entity_store::{InMemoryProvenanceRegistry, ProvenanceRegistry};
+use proximadb::storage::entity_store::CsrRelationsStore;
+use proximadb::storage::entity_store::RelationsStore;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -93,10 +94,10 @@ async fn create_entity_store() -> anyhow::Result<Arc<ProximaEntityStore>> {
     let storage_engine = create_mock_storage_engine();
 
     // Create relations store for graph relationships
-    let relations_store = Arc::new(InMemoryRelationsStore::new(storage_engine.clone()));
+    let relations_store = Arc::new(CsrRelationsStore::new());
 
     // Create provenance registry for tracking data lineage
-    let provenance_registry = Arc::new(InMemoryProvenanceRegistry::new(storage_engine.clone()));
+    let provenance_registry = Arc::new(InMemoryProvenanceRegistry::new());
 
     // Create the entity store
     Ok(Arc::new(ProximaEntityStore::new(
@@ -114,10 +115,7 @@ fn create_research_paper_entity() -> anyhow::Result<Entity> {
         model_version: "2024-01-01".to_string(),
         vector: vec![0.1; 3072], // Example 3072-dimensional embedding
         dimension: 3072,
-        created_at: Some(prost_types::Timestamp {
-            seconds: chrono::Utc::now().timestamp(),
-            nanos: 0,
-        }),
+        created_at_ms: chrono::Utc::now().timestamp_millis(),
         model_params: {
             let mut params = HashMap::new();
             params.insert("temperature".to_string(), "0.0".to_string());
@@ -173,10 +171,7 @@ fn create_research_paper_entity() -> anyhow::Result<Entity> {
         chunk_id: "abstract".to_string(),
         chunk_position: 0,
         extraction_method: "pdf_extraction_v2".to_string(),
-        extracted_at: Some(prost_types::Timestamp {
-            seconds: chrono::Utc::now().timestamp(),
-            nanos: 0,
-        }),
+        extracted_at_ms: chrono::Utc::now().timestamp_millis(),
         metadata: {
             let mut meta = HashMap::new();
             meta.insert("extractor_version".to_string(), "2.0.1".to_string());
@@ -191,7 +186,7 @@ fn create_research_paper_entity() -> anyhow::Result<Entity> {
         typed_metadata: Some(TypedMetadata {
             fields: metadata_fields,
         }),
-        flexible_metadata: None, // Could add unstructured metadata here
+        flexible_metadata: HashMap::new(), // Empty metadata map
         provenance: Some(provenance),
         relations: vec![], // Will be added separately
         temporal: None,    // Could add temporal information
@@ -223,7 +218,7 @@ fn create_author_and_citation() -> anyhow::Result<(Entity, Relation)> {
                 fields
             },
         }),
-        flexible_metadata: None,
+        flexible_metadata: HashMap::new(),
         provenance: None,
         relations: vec![],
         temporal: None,
@@ -236,7 +231,7 @@ fn create_author_and_citation() -> anyhow::Result<(Entity, Relation)> {
         target_entity_id: "paper_bert_2018".to_string(),
         relation_type: "cites".to_string(),
         weight: 1.0,
-        created_at: chrono::Utc::now().timestamp() as u32,
+        created_at_ms: chrono::Utc::now().timestamp_millis(),
         properties: {
             let mut props = HashMap::new();
             props.insert("citation_context".to_string(), "methodology".to_string());

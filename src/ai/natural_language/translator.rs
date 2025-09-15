@@ -212,13 +212,17 @@ impl NLQueryTranslator {
     ) -> Result<String, TranslationError> {
         let template = PromptTemplate::SecureTranslation;
 
+        let accessible_tables_str = user_context.accessible_tables.iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<&str>>()
+            .join(", ");
         let prompt = self.prompt_builder.build_prompt(template, &[
-            ("user_accessible_tables", &user_context.accessible_tables.join(", ")),
+            ("user_accessible_tables", &accessible_tables_str),
             ("schema_context", schema_context),
             ("natural_language_query", query),
             ("tenant_id", &user_context.tenant_id.clone().unwrap_or_default()),
             ("user_id", &user_context.user_id),
-        ])?;
+        ]).map_err(|e| TranslationError::ConfigurationError(format!("Failed to build prompt: {}", e)))?;
 
         debug!("Built secure translation prompt: {} characters", prompt.len());
         Ok(prompt)

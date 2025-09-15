@@ -293,6 +293,14 @@ cargo doc --open
 
 # Development build and test cycle
 make dev
+
+# Additional Makefile commands
+make help                    # Show all available commands
+make perf-test              # Performance tests with real server
+make integration-full       # Full integration test with server
+make test-python-install    # Install Python test dependencies
+make docker-build           # Build Docker image
+make docker-run             # Run ProximaDB in Docker
 ```
 
 ## Architecture Overview
@@ -387,6 +395,8 @@ Important Cargo feature flags (use with `--features`):
 - `distributed`, `standalone`: Deployment mode selection
 - `gpu`: GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
 - `debug-filters`: Enable debug filtering for search operations
+- `comprehensive_tests`, `perf_tests`: Extended test suites
+- `simd`: SIMD optimization placeholder (ARM NEON support planned)
 
 ### Data Directories
 - `/data/wal/`: Write-ahead log files
@@ -512,6 +522,21 @@ The system automatically detects and uses:
 - CPU cache sizes for optimal batching
 - 13 compression algorithms with context-aware selection
 
+### Available Benchmarks
+```bash
+# All available benchmarks (use --list to see)
+cargo bench
+
+# Specific performance benchmarks
+cargo bench --bench simd_distance_bench
+cargo bench --bench flush_optimization_bench
+cargo bench --bench vector_optimization_bench
+cargo bench --bench engine_comparison_bench
+
+# Run with custom timing
+cargo bench -- --warm-up-time 1 --measurement-time 5
+```
+
 ### Python Client SDK
 Location: `clients/python/`
 
@@ -530,6 +555,7 @@ Supports automatic protocol selection (REST/gRPC) with:
 3. **ARM64 build issues**: Use `cargo build --no-default-features`
 4. **Quantization errors**: Ensure all engines use unified quantization module
 5. **Filesystem errors**: Ensure all engines use IntelligentFilesystem
+6. **Compilation tracking**: Use `current_error.log` to track ongoing compilation issues
 
 ### Debugging Commands
 ```bash

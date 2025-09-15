@@ -64,6 +64,7 @@ pub enum LimitValue {
 /// Enforcement actions when limits are exceeded
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EnforcementAction {
+    Allow,         // Allow the request
     Block,         // Block the request
     Warn,          // Allow but warn
     Throttle,      // Rate limit the requests

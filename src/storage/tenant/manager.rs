@@ -1,7 +1,9 @@
 //! Tenant manager implementation - clean and simple
 
 use super::{TenantContext, TenantConfig, TenantStatus, TenantResourceTracker};
+use super::resources::{ResourceLimits, TenantResourceUsageSnapshot};
 use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::{info, warn, debug};
@@ -53,8 +55,16 @@ impl TenantManager {
             resource_limits: config.resource_limits.clone(),
         };
         
-        // Initialize resource tracker
-        let resource_tracker = TenantResourceTracker::new(&tenant_id, &config.resource_limits);
+        // Initialize resource tracker - convert ResourceLimits from context to resources
+        let resource_limits = ResourceLimits {
+            max_memory_mb: config.resource_limits.max_memory_mb,
+            max_storage_mb: config.resource_limits.max_storage_mb,
+            max_operations_per_minute: config.resource_limits.max_operations_per_minute,
+            max_concurrent_users: config.resource_limits.max_concurrent_users,
+            max_collections: config.resource_limits.max_collections,
+            max_domains: config.resource_limits.max_domains,
+        };
+        let resource_tracker = TenantResourceTracker::new(&tenant_id, &resource_limits);
         
         // Store tenant
         self.active_tenants.insert(tenant_id.clone(), tenant_context.clone());
@@ -106,7 +116,7 @@ impl TenantManager {
     }
     
     /// Get tenant resource usage
-    pub fn get_tenant_resource_usage(&self, tenant_id: &str) -> Option<TenantResourceUsage> {
+    pub fn get_tenant_resource_usage(&self, tenant_id: &str) -> Option<TenantResourceUsageSnapshot> {
         self.tenant_resources.get(tenant_id)
             .map(|tracker| tracker.get_current_usage())
     }

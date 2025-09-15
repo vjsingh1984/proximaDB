@@ -11,6 +11,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use proximadb::compute::distance_computation::{
     DistanceMetric, DistanceMode, UnifiedDistanceCompute,
 };
+use proximadb::core::hardware_capabilities;
 use rand::prelude::*;
 use tracing::debug;
 
@@ -24,6 +25,8 @@ fn generate_random_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
 
 /// Benchmark different vector dimensions
 fn benchmark_dimensions(c: &mut Criterion) {
+    // Initialize global hardware capabilities
+    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
     let mut group = c.benchmark_group("simd_distance_dimensions");
 
     // Test different dimensions (powers of 2 for optimal SIMD)
@@ -111,7 +114,7 @@ fn benchmark_batch_processing(c: &mut Criterion) {
             batch_size,
             |b, _| {
                 let mut calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
-                calculator.set_gpu_enabled(true);
+                // GPU acceleration enabled by default in UnifiedDistanceCompute
                 b.iter(|| {
                     let results = calculator.calculate_distance_batch(
                         &query,
@@ -129,10 +132,13 @@ fn benchmark_batch_processing(c: &mut Criterion) {
 
 /// Benchmark hardware backends
 fn benchmark_hardware_backends(c: &mut Criterion) {
+    // Initialize global hardware capabilities
+    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+
     // Get hardware info
     let calculator = UnifiedDistanceCompute::default();
     debug!("\nHardware Backend:");
-    debug!("  Using: {}", calculator.preferred_backend());
+    debug!("  Available backends: {:?}", calculator.available_backends());
 
     let mut group = c.benchmark_group("hardware_backends");
 
@@ -145,7 +151,7 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
     // CPU backend
     group.bench_function("cpu", |b| {
         let mut calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
-        calc.set_gpu_enabled(false);
+        // CPU-only mode: create with CPU backend
         b.iter(|| {
             let result = calc.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
             black_box(result.raw_value)
@@ -155,7 +161,7 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
     // GPU backend (if available)
     group.bench_function("gpu", |b| {
         let mut calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
-        calc.set_gpu_enabled(true);
+        // GPU acceleration enabled by default
         b.iter(|| {
             let result = calc.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
             black_box(result.raw_value)

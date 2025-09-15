@@ -1,11 +1,11 @@
-= ProximaDB Enterprise Documentation Guide
+= ProximaDB Documentation - Enterprise AI Platform
 :toc: macro
-:toclevels: 3
+:toclevels: 2
 :icons: font
 :source-highlighter: highlight.js
 
 [.lead]
-**Streamlined Enterprise Documentation Suite** - Professional documentation structure optimized for business stakeholders, developers, and operations teams.
+**Complete documentation for ProximaDB Enterprise** - The unified AI-powered vector intelligence platform delivering 90% cost reduction and 18x faster deployment.
 
 toc::[]
 

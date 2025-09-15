@@ -8,7 +8,6 @@ use std::sync::Arc;
 use anyhow::Result;
 
 /// Report generator for business intelligence
-#[derive(Debug, Clone)]
 pub struct ReportGenerator {
     llm_engine: Arc<LLMIntegrationEngine>,
 }

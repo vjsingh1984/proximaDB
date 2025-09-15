@@ -3,7 +3,7 @@
 //! Main engine for managing multiple LLM providers with fallback support,
 //! implementing the design from task_1_ai_implementation_design.adoc
 
-use super::types::{LLMConfig, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext};
+use super::types::{LLMConfig, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage};
 use super::providers::{LLMClient, OpenAIClient, AnthropicClient, CohereClient, OllamaClient, AWSBedrockClient, AzureOpenAIClient, HuggingFaceClient, VLLMClient};
 use super::metrics::LLMMetrics;
 use std::collections::HashMap;
@@ -382,6 +382,13 @@ impl std::fmt::Display for LLMProvider {
         match self {
             LLMProvider::OpenAI => write!(f, "OpenAI"),
             LLMProvider::Anthropic => write!(f, "Anthropic"),
+            LLMProvider::Cohere => write!(f, "Cohere"),
+            LLMProvider::AWSBedrock => write!(f, "AWS Bedrock"),
+            LLMProvider::AzureOpenAI => write!(f, "Azure OpenAI"),
+            LLMProvider::GoogleVertexAI => write!(f, "Google Vertex AI"),
+            LLMProvider::Ollama => write!(f, "Ollama"),
+            LLMProvider::VLLM => write!(f, "VLLM"),
+            LLMProvider::HuggingFace => write!(f, "HuggingFace"),
         }
     }
 }

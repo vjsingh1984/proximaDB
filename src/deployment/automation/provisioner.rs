@@ -4,6 +4,7 @@
 //! with automatic configuration generation and validation.
 
 use crate::deployment::discovery::{DetectedEnvironment, PlatformType};
+use crate::deployment::discovery::environment_detector::DetectionConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
@@ -12,7 +13,6 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Enterprise deployment provisioner for automated setup
-#[derive(Debug, Clone)]
 pub struct DeploymentProvisioner {
     platform_deployers: HashMap<PlatformType, Box<dyn PlatformDeployer + Send + Sync>>,
     config_generator: ConfigurationGenerator,
@@ -85,6 +85,18 @@ pub enum DeploymentStatus {
     Failed,
     PartiallySucceeded,
     RolledBack,
+}
+
+impl std::fmt::Display for DeploymentStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeploymentStatus::InProgress => write!(f, "In Progress"),
+            DeploymentStatus::Succeeded => write!(f, "Succeeded"),
+            DeploymentStatus::Failed => write!(f, "Failed"),
+            DeploymentStatus::PartiallySucceeded => write!(f, "Partially Succeeded"),
+            DeploymentStatus::RolledBack => write!(f, "Rolled Back"),
+        }
+    }
 }
 
 /// Deployment endpoints for customer access
@@ -299,6 +311,35 @@ impl DeploymentProvisioner {
             monitoring_endpoints: vec![
                 format!("https://monitoring.{}.proximadb.com", deployment_id),
             ],
+        })
+    }
+
+    /// Generate dashboard configuration
+    async fn generate_dashboard_config(&self, _request: &EnterpriseDeploymentRequest) -> Result<DashboardConfig> {
+        Ok(DashboardConfig {
+            enabled: true,
+            refresh_interval_seconds: 30,
+            panels: vec!["system_metrics".to_string(), "query_performance".to_string()],
+        })
+    }
+
+    /// Generate alerting rules
+    async fn generate_alerting_rules(&self, _request: &EnterpriseDeploymentRequest) -> Result<AlertingRules> {
+        Ok(AlertingRules {
+            rules: vec![AlertRule {
+                name: "high_cpu_usage".to_string(),
+                condition: "cpu_usage > 80%".to_string(),
+                threshold: 0.8,
+            }],
+        })
+    }
+
+    /// Setup log aggregation
+    async fn setup_log_aggregation(&self, _deployment_id: &str) -> Result<LoggingConfig> {
+        Ok(LoggingConfig {
+            log_level: "info".to_string(),
+            retention_days: 30,
+            aggregation_enabled: true,
         })
     }
 }
@@ -769,17 +810,6 @@ pub struct TroubleshootingInfo {
     pub support_contact: String,
 }
 
-impl Default for DetectionConfig {
-    fn default() -> Self {
-        Self {
-            enable_cloud_detection: true,
-            enable_kubernetes_detection: true,
-            enable_docker_detection: true,
-            timeout_seconds: 30,
-            detailed_analysis: true,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -888,4 +918,31 @@ mod tests {
             detected_at: chrono::Utc::now(),
         }
     }
+}
+
+// Additional type definitions for missing structs
+#[derive(Debug, Clone)]
+pub struct DashboardConfig {
+    pub enabled: bool,
+    pub refresh_interval_seconds: u32,
+    pub panels: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlertingRules {
+    pub rules: Vec<AlertRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlertRule {
+    pub name: String,
+    pub condition: String,
+    pub threshold: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct LoggingConfig {
+    pub log_level: String,
+    pub retention_days: u32,
+    pub aggregation_enabled: bool,
 }

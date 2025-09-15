@@ -1,7 +1,8 @@
 //! Benchmarks for flush optimization strategies
+use proximadb::core::hardware_capabilities;
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use proximadb::proto::proximadb::VectorRecord;
+use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -10,16 +11,15 @@ use tokio::runtime::Runtime;
 fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| VectorRecord {
-            id: Some(format!("vec_{}", i)),
+            id: format!("vec_{}", i),
             vector: vec![i as f32; dimension],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: Some(0),
             expires_at: None,
             version: Some(1),
-            distance: None,
-            rank: None,
-            score: None,
+            quantized_vector: vec![],
+            source: None,
         })
         .collect()
 }

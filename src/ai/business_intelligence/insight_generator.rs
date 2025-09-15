@@ -13,7 +13,7 @@ use anyhow::Result;
 use tracing::{debug, info};
 
 /// Insight generator for automated business intelligence
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct InsightGenerator {
     llm_engine: Arc<LLMIntegrationEngine>,
     config: InsightGeneratorConfig,
@@ -277,7 +277,7 @@ impl InsightGenerator {
             ),
             insight_type: InsightType::TrendIdentification,
             confidence_score: trend.confidence_score,
-            impact_score: (trend.change_percentage.abs() / 100.0).min(1.0),
+            impact_score: (trend.change_percentage.abs() / 100.0).min(1.0) as f32,
             data_source: "Trend Analysis".to_string(),
             generated_at: Utc::now(),
             recommendations: vec![

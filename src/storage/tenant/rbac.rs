@@ -3,7 +3,7 @@
 use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tracing::{info, debug, warn};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -112,7 +112,7 @@ pub struct UserRoleAssignment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldLevelPermissions {
     pub restricted_fields: HashSet<String>,
-    pub role_field_access: DashMap<String, HashSet<String>>,
+    pub role_field_access: HashMap<String, HashSet<String>>,
 }
 
 /// Business context permissions
@@ -336,8 +336,7 @@ impl EnhancedRBACManager {
     
     fn get_tenant_role(&self, tenant_id: &str, role_name: &str) -> Result<TenantRole> {
         self.tenant_roles.get(tenant_id)
-            .and_then(|roles| roles.get(role_name))
-            .map(|entry| entry.clone())
+            .and_then(|roles| roles.get(role_name).map(|role| role.clone()))
             .ok_or_else(|| anyhow!("Role {} not found in tenant {}", role_name, tenant_id))
     }
     
@@ -390,6 +389,13 @@ pub struct ValidationMetadata {
     pub validated_at: DateTime<Utc>,
     pub permissions_checked: HashSet<Permission>,
     pub validation_reason: String,
+}
+
+/// Permission result for RBAC operations
+#[derive(Debug, Clone)]
+pub struct PermissionResult {
+    pub allowed: bool,
+    pub reason: String,
 }
 
 /// RBAC event logger for audit trails

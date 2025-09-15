@@ -162,7 +162,8 @@ impl SchemaContext {
 
             // Add sample values if configured and available
             if self.config.include_sample_values && !column.sample_values.is_empty() {
-                let samples: Vec<&String> = column.sample_values.iter()
+                let samples: Vec<&str> = column.sample_values.iter()
+                    .map(|s| s.as_str())
                     .take(self.config.max_sample_values_per_column)
                     .collect();
                 description.push_str(&format!(" [Examples: {}]", samples.join(", ")));

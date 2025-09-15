@@ -31,6 +31,11 @@ impl EnterpriseAuthManager {
         }
     }
     
+    /// Validate and resolve SSO token to enterprise user context
+    pub async fn validate_and_resolve_token(&self, sso_token: &SSOToken) -> Result<EnterpriseUserContext> {
+        self.sso_manager.validate_and_resolve_token(sso_token).await
+    }
+
     /// Authenticate and authorize user operation
     pub async fn authenticate_and_authorize(
         &self,
@@ -48,12 +53,12 @@ impl EnterpriseAuthManager {
                     tenant_id,
                     &collection_id,
                     operation_type,
-                    &enterprise_user.into(),
+                    &enterprise_user.clone().into(),
                 ).await?
             },
             // Additional operation types to be added
         };
-        
+
         Ok(AuthorizedContext {
             enterprise_user,
             authorization_result,

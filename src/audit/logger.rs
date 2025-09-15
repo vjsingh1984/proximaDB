@@ -8,13 +8,13 @@ use super::storage::AuditStorage;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Utc, Duration, Timelike};
 use uuid::Uuid;
 use anyhow::{Result, anyhow};
 use tracing::{debug, info, warn, error};
 
 /// Comprehensive audit logger for enterprise compliance
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AuditLogger {
     storage: Arc<dyn AuditStorage + Send + Sync>,
     config: AuditConfig,
@@ -74,6 +74,17 @@ pub struct EmailConfig {
     pub password: String,
     pub from_address: String,
     pub to_addresses: Vec<String>,
+}
+
+impl std::fmt::Debug for AuditLogger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuditLogger")
+            .field("config", &self.config)
+            .field("encryption_key", &self.encryption_key)
+            .field("alert_sender", &self.alert_sender)
+            .field("storage", &"<AuditStorage trait object>")
+            .finish()
+    }
 }
 
 impl AuditLogger {
@@ -151,6 +162,9 @@ impl AuditLogger {
         ip_address: Option<String>,
         user_agent: Option<String>,
     ) -> Result<()> {
+        // Calculate risk score before moving ip_address
+        let risk_score = self.calculate_authentication_risk(user_id, &ip_address).await;
+
         let event = AuditEvent {
             event_id: Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
@@ -169,7 +183,7 @@ impl AuditLogger {
             request_id: None,
             tenant_id: None,
             session_id: None,
-            risk_score: self.calculate_authentication_risk(user_id, &ip_address).await,
+            risk_score,
         };
 
         self.log_event(event).await
@@ -249,7 +263,7 @@ impl AuditLogger {
         // Add system metadata
         event.details.insert("audit_version".to_string(), serde_json::Value::String("1.0".to_string()));
         event.details.insert("system_hostname".to_string(), serde_json::Value::String(
-            hostname::get().unwrap_or_default().to_string_lossy().to_string()
+            std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string())
         ));
 
         // Add compliance framework tags
@@ -280,13 +294,13 @@ impl AuditLogger {
         // Encrypt IP addresses for privacy
         if let Some(ref ip) = event.ip_address {
             let encrypted_ip = self.encryption_key.encrypt(ip.as_bytes())?;
-            event.ip_address = Some(base64::encode(encrypted_ip));
+            event.ip_address = Some(crate::utils::encoding::base64_encode(&encrypted_ip));
         }
 
         // Encrypt user agent strings
         if let Some(ref user_agent) = event.user_agent {
             let encrypted_ua = self.encryption_key.encrypt(user_agent.as_bytes())?;
-            event.user_agent = Some(base64::encode(encrypted_ua));
+            event.user_agent = Some(crate::utils::encoding::base64_encode(&encrypted_ua));
         }
 
         // Encrypt sensitive details
@@ -294,7 +308,7 @@ impl AuditLogger {
             if self.is_sensitive_field(key) {
                 if let serde_json::Value::String(string_value) = value {
                     let encrypted_value = self.encryption_key.encrypt(string_value.as_bytes())?;
-                    *value = serde_json::Value::String(base64::encode(encrypted_value));
+                    *value = serde_json::Value::String(crate::utils::encoding::base64_encode(&encrypted_value));
                 }
             }
         }
@@ -342,7 +356,7 @@ impl AuditLogger {
         }
 
         // Check for cross-tenant access attempts
-        if let (Some(ref user_tenant), Some(ref resource_tenant)) = (&event.tenant_id, &event.tenant_id) {
+        if let (Some(user_tenant), Some(resource_tenant)) = (&event.tenant_id, &event.tenant_id) {
             if user_tenant != resource_tenant {
                 alerts.push(SecurityAlert {
                     alert_id: Uuid::new_v4().to_string(),
@@ -386,7 +400,7 @@ impl AuditLogger {
             },
             action: format!("security_alert_{:?}", alert.alert_type),
             result: AuditResult::Success,
-            details: serde_json::to_value(&alert)?.as_object().unwrap().clone(),
+            details: serde_json::to_value(&alert)?.as_object().unwrap().clone().into_iter().collect(),
             ip_address: alert.ip_address,
             user_agent: None,
             request_id: None,
@@ -428,10 +442,10 @@ impl AuditLogger {
 
     /// Calculate authentication risk score
     async fn calculate_authentication_risk(&self, user_id: &str, ip_address: &Option<String>) -> Option<f64> {
-        let mut risk_score = 0.0;
+        let mut risk_score: f64 = 0.0;
 
         // Check for unusual IP address
-        if let Some(ref ip) = ip_address {
+        if let Some(ip) = &ip_address {
             if self.is_suspicious_ip(ip).await {
                 risk_score += 0.3;
             }
@@ -453,7 +467,7 @@ impl AuditLogger {
 
     /// Calculate data access risk score
     async fn calculate_data_access_risk(&self, user_id: &str, action: &str) -> Option<f64> {
-        let mut risk_score = 0.0;
+        let mut risk_score: f64 = 0.0;
 
         // Higher risk for bulk operations
         if action.contains("bulk") || action.contains("export") || action.contains("download") {

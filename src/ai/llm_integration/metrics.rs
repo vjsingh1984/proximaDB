@@ -19,7 +19,7 @@ pub struct LLMMetrics {
 }
 
 /// Metrics for a specific LLM provider
-#[derive(Debug, Clone, Default)]
+#[derive(Debug)]
 pub struct ProviderMetrics {
     pub total_requests: AtomicU64,
     pub successful_requests: AtomicU64,

@@ -145,12 +145,13 @@ pub struct ComplianceRequirement {
     pub status: RequirementStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ComplianceStatus {
+    #[default]
+    Unknown,
     Compliant,
     NonCompliant,
     PartiallyCompliant,
-    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +200,18 @@ impl PredictiveAnalyticsEngine {
         // TODO: Implement actual prediction logic
         Ok(vec![])
     }
+
+    pub async fn execute_business_prediction(
+        &self,
+        _tenant_id: &str,
+        _business_scenario: &str,
+        _prediction_horizon: &str,
+        _user_context: &crate::storage::tenant::UserContext,
+    ) -> Result<String> {
+        // TODO: Implement actual business prediction logic
+        Ok(format!("Business prediction for scenario '{}' with horizon '{}': Placeholder result",
+                   _business_scenario, _prediction_horizon))
+    }
 }
 
 impl ConversationalAnalyticsEngine {
@@ -217,6 +230,18 @@ impl ConversationalAnalyticsEngine {
     pub async fn process_conversational_query(&self, _query: &str) -> Result<String> {
         // TODO: Implement actual conversational query processing
         Ok("Analytics query processing not yet implemented".to_string())
+    }
+
+    pub async fn start_conversational_session(
+        &self,
+        _tenant_id: &str,
+        _session_type: &str,
+        _context: &str,
+        _user_context: &crate::storage::tenant::UserContext,
+    ) -> Result<String> {
+        // TODO: Implement actual conversational session logic
+        Ok(format!("Started conversational session of type '{}' with context '{}'",
+                   _session_type, _context))
     }
 }
 

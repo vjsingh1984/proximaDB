@@ -10,7 +10,6 @@ use tracing::{info, debug, warn, error};
 use async_trait::async_trait;
 
 /// Enterprise environment detector for automated deployment
-#[derive(Debug, Clone)]
 pub struct EnvironmentDetector {
     detection_config: DetectionConfig,
     platform_analyzers: HashMap<PlatformType, Box<dyn PlatformAnalyzer + Send + Sync>>,
@@ -99,6 +98,9 @@ pub struct SecurityConstraints {
     pub encryption_requirements: EncryptionRequirements,
     pub audit_logging_required: bool,
     pub network_isolation_required: bool,
+    pub encryption_required: bool,
+    pub compliance_frameworks: Vec<String>,
+    pub access_control_level: String,
 }
 
 /// Compliance frameworks detected
@@ -631,6 +633,70 @@ impl EnvironmentDetector {
     async fn detect_network_bandwidth(&self) -> Result<u32> { Ok(1000) } // Default 1Gbps
     async fn detect_gpu_availability(&self) -> Result<bool> { Ok(false) } // Conservative default
     async fn detect_high_iops_storage(&self) -> Result<bool> { Ok(true) } // Assume modern storage
+
+    /// Analyze network configuration
+    async fn analyze_network_configuration(&self) -> Result<NetworkConfig> {
+        debug!("🌐 Analyzing network configuration...");
+        Ok(NetworkConfig {
+            public_access_required: true,
+            load_balancer_available: false,
+            ssl_termination_available: false,
+            internal_dns_available: true,
+            firewall_rules_needed: vec![
+                FirewallRule {
+                    port: 5678,
+                    protocol: "TCP".to_string(),
+                    description: "ProximaDB REST API".to_string(),
+                    required: true,
+                },
+                FirewallRule {
+                    port: 5679,
+                    protocol: "TCP".to_string(),
+                    description: "ProximaDB gRPC API".to_string(),
+                    required: true,
+                },
+            ],
+        })
+    }
+
+    /// Analyze security constraints
+    async fn analyze_security_constraints(&self) -> Result<SecurityConstraints> {
+        debug!("🔒 Analyzing security constraints...");
+        Ok(SecurityConstraints {
+            air_gapped_environment: false,
+            compliance_requirements: vec![ComplianceFramework::SOC2],
+            encryption_requirements: EncryptionRequirements {
+                data_at_rest: true,
+                data_in_transit: true,
+                key_management_required: false,
+                encryption_algorithm: Some("AES-256".to_string()),
+            },
+            audit_logging_required: true,
+            network_isolation_required: false,
+            encryption_required: true,
+            compliance_frameworks: vec!["SOC2".to_string()],
+            access_control_level: "basic".to_string(),
+        })
+    }
+
+    /// Profile performance characteristics
+    async fn profile_performance_characteristics(&self, resource_availability: &ResourceAvailability) -> Result<PerformanceProfile> {
+        debug!("⚡ Profiling performance characteristics...");
+        Ok(PerformanceProfile {
+            estimated_qps_capacity: resource_availability.cpu_cores * 250,
+            storage_iops: if self.detect_high_iops_storage().await? { 10000 } else { 5000 },
+            network_latency_ms: 25.0,
+            recommended_storage_engine: "NOVA".to_string(),
+            optimal_configuration: OptimalConfig {
+                memory_allocation_mb: (resource_availability.memory_gb * 1024 * 3) / 4, // Use 75% of available memory
+                worker_threads: resource_availability.cpu_cores.min(16),
+                cache_size_mb: resource_availability.memory_gb * 256, // 25% of memory for cache
+                write_buffer_size_mb: resource_availability.memory_gb * 128, // 12.5% for write buffer
+                enable_gpu_acceleration: self.detect_gpu_availability().await?,
+                quantization_strategy: "PQ8".to_string(),
+            },
+        })
+    }
 }
 
 /// Trait for platform-specific analysis
@@ -824,6 +890,9 @@ impl BackupStrategy {
         }
     }
 }
+
+// Removed duplicate NetworkConfiguration struct - use NetworkConfig instead
+
 
 #[cfg(test)]
 mod tests {

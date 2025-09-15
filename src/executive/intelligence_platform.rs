@@ -188,17 +188,19 @@ impl ExecutiveIntelligencePlatform {
             board_requirements,
         ).await?;
         
+        let strategic_recommendations = self.generate_board_strategic_recommendations(
+            tenant_id,
+            &governance_analytics,
+            executive_context,
+        ).await?;
+
         Ok(AutomatedBoardReport {
             tenant_id: tenant_id.to_string(),
             reporting_period: reporting_period.clone(),
             governance_analytics,
             compliance_summary,
             executive_summary,
-            strategic_recommendations: self.generate_board_strategic_recommendations(
-                tenant_id,
-                &governance_analytics,
-                executive_context,
-            ).await?,
+            strategic_recommendations,
             board_metadata: BoardReportMetadata {
                 report_id: uuid::Uuid::new_v4().to_string(),
                 generated_at: Utc::now(),
@@ -231,14 +233,17 @@ impl ExecutiveIntelligencePlatform {
             modeling_requirements,
         ).await?;
         
+        let strategic_recommendations = self.generate_scenario_based_recommendations(
+            &scenario_results,
+            executive_context,
+        ).await?;
+        let risk_assessment = self.assess_scenario_risks(&scenario_results).await?;
+
         Ok(StrategicScenarioAnalysis {
             scenario_results,
             competitive_analysis,
-            strategic_recommendations: self.generate_scenario_based_recommendations(
-                &scenario_results,
-                executive_context,
-            ).await?,
-            risk_assessment: self.assess_scenario_risks(&scenario_results).await?,
+            strategic_recommendations,
+            risk_assessment,
         })
     }
     

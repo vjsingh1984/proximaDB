@@ -400,8 +400,8 @@ pub struct TenantEntityStats {
 impl MetadataSummary {
     pub fn from_entity(entity: &Entity) -> Self {
         Self {
-            typed_metadata_keys: entity.typed_metadata.iter().map(|m| m.key.clone()).collect(),
-            flexible_metadata_keys: entity.metadata.keys().cloned().collect(),
+            typed_metadata_keys: entity.typed_metadata.as_ref().map(|tm| tm.fields.keys().cloned().collect()).unwrap_or_default(),
+            flexible_metadata_keys: entity.flexible_metadata.keys().cloned().collect(),
             has_embeddings: !entity.embeddings.is_empty(),
             has_relationships: false, // Will be enhanced when relationships are implemented
         }

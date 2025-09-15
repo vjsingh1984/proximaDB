@@ -12,7 +12,6 @@ use anyhow::{Result, anyhow};
 use tracing::{debug, info, warn, error};
 
 /// Enterprise usage metering engine for real-time billing
-#[derive(Debug, Clone)]
 pub struct UsageMeteringEngine {
     /// Real-time usage event storage
     usage_events: Arc<RwLock<HashMap<String, Vec<UsageEvent>>>>,
