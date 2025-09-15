@@ -1,12 +1,20 @@
-// Custom serde implementations for protobuf oneof types ONLY
-// Simple types use build.rs auto-derives, complex oneof types use custom implementations
+// Minimal custom serde implementations for ONLY complex oneof types
+// All simple types handled by build.rs auto-derives
 
 use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use crate::utils::encoding::{base64_encode, base64_decode};
 use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlValueVariant};
 use crate::proto::proximadb_v1::{PropertyValue, property_value::Value as PropertyValueVariant};
 
-// Custom serde for SqlValue (has oneof value)
+// Note: This file contains ONLY the absolutely necessary custom serde implementations
+// for protobuf oneof types that cannot be auto-derived due to their complexity.
+// All other types use build.rs auto-derives.
+
+// The essential oneof types that need custom handling:
+// 1. SqlValue (oneof value) - complex with multiple variants
+// 2. PropertyValue (oneof value) - complex with multiple variants  
+// 3. SourceContent (oneof data) - complex with binary data handling
+
 impl Serialize for SqlValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -14,7 +22,7 @@ impl Serialize for SqlValue {
     {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(1))?;
-
+        
         match &self.value {
             Some(SqlValueVariant::StringValue(v)) => {
                 map.serialize_entry("string_value", v)?;
@@ -44,115 +52,53 @@ impl Serialize for SqlValue {
                 map.serialize_entry("null_value", &serde_json::Value::Null)?;
             }
         }
-
+        
         map.end()
     }
 }
-
 impl<'de> Deserialize<'de> for SqlValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field {
-            StringValue,
-            NumberValue,
-            BoolValue,
-            Int64Value,
-            BytesValue,
-            NullValue,
-            ArrayValue,
-            ObjectValue,
+        struct SqlValueHelper {
+            string_value: Option<String>,
+            number_value: Option<f64>,
+            bool_value: Option<bool>,
+            int64_value: Option<i64>,
+            bytes_value: Option<String>, // base64 encoded
+            null_value: Option<serde_json::Value>,
+            array_value: Option<crate::proto::proximadb_v1::SqlArray>,
+            object_value: Option<crate::proto::proximadb_v1::SqlObject>,
         }
-
-        struct SqlValueVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for SqlValueVisitor {
-            type Value = SqlValue;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct SqlValue")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<SqlValue, V::Error>
-            where
-                V: serde::de::MapAccess<'de>,
-            {
-                let mut value = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::StringValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: String = map.next_value()?;
-                            value = Some(SqlValueVariant::StringValue(v));
-                        }
-                        Field::NumberValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: f64 = map.next_value()?;
-                            value = Some(SqlValueVariant::NumberValue(v));
-                        }
-                        Field::BoolValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: bool = map.next_value()?;
-                            value = Some(SqlValueVariant::BoolValue(v));
-                        }
-                        Field::Int64Value => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: i64 = map.next_value()?;
-                            value = Some(SqlValueVariant::Int64Value(v));
-                        }
-                        Field::BytesValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: String = map.next_value()?;
-                            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
-                            value = Some(SqlValueVariant::BytesValue(bytes));
-                        }
-                        Field::NullValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let _: serde_json::Value = map.next_value()?;
-                            value = Some(SqlValueVariant::NullValue(()));
-                        }
-                        Field::ArrayValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v = map.next_value()?;
-                            value = Some(SqlValueVariant::ArrayValue(v));
-                        }
-                        Field::ObjectValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v = map.next_value()?;
-                            value = Some(SqlValueVariant::ObjectValue(v));
-                        }
-                    }
-                }
-
-                Ok(SqlValue { value })
-            }
-        }
-
-        deserializer.deserialize_struct("SqlValue", &["string_value", "number_value", "bool_value", "int64_value", "bytes_value", "null_value", "array_value", "object_value"], SqlValueVisitor)
+        
+        let helper = SqlValueHelper::deserialize(deserializer)?;
+        
+        let value = if let Some(v) = helper.string_value {
+            Some(SqlValueVariant::StringValue(v))
+        } else if let Some(v) = helper.number_value {
+            Some(SqlValueVariant::NumberValue(v))
+        } else if let Some(v) = helper.bool_value {
+            Some(SqlValueVariant::BoolValue(v))
+        } else if let Some(v) = helper.int64_value {
+            Some(SqlValueVariant::Int64Value(v))
+        } else if let Some(v) = helper.bytes_value {
+            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
+            Some(SqlValueVariant::BytesValue(bytes))
+        } else if helper.null_value.is_some() {
+            Some(SqlValueVariant::NullValue(0)) // prost_types::NullValue
+        } else if let Some(v) = helper.array_value {
+            Some(SqlValueVariant::ArrayValue(v))
+        } else if let Some(v) = helper.object_value {
+            Some(SqlValueVariant::ObjectValue(v))
+        } else {
+            None
+        };
+        
+        Ok(SqlValue { value })
     }
 }
-
-// Custom serde for PropertyValue (has oneof value)
 impl Serialize for PropertyValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -160,7 +106,7 @@ impl Serialize for PropertyValue {
     {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(1))?;
-
+        
         match &self.value {
             Some(PropertyValueVariant::StringValue(v)) => {
                 map.serialize_entry("string_value", v)?;
@@ -168,8 +114,8 @@ impl Serialize for PropertyValue {
             Some(PropertyValueVariant::IntValue(v)) => {
                 map.serialize_entry("int_value", v)?;
             }
-            Some(PropertyValueVariant::FloatValue(v)) => {
-                map.serialize_entry("float_value", v)?;
+            Some(PropertyValueVariant::DoubleValue(v)) => {
+                map.serialize_entry("double_value", v)?;
             }
             Some(PropertyValueVariant::BoolValue(v)) => {
                 map.serialize_entry("bool_value", v)?;
@@ -183,297 +129,81 @@ impl Serialize for PropertyValue {
             Some(PropertyValueVariant::ObjectValue(v)) => {
                 map.serialize_entry("object_value", v)?;
             }
+            Some(PropertyValueVariant::VectorValue(v)) => {
+                map.serialize_entry("vector_value", &v.values)?;
+            }
             None => {
                 map.serialize_entry("null_value", &serde_json::Value::Null)?;
             }
         }
-
+        
         map.end()
     }
 }
-
 impl<'de> Deserialize<'de> for PropertyValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field {
-            StringValue,
-            IntValue,
-            FloatValue,
-            BoolValue,
-            BytesValue,
-            ArrayValue,
-            ObjectValue,
-            NullValue,
+        struct PropertyValueHelper {
+            string_value: Option<String>,
+            int_value: Option<i64>,
+            double_value: Option<f64>,
+            bool_value: Option<bool>,
+            bytes_value: Option<String>, // base64 encoded
+            array_value: Option<crate::proto::proximadb_v1::PropertyArray>,
+            object_value: Option<crate::proto::proximadb_v1::PropertyObject>,
+            vector_value: Option<Vec<f32>>,
+            null_value: Option<serde_json::Value>,
         }
-
-        struct PropertyValueVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for PropertyValueVisitor {
-            type Value = PropertyValue;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct PropertyValue")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<PropertyValue, V::Error>
-            where
-                V: serde::de::MapAccess<'de>,
-            {
-                let mut value = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::StringValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: String = map.next_value()?;
-                            value = Some(PropertyValueVariant::StringValue(v));
-                        }
-                        Field::IntValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: i64 = map.next_value()?;
-                            value = Some(PropertyValueVariant::IntValue(v));
-                        }
-                        Field::FloatValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: f64 = map.next_value()?;
-                            value = Some(PropertyValueVariant::FloatValue(v));
-                        }
-                        Field::BoolValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: bool = map.next_value()?;
-                            value = Some(PropertyValueVariant::BoolValue(v));
-                        }
-                        Field::BytesValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v: String = map.next_value()?;
-                            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
-                            value = Some(PropertyValueVariant::BytesValue(bytes));
-                        }
-                        Field::ArrayValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v = map.next_value()?;
-                            value = Some(PropertyValueVariant::ArrayValue(v));
-                        }
-                        Field::ObjectValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let v = map.next_value()?;
-                            value = Some(PropertyValueVariant::ObjectValue(v));
-                        }
-                        Field::NullValue => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let _: serde_json::Value = map.next_value()?;
-                            // PropertyValue doesn't have null variant, use default
-                        }
-                    }
-                }
-
-                Ok(PropertyValue { value })
-            }
-        }
-
-        deserializer.deserialize_struct("PropertyValue", &["string_value", "int_value", "float_value", "bool_value", "bytes_value", "array_value", "object_value"], PropertyValueVisitor)
+        
+        let helper = PropertyValueHelper::deserialize(deserializer)?;
+        
+        let value = if let Some(v) = helper.string_value {
+            Some(PropertyValueVariant::StringValue(v))
+        } else if let Some(v) = helper.int_value {
+            Some(PropertyValueVariant::IntValue(v))
+        } else if let Some(v) = helper.double_value {
+            Some(PropertyValueVariant::DoubleValue(v))
+        } else if let Some(v) = helper.bool_value {
+            Some(PropertyValueVariant::BoolValue(v))
+        } else if let Some(v) = helper.bytes_value {
+            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
+            Some(PropertyValueVariant::BytesValue(bytes))
+        } else if let Some(v) = helper.array_value {
+            Some(PropertyValueVariant::ArrayValue(v))
+        } else if let Some(v) = helper.object_value {
+            Some(PropertyValueVariant::ObjectValue(v))
+        } else if let Some(v) = helper.vector_value {
+            Some(PropertyValueVariant::VectorValue(crate::proto::proximadb_v1::VectorData {
+                values: v,
+            }))
+        } else {
+            None
+        };
+        
+        Ok(PropertyValue { value })
     }
 }
-
-// Custom serde for SourceContent (has oneof data)
 impl Serialize for crate::proto::proximadb_v1::SourceContent {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         use serde::ser::SerializeMap;
+        use crate::proto::proximadb_v1::source_content::Data;
+        
         let mut map = serializer.serialize_map(Some(1))?;
-
+        
         match &self.data {
-            Some(crate::proto::proximadb_v1::source_content::Data::TextContent(v)) => {
-                map.serialize_entry("text_content", v)?;
-            }
-            Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(v)) => {
-                map.serialize_entry("binary_content", &base64_encode(v))?;
-            }
-            None => {
-                map.serialize_entry("null", &serde_json::Value::Null)?;
-            }
+            Some(Data::TextContent(v)) => map.serialize_entry("text_content", v)?,
+            Some(Data::BinaryContent(v)) => map.serialize_entry("binary_content", &base64_encode(v))?,
+            Some(Data::ExternalReference(v)) => map.serialize_entry("external_reference", v)?,
+            None => map.serialize_entry("null_content", &serde_json::Value::Null)?,
         }
-
+        
         map.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::SourceContent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field {
-            TextContent,
-            BinaryContent,
-            Null,
-        }
-
-        struct SourceContentVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for SourceContentVisitor {
-            type Value = crate::proto::proximadb_v1::SourceContent;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct SourceContent")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::SourceContent, V::Error>
-            where
-                V: serde::de::MapAccess<'de>,
-            {
-                let mut data = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::TextContent => {
-                            if data.is_some() {
-                                return Err(serde::de::Error::duplicate_field("data"));
-                            }
-                            let v: String = map.next_value()?;
-                            data = Some(crate::proto::proximadb_v1::source_content::Data::TextContent(v));
-                        }
-                        Field::BinaryContent => {
-                            if data.is_some() {
-                                return Err(serde::de::Error::duplicate_field("data"));
-                            }
-                            let v: String = map.next_value()?;
-                            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
-                            data = Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(bytes));
-                        }
-                        Field::Null => {
-                            let _: serde_json::Value = map.next_value()?;
-                            // Leave data as None
-                        }
-                    }
-                }
-
-                Ok(crate::proto::proximadb_v1::SourceContent { data })
-            }
-        }
-
-        deserializer.deserialize_struct("SourceContent", &["text_content", "binary_content", "null"], SourceContentVisitor)
-    }
-}
-// Custom serde for MetadataItem (has oneof value)
-impl Serialize for crate::proto::proximadb_v1::MetadataItem {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("MetadataItem", 2)?;
-        state.serialize_field("key", &self.key)?;
-
-        match &self.value {
-            Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(v)) => {
-                state.serialize_field("value", &serde_json::json!({"string_value": v}))?;
-            }
-            Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(v)) => {
-                state.serialize_field("value", &serde_json::json!({"number_value": v}))?;
-            }
-            Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(v)) => {
-                state.serialize_field("value", &serde_json::json!({"bool_value": v}))?;
-            }
-            None => {
-                state.serialize_field("value", &serde_json::Value::Null)?;
-            }
-        }
-        state.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataItem {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field {
-            Key,
-            Value,
-        }
-
-        struct MetadataItemVisitor;
-
-        impl<'de> serde::de::Visitor<'de> for MetadataItemVisitor {
-            type Value = crate::proto::proximadb_v1::MetadataItem;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct MetadataItem")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::MetadataItem, V::Error>
-            where
-                V: serde::de::MapAccess<'de>,
-            {
-                let mut key = None;
-                let mut value = None;
-
-                while let Some(field) = map.next_key()? {
-                    match field {
-                        Field::Key => {
-                            if key.is_some() {
-                                return Err(serde::de::Error::duplicate_field("key"));
-                            }
-                            key = Some(map.next_value()?);
-                        }
-                        Field::Value => {
-                            if value.is_some() {
-                                return Err(serde::de::Error::duplicate_field("value"));
-                            }
-                            let val: serde_json::Value = map.next_value()?;
-                            if let Some(obj) = val.as_object() {
-                                if let Some(string_val) = obj.get("string_value") {
-                                    if let Some(s) = string_val.as_str() {
-                                        value = Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.to_string()));
-                                    }
-                                } else if let Some(number_val) = obj.get("number_value") {
-                                    if let Some(n) = number_val.as_f64() {
-                                        value = Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n));
-                                    }
-                                } else if let Some(bool_val) = obj.get("bool_value") {
-                                    if let Some(b) = bool_val.as_bool() {
-                                        value = Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let key = key.ok_or_else(|| serde::de::Error::missing_field("key"))?;
-
-                Ok(crate::proto::proximadb_v1::MetadataItem { key, value })
-            }
-        }
-
-        deserializer.deserialize_struct("MetadataItem", &["key", "value"], MetadataItemVisitor)
     }
 }
 impl Serialize for crate::proto::proximadb_v1::FilterClause {
@@ -497,5 +227,81 @@ impl Serialize for crate::proto::proximadb_v1::FilterClause {
         }
         
         map.end()
+    }
+}
+
+// Custom serde for TypedField (has oneof value)
+impl Serialize for crate::proto::proximadb_v1::TypedField {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+
+        match &self.value {
+            Some(crate::proto::proximadb_v1::typed_field::Value::StringValue(v)) => {
+                map.serialize_entry("string_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::IntValue(v)) => {
+                map.serialize_entry("int_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::DoubleValue(v)) => {
+                map.serialize_entry("double_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::BoolValue(v)) => {
+                map.serialize_entry("bool_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::BytesValue(v)) => {
+                map.serialize_entry("bytes_value", &base64_encode(v))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::ArrayValue(v)) => {
+                map.serialize_entry("array_value", v)?;
+            }
+            None => {
+                map.serialize_entry("null_value", &serde_json::Value::Null)?;
+            }
+        }
+
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::TypedField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TypedFieldHelper {
+            string_value: Option<String>,
+            int_value: Option<i64>,
+            double_value: Option<f64>,
+            bool_value: Option<bool>,
+            bytes_value: Option<String>, // base64 encoded
+            array_value: Option<crate::proto::proximadb_v1::StringArray>,
+            null_value: Option<serde_json::Value>,
+        }
+
+        let helper = TypedFieldHelper::deserialize(deserializer)?;
+
+        let value = if let Some(v) = helper.string_value {
+            Some(crate::proto::proximadb_v1::typed_field::Value::StringValue(v))
+        } else if let Some(v) = helper.int_value {
+            Some(crate::proto::proximadb_v1::typed_field::Value::IntValue(v))
+        } else if let Some(v) = helper.double_value {
+            Some(crate::proto::proximadb_v1::typed_field::Value::DoubleValue(v))
+        } else if let Some(v) = helper.bool_value {
+            Some(crate::proto::proximadb_v1::typed_field::Value::BoolValue(v))
+        } else if let Some(v) = helper.bytes_value {
+            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
+            Some(crate::proto::proximadb_v1::typed_field::Value::BytesValue(bytes))
+        } else if let Some(v) = helper.array_value {
+            Some(crate::proto::proximadb_v1::typed_field::Value::ArrayValue(v))
+        } else {
+            None
+        };
+
+        Ok(crate::proto::proximadb_v1::TypedField { value })
     }
 }

@@ -150,6 +150,7 @@ pub struct EmbeddingVersion {
     #[prost(enumeration = "Modality", tag = "7")]
     pub modality: i32,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedMetadata {
@@ -186,12 +187,14 @@ pub mod typed_field {
         TimestampValueMs(i64),
     }
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StringArray {
     #[prost(string, repeated, tag = "1")]
     pub values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Provenance {
@@ -212,6 +215,7 @@ pub struct Provenance {
         ::prost::alloc::string::String,
     >,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TemporalInfo {
@@ -229,6 +233,7 @@ pub struct TemporalInfo {
     #[prost(message, repeated, tag = "5")]
     pub versions: ::prost::alloc::vec::Vec<TemporalVersion>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TemporalVersion {
@@ -243,6 +248,7 @@ pub struct TemporalVersion {
         ::prost::alloc::string::String,
     >,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Relation {
@@ -361,6 +367,7 @@ pub struct EntityResult {
         ::prost::alloc::string::String,
     >,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorData {
@@ -390,6 +397,7 @@ pub mod similar_query {
         RawData(::prost::alloc::vec::Vec<u8>),
     }
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetadataFilter {
@@ -441,6 +449,7 @@ pub mod temporal_clause {
         ValidBetween(super::TimeRange),
     }
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TimeRange {
@@ -451,6 +460,7 @@ pub struct TimeRange {
     #[prost(int64, tag = "2")]
     pub end_ms: i64,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PageInfo {
@@ -459,6 +469,7 @@ pub struct PageInfo {
     #[prost(bool, tag = "2")]
     pub has_more: bool,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProgressInfo {
@@ -1145,6 +1156,7 @@ pub struct ListRelationsResponse {
     pub relations: ::prost::alloc::vec::Vec<Relation>,
 }
 /// Represents a single path in a graph traversal.
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GraphPath {
@@ -2142,6 +2154,7 @@ pub mod context_service_server {
         const NAME: &'static str = "proximadb.v1.ContextService";
     }
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct IncludeFields {
@@ -2183,6 +2196,7 @@ pub mod metadata_item {
         BoolValue(bool),
     }
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SearchQuery {
@@ -2195,6 +2209,7 @@ pub struct SearchQuery {
     #[prost(message, optional, tag = "3")]
     pub advanced_filter: ::core::option::Option<MetadataFilter>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SearchParams {
@@ -2219,6 +2234,7 @@ pub struct SearchParams {
         SqlValue,
     >,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SearchOptimization {
@@ -2293,6 +2309,7 @@ pub struct VectorGetRequest {
     #[prost(bool, optional, tag = "4")]
     pub include_metadata: ::core::option::Option<bool>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OperationMetrics {
@@ -2311,6 +2328,7 @@ pub struct OperationMetrics {
     #[prost(int64, tag = "7")]
     pub index_update_time_us: i64,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SearchVectorRecord {
@@ -2345,6 +2363,7 @@ pub struct SearchVectorRecord {
     #[prost(string, optional, tag = "13")]
     pub index_path: ::core::option::Option<::prost::alloc::string::String>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SearchResult {
@@ -2555,6 +2574,7 @@ pub mod quantization_level {
     }
 }
 /// Filterable column specification
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FilterableColumnSpec {
@@ -2590,6 +2610,7 @@ pub mod source_content {
     }
 }
 /// Compression configuration
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CompressionConfig {
@@ -2636,6 +2657,7 @@ pub mod metadata_value {
     }
 }
 /// Filter condition for metadata
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FilterCondition {
@@ -3766,6 +3788,7 @@ pub struct TraversalRequest {
     pub max_frontier: ::core::option::Option<u32>,
 }
 /// Property filter for graph queries
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PropertyFilter {
@@ -3795,6 +3818,7 @@ pub struct TraversalResponse {
     pub stats: ::core::option::Option<TraversalStats>,
 }
 /// Traversal statistics
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraversalStats {
@@ -3936,6 +3960,7 @@ pub struct HybridSearchResponse {
     pub vector_results: ::prost::alloc::vec::Vec<SearchVectorRecord>,
 }
 /// Statistics for hybrid search
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HybridSearchStats {
@@ -3947,6 +3972,7 @@ pub struct HybridSearchStats {
     #[prost(uint64, tag = "3")]
     pub execution_time_microseconds: u64,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GraphStats {
@@ -3969,6 +3995,7 @@ pub struct GraphStats {
     #[prost(uint32, tag = "9")]
     pub connected_components: u32,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LabelStats {
@@ -3977,6 +4004,7 @@ pub struct LabelStats {
     #[prost(uint64, tag = "2")]
     pub count: u64,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EdgeTypeStats {
@@ -4118,6 +4146,7 @@ pub struct ConnectedComponentsResponse {
     #[prost(message, repeated, tag = "1")]
     pub components: ::prost::alloc::vec::Vec<Component>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Component {
@@ -6310,6 +6339,7 @@ pub struct IndexConfig {
     pub queue_representation: ::prost::alloc::string::String,
 }
 /// Storage configuration
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StorageConfig {
@@ -6325,6 +6355,7 @@ pub struct StorageConfig {
     pub enable_caching: bool,
 }
 /// Storage assignment information
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct StorageAssignment {
