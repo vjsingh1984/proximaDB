@@ -12,6 +12,7 @@ mod tests {
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
         SystemMetadata, write_ahead_log::{MetadataWALConfig, AccessPattern}, VersionedCollectionMetadata,
     };
+    use crate::proto::proximadb_v1;
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
     };
@@ -53,27 +54,68 @@ mod tests {
     }
 
     /// Create test collection metadata
-    fn create_test_collection_metadata(collection_id: &str) -> CollectionMetadata {
-        CollectionMetadata {
+    fn create_test_collection_metadata(collection_id: &str) -> proximadb_v1::Collection {
+        proximadb_v1::Collection {
             id: collection_id.to_string(),
-            name: format!("Test Collection {}", collection_id),
-            dimension: 128,
-            distance_metric: "cosine".to_string(),
-            indexing_algorithm: "hnsw".to_string(),
-            timestamp: Utc::now(),
-            updated_at: Utc::now(),
-            vector_count: 0,
-            total_size_bytes: 0,
-            config: HashMap::new(),
-            access_pattern: AccessPattern::Normal,
-            retention_policy: None,
-            tags: vec!["test".to_string()],
-            owner: Some("test_user".to_string()),
-            description: Some("Test collection".to_string()),
-            strategy_config: Default::default(),
-            strategy_change_history: Vec::new(),
-            flush_config: None,
+            config: Some(proximadb_v1::CollectionConfig {
+                name: format!("Test Collection {}", collection_id),
+                dimension: 128,
+                distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
+                storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                tags: vec!["test".to_string()],
+                description: Some("Test collection".to_string()),
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
+                storage_config: None,
+                primary_index: "default".to_string(),
+                auto_index_selection: true,
+                owner: Some("test_user".to_string()),
+                access_pattern: Some(AccessPattern::Normal as i32),
+                retention_policy: None,
+            }),
+            stats: Some(proximadb_v1::CollectionStats {
+                vector_count: 0,
+                total_size_bytes: 0,
+                index_size_bytes: 0,
+                last_updated: 0,
+                avg_vector_size_bytes: 0.0,
+                total_indexed_vectors: 0,
+                compression_ratio: 1.0,
+            }),
+            created_at: Utc::now().timestamp(),
+            updated_at: Utc::now().timestamp(),
             storage_assignment: None,
+        }
+    }
+
+    /// Convert protobuf Collection to VersionedCollectionMetadata
+    fn proto_to_versioned_metadata(collection: &proximadb_v1::Collection) -> VersionedCollectionMetadata {
+        let config = collection.config.as_ref().unwrap_or(&proximadb_v1::CollectionConfig::default());
+        VersionedCollectionMetadata {
+            id: collection.id.clone(),
+            name: config.name.clone(),
+            dimension: config.dimension as usize,
+            distance_metric: format!("{:?}", proximadb_v1::DistanceMetric::from_i32(config.distance_metric).unwrap_or_default()),
+            indexing_algorithm: "hnsw".to_string(),
+            timestamp: collection.created_at as u32,
+            version: Some(1),
+            vector_count: collection.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
+            total_size_bytes: collection.stats.as_ref().map(|s| s.total_size_bytes).unwrap_or(0),
+            config: std::collections::HashMap::new(),
+            description: config.description.clone(),
+            tags: config.tags.clone(),
+            owner: config.owner.clone(),
+            access_pattern: match config.access_pattern {
+                Some(pattern) => match pattern {
+                    0 => AccessPattern::Hot,
+                    1 => AccessPattern::Cold,
+                    2 => AccessPattern::Archive,
+                    _ => AccessPattern::Normal,
+                },
+                None => AccessPattern::Normal,
+            },
+            retention_policy: None,
         }
     }
 
@@ -137,19 +179,21 @@ mod tests {
                     for op in &tx.operations {
                         match op {
                             MetadataOperation::CreateCollection(metadata) => {
+                                let versioned = proto_to_versioned_metadata(metadata);
                                 self.metadata
                                     .write()
                                     .await
-                                    .insert(metadata.id.clone(), metadata.clone());
+                                    .insert(metadata.id.clone(), versioned);
                             }
                             MetadataOperation::UpdateCollection {
                                 collection_id,
                                 metadata,
                             } => {
+                                let versioned = proto_to_versioned_metadata(metadata);
                                 self.metadata
                                     .write()
                                     .await
-                                    .insert(collection_id.clone(), metadata.clone());
+                                    .insert(collection_id.clone(), versioned);
                             }
                             MetadataOperation::DeleteCollection(collection_id) => {
                                 self.metadata.write().await.remove(collection_id);
@@ -196,18 +240,7 @@ mod tests {
     #[async_trait]
     impl MetadataStoreInterface for MockAtomicMetadataStore {
         async fn create_collection(&self, metadata: crate::proto::proximadb_v1::Collection) -> Result<()> {
-            let versioned_metadata = VersionedCollectionMetadata {
-                id: metadata.id.clone(),
-                name: metadata.name.clone(),
-                dimension: metadata.dimension as usize,
-                distance_metric: metadata.distance_metric.to_string(),
-                indexing_algorithm: "hnsw".to_string(),
-                timestamp: metadata.created_at.unwrap_or_default(),
-                version: Some(1),
-                vector_count: 0,
-                total_size_bytes: 0,
-                config: std::collections::HashMap::new(),
-            };
+            let versioned_metadata = proto_to_versioned_metadata(&metadata);
             self.metadata
                 .write()
                 .await
@@ -219,12 +252,40 @@ mod tests {
             if let Some(versioned) = self.metadata.read().await.get(collection_id) {
                 let collection = crate::proto::proximadb_v1::Collection {
                     id: versioned.id.clone(),
-                    name: versioned.name.clone(),
-                    dimension: versioned.dimension as u32,
-                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::try_from(versioned.distance_metric.as_str()).unwrap_or_default(),
-                    created_at: Some(versioned.timestamp),
-                    updated_at: Some(versioned.timestamp),
-                    metadata: std::collections::HashMap::new(),
+                    config: Some(proximadb_v1::CollectionConfig {
+                        name: versioned.name.clone(),
+                        dimension: versioned.dimension as u32,
+                        distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
+                        storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                        tags: versioned.tags.clone(),
+                        description: versioned.description.clone(),
+                        filterable_columns: vec![],
+                        index_configs: vec![],
+                        quantization: None,
+                        storage_config: None,
+                        primary_index: "default".to_string(),
+                        auto_index_selection: true,
+                        owner: versioned.owner.clone(),
+                        access_pattern: Some(match versioned.access_pattern {
+                            AccessPattern::Hot => 0,
+                            AccessPattern::Cold => 1,
+                            AccessPattern::Archive => 2,
+                            AccessPattern::Normal => 3,
+                        }),
+                        retention_policy: None,
+                    }),
+                    stats: Some(proximadb_v1::CollectionStats {
+                        vector_count: versioned.vector_count,
+                        total_size_bytes: versioned.total_size_bytes,
+                        index_size_bytes: 0,
+                        last_updated: versioned.timestamp as u64,
+                        avg_vector_size_bytes: 0.0,
+                        total_indexed_vectors: 0,
+                        compression_ratio: 1.0,
+                    }),
+                    created_at: versioned.timestamp as i64,
+                    updated_at: versioned.timestamp as i64,
+                    storage_assignment: None,
                 };
                 Ok(Some(collection))
             } else {
@@ -237,18 +298,7 @@ mod tests {
             collection_id: &str,
             metadata: crate::proto::proximadb_v1::Collection,
         ) -> Result<()> {
-            let versioned_metadata = VersionedCollectionMetadata {
-                id: metadata.id.clone(),
-                name: metadata.name.clone(),
-                dimension: metadata.dimension as usize,
-                distance_metric: metadata.distance_metric.to_string(),
-                indexing_algorithm: "hnsw".to_string(),
-                timestamp: metadata.updated_at.unwrap_or_default(),
-                version: Some(1),
-                vector_count: 0,
-                total_size_bytes: 0,
-                config: std::collections::HashMap::new(),
-            };
+            let versioned_metadata = proto_to_versioned_metadata(&metadata);
             self.metadata
                 .write()
                 .await
@@ -267,12 +317,40 @@ mod tests {
             let collections: Vec<_> = self.metadata.read().await.values().map(|versioned| {
                 crate::proto::proximadb_v1::Collection {
                     id: versioned.id.clone(),
-                    name: versioned.name.clone(),
-                    dimension: versioned.dimension as u32,
-                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::try_from(versioned.distance_metric.as_str()).unwrap_or_default(),
-                    created_at: Some(versioned.timestamp),
-                    updated_at: Some(versioned.timestamp),
-                    metadata: std::collections::HashMap::new(),
+                    config: Some(proximadb_v1::CollectionConfig {
+                        name: versioned.name.clone(),
+                        dimension: versioned.dimension as u32,
+                        distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
+                        storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                        tags: versioned.tags.clone(),
+                        description: versioned.description.clone(),
+                        filterable_columns: vec![],
+                        index_configs: vec![],
+                        quantization: None,
+                        storage_config: None,
+                        primary_index: "default".to_string(),
+                        auto_index_selection: true,
+                        owner: versioned.owner.clone(),
+                        access_pattern: Some(match versioned.access_pattern {
+                            AccessPattern::Hot => 0,
+                            AccessPattern::Cold => 1,
+                            AccessPattern::Archive => 2,
+                            AccessPattern::Normal => 3,
+                        }),
+                        retention_policy: None,
+                    }),
+                    stats: Some(proximadb_v1::CollectionStats {
+                        vector_count: versioned.vector_count,
+                        total_size_bytes: versioned.total_size_bytes,
+                        index_size_bytes: 0,
+                        last_updated: versioned.timestamp as u64,
+                        avg_vector_size_bytes: 0.0,
+                        total_indexed_vectors: 0,
+                        compression_ratio: 1.0,
+                    }),
+                    created_at: versioned.timestamp as i64,
+                    updated_at: versioned.timestamp as i64,
+                    storage_assignment: None,
                 }
             }).collect();
             Ok(collections)

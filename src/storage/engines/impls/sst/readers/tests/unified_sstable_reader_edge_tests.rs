@@ -33,8 +33,12 @@ mod edge_tests {
         let config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
         UnifiedSstableReader::new(
-            filesystem,
-            Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new()),
+            filesystem.clone(),
+            Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+                crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
+                filesystem,
+                vec![],
+            ).await.unwrap()),
             "test_collection".to_string(),
         )
     }

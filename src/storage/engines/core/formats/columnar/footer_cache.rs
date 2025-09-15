@@ -794,6 +794,6 @@ mod tests {
         let search_strategy = WarmingStrategy::Custom { files };
 
         // This will fail since files don't exist, but tests the interface
-        let _ = cache.warm_cache(strategy).await;
+        let _ = cache.warm_cache(search_strategy).await;
     }
 }

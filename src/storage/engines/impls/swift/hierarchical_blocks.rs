@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, SuperBlock};
+use crate::core::service_types::VectorRecord;
 
 /// Metadata index for efficient filtering
 #[derive(Debug)]

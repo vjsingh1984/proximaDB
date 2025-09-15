@@ -112,12 +112,14 @@ mod tests {
 
         // Create required services for VectorOperationsService
         let axis_manager = Arc::new(crate::index::AxisManager::new(crate::index::axis::types::AxisConfig::default()));
+        let metadata_backend = Arc::new(
+            crate::storage::metadata::MetadataStore::new(crate::storage::metadata::MetadataStoreConfig::default()).await.unwrap()
+        ) as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
         let collection_service = Arc::new(
             crate::services::collection::manager::CollectionService::new(
-                // Use the actual metadata store instead of non-existent provider
-                crate::storage::metadata::MetadataStore::new(crate::storage::metadata::MetadataStoreConfig::default()),
+                metadata_backend,
                 config.storage.clone(),
-            )
+            ).await.unwrap()
         );
 
         let service = VectorOperationsService::new(

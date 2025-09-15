@@ -26,8 +26,12 @@ async fn create_test_reader() -> Arc<UnifiedSstableReader> {
             .expect("Failed to create filesystem factory"),
     );
     Arc::new(UnifiedSstableReader::new(
-        filesystem_factory,
-        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new()),
+        filesystem_factory.clone(),
+        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
+            filesystem_factory,
+            vec![],
+        ).await.unwrap()),
         "test_collection".to_string(),
     ))
 }

@@ -442,7 +442,7 @@ mod tests {
                 .expect("Failed to create filesystem factory"),
         );
 
-        let manager = WriteBufferDiskManager::new(filesystem_factory, temp_dir.path());
+        let manager = WriteBufferDiskManager::new(filesystem_factory, temp_dir.path().to_str().unwrap());
 
         (manager, temp_dir)
     }

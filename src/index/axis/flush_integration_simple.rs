@@ -224,7 +224,8 @@ mod tests {
         collection_cache.insert("test_collection".to_string(), Arc::new(collection));
 
         // Create EventLogManager (aliased as MetadataQueueService)
-        let queue_service = MetadataQueueService::new(filesystem_factory, collection_cache)
+        let event_config = crate::index::axis::eventlog::EventLogConfig::default();
+        let queue_service = MetadataQueueService::new(event_config, filesystem_factory, collection_cache)
             .await
             .unwrap();
 

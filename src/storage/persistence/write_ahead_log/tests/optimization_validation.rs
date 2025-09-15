@@ -196,7 +196,7 @@ mod tests {
 
         // Verify extra metadata
         assert_eq!(
-            context.extra_metadata.get(key),
+            context.extra_metadata.get("test_key"),
             Some(&"test_value".to_string())
         );
 

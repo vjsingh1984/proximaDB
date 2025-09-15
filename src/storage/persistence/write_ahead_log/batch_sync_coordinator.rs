@@ -344,7 +344,7 @@ mod tests {
         );
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
             filesystem_factory,
-            temp_dir.path(),
+            temp_dir.path().to_str().unwrap(),
         ));
 
         let coordinator = BatchSyncCoordinator::new(durability_level, disk_manager);

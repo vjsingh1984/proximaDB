@@ -737,7 +737,7 @@ mod tests {
 
         // Create disk manager
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
-            filesystem_factory,
+            filesystem_factory.clone(),
             temp_dir.path().to_str().unwrap(),
         ));
 

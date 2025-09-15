@@ -127,7 +127,7 @@ mod tests {
 
         async fn search_vectors_unified(
             &self,
-            _ctx: &crate::storage::StorageQueryContext,
+            _ctx: &crate::storage::traits::StorageQueryContext,
         ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(Vec::new())
         }
