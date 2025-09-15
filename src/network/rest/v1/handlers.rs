@@ -44,7 +44,7 @@ pub struct AppState {
 pub async fn vector_search(
     State(state): State<AppState>,
     Json(request): Json<VectorSearchRequest>,
-) -> impl IntoResponse {
+) -> Response {
     // Simple working implementation
     match state.unified_handlers.handle_vector_search_v1(request).await {
         Ok(response) => JsonResponse(response).into_response(),
@@ -56,7 +56,7 @@ pub async fn vector_search(
 pub async fn vector_batch(
     State(state): State<AppState>,
     Json(request): Json<VectorBatchRequest>,
-) -> impl IntoResponse {
+) -> Response {
     info!(
         "Vector batch operation for collection: {}, {} records",
         request.collection_id,
@@ -93,7 +93,7 @@ pub async fn vector_batch(
 pub async fn collection_operation(
     State(state): State<AppState>,
     Json(request): Json<CollectionRequest>,
-) -> impl IntoResponse {
+) -> Response {
     let operation = match CollectionOperation::try_from(request.operation) {
         Ok(op) => op,
         Err(_) => return (StatusCode::BAD_REQUEST, "Invalid collection operation").into_response(),

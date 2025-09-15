@@ -10,7 +10,7 @@ mod tests {
     };
     use super::super::{
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
-        SystemMetadata, write_ahead_log::{MetadataWALConfig, AccessPattern}, CollectionMetadata,
+        SystemMetadata, write_ahead_log::{MetadataWALConfig, AccessPattern}, VersionedCollectionMetadata,
     };
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
@@ -89,7 +89,7 @@ mod tests {
 
     /// Mock implementation for testing that avoids write buffer complexity
     struct MockAtomicMetadataStore {
-        metadata: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
+        metadata: Arc<RwLock<HashMap<String, VersionedCollectionMetadata>>>,
         transactions: Arc<RwLock<HashMap<TransactionId, MetadataTransaction>>>,
         version_counter: Arc<Mutex<u64>>,
     }
@@ -195,27 +195,64 @@ mod tests {
     // Implement MetadataStoreInterface for MockAtomicMetadataStore
     #[async_trait]
     impl MetadataStoreInterface for MockAtomicMetadataStore {
-        async fn create_collection(&self, metadata: CollectionMetadata) -> Result<()> {
+        async fn create_collection(&self, metadata: crate::proto::proximadb_v1::Collection) -> Result<()> {
+            let versioned_metadata = VersionedCollectionMetadata {
+                id: metadata.id.clone(),
+                name: metadata.name.clone(),
+                dimension: metadata.dimension as usize,
+                distance_metric: metadata.distance_metric.to_string(),
+                indexing_algorithm: "hnsw".to_string(),
+                timestamp: metadata.created_at.unwrap_or_default(),
+                version: Some(1),
+                vector_count: 0,
+                total_size_bytes: 0,
+                config: std::collections::HashMap::new(),
+            };
             self.metadata
                 .write()
                 .await
-                .insert(metadata.id.clone(), metadata);
+                .insert(metadata.id.clone(), versioned_metadata);
             Ok(())
         }
 
-        async fn get_collection(&self, collection_id: &str) -> Result<Option<CollectionMetadata>> {
-            Ok(self.metadata.read().await.get(collection_id).cloned())
+        async fn get_collection(&self, collection_id: &str) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
+            if let Some(versioned) = self.metadata.read().await.get(collection_id) {
+                let collection = crate::proto::proximadb_v1::Collection {
+                    id: versioned.id.clone(),
+                    name: versioned.name.clone(),
+                    dimension: versioned.dimension as u32,
+                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::try_from(versioned.distance_metric.as_str()).unwrap_or_default(),
+                    created_at: Some(versioned.timestamp),
+                    updated_at: Some(versioned.timestamp),
+                    metadata: std::collections::HashMap::new(),
+                };
+                Ok(Some(collection))
+            } else {
+                Ok(None)
+            }
         }
 
         async fn update_collection(
             &self,
             collection_id: &str,
-            metadata: CollectionMetadata,
+            metadata: crate::proto::proximadb_v1::Collection,
         ) -> Result<()> {
+            let versioned_metadata = VersionedCollectionMetadata {
+                id: metadata.id.clone(),
+                name: metadata.name.clone(),
+                dimension: metadata.dimension as usize,
+                distance_metric: metadata.distance_metric.to_string(),
+                indexing_algorithm: "hnsw".to_string(),
+                timestamp: metadata.updated_at.unwrap_or_default(),
+                version: Some(1),
+                vector_count: 0,
+                total_size_bytes: 0,
+                config: std::collections::HashMap::new(),
+            };
             self.metadata
                 .write()
                 .await
-                .insert(collection_id.to_string(), metadata);
+                .insert(collection_id.to_string(), versioned_metadata);
             Ok(())
         }
 
@@ -226,8 +263,19 @@ mod tests {
         async fn list_collections(
             &self,
             _filter: Option<MetadataFilter>,
-        ) -> Result<Vec<CollectionMetadata>> {
-            Ok(self.metadata.read().await.values().cloned().collect())
+        ) -> Result<Vec<crate::proto::proximadb_v1::Collection>> {
+            let collections: Vec<_> = self.metadata.read().await.values().map(|versioned| {
+                crate::proto::proximadb_v1::Collection {
+                    id: versioned.id.clone(),
+                    name: versioned.name.clone(),
+                    dimension: versioned.dimension as u32,
+                    distance_metric: crate::proto::proximadb_v1::DistanceMetric::try_from(versioned.distance_metric.as_str()).unwrap_or_default(),
+                    created_at: Some(versioned.timestamp),
+                    updated_at: Some(versioned.timestamp),
+                    metadata: std::collections::HashMap::new(),
+                }
+            }).collect();
+            Ok(collections)
         }
 
         async fn update_stats(
@@ -295,8 +343,8 @@ mod tests {
             })
         }
 
-        async fn begin_transaction(&self) -> Result<String> {
-            Ok(Uuid::new_v4().to_string())
+        async fn begin_transaction(&self) -> Result<Option<String>> {
+            Ok(Some(Uuid::new_v4().to_string()))
         }
 
         async fn commit_transaction(&self, _transaction_id: &str) -> Result<()> {
@@ -307,11 +355,12 @@ mod tests {
             Ok(())
         }
 
-        async fn backup(&self, _backup_path: &str) -> Result<()> {
-            Ok(())
+        async fn backup(&self, location: &str) -> Result<String> {
+            Ok(format!("backup-{}-test", location))
         }
 
-        async fn restore(&self, _backup_path: &str) -> Result<()> {
+        async fn restore(&self, backup_id: &str, location: &str) -> Result<()> {
+            tracing::info!("Restoring from backup_id: {}, location: {}", backup_id, location);
             Ok(())
         }
 

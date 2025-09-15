@@ -42,7 +42,7 @@ async fn test_sstable_format_with_bloom_filter() {
     // Create test records
     let mut records = BTreeMap::new();
     for i in 0..10 {
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_{:03}", i),
             vector: vec![i as f32; 3],
             metadata: vec![],

@@ -25,7 +25,11 @@ async fn create_test_reader() -> Arc<UnifiedSstableReader> {
             .await
             .expect("Failed to create filesystem factory"),
     );
-    Arc::new(UnifiedSstableReader::new(filesystem_factory))
+    Arc::new(UnifiedSstableReader::new(
+        filesystem_factory,
+        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new()),
+        "test_collection".to_string(),
+    ))
 }
 
 /// Helper to write bytes to a temp file and return the path

@@ -621,6 +621,15 @@ impl ExecutiveSummaryGenerator {
     }
 }
 
+/// Business impact metrics for strategic recommendations
+#[derive(Debug, Clone)]
+pub struct BusinessImpact {
+    pub revenue_impact: f32,
+    pub risk_impact: f32,
+    pub operational_impact: f32,
+    pub competitive_impact: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -646,6 +646,7 @@ impl DeltaManager {
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
+    use serde::{Deserialize, Serialize};
 
     /// Index type enum for testing
     #[derive(Debug, Clone, Serialize, Deserialize)]

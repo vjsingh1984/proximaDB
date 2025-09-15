@@ -22,7 +22,7 @@ pub async fn viper_optimization_example() -> Result<()> {
     println!("=== VIPER Engine Optimization Example ===");
 
     // Initialize hardware capabilities
-    let _ = HardwareCapabilities::detect();
+    let _ = HardwareCapabilities::detect_with_config(Default::default());
 
     // Setup
     let temp_dir = tempdir()?;

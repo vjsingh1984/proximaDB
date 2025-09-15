@@ -560,7 +560,7 @@ mod tests {
             properties: std::collections::HashMap::from([(
                 "name".to_string(),
                 PropertyValue {
-                    value: Some(Value::StringValue("Alice".to_string())),
+                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("Alice".to_string())),
                 },
             )]),
             embedding: None,

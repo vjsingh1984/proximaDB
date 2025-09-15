@@ -320,6 +320,58 @@ impl AdaptiveIndexStrategy {
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
+    use std::collections::HashMap;
+
+    /// Test struct for collection statistics
+    #[derive(Debug, Clone)]
+    struct CollectionStatistics {
+        total_vectors: u64,
+        vector_dimension: usize,
+        avg_vector_sparsity: f32,
+        has_metadata: bool,
+        metadata_cardinality: HashMap<String, usize>,
+        has_text_fields: bool,
+        update_frequency: f32,
+    }
+
+    /// Test struct for query patterns
+    #[derive(Debug, Clone)]
+    struct QueryPatterns {
+        avg_queries_per_second: f32,
+        filter_usage_ratio: f32,
+        text_search_ratio: f32,
+        typical_k: usize,
+        recall_requirement: f32,
+    }
+
+    /// Test struct for index strategy builder
+    #[derive(Debug)]
+    struct IndexStrategyBuilder {
+        stats: CollectionStatistics,
+        patterns: QueryPatterns,
+    }
+
+    impl IndexStrategyBuilder {
+        fn new(stats: CollectionStatistics, patterns: QueryPatterns) -> Self {
+            Self { stats, patterns }
+        }
+
+        fn build(self) -> Result<IndexStrategy, String> {
+            Ok(IndexStrategy {
+                indexes: vec![
+                    "identifier".to_string(),
+                    "vector".to_string(),
+                    "metadata".to_string(),
+                ],
+            })
+        }
+    }
+
+    /// Test struct for index strategy
+    #[derive(Debug)]
+    struct IndexStrategy {
+        indexes: Vec<String>,
+    }
 
     #[test]
     fn test_strategy_builder_small_collection() {

@@ -720,7 +720,7 @@ mod tests {
             properties: HashMap::from([(
                 "name".to_string(),
                 crate::graph::PropertyValue {
-                    value: Some(Value::StringValue("Test Node".to_string())),
+                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("Test Node".to_string())),
                 },
             )]),
             embedding: None,

@@ -1351,7 +1351,7 @@ mod tests {
         // Create test records
         let mut records = BTreeMap::new();
         for i in 0..10 {
-            let record = SstRecord {
+            let record = VectorRecord {
                 id: format!("key{:03}", i),
                 vector: vec![1.0, 2.0, 3.0],
                 metadata: vec![],

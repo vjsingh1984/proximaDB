@@ -314,7 +314,7 @@ async fn test_recovery_skips_corrupted_checksum() {
         fn engine_name(&self) -> &'static str { "Mock" }
         fn engine_version(&self) -> &'static str { "1" }
         fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Lsm }
-        fn get_filesystem_factory(&self) -> Arc<crate::storage::persistence::filesystem::FilesystemFactory> { unimplemented!() }
+        fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory { unimplemented!() }
         async fn do_flush(&self, p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult, anyhow::Error> { let mut g = self.cnt.lock().await; *g += p.vector_records.len() as u64; Ok(Default::default()) }
         async fn do_compact(&self, _: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult, anyhow::Error> { Ok(Default::default()) }
         async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>, anyhow::Error> { Ok(HashMap::new()) }

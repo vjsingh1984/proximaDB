@@ -85,7 +85,7 @@ mod tests {
 
         let sst_engine = Arc::new(
             SstStorage::new(
-                crate::storage::engines::impls::sst::SstStorageConfig::default(),
+                crate::core::SstConfig::default(),
                 filesystem.clone(),
                 distance_compute,
             )
@@ -111,10 +111,11 @@ mod tests {
         );
 
         // Create required services for VectorOperationsService
-        let axis_manager = Arc::new(crate::index::AxisManager::new(crate::index::axis::config::AxisConfig::default()));
+        let axis_manager = Arc::new(crate::index::AxisManager::new(crate::index::axis::types::AxisConfig::default()));
         let collection_service = Arc::new(
             crate::services::collection::manager::CollectionService::new(
-                Arc::new(crate::services::collection::provider::InMemoryCollectionProvider::new()),
+                // Use the actual metadata store instead of non-existent provider
+                crate::storage::metadata::MetadataStore::new(crate::storage::metadata::MetadataStoreConfig::default()),
                 config.storage.clone(),
             )
         );
@@ -124,7 +125,6 @@ mod tests {
             wal_manager,
             axis_manager,
             collection_service,
-            Default::default(),
         );
 
         (service, temp_dir)

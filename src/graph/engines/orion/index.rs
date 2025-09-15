@@ -554,7 +554,7 @@ mod tests {
         let mut index = PropertyIndex::new("name".to_string());
 
         let value = PropertyValue {
-            value: Some(Value::StringValue("Alice".to_string())),
+            value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("Alice".to_string())),
         };
 
         // Add entry
