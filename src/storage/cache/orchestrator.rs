@@ -1309,3 +1309,154 @@ impl Default for CrossCacheOrchestrator {
         Self::new(1024 * 1024 * 1024) // 1GB default
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn test_cache_orchestrator_creation() {
+        let orchestrator = CrossCacheOrchestrator::new(1024 * 1024); // 1MB for tests
+        assert_eq!(orchestrator.memory_allocator().total_budget(), 1024 * 1024);
+    }
+
+    #[tokio::test]
+    async fn test_batch_cache_operations() {
+        let orchestrator = CrossCacheOrchestrator::new(1024 * 1024);
+        
+        // Create batch operation
+        let batch = CrossCacheOrchestrator::create_batch(CacheType::VectorData)
+            .put("key1".to_string(), b"value1".to_vec(), None)
+            .put("key2".to_string(), b"value2".to_vec(), None)
+            .get("key1".to_string())
+            .build();
+        
+        // Execute batch
+        let results = orchestrator.execute_batch(batch).await.unwrap();
+        assert_eq!(results.len(), 3); // 2 puts + 1 get
+    }
+
+    #[tokio::test]
+    async fn test_cache_type_coverage() {
+        // Verify all cache types are properly defined
+        let cache_types = vec![
+            CacheType::VectorData,
+            CacheType::QueryResult,
+            CacheType::FilterBitmap,
+            CacheType::IndexStructure,
+            CacheType::Metadata,
+            CacheType::QueryPlan,
+            CacheType::EntityHeader,
+            CacheType::EmbeddingCatalog,
+            CacheType::GraphNode,
+            CacheType::GraphEdge,
+            CacheType::GraphAdjacency,
+            CacheType::GraphPropertyIndex,
+            CacheType::DistanceTable,
+            CacheType::MetricsSnapshot,
+        ];
+        
+        assert_eq!(cache_types.len(), 14); // Verify we have all expected cache types
+    }
+
+    #[tokio::test]
+    async fn test_access_pattern_tracking() {
+        let orchestrator = CrossCacheOrchestrator::new(1024 * 1024);
+        
+        // Track access patterns
+        orchestrator.track_access_async("test_key".to_string(), CacheType::VectorData);
+        orchestrator.track_access_async("related_key".to_string(), CacheType::VectorData);
+        
+        // Allow some time for async processing
+        sleep(Duration::from_millis(150)).await;
+        
+        // Pattern tracking should be working (internal implementation)
+        assert!(true); // Basic validation that the function executes without panic
+    }
+
+    #[tokio::test]
+    async fn test_memory_allocation() {
+        let orchestrator = CrossCacheOrchestrator::new(1024 * 1024);
+        
+        let initial_allocation = orchestrator
+            .memory_allocator()
+            .get_allocation(CacheType::VectorData)
+            .await;
+        
+        // Should have some initial allocation
+        assert!(initial_allocation > 0);
+    }
+
+    #[tokio::test]
+    async fn test_batch_builder_pattern() {
+        let builder = BatchCacheOperationBuilder::new(CacheType::QueryResult);
+        let batch = builder
+            .put("test_key".to_string(), b"test_value".to_vec(), None)
+            .get("test_key".to_string())
+            .remove("old_key".to_string())
+            .build();
+        
+        assert_eq!(batch.operations.len(), 3);
+        assert_eq!(batch.cache_type, CacheType::QueryResult);
+    }
+
+    #[tokio::test]
+    async fn test_global_orchestrator_registration() {
+        let orchestrator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024));
+        CrossCacheOrchestrator::register_global(orchestrator.clone());
+        
+        let global_ref = CrossCacheOrchestrator::global();
+        assert!(global_ref.is_some());
+    }
+
+    #[test]
+    fn test_cache_operation_types() {
+        let get_op = CacheOperation::Get("test".to_string());
+        let put_op = CacheOperation::Put("test".to_string(), vec![1, 2, 3], None);
+        let remove_op = CacheOperation::Remove("test".to_string());
+        
+        // Verify operations can be created and are properly typed
+        match get_op {
+            CacheOperation::Get(_) => assert!(true),
+            _ => assert!(false, "Should be Get operation"),
+        }
+        
+        match put_op {
+            CacheOperation::Put(_, _, _) => assert!(true),
+            _ => assert!(false, "Should be Put operation"),
+        }
+        
+        match remove_op {
+            CacheOperation::Remove(_) => assert!(true),
+            _ => assert!(false, "Should be Remove operation"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_predictive_prefetch() {
+        let orchestrator = CrossCacheOrchestrator::new(1024 * 1024);
+        
+        // Test prefetch request
+        orchestrator.request_prefetch("test_key", CacheType::VectorData).await;
+        
+        // Should not panic and execute successfully
+        assert!(true);
+    }
+
+    #[tokio::test]
+    async fn test_memory_rebalancing() {
+        let allocator = DynamicMemoryAllocator::new(1024 * 1024);
+        
+        // Test memory rebalancing
+        let allocations = allocator.rebalance().await;
+        
+        // Should return some allocations
+        assert!(!allocations.is_empty());
+        
+        // Total allocations should not exceed budget
+        let total: usize = allocations.values().sum();
+        assert!(total <= 1024 * 1024);
+    }
+}

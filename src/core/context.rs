@@ -10,11 +10,23 @@ pub struct SharedContext {
     pub tenant: Option<String>,
     /// Optional graph traversal runtime settings (e.g., prefetch knobs)
     pub graph_settings: Option<GraphTraversalSettings>,
+    /// Multi-tenant manager for tenant validation
+    pub tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
+    /// RBAC enforcer for permission validation
+    pub rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 }
 
 impl Default for SharedContext {
     fn default() -> Self {
-        Self { orchestrator: None, metrics_updater: None, tracer: None, tenant: None, graph_settings: None }
+        Self {
+            orchestrator: None,
+            metrics_updater: None,
+            tracer: None,
+            tenant: None,
+            graph_settings: None,
+            tenant_manager: None,
+            rbac_enforcer: None,
+        }
     }
 }
 

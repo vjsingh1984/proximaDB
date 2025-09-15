@@ -31,9 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add serde to config types needed for JSON serialization
         .type_attribute("IndexConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("QuantizationConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to specific config types used by IndexConfig
         .type_attribute("HnswConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("IvfConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("LshConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to embedding types needed for graph serialization
         .type_attribute("EmbeddingVersion", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add serde to graph types needed for JSON serialization
         .type_attribute("Node", "#[derive(serde::Serialize, serde::Deserialize)]")

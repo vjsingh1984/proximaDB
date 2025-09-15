@@ -87,8 +87,6 @@
 
 /// Shared infrastructure components for cross-cutting concerns
 pub mod infrastructure;
-/// Transport adapters for wire types (REST/gRPC v1) ↔ native domain types
-pub mod transport;
 
 /// High-performance compute layer with SIMD/GPU acceleration for vector operations
 pub mod compute;
@@ -108,6 +106,30 @@ pub mod graph;
 
 /// Unified API handlers for REST and gRPC with proto-first zero-copy design
 pub mod api_handlers;
+
+/// Enhanced authentication and authorization for multi-tenant enterprise
+pub mod auth;
+
+/// Comprehensive audit system for enterprise compliance
+pub mod audit;
+
+/// AI-powered intelligence for Release 2 enterprise platform
+pub mod ai;
+
+/// Enterprise deployment automation for one-click setup
+pub mod deployment;
+
+/// Enterprise revenue engine for billing and customer success
+pub mod revenue;
+
+/// Sales enablement platform for customer-facing sales automation
+pub mod sales_enablement;
+
+/// License management and tier enforcement for all deployment models
+pub mod licensing;
+
+/// Executive intelligence platform for C-level strategic analytics
+pub mod executive;
 
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
 pub mod index;

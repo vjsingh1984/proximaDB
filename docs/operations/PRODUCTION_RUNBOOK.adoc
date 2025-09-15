@@ -9,63 +9,64 @@
 
 toc::[]
 
-== 🚀 Quick Reference
+== Quick Reference
 
 [cols="3,1,3,3", options="header"]
 |===
 | Component | Status | Dashboard | Documentation
 
 | **System Health**
-| ✅ 100% Ready
+| ■ 100% Ready
 | http://localhost:5678/dashboard
 | <<health-monitoring>>
 
 | **Performance**
-| ✅ Optimized
+| ■ Optimized
 | Performance Tab
 | <<performance-tuning>>
 
 | **Security**
-| ✅ Enterprise Grade
+| ■ Enterprise Grade
 | Security Tab
 | <<security-operations>>
 
 | **Monitoring**
-| ✅ Full Coverage
+| ■ Full Coverage
 | Metrics Tab
 | <<monitoring-guide>>
 |===
 
-== 🏗️ Production Architecture
+== Production Architecture
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "🌐 Production Network"
-        A[REST API<br/>Port 5678<br/>✅ HTTPS Ready]
-        B[gRPC API<br/>Port 5679<br/>✅ TLS Enabled]
-        C[Enterprise Dashboard<br/>8-Tab Interface<br/>✅ Real-time UI]
+    subgraph "Production Network"
+        A[REST API<br/>Port 5678<br/>■ HTTPS Ready]
+        B[gRPC API<br/>Port 5679<br/>■ TLS Enabled]
+        C[Enterprise Dashboard<br/>8-Tab Interface<br/>■ Real-time UI]
     end
-    
-    subgraph "💾 Storage Architecture"
-        D[SST Engine<br/>✅ OLTP Optimized]
-        E[VIPER Engine<br/>✅ Analytics Ready]
-        F[NOVA Engine<br/>✅ Progressive Search]
-        G[4 Additional Engines<br/>✅ All Production Ready]
+
+    subgraph "Storage Architecture"
+        D[SST Engine<br/>■ OLTP Optimized]
+        E[VIPER Engine<br/>■ Analytics Ready]
+        F[NOVA Engine<br/>■ Progressive Search]
+        G[4 Additional Engines<br/>■ All Production Ready]
     end
-    
-    subgraph "🧠 Intelligence Layer"
-        H[Unified Cache<br/>✅ 94.2% Hit Rate]
-        I[Memory Pools<br/>✅ 60-80% Reduction]
-        J[AXIS Index<br/>✅ Multi-tier Search]
+
+    subgraph "Intelligence Layer"
+        H[Unified Cache<br/>■ 94.2% Hit Rate]
+        I[Memory Pools<br/>■ 60-80% Reduction]
+        J[AXIS Index<br/>■ Multi-tier Search]
     end
-    
-    subgraph "🛡️ Security & Monitoring"
-        K[Multi-Auth<br/>✅ API/JWT/OAuth2/mTLS]
-        L[Real-time Alerts<br/>✅ Multi-level System]
-        M[Metrics Export<br/>✅ Prometheus/Grafana]
+
+    subgraph "Security & Monitoring"
+        K[Multi-Auth<br/>■ API/JWT/OAuth2/mTLS]
+        L[Real-time Alerts<br/>■ Multi-level System]
+        M[Metrics Export<br/>■ Prometheus/Grafana]
     end
-    
+
     A --> D
     B --> E
     C --> F
@@ -73,34 +74,35 @@ graph TB
     E --> I
     F --> J
     G --> H
-    
+
     K --> A
     K --> B
     L --> C
     M --> C
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style H fill:#9C27B0
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style H fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
 ----
 
 === Core Components
 
-**Database Engine**: 7 storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX) - ✅ **All Production Ready**
+**Database Engine**: 7 storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX) - ■ **All Production Ready**
 
-**Query Engine**: Unified query layer with SKS functions and SQL compatibility - ✅ **CTE/UNION/INTERSECT/EXCEPT Supported**
+**Query Engine**: Unified query layer with SKS functions and SQL compatibility - ■ **CTE/UNION/INTERSECT/EXCEPT Supported**
 
-**Cache System**: Unified cache orchestrator with memory pooling - ✅ **94.2% Hit Rate Achieved**
+**Cache System**: Unified cache orchestrator with memory pooling - ■ **94.2% Hit Rate Achieved**
 
-**Index System**: AXIS engine with multi-tier progressive search - ✅ **Performance Optimized**
+**Index System**: AXIS engine with multi-tier progressive search - ■ **Performance Optimized**
 
-**Monitoring**: Enterprise dashboard with real-time observability - ✅ **8-Tab Interface Complete**
+**Monitoring**: Enterprise dashboard with real-time observability - ■ **8-Tab Interface Complete**
 
 === Network Architecture
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
 sequenceDiagram
     participant Client
     participant Dashboard
@@ -108,7 +110,7 @@ sequenceDiagram
     participant GRPC as gRPC API :5679
     participant Engine as Storage Engine
     participant Cache as Unified Cache
-    
+
     Client->>+Dashboard: Access Monitoring
     Dashboard->>+REST: Health Check
     REST->>+Engine: Status Query
@@ -117,16 +119,16 @@ sequenceDiagram
     Engine-->>-REST: Health Response
     REST-->>-Dashboard: Status Data
     Dashboard-->>-Client: Real-time UI Update
-    
+
     Note over Client,Cache: Production Flow with Caching
 ----
 
-- **REST API**: Port 5678 (HTTP/HTTPS) - ✅ **Enterprise Ready**
-- **gRPC API**: Port 5679 (with TLS) - ✅ **Secure Communication**
-- **Dashboard**: Integrated web interface - ✅ **8-Tab Monitoring**
-- **Metrics**: Prometheus/Grafana integration - ✅ **Export Ready**
+- **REST API**: Port 5678 (HTTP/HTTPS) - ■ **Enterprise Ready**
+- **gRPC API**: Port 5679 (with TLS) - ■ **Secure Communication**
+- **Dashboard**: Integrated web interface - ■ **8-Tab Monitoring**
+- **Metrics**: Prometheus/Grafana integration - ■ **Export Ready**
 
-== 🔧 Operations Procedures
+== Operations Procedures
 
 === 1. Enterprise Deployment
 
@@ -435,38 +437,53 @@ kubectl exec -it proximadb-0 -- proximadb-cli restore \
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
-    A[⚠️ Alert Triggered] --> B{Severity Level?}
-    
-    B -->|Critical| C[🚨 Immediate Response]
-    B -->|Warning| D[📊 Investigate Metrics]
-    B -->|Info| E[📝 Log for Review]
-    
+    A[Alert Triggered] --> B{Severity Level?}
+
+    B -->|Critical| C[Immediate Response]
+    B -->|Warning| D[Investigate Metrics]
+    B -->|Info| E[Log for Review]
+
     C --> F{System Health?}
-    F -->|Degraded| G[🔄 Auto Recovery]
-    F -->|Failed| H[📞 Escalate to On-call]
-    
-    D --> I[📈 Check Dashboard]
+    F -->|Degraded| G[Auto Recovery]
+    F -->|Failed| H[Escalate to On-call]
+
+    D --> I[Check Dashboard]
     I --> J{Performance Issue?}
-    J -->|Yes| K[🔧 Apply Optimization]
-    J -->|No| L[✅ Monitor & Document]
-    
+    J -->|Yes| K[Apply Optimization]
+    J -->|No| L[Monitor & Document]
+
     G --> M{Recovery Success?}
-    M -->|Yes| N[✅ Resolved]
+    M -->|Yes| N[Resolved]
     M -->|No| H
-    
-    H --> O[🚨 Emergency Protocol]
+
+    H --> O[Emergency Protocol]
     O --> P[Team Notification]
     P --> Q[Investigation & Fix]
     Q --> N
-    
+
     K --> N
     L --> N
     E --> N
-    
-    style C fill:#F44336
-    style H fill:#FF5722
-    style N fill:#4CAF50
+
+    style A fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style H fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style M fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style N fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style O fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style P fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style Q fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 === Performance Issues

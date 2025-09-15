@@ -8,49 +8,55 @@ Technical implementation reference for ProximaDB's Semantic Knowledge Store (SKS
 
 toc::[]
 
-== 🧠 SKS Architecture Overview
+== SKS Architecture Overview
 
 The Semantic Knowledge Store transforms ProximaDB from a pure vector database into a comprehensive knowledge management system with entity-centric storage, graph relationships, and provenance tracking.
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "SKS Components"
         A[Entity Store<br/>Multi-version embeddings<br/>TypedMetadata]
         B[Relations Store<br/>Graph relationships<br/>BFS traversal]
         C[Provenance Tracker<br/>Data lineage<br/>Source mapping]
     end
-    
+
     subgraph "Service Layer"
         D[EntityService<br/>gRPC interface]
         E[GraphService<br/>Relationship management]
         F[Query Extensions<br/>SIMILAR, FOLLOW, ASSEMBLE]
     end
-    
+
     subgraph "API Layer"
         G[REST Endpoints<br/>HTTP/JSON]
         H[gRPC Interface<br/>Protobuf/Streaming]
     end
-    
+
     A --> D
     B --> E
     C --> F
-    
+
     D --> G
     D --> H
     E --> G
     F --> H
-    
-    style A fill:#1e88e5
-    style B fill:#43a047
-    style C fill:#ff9800
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
 ----
 
-== 🏗️ Implementation Status
+== Implementation Status
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#43a047"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 pie title SKS Implementation Completion
     "Entity Store (Complete)" : 100
     "Relations Store (Complete)" : 100
@@ -103,12 +109,13 @@ pie title SKS Implementation Completion
 |`tests/sks_integration_test.rs`
 |===
 
-== 🔧 Technical Implementation Details
+== Technical Implementation Details
 
 === Entity Store Architecture
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 classDiagram
     class EntityStore {
         <<interface>>
@@ -118,18 +125,18 @@ classDiagram
         +search_entities(query) Vec~Entity~
         +list_entities(collection) Vec~Entity~
     }
-    
+
     class ProximaEntityStore {
         +headers: DashMap~String, EntityHeader~
         +storage_engines: HashMap~String, StorageEngine~
         +embedding_manager: EmbeddingManager
         +metadata_processor: MetadataProcessor
-        
+
         +handle_embedding_versioning(entity)
         +process_flexible_metadata(metadata)
         +integrate_storage_engines()
     }
-    
+
     class EntityHeader {
         +id: String
         +collection_id: String
@@ -139,7 +146,7 @@ classDiagram
         +updated_at: SystemTime
         +storage_locations: Vec~StorageLocation~
     }
-    
+
     EntityStore <|-- ProximaEntityStore
     ProximaEntityStore --> EntityHeader
 ----
@@ -148,17 +155,18 @@ classDiagram
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 stateDiagram-v2
     [*] --> EntityCreated
     EntityCreated --> EmbeddingV1: Initial embedding
     EmbeddingV1 --> EmbeddingV2: Model upgrade
     EmbeddingV2 --> EmbeddingV3: Reprocessing
     EmbeddingV3 --> [*]: Current version
-    
+
     EmbeddingV1: Version 1\nOriginal model\nPreserved for compatibility
     EmbeddingV2: Version 2\nImproved model\nBetter accuracy
     EmbeddingV3: Version 3\nLatest model\nCurrent default
-    
+
     note right of EmbeddingV1
         Previous versions maintained
         for backward compatibility
@@ -197,28 +205,37 @@ impl EntityStore {
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
     subgraph "Forward Index"
         A[Entity ID] --> B[Outgoing Relations]
         B --> C[Target Entities]
     end
-    
-    subgraph "Reverse Index"  
+
+    subgraph "Reverse Index"
         D[Entity ID] --> E[Incoming Relations]
         E --> F[Source Entities]
     end
-    
+
     subgraph "Traversal Engine"
         G[BFS Algorithm] --> H[Configurable Depth]
         H --> I[Relationship Filtering]
         I --> J[Result Assembly]
     end
-    
+
     C --> G
     F --> G
-    
-    style A fill:#e3f2fd
-    style J fill:#e8f5e8
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Key Features:**
@@ -227,19 +244,20 @@ graph LR
 * **Property Support**: Rich relationship metadata
 * **Weight Support**: Weighted edges for advanced algorithms
 
-== 🔌 API Implementation
+== API Implementation
 
 === gRPC Service Interface
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
 sequenceDiagram
     participant Client
     participant gRPC_Server
     participant EntityService
     participant EntityStore
     participant StorageEngine
-    
+
     Client->>gRPC_Server: UpsertEntity request
     gRPC_Server->>EntityService: Process request
     EntityService->>EntityStore: Store entity
@@ -248,7 +266,7 @@ sequenceDiagram
     EntityStore-->>EntityService: Success
     EntityService-->>gRPC_Server: Response
     gRPC_Server-->>Client: UpsertEntityResponse
-    
+
     Note over EntityStore,StorageEngine: Multi-version embedding handling
 ----
 
@@ -291,21 +309,26 @@ service EntityService {
 |List all entities in collection
 |===
 
-== 📊 SQL Query Extensions
+== SQL Query Extensions
 
 === SIMILAR Operator
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
     A[SQL Query with SIMILAR] --> B[Parse Query]
-    B --> C[Extract Vector Component] 
+    B --> C[Extract Vector Component]
     C --> D[Execute Vector Search]
     D --> E[Apply Similarity Threshold]
     E --> F[Return Results]
-    
-    style A fill:#e3f2fd
-    style F fill:#e8f5e8
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Syntax Examples:**
@@ -327,14 +350,18 @@ WITH THRESHOLD 0.75;
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
     A[Start Entity] --> B[Follow Relations]
     B --> C[Traverse Graph]
     C --> D[Apply Filters]
     D --> E[Collect Results]
-    
-    style A fill:#e3f2fd
-    style E fill:#e8f5e8
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Syntax Examples:**
@@ -356,17 +383,20 @@ WITH MAX_DEPTH 2;
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
     A[Vector Results] --> C[Fusion Engine]
     B[Graph Results] --> C
     C --> D[Unified Ranking]
     D --> E[Context Assembly]
     E --> F[Final Results]
-    
-    style A fill:#f3e5f5
-    style B fill:#fff3e0  
-    style C fill:#1e88e5
-    style F fill:#e8f5e8
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Syntax Example:**
@@ -379,12 +409,13 @@ ASSEMBLE CONTEXT FROM citations, references
 WITH MAX_DEPTH 2, THRESHOLD 0.8;
 ----
 
-== 🎯 Performance Characteristics
+== Performance Characteristics
 
 === SKS Operation Performance
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 xychart-beta
     title "SKS Operation Performance"
     x-axis ["Entity Upsert", "Entity Search", "Graph Traversal", "Hybrid Query", "Context Assembly"]
@@ -422,12 +453,13 @@ xychart-beta
 |Full context building with provenance
 |===
 
-== 💡 Usage Patterns
+== Usage Patterns
 
 === Knowledge Graph Construction
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
     A[Raw Documents] --> B[Text Extraction]
     B --> C[Embedding Generation]
@@ -437,9 +469,16 @@ flowchart TD
     F --> G[Relation Graph Building]
     G --> H[Provenance Tracking]
     H --> I[Knowledge Graph Complete]
-    
-    style A fill:#ffcdd2
-    style I fill:#c8e6c9
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Implementation Example:**
@@ -504,26 +543,34 @@ results = await sks_client.hybrid_search(
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
     subgraph "Source Documents"
         A[PDF Document] --> B[Text Extraction]
         B --> C[Chunking Strategy]
     end
-    
+
     subgraph "Processing Pipeline"
         C --> D[Embedding Generation]
         D --> E[Entity Recognition]
         E --> F[Relationship Extraction]
     end
-    
+
     subgraph "Provenance Chain"
         F --> G[Source Mapping]
         G --> H[Extraction Metadata]
         H --> I[Lineage Tracking]
     end
-    
-    style A fill:#e3f2fd
-    style I fill:#e8f5e8
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Provenance Data Structure:**
@@ -546,28 +593,29 @@ pub enum ExtractionMethod {
 }
 ----
 
-== 🔍 Advanced Query Capabilities
+== Advanced Query Capabilities
 
 === Hybrid Query Execution
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
 sequenceDiagram
     participant QueryParser
     participant VectorEngine
     participant GraphEngine
     participant FusionEngine
     participant ResultAssembler
-    
+
     QueryParser->>VectorEngine: Execute vector component
     QueryParser->>GraphEngine: Execute graph component
-    
+
     VectorEngine-->>FusionEngine: Vector candidates
     GraphEngine-->>FusionEngine: Graph results
-    
+
     FusionEngine->>ResultAssembler: Fused results
     ResultAssembler->>QueryParser: Final response
-    
+
     Note over VectorEngine,GraphEngine: Parallel execution
     Note over FusionEngine: Unified ranking algorithm
 ----
@@ -601,42 +649,54 @@ ORDER BY (similarity_score * 0.7 + (1.0 / graph_distance) * 0.3) DESC
 LIMIT 10;
 ----
 
-== 📊 Integration Patterns
+== Integration Patterns
 
 === RAG System Integration
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "Document Processing"
         A[Documents] --> B[Text Extraction]
         B --> C[Chunking]
         C --> D[Embedding Generation]
     end
-    
+
     subgraph "SKS Storage"
         D --> E[Entity Creation]
         E --> F[Relationship Mapping]
         F --> G[Provenance Recording]
     end
-    
+
     subgraph "Query Processing"
         H[User Query] --> I[Query Embedding]
         I --> J[SKS Hybrid Search]
         J --> K[Context Assembly]
         K --> L[Grounded Response]
     end
-    
+
     G --> J
-    
-    style A fill:#ffcdd2
-    style L fill:#c8e6c9
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style J fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 === Multi-Modal Knowledge Store
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
     subgraph "Input Sources"
         A[Text Documents]
@@ -644,31 +704,37 @@ flowchart LR
         C[Audio]
         D[Video]
     end
-    
+
     subgraph "Processing"
         E[Unified Embedding<br/>Multi-modal models]
         F[Cross-Modal Relations<br/>Image-text, audio-text]
     end
-    
+
     subgraph "SKS Storage"
         G[Entity Store<br/>Multi-modal entities]
         H[Relation Store<br/>Cross-modal links]
     end
-    
+
     A --> E
-    B --> E  
+    B --> E
     C --> E
     D --> E
-    
+
     E --> F
     F --> G
     F --> H
-    
-    style E fill:#1e88e5
-    style G fill:#43a047
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
 ----
 
-== 🎯 Best Practices
+== Best Practices
 
 === Entity Modeling Guidelines
 
@@ -706,7 +772,7 @@ flowchart LR
 |50-90% latency reduction
 |===
 
-== 🔧 Configuration Reference
+== Configuration Reference
 
 === SKS Configuration
 
@@ -737,7 +803,7 @@ batch_size = 1000
 enable_async_indexing = true
 ----
 
-== 🔗 Related Documentation
+== Related Documentation
 
 * **API Reference**: Complete gRPC and REST API specifications
 * **Architecture**: link:technical_architecture.adoc[System Architecture Details]

@@ -10,7 +10,7 @@
 
 toc::[]
 
-== 🛡️ Security Overview
+== Security Overview
 
 ProximaDB's security architecture is built on three foundational principles:
 
@@ -18,45 +18,51 @@ ProximaDB's security architecture is built on three foundational principles:
 |===
 | Security Principle | Implementation
 
-| **🔐 Identity & Access Management**
+| **Identity & Access Management**
 | Multi-method authentication with granular role-based access control
 
-| **🏢 Multi-Tenant Isolation** 
+| **Multi-Tenant Isolation** 
 | Secure tenant boundaries with data segregation and resource isolation
 
-| **🔒 Transport & Data Security**
+| **Transport & Data Security**
 | End-to-end encryption with mutual TLS and configurable data protection
 |===
 
-== 🔑 Authentication Methods
+== Authentication Methods
 
 ProximaDB supports multiple authentication methods to fit different deployment scenarios and security requirements.
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
     A[Client Application] --> B{Authentication Method}
     B -->|Simple| C[API Key]
-    B -->|Enterprise| D[JWT Token]  
+    B -->|Enterprise| D[JWT Token]
     B -->|SSO Integration| E[OAuth2]
     B -->|Zero Trust| F[mTLS Client Cert]
-    
+
     C --> G[ProximaDB Server]
     D --> H[Token Validation]
     E --> I[Identity Provider]
     F --> J[Certificate Authority]
-    
+
     H --> G
     I --> H
     J --> G
-    
+
     G --> K[Role-Based Access Control]
     K --> L[Resource Access]
-    
-    style A fill:#e1f5fe
-    style G fill:#c8e6c9
-    style K fill:#fff3e0
-    style L fill:#f3e5f5
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style L fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
 ----
 
 === API Key Authentication
@@ -146,27 +152,28 @@ auth_config = AuthConfig(
 • Perfect for zero-trust architectures
 • Hardware security module (HSM) support
 
-== 👥 Role-Based Access Control (RBAC)
+== Role-Based Access Control (RBAC)
 
 ProximaDB implements fine-grained RBAC with 23+ predefined permissions across all platform capabilities.
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TB
     subgraph "User Identity"
         U[User] --> R[Roles]
         R --> P[Permissions]
     end
-    
+
     subgraph "Permission Categories"
         P --> C1[Collections]
-        P --> C2[Vectors] 
+        P --> C2[Vectors]
         P --> C3[Graph]
         P --> C4[Knowledge Store]
         P --> C5[System Admin]
         P --> C6[Security & Audit]
     end
-    
+
     subgraph "Resource Access"
         C1 --> R1[collections.create<br/>collections.read<br/>collections.update<br/>collections.delete]
         C2 --> R2[vectors.read<br/>vectors.write<br/>vectors.search<br/>vectors.batch]
@@ -175,16 +182,22 @@ flowchart TB
         C5 --> R5[system.health<br/>system.metrics<br/>system.config<br/>system.admin]
         C6 --> R6[security.audit<br/>security.manage<br/>security.view]
     end
-    
-    style U fill:#ffecb3
-    style R fill:#e8f5e8
-    style P fill:#e3f2fd
-    style R1 fill:#fff3e0
-    style R2 fill:#f3e5f5
-    style R3 fill:#e0f2f1
-    style R4 fill:#fce4ec
-    style R5 fill:#fff8e1
-    style R6 fill:#e8eaf6
+
+    style U fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style P fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C1 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C2 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C3 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C4 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C5 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C6 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style R1 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R2 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R3 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R4 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R5 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style R6 fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 === Permission Categories
@@ -252,12 +265,13 @@ roles:
       - "*"  # All permissions
 ----
 
-== 🏢 Multi-Tenant Architecture
+== Multi-Tenant Architecture
 
 ProximaDB's multi-tenant capabilities provide secure isolation for shared deployments while maintaining performance and operational efficiency.
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "Multi-Tenant ProximaDB Instance"
         subgraph "Tenant A - ACME Corp"
@@ -265,19 +279,19 @@ graph TB
             TA_AUTH[Auth Context A]
             TA_PERMS[Permissions A]
         end
-        
+
         subgraph "Tenant B - Tech Start"
             TB_DATA[(Collections B)]
-            TB_AUTH[Auth Context B]  
+            TB_AUTH[Auth Context B]
             TB_PERMS[Permissions B]
         end
-        
+
         subgraph "Tenant C - Enterprise"
             TC_DATA[(Collections C)]
             TC_AUTH[Auth Context C]
             TC_PERMS[Permissions C]
         end
-        
+
         subgraph "Shared Infrastructure"
             API[Unified API Layer]
             AUTH_SVC[Authentication Service]
@@ -285,39 +299,39 @@ graph TB
             AUDIT[Audit Logger]
         end
     end
-    
+
     CLIENT_A[ACME Client] --> API
-    CLIENT_B[Tech Start Client] --> API  
+    CLIENT_B[Tech Start Client] --> API
     CLIENT_C[Enterprise Client] --> API
-    
+
     API --> AUTH_SVC
     AUTH_SVC --> TA_AUTH
     AUTH_SVC --> TB_AUTH
     AUTH_SVC --> TC_AUTH
-    
+
     TA_AUTH --> RBAC
     TB_AUTH --> RBAC
     TC_AUTH --> RBAC
-    
+
     RBAC --> TA_PERMS
     RBAC --> TB_PERMS
     RBAC --> TC_PERMS
-    
+
     TA_PERMS --> TA_DATA
     TB_PERMS --> TB_DATA
     TC_PERMS --> TC_DATA
-    
+
     API --> AUDIT
-    
-    style CLIENT_A fill:#e1f5fe
-    style CLIENT_B fill:#f3e5f5  
-    style CLIENT_C fill:#fff3e0
-    style TA_DATA fill:#e8f5e8
-    style TB_DATA fill:#fce4ec
-    style TC_DATA fill:#fff8e1
-    style API fill:#e3f2fd
-    style AUTH_SVC fill:#ffecb3
-    style RBAC fill:#e0f2f1
+
+    style CLIENT_A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style CLIENT_B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style CLIENT_C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style TA_DATA fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style TB_DATA fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style TC_DATA fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style API fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style AUTH_SVC fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style RBAC fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
 === Tenant Isolation Levels
@@ -326,15 +340,15 @@ graph TB
 |===
 | Isolation Level | Description | Security Boundary
 
-| **🔒 Strict Isolation**
+| **Strict Isolation**
 | Complete data and resource separation
 | Physical separation per tenant
 
-| **🏗️ Logical Isolation** 
+| **Logical Isolation** 
 | Shared infrastructure with logical boundaries
 | Namespace and access control separation
 
-| **🔄 Hybrid Isolation**
+| **Hybrid Isolation**
 | Configurable per-tenant requirements
 | Mixed physical/logical based on sensitivity
 |===
@@ -367,7 +381,7 @@ collections = client.list_collections()  # Only ACME Corp collections
 • Audit trail per tenant
 • Custom configuration per tenant
 
-== 🔒 Transport Security
+== Transport Security
 
 === TLS/SSL Configuration
 
@@ -402,12 +416,13 @@ require_client_cert = false  # Set true for mTLS
 • CORS configuration for web applications
 • Rate limiting and DDoS protection
 
-== 📊 Security Monitoring & Audit
+== Security Monitoring & Audit
 
 ProximaDB provides comprehensive security monitoring with real-time threat detection and compliance-ready audit trails.
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
 sequenceDiagram
     participant C as Client
     participant A as Auth Service
@@ -419,26 +434,26 @@ sequenceDiagram
     C->>A: Authentication Request
     A->>A: Validate Credentials
     A->>S: Log Auth Attempt
-    
+
     alt Authentication Success
         A->>R: Request Permissions
         R->>A: Return Role & Permissions
         A->>C: Auth Success + Token
         S->>L: Log Success Event
-    else Authentication Failure  
+    else Authentication Failure
         A->>C: Auth Failure
         S->>S: Analyze Failure Pattern
         S->>L: Log Failure Event
-        
+
         alt Suspicious Pattern Detected
             S->>D: Alert: Potential Attack
             S->>A: Rate Limit IP
         end
     end
-    
+
     C->>A: Resource Request + Token
     A->>R: Validate Permission
-    
+
     alt Permission Granted
         R->>C: Allow Access
         S->>L: Log Access Grant
@@ -446,12 +461,12 @@ sequenceDiagram
         R->>C: Deny Access
         S->>S: Check Access Pattern
         S->>L: Log Access Denial
-        
+
         alt Multiple Denials Detected
             S->>D: Alert: Privilege Escalation
         end
     end
-    
+
     L->>D: Aggregate Metrics
     D->>D: Generate Security Reports
 ----
@@ -494,7 +509,7 @@ ProximaDB logs all authentication events for security monitoring and compliance:
 • Cross-tenant access attempts
 • Performance impact of security controls
 
-== 🚀 Production Deployment Security
+== Production Deployment Security
 
 === Secure Configuration
 
@@ -574,17 +589,18 @@ spec:
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "Cloud Deployment"
         subgraph "AWS Multi-Tenant"
             AWS_T1[Tenant 1 - VPC A]
-            AWS_T2[Tenant 2 - VPC B] 
+            AWS_T2[Tenant 2 - VPC B]
             AWS_T3[Tenant 3 - VPC C]
             AWS_KMS[AWS KMS]
             AWS_IAM[AWS IAM]
             AWS_CT[CloudTrail]
         end
-        
+
         subgraph "Azure Multi-Tenant"
             AZ_T1[Tenant 1 - VNet A]
             AZ_T2[Tenant 2 - VNet B]
@@ -592,7 +608,7 @@ graph TB
             AZ_AD[Azure AD]
             AZ_MON[Azure Monitor]
         end
-        
+
         subgraph "GCP Multi-Tenant"
             GCP_T1[Tenant 1 - VPC A]
             GCP_T2[Tenant 2 - VPC B]
@@ -601,7 +617,7 @@ graph TB
             GCP_LOG[Cloud Logging]
         end
     end
-    
+
     subgraph "On-Premise Deployment"
         subgraph "Private Cloud Multi-Tenant"
             PREM_T1[Tenant 1 - Network Segment A]
@@ -612,45 +628,46 @@ graph TB
             PREM_SIEM[Security Information Event Management]
         end
     end
-    
+
     subgraph "Hybrid Multi-Tenant"
         HYB_CLOUD[Cloud Tenants]
         HYB_PREM[On-Premise Tenants]
         HYB_VPN[VPN/Private Links]
         HYB_FED[Federated Identity]
     end
-    
+
     AWS_T1 --> AWS_KMS
     AWS_T2 --> AWS_IAM
     AWS_T3 --> AWS_CT
-    
+
     AZ_T1 --> AZ_KV
     AZ_T2 --> AZ_AD
     AZ_AD --> AZ_MON
-    
+
     GCP_T1 --> GCP_KMS
     GCP_T2 --> GCP_IAM
     GCP_IAM --> GCP_LOG
-    
+
     PREM_T1 --> PREM_HSM
     PREM_T2 --> PREM_LDAP
     PREM_T3 --> PREM_SIEM
-    
+
     HYB_CLOUD --> HYB_VPN
     HYB_PREM --> HYB_VPN
     HYB_VPN --> HYB_FED
-    
-    style AWS_T1 fill:#ff9800
-    style AZ_T1 fill:#2196f3
-    style GCP_T1 fill:#4caf50
-    style PREM_T1 fill:#9c27b0
-    style HYB_CLOUD fill:#e91e63
+
+    style AWS_T1 fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style AZ_T1 fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style GCP_T1 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style PREM_T1 fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style HYB_CLOUD fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
 ----
 
 === Enterprise Governance & Audit
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
     subgraph "Governance Framework"
         POL[Security Policies]
@@ -658,7 +675,7 @@ flowchart TD
         RISK[Risk Assessment]
         GOV[Governance Board]
     end
-    
+
     subgraph "Multi-Tenant Audit System"
         subgraph "Real-Time Monitoring"
             AUTH_AUD[Authentication Audit]
@@ -666,15 +683,15 @@ flowchart TD
             DATA_AUD[Data Access Audit]
             CONFIG_AUD[Configuration Audit]
         end
-        
+
         subgraph "Compliance Reporting"
             SOC2[SOC 2 Reports]
-            ISO27001[ISO 27001 Reports] 
+            ISO27001[ISO 27001 Reports]
             GDPR[GDPR Compliance]
             HIPAA[HIPAA Compliance]
             CCPA[CCPA Compliance]
         end
-        
+
         subgraph "Audit Storage & Analytics"
             AUDIT_DB[(Audit Database)]
             ANALYTICS[Audit Analytics Engine]
@@ -682,56 +699,56 @@ flowchart TD
             REPORTS[Executive Reports]
         end
     end
-    
+
     subgraph "Tenant-Specific Governance"
         T1_GOV[Tenant A Governance]
         T2_GOV[Tenant B Governance]
         T3_GOV[Tenant C Governance]
-        
+
         T1_AUDIT[Tenant A Audit Trail]
         T2_AUDIT[Tenant B Audit Trail]
         T3_AUDIT[Tenant C Audit Trail]
     end
-    
+
     POL --> COMP
     COMP --> RISK
     RISK --> GOV
-    
+
     GOV --> AUTH_AUD
     GOV --> ACCESS_AUD
     GOV --> DATA_AUD
     GOV --> CONFIG_AUD
-    
+
     AUTH_AUD --> AUDIT_DB
     ACCESS_AUD --> AUDIT_DB
     DATA_AUD --> AUDIT_DB
     CONFIG_AUD --> AUDIT_DB
-    
+
     AUDIT_DB --> ANALYTICS
     ANALYTICS --> ALERTS
     ANALYTICS --> REPORTS
-    
+
     ANALYTICS --> SOC2
     ANALYTICS --> ISO27001
     ANALYTICS --> GDPR
     ANALYTICS --> HIPAA
     ANALYTICS --> CCPA
-    
+
     T1_GOV --> T1_AUDIT
     T2_GOV --> T2_AUDIT
     T3_GOV --> T3_AUDIT
-    
+
     T1_AUDIT --> AUDIT_DB
     T2_AUDIT --> AUDIT_DB
     T3_AUDIT --> AUDIT_DB
-    
-    style POL fill:#ffecb3
-    style COMP fill:#e8f5e8
-    style AUDIT_DB fill:#e3f2fd
-    style ANALYTICS fill:#f3e5f5
-    style T1_GOV fill:#e1f5fe
-    style T2_GOV fill:#fff3e0
-    style T3_GOV fill:#fce4ec
+
+    style POL fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style COMP fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style AUDIT_DB fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style ANALYTICS fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style T1_GOV fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style T2_GOV fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style T3_GOV fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
 === Cloud Security Integration
@@ -768,7 +785,7 @@ flowchart TD
 • Certificate Authority integration for tenant PKI
 • Backup and disaster recovery with tenant data segregation
 
-== 🔧 Security Best Practices
+== Security Best Practices
 
 === Development Security
 
@@ -816,7 +833,7 @@ with ProximaDBClient(auth_config=auth_config) as client:
 • Security incident logging and analysis
 • Recovery procedures for compromised credentials
 
-== 📋 Compliance & Certifications
+== Compliance & Certifications
 
 === Standards Compliance
 
@@ -844,7 +861,7 @@ with ProximaDBClient(auth_config=auth_config) as client:
 • Regular security assessments
 • Compliance reporting dashboards
 
-== 🎯 Getting Started with Security
+== Getting Started with Security
 
 === Quick Security Setup
 
@@ -878,7 +895,7 @@ proximadb deploy --config secure-config.toml
 - [ ] Network security controls implemented
 - [ ] Security assessment completed
 
-== 📞 Security Support
+== Security Support
 
 **For security-related questions and support:**
 
@@ -898,4 +915,4 @@ proximadb deploy --config secure-config.toml
 
 [.text-center]
 *ProximaDB Security - Protecting Your Unified Intelligence Platform* +
-**🛡️ Enterprise-Ready • 🔐 Zero-Trust Compatible • 🏢 Multi-Tenant Secure**
+**Enterprise-Ready • Zero-Trust Compatible • Multi-Tenant Secure**

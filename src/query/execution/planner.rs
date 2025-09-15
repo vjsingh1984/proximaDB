@@ -1229,4 +1229,156 @@ mod planner_tests {
 
     // NOTE: Full SQL-lowered JOIN tests require JOIN lowering support.
     // This suite validates composite ON parsing semantics equivalent to SQL-lowered AST.
+
+    #[tokio::test]
+    async fn test_query_plan_caching() {
+        use crate::graph::service::GraphService;
+        use crate::services::operations::vectors::VectorOperationsService;
+        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+        
+        // Create mock services (simplified for testing)
+        let graph_service = Arc::new(GraphService::new_placeholder().await.unwrap());
+        let vector_service = Arc::new(VectorOperationsService::new_placeholder().await.unwrap());
+        let cache_orchestrator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024));
+        
+        // Create planner with cache
+        let planner = ExecutionPlanner::with_cache(
+            vector_service,
+            graph_service,
+            cache_orchestrator,
+        );
+        
+        // Create simple query
+        let query = Query::Select(Select {
+            projection: vec![ProjectionItem {
+                expr: Expr::Identifier("*".to_string()),
+                alias: None,
+            }],
+            from: vec![TableRef {
+                name: Some("test".to_string()),
+                subquery: None,
+                alias: None,
+            }],
+            ..Default::default()
+        });
+        
+        // First call should generate and cache plan
+        let plan1 = planner.create_plan(&query).unwrap();
+        
+        // Second call should use cached plan
+        let plan2 = planner.create_plan(&query).unwrap();
+        
+        // Plans should be identical (from cache)
+        assert_eq!(plan1.execution_strategy, plan2.execution_strategy);
+        assert_eq!(plan1.operations.len(), plan2.operations.len());
+    }
+
+    #[test]
+    fn test_set_operation_planning() {
+        use crate::graph::service::GraphService;
+        use crate::services::operations::vectors::VectorOperationsService;
+        
+        // Create simple test planner
+        let graph_service = Arc::new(GraphService::new_placeholder().await.unwrap());
+        let vector_service = Arc::new(VectorOperationsService::new_placeholder().await.unwrap());
+        let planner = ExecutionPlanner::new(vector_service, graph_service);
+        
+        // Test UNION operation planning
+        let left_query = Query::Select(Select {
+            projection: vec![ProjectionItem {
+                expr: Expr::Identifier("id".to_string()),
+                alias: None,
+            }],
+            from: vec![TableRef {
+                name: Some("table1".to_string()),
+                subquery: None,
+                alias: None,
+            }],
+            ..Default::default()
+        });
+        
+        let right_query = Query::Select(Select {
+            projection: vec![ProjectionItem {
+                expr: Expr::Identifier("id".to_string()),
+                alias: None,
+            }],
+            from: vec![TableRef {
+                name: Some("table2".to_string()),
+                subquery: None,
+                alias: None,
+            }],
+            ..Default::default()
+        });
+        
+        let union_plan = planner.plan_set_operation(
+            &left_query,
+            &crate::query::ast::SetOp::Union,
+            false, // DISTINCT
+            &right_query,
+        ).unwrap();
+        
+        assert_eq!(union_plan.execution_strategy, ExecutionStrategy::Relational);
+        assert_eq!(union_plan.operations.len(), 1);
+        
+        match &union_plan.operations[0] {
+            ExecutionOperation::SetUnion { distinct } => assert!(*distinct),
+            _ => panic!("Expected SetUnion operation"),
+        }
+    }
+
+    #[test]
+    fn test_cache_key_generation() {
+        use crate::graph::service::GraphService;
+        use crate::services::operations::vectors::VectorOperationsService;
+        
+        let graph_service = Arc::new(GraphService::new_placeholder().await.unwrap());
+        let vector_service = Arc::new(VectorOperationsService::new_placeholder().await.unwrap());
+        let planner = ExecutionPlanner::new(vector_service, graph_service);
+        
+        let query1 = Query::Select(Select {
+            projection: vec![ProjectionItem {
+                expr: Expr::Identifier("*".to_string()),
+                alias: None,
+            }],
+            ..Default::default()
+        });
+        
+        let query2 = Query::Select(Select {
+            projection: vec![ProjectionItem {
+                expr: Expr::Identifier("id".to_string()),
+                alias: None,
+            }],
+            ..Default::default()
+        });
+        
+        let key1 = planner.generate_cache_key(&query1);
+        let key2 = planner.generate_cache_key(&query2);
+        
+        // Different queries should generate different cache keys
+        assert_ne!(key1, key2);
+        assert!(key1.starts_with("plan_"));
+        assert!(key2.starts_with("plan_"));
+    }
+
+    #[test]
+    fn test_cost_model_estimation() {
+        let cost_model = CostModel::new();
+        
+        let operations = vec![
+            ExecutionOperation::VectorSearch {
+                collection_id: "test".to_string(),
+                query_vector: None,
+                filters: None,
+                top_k: 100,
+                distance_metric: "cosine".to_string(),
+            },
+            ExecutionOperation::Project {
+                columns: vec!["id".to_string()],
+                transformations: vec![],
+            },
+        ];
+        
+        let total_cost = cost_model.estimate_total_cost(&operations);
+        assert!(total_cost > 0.0);
+    }
 }
