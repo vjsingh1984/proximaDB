@@ -1530,15 +1530,15 @@ impl RaptorEngine {
     }
 
     /// Determine storage tier from base path
-    fn determine_storage_tier(base_path: &str) -> crate::storage::engines::impls::raptor::common::StorageTier {
-        use crate::storage::engines::impls::raptor::common::StorageTier;
+    fn determine_storage_tier(base_path: &str) -> crate::storage::persistence::filesystem::FileStorageTier {
+        use crate::storage::persistence::filesystem::FileStorageTier;
 
         if base_path.contains("s3://") || base_path.contains("azure://") || base_path.contains("gcs://") {
-            StorageTier::Cloud
+            FileStorageTier::S3Standard
         } else if base_path.contains("/tmp") || base_path.contains("memory") {
-            StorageTier::Memory
+            FileStorageTier::Memory
         } else {
-            StorageTier::Local
+            FileStorageTier::SSD
         }
     }
 }
