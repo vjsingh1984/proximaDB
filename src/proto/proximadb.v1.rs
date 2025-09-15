@@ -64,6 +64,7 @@ pub struct SqlRow {
     #[prost(float, optional, tag = "2")]
     pub similarity: ::core::option::Option<f32>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecuteSqlRequest {
@@ -81,6 +82,7 @@ pub struct ExecuteSqlRequest {
     #[prost(uint32, optional, tag = "5")]
     pub offset: ::core::option::Option<u32>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecuteSqlResponse {
@@ -151,7 +153,6 @@ pub struct TypedMetadata {
     #[prost(map = "string, message", tag = "1")]
     pub fields: ::std::collections::HashMap<::prost::alloc::string::String, TypedField>,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedField {
@@ -385,7 +386,6 @@ pub mod similar_query {
         RawData(::prost::alloc::vec::Vec<u8>),
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetadataFilter {
@@ -394,7 +394,6 @@ pub struct MetadataFilter {
     #[prost(enumeration = "LogicalOp", tag = "2")]
     pub op: i32,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FilterClause {
@@ -2159,7 +2158,6 @@ pub struct IncludeFields {
         bool,
     >,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetadataItem {
@@ -2246,7 +2244,6 @@ pub struct VectorSearchRequest {
     #[prost(message, optional, tag = "7")]
     pub search_optimization: ::core::option::Option<SearchOptimization>,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorRecord {
@@ -3731,6 +3728,7 @@ pub struct PropertyObject {
     >,
 }
 /// Graph traversal request
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraversalRequest {
@@ -3774,6 +3772,7 @@ pub struct PropertyFilter {
     pub value: ::core::option::Option<PropertyValue>,
 }
 /// Graph traversal response
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraversalResponse {
@@ -3804,6 +3803,7 @@ pub struct TraversalStats {
     pub execution_time_microseconds: u64,
 }
 /// Node query request
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NodeQuery {
@@ -3824,6 +3824,7 @@ pub struct NodeQuery {
     pub continuation_token: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Edge query request
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EdgeQuery {
@@ -3889,6 +3890,7 @@ pub struct BatchResponse {
     pub error_messages: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// Hybrid query request combining vector and graph components
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HybridSearchRequest {
@@ -3909,6 +3911,7 @@ pub struct HybridSearchRequest {
     pub offset: ::core::option::Option<u32>,
 }
 /// Hybrid query response
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HybridSearchResponse {
@@ -3977,6 +3980,7 @@ pub struct EdgeTypeStats {
     #[prost(uint64, tag = "2")]
     pub count: u64,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateNodeRequest {
@@ -4001,6 +4005,7 @@ pub struct DeleteNodeRequest {
     #[prost(string, tag = "1")]
     pub node_id: ::prost::alloc::string::String,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateEdgeRequest {
@@ -6181,7 +6186,6 @@ pub mod graph_service_server {
         const NAME: &'static str = "proximadb.v1.GraphService";
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionConfig {

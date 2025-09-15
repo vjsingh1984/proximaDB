@@ -40,21 +40,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add serde to graph types needed for JSON serialization
         .type_attribute("Node", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("Edge", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // Add serde to main request/response types for REST API handlers
+        // Add serde ONLY to simple request/response types needed by REST API handlers
         .type_attribute("VectorSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("VectorBatchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CollectionRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("VectorOperationResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("CollectionResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // Add serde to supporting types needed by the request types
-        .type_attribute("VectorQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("VectorRecord", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("MetadataFilter", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("FilterClause", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("MetadataItem", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("TypedField", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("CollectionConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // oneof types (SqlValue, PropertyValue) get custom serde from serde_impls.rs but PartialEq works fine
+        // Add serde to SQL request/response types for gRPC/REST API
+        .type_attribute("ExecuteSqlRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ExecuteSqlResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to graph request/response types for gRPC/REST API
+        .type_attribute("TraversalRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("TraversalResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("HybridSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("HybridSearchResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CreateNodeRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CreateEdgeRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("NodeQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("EdgeQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // oneof types (SqlValue, PropertyValue, VectorRecord, FilterClause) get custom serde from serde_impls.rs
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(
             &[
