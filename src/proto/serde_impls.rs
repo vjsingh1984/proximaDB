@@ -217,3 +217,162 @@ impl Serialize for crate::proto::proximadb_v1::FilterClause {
         map.end()
     }
 }
+
+// Custom serde for TypedField (has oneof value)
+impl Serialize for crate::proto::proximadb_v1::TypedField {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("TypedField", 3)?;
+        
+        // Serialize the oneof value field
+        match &self.value {
+            Some(crate::proto::proximadb_v1::typed_field::Value::StringValue(v)) => {
+                state.serialize_field("value", &serde_json::json!({"string_value": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::IntValue(v)) => {
+                state.serialize_field("value", &serde_json::json!({"int_value": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::DoubleValue(v)) => {
+                state.serialize_field("value", &serde_json::json!({"double_value": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::BoolValue(v)) => {
+                state.serialize_field("value", &serde_json::json!({"bool_value": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::StringArray(v)) => {
+                state.serialize_field("value", &serde_json::json!({"string_array": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs(v)) => {
+                state.serialize_field("value", &serde_json::json!({"timestamp_value_ms": v}))?;
+            }
+            None => {
+                state.serialize_field("value", &serde_json::Value::Null)?;
+            }
+        }
+        
+        // Serialize the boolean fields
+        state.serialize_field("indexed", &self.indexed)?;
+        state.serialize_field("filterable", &self.filterable)?;
+        
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::TypedField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TypedFieldHelper {
+            value: Option<serde_json::Value>,
+            indexed: Option<bool>,
+            filterable: Option<bool>,
+        }
+
+        let helper = TypedFieldHelper::deserialize(deserializer)?;
+
+        let value = if let Some(val) = helper.value {
+            if let Some(obj) = val.as_object() {
+                if let Some(string_val) = obj.get("string_value") {
+                    if let Some(s) = string_val.as_str() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::StringValue(s.to_string()))
+                    } else { None }
+                } else if let Some(int_val) = obj.get("int_value") {
+                    if let Some(i) = int_val.as_i64() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::IntValue(i))
+                    } else { None }
+                } else if let Some(double_val) = obj.get("double_value") {
+                    if let Some(d) = double_val.as_f64() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::DoubleValue(d))
+                    } else { None }
+                } else if let Some(bool_val) = obj.get("bool_value") {
+                    if let Some(b) = bool_val.as_bool() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::BoolValue(b))
+                    } else { None }
+                } else if let Some(timestamp_val) = obj.get("timestamp_value_ms") {
+                    if let Some(t) = timestamp_val.as_i64() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs(t))
+                    } else { None }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(crate::proto::proximadb_v1::TypedField {
+            value,
+            indexed: helper.indexed.unwrap_or(false),
+            filterable: helper.filterable.unwrap_or(false),
+        })
+    }
+}
+
+// Custom serde for MetadataValue (has oneof value)
+impl Serialize for crate::proto::proximadb_v1::MetadataValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+
+        match &self.value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue(v)) => {
+                map.serialize_entry("string_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::metadata_value::Value::IntValue(v)) => {
+                map.serialize_entry("int_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::metadata_value::Value::DoubleValue(v)) => {
+                map.serialize_entry("double_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::metadata_value::Value::BoolValue(v)) => {
+                map.serialize_entry("bool_value", v)?;
+            }
+            None => {
+                map.serialize_entry("null_value", &serde_json::Value::Null)?;
+            }
+        }
+
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct MetadataValueHelper {
+            string_value: Option<String>,
+            int_value: Option<i64>,
+            double_value: Option<f64>,
+            bool_value: Option<bool>,
+            null_value: Option<serde_json::Value>,
+        }
+
+        let helper = MetadataValueHelper::deserialize(deserializer)?;
+
+        let value = if let Some(v) = helper.string_value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue(v))
+        } else if let Some(v) = helper.int_value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::IntValue(v))
+        } else if let Some(v) = helper.double_value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::DoubleValue(v))
+        } else if let Some(v) = helper.bool_value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::BoolValue(v))
+        } else {
+            None
+        };
+
+        Ok(crate::proto::proximadb_v1::MetadataValue { value })
+    }
+}
