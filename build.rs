@@ -40,15 +40,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add serde to graph types needed for JSON serialization
         .type_attribute("Node", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("Edge", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // Add serde ONLY to simple request/response types needed by REST API handlers
+        // Add serde ONLY to simple request types (responses have custom implementations in serde_impls.rs)
         .type_attribute("VectorSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("VectorBatchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("VectorOperationResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("CollectionRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Now add the simple response types that were removed from serde_impls.rs
+        .type_attribute("VectorOperationResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("CollectionResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("VectorRecord", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Collection", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionStats", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Entity", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("EntityResult", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add serde to SQL request/response types for gRPC/REST API
         .type_attribute("ExecuteSqlRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("ExecuteSqlResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SqlRow", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SqlRowField", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add serde to graph request/response types for gRPC/REST API
         .type_attribute("TraversalRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("TraversalResponse", "#[derive(serde::Serialize, serde::Deserialize)]")

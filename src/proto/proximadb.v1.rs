@@ -47,6 +47,7 @@ pub mod sql_value {
     }
 }
 /// Single SQL row field
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SqlRowField {
@@ -56,6 +57,7 @@ pub struct SqlRowField {
     pub value: ::core::option::Option<SqlValue>,
 }
 /// SQL row with optional similarity score
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SqlRow {
@@ -100,6 +102,7 @@ pub struct ExecuteSqlResponse {
     pub column_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// Entity represents a semantic unit with embeddings, metadata, and relationships
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Entity {
@@ -344,6 +347,7 @@ pub struct SearchEntitiesResponse {
     #[prost(message, optional, tag = "4")]
     pub progress: ::core::option::Option<ProgressInfo>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EntityResult {
@@ -2244,6 +2248,7 @@ pub struct VectorSearchRequest {
     #[prost(message, optional, tag = "7")]
     pub search_optimization: ::core::option::Option<SearchOptimization>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorRecord {
@@ -6186,6 +6191,7 @@ pub mod graph_service_server {
         const NAME: &'static str = "proximadb.v1.GraphService";
     }
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionConfig {
@@ -6219,6 +6225,7 @@ pub struct CollectionConfig {
     #[prost(string, repeated, tag = "14")]
     pub embedding_models: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionStats {
@@ -6229,6 +6236,7 @@ pub struct CollectionStats {
     #[prost(int64, tag = "3")]
     pub data_size_bytes: i64,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Collection {
