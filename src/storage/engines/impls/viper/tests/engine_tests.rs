@@ -627,7 +627,7 @@ async fn test_persistence_across_restarts() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-
+            estimated_size: 10 * 256,
             collection_config: Some(create_test_collection(collection_id, base_path)),
         };
 
@@ -720,11 +720,11 @@ async fn test_search_vectors_unified() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
+        estimated_size: 10 * 256,
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
-        // estimated_size field not available in CompactionParameters
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
@@ -938,17 +938,19 @@ async fn test_search_vectors_unified() {
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
+    let query_context = crate::storage::traits::StorageQueryContext {
+        collection_id: collection_id.to_string(),
+        query_vector: vec![1.0, 0.0, 0.0],
+        top_k: 3,
+        distance_metric: DistanceMetric::Cosine,
+        filter: None,
+        metadata_filter: None,
+        threshold: None,
+        include_vector: true,
+        include_metadata: true,
+    };
     let results = match engine
-        .search_vectors_unified(
-            collection_id,
-            &storage_url,
-            &[1.0, 0.0, 0.0],
-            3,
-            &DistanceMetric::Cosine,
-            None,
-            true,
-            true,
-        )
+        .search_vectors_unified(&query_context)
         .await
     {
         Ok(r) => r,
@@ -989,17 +991,19 @@ async fn test_search_vectors_unified() {
         value: serde_json::Value::String("A".to_string()),
     };
 
+    let query_context_2 = crate::storage::traits::StorageQueryContext {
+        collection_id: collection_id.to_string(),
+        query_vector: vec![0.5, 0.5, 0.5],
+        top_k: 10,
+        distance_metric: DistanceMetric::Euclidean,
+        filter: Some(filter_expr),
+        metadata_filter: None,
+        threshold: None,
+        include_vector: true,
+        include_metadata: true,
+    };
     let filtered_results = engine
-        .search_vectors_unified(
-            collection_id,
-            &storage_url,
-            &[0.5, 0.5, 0.5],
-            10,
-            &DistanceMetric::Euclidean,
-            Some(&filter_expr),
-            true,
-            true,
-        )
+        .search_vectors_unified(&query_context_2)
         .await
         .expect("Failed to search with filters");
 
@@ -1012,17 +1016,19 @@ async fn test_search_vectors_unified() {
     // TODO: Add integration test with proper collection service setup for full metadata filtering test
 
     // Test 3: Search without vectors/metadata included
+    let query_context_3 = crate::storage::traits::StorageQueryContext {
+        collection_id: collection_id.to_string(),
+        query_vector: vec![0.0, 1.0, 0.0],
+        top_k: 2,
+        distance_metric: DistanceMetric::DotProduct,
+        filter: None,
+        metadata_filter: None,
+        threshold: None,
+        include_vector: false, // Don't include vectors
+        include_metadata: false, // Don't include metadata
+    };
     let minimal_results = engine
-        .search_vectors_unified(
-            collection_id,
-            &storage_url,
-            &[0.0, 1.0, 0.0],
-            2,
-            &DistanceMetric::DotProduct,
-            None,
-            false, // Don't include vectors
-            false, // Don't include metadata
-        )
+        .search_vectors_unified(&query_context_3)
         .await
         .expect("Failed to search");
 
@@ -1101,11 +1107,11 @@ async fn test_concurrent_operations() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
+        estimated_size: 100 * 256,
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
-        // estimated_size field not available in CompactionParameters
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");

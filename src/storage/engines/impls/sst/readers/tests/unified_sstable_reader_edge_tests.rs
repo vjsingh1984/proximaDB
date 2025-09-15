@@ -492,46 +492,44 @@ mod edge_tests {
 
         // Add multiple versions of the same record
         for version in 1..=10 {
-            records.push(SstRecord {
+            records.push(VectorRecord {
                 id: vector_id.to_string(),
                 vector: vec![0.1 * version as f32; 128],
-                metadata: vec![],
+                metadata: HashMap::new(),
                 timestamp: version,
                 updated_at: Some(version),
                 expires_at: None,
-                version: Some(version),
-                is_tombstone: false,
-                sequence_number: version as u64,
+                version: Some(version as i64),
+                quantized_vector: vec![],
+                source: None,
                 level: 0,
             });
         }
 
         // Add a tombstone (deletion marker)
-        records.push(SstRecord {
+        records.push(VectorRecord {
             id: vector_id.to_string(),
             vector: vec![],
-            metadata: vec![],
+            metadata: HashMap::new(),
             timestamp: 11,
             updated_at: Some(11),
             expires_at: None,
             version: Some(11),
-            is_tombstone: true,
-            sequence_number: 11,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         });
 
         // Add another version after deletion
-        records.push(SstRecord {
+        records.push(VectorRecord {
             id: vector_id.to_string(),
             vector: vec![0.99; 128],
-            metadata: vec![],
+            metadata: HashMap::new(),
             timestamp: 12,
             updated_at: Some(12),
             expires_at: None,
             version: Some(12),
-            is_tombstone: false,
-            sequence_number: 12,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         });
 
         // Verify we have multiple versions and a tombstone
@@ -636,7 +634,7 @@ mod edge_tests {
 
         let mut records = std::collections::BTreeMap::new();
         for i in 0..10 {
-            let record = crate::storage::engines::impls::sst::SstRecord {
+            let record = crate::storage::engines::impls::sst::VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32; 128],
                 metadata: vec![],
@@ -829,7 +827,7 @@ mod edge_tests {
         // Create various tombstone scenarios
         let tombstones = vec![
             // Regular tombstone
-            SstRecord {
+            VectorRecord {
                 id: "deleted_1".to_string(),
                 vector: vec![],
                 metadata: vec![],
@@ -842,7 +840,7 @@ mod edge_tests {
                 level: 0,
             },
             // Tombstone with metadata (unusual but valid)
-            SstRecord {
+            VectorRecord {
                 id: "deleted_2".to_string(),
                 vector: vec![],
                 metadata: vec![crate::proto::proximadb_v1::MetadataItem {
@@ -862,7 +860,7 @@ mod edge_tests {
                 level: 0,
             },
             // Tombstone with expiration (double deletion)
-            SstRecord {
+            VectorRecord {
                 id: "deleted_3".to_string(),
                 vector: vec![],
                 metadata: vec![],
@@ -962,7 +960,7 @@ mod edge_tests {
 
         // Fill with large records
         for i in 0..1000 {
-            let record = SstRecord {
+            let record = VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![0.1; 1024], // Large vector
                 metadata: vec![],

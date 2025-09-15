@@ -5,7 +5,7 @@
 //! and metadata bloom filters.
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::sst::{SstableWriter, SstRecord};
+use crate::storage::engines::impls::sst::SstableWriter;
 use crate::storage::engines::impls::sst::{SstConfig, BloomFilterConfig};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
@@ -186,7 +186,7 @@ async fn test_metadata_filtering_basic() {
             result.id.starts_with("vec_a_"),
             "All results should be category A"
         );
-        let category = result.metadata.get(key).unwrap();
+        let category = result.metadata.get("category").unwrap();
         assert_eq!(category, &json!("A"), "Category should be A");
     }
 
@@ -214,7 +214,7 @@ async fn test_metadata_filtering_basic() {
             result.id.starts_with("vec_b_"),
             "All image results should be category B"
         );
-        let type_val = result.metadata.get(key).unwrap();
+        let type_val = result.metadata.get("type").unwrap();
         assert_eq!(type_val, &json!("image"), "Type should be image");
     }
 
@@ -265,8 +265,8 @@ async fn test_metadata_filtering_basic() {
         "Should find 5 records matching both filters"
     );
     for result in &results {
-        let category = result.metadata.get(key).unwrap();
-        let type_val = result.metadata.get(key).unwrap();
+        let category = result.metadata.get("category").unwrap();
+        let type_val = result.metadata.get("type").unwrap();
         assert_eq!(category, &json!("B"), "Category should be B");
         assert_eq!(type_val, &json!("image"), "Type should be image");
     }

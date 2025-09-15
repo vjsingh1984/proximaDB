@@ -1104,11 +1104,14 @@ mod planner_tests {
                 subquery: None,
                 alias: None,
             }],
+            joins: vec![],
             selection: Some(Expr::Binary {
                 left: Box::new(Expr::Identifier("metadata.category".to_string())),
                 op: BinaryOp::Eq,
                 right: Box::new(Expr::Literal(Literal::String("electronics".to_string()))),
             }),
+            group_by: vec![],
+            having: None,
             order_by: vec![OrderByExpr {
                 expr: Expr::FuncCall {
                     name: "VECTOR_SIMILARITY".to_string(),
@@ -1117,7 +1120,7 @@ mod planner_tests {
                 asc: false,
             }],
             limit: Some(10),
-            ..Default::default()
+            offset: None,
         });
 
         let plan = planner.create_plan(&query).unwrap();
@@ -1273,8 +1276,8 @@ mod planner_tests {
         assert_eq!(plan1.operations.len(), plan2.operations.len());
     }
 
-    #[test]
-    fn test_set_operation_planning() {
+    #[tokio::test]
+    async fn test_set_operation_planning() {
         use crate::graph::service::GraphService;
         use crate::services::operations::vectors::VectorOperationsService;
         
@@ -1326,8 +1329,8 @@ mod planner_tests {
         }
     }
 
-    #[test]
-    fn test_cache_key_generation() {
+    #[tokio::test]
+    async fn test_cache_key_generation() {
         use crate::graph::service::GraphService;
         use crate::services::operations::vectors::VectorOperationsService;
         

@@ -13,6 +13,7 @@ use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMetric};
 use crate::core::VectorRecord;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 

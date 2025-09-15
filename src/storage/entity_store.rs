@@ -949,6 +949,35 @@ mod tests {
     use super::*;
     use tokio::runtime::Runtime;
     use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Modality, Relation};
+    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+
+    // Test helper struct for mocking storage engine
+    struct NoopEngine {
+        filesystem_factory: FilesystemFactory,
+    }
+
+    impl NoopEngine {
+        async fn new() -> Self {
+            let config = FilesystemConfig::default();
+            let filesystem_factory = FilesystemFactory::new(config).await.unwrap();
+            Self { filesystem_factory }
+        }
+    }
+
+    #[async_trait]
+    impl UnifiedStorageEngine for NoopEngine {
+        fn engine_name(&self) -> &'static str { "noop" }
+        fn engine_version(&self) -> &'static str { "0" }
+        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::FileStorageTier }
+        async fn do_flush(&self, _p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult> { Ok(Default::default()) }
+        async fn do_compact(&self, _p: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult> { Ok(Default::default()) }
+        async fn collect_engine_metrics(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> { Ok(Default::default()) }
+        async fn vector_by_id(&self, _c:&str, _v:&str) -> Result<Option<crate::core::VectorRecord>> { Ok(None) }
+        async fn search_vectors_unified(&self, _ctx:&crate::storage::traits::StorageQueryContext) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> { Ok(vec![]) }
+        fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+            &self.filesystem_factory
+        }
+    }
 
     #[tokio::test]
     async fn test_entity_key_generation() {
@@ -971,20 +1000,7 @@ mod tests {
     async fn test_upsert_and_persist_header_and_embeddings() {
         // Minimal engine: use a dummy unified engine from tests (SST mocked by trait objects would be heavy)
         // For persistence we use filesystem KV; embeddings stored in-memory index
-        struct NoopEngine;
-        #[async_trait]
-        impl UnifiedStorageEngine for NoopEngine {
-            fn engine_name(&self) -> &'static str { "noop" }
-            fn engine_version(&self) -> &'static str { "0" }
-            fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Sst }
-            async fn do_flush(&self, _p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult> { Ok(Default::default()) }
-            async fn do_compact(&self, _p: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult> { Ok(Default::default()) }
-            async fn collect_engine_metrics(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> { Ok(Default::default()) }
-            async fn vector_by_id(&self, _c:&str, _v:&str) -> Result<Option<crate::core::VectorRecord>> { Ok(None) }
-            async fn search_vectors_unified(&self, _ctx:&crate::storage::traits::StorageQueryContext) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> { Ok(vec![]) }
-        }
-
-        let engine = Arc::new(NoopEngine) as Arc<dyn UnifiedStorageEngine>;
+        let engine = Arc::new(NoopEngine::new().await) as Arc<dyn UnifiedStorageEngine>;
         let store = ProximaEntityStore::new(
             engine,
             Arc::new(CsrRelationsStore::new()),
@@ -998,12 +1014,12 @@ mod tests {
                 model_version: "v1".to_string(),
                 vector: vec![0.1,0.2,0.3],
                 dimension: 3,
-                created_at: None,
+                created_at_ms: 0,
                 model_params: Default::default(),
                 modality: Modality::Text as i32,
             }],
             typed_metadata: None,
-            flexible_metadata: None,
+            flexible_metadata: HashMap::new(),
             provenance: None,
             relations: vec![],
             temporal: None,
@@ -1030,7 +1046,7 @@ mod tests {
             target_entity_id: "e2".into(),
             relation_type: "related".into(),
             weight: 1.0,
-            created_at: None,
+            created_at_ms: 0,
             properties: Default::default(),
         };
         csr.add_relation("c1", rel.clone()).await.unwrap();
@@ -1045,45 +1061,58 @@ mod tests {
     #[tokio::test]
     async fn test_batch_filter_entities() {
         let store = ProximaEntityStore::new(
-            Arc::new(MockStorageEngine),
-            None,
+            Arc::new(NoopEngine::new().await),
+            Arc::new(CsrRelationsStore::new()),
+            Arc::new(InMemoryProvenanceRegistry::new()),
         );
         
         // Create test entities
         let entity1 = Entity {
             id: "test_entity_1".to_string(),
-            typed_metadata: vec![TypedMetadata {
-                key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue("electronics".to_string())),
-            }],
+            typed_metadata: None,
+            flexible_metadata: {
+                let mut metadata = HashMap::new();
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())),
+                });
+                metadata
+            },
             embeddings: vec![],
-            ..Default::default()
+            relations: vec![],
+            provenance: None,
+            temporal: None,
+            collection_id: "test_collection".to_string(),
         };
         
         let entity2 = Entity {
             id: "test_entity_2".to_string(),
-            typed_metadata: vec![TypedMetadata {
-                key: "category".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue("books".to_string())),
-            }],
+            typed_metadata: None,
+            flexible_metadata: {
+                let mut metadata = HashMap::new();
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("books".to_string())),
+                });
+                metadata
+            },
             embeddings: vec![],
-            ..Default::default()
+            relations: vec![],
+            provenance: None,
+            temporal: None,
+            collection_id: "test_collection".to_string(),
         };
         
         // Store entities
-        store.store_entity("test_collection", entity1).await.unwrap();
-        store.store_entity("test_collection", entity2).await.unwrap();
-        
+        store.upsert_entity("test_collection", entity1).await.unwrap();
+        store.upsert_entity("test_collection", entity2).await.unwrap();
+
         // Create filter for electronics category
         let filter = MetadataFilter {
-            fields: {
-                let mut fields = std::collections::HashMap::new();
-                fields.insert("category".to_string(), SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())),
-                });
-                fields
-            },
-            advanced_filter: None,
+            clauses: vec![crate::proto::proximadb_v1::FilterClause {
+                field: "category".to_string(),
+                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue("electronics".to_string())),
+            }],
+            op: crate::proto::proximadb_v1::LogicalOp::And as i32,
         };
         
         // Test batch filtering
@@ -1095,22 +1124,30 @@ mod tests {
     #[tokio::test]
     async fn test_streaming_entities() {
         let store = ProximaEntityStore::new(
-            Arc::new(MockStorageEngine),
-            None,
+            Arc::new(NoopEngine::new().await),
+            Arc::new(CsrRelationsStore::new()),
+            Arc::new(InMemoryProvenanceRegistry::new()),
         );
         
         // Create multiple test entities
         for i in 0..5 {
             let entity = Entity {
                 id: format!("stream_entity_{}", i),
-                typed_metadata: vec![TypedMetadata {
-                    key: "index".to_string(),
-                    value: Some(crate::proto::proximadb_v1::metadata_value::Value::NumberValue(i as f64)),
-                }],
+                typed_metadata: None,
+                flexible_metadata: {
+                    let mut metadata = HashMap::new();
+                    metadata.insert("index".to_string(), SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(i as f64)),
+                    });
+                    metadata
+                },
                 embeddings: vec![],
-                ..Default::default()
+                relations: vec![],
+                provenance: None,
+                temporal: None,
+                collection_id: "stream_collection".to_string(),
             };
-            store.store_entity("stream_collection", entity).await.unwrap();
+            store.upsert_entity("stream_collection", entity).await.unwrap();
         }
         
         // Test streaming with batch size of 2
@@ -1121,6 +1158,7 @@ mod tests {
         let mut batch_count = 0;
         
         // Collect all batches
+        use futures::pin_mut;
         pin_mut!(stream);
         while let Some(batch_result) = stream.next().await {
             let batch = batch_result.unwrap();
@@ -1136,19 +1174,19 @@ mod tests {
     #[tokio::test]
     async fn test_header_level_filtering() {
         let store = ProximaEntityStore::new(
-            Arc::new(MockStorageEngine),
-            None,
+            Arc::new(NoopEngine::new().await),
+            Arc::new(CsrRelationsStore::new()),
+            Arc::new(InMemoryProvenanceRegistry::new()),
         );
         
         // Create entity header
         let header = EntityHeader {
-            typed_metadata: Some(TypedMetadata {
-                key: "status".to_string(),
-                value: Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue("active".to_string())),
-            }),
+            typed_metadata: None,
             flexible_metadata: {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert("priority".to_string(), serde_json::Value::String("high".to_string()));
+                let mut metadata = HashMap::new();
+                metadata.insert("priority".to_string(), SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("high".to_string())),
+                });
                 metadata
             },
             provenance: None,
@@ -1157,26 +1195,22 @@ mod tests {
         
         // Create filter that should match
         let matching_filter = MetadataFilter {
-            fields: {
-                let mut fields = std::collections::HashMap::new();
-                fields.insert("priority".to_string(), SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("high".to_string())),
-                });
-                fields
-            },
-            advanced_filter: None,
+            clauses: vec![crate::proto::proximadb_v1::FilterClause {
+                field: "priority".to_string(),
+                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue("high".to_string())),
+            }],
+            op: crate::proto::proximadb_v1::LogicalOp::And as i32,
         };
-        
+
         // Create filter that should not match
         let non_matching_filter = MetadataFilter {
-            fields: {
-                let mut fields = std::collections::HashMap::new();
-                fields.insert("priority".to_string(), SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("low".to_string())),
-                });
-                fields
-            },
-            advanced_filter: None,
+            clauses: vec![crate::proto::proximadb_v1::FilterClause {
+                field: "priority".to_string(),
+                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue("low".to_string())),
+            }],
+            op: crate::proto::proximadb_v1::LogicalOp::And as i32,
         };
         
         // Test header-level filtering

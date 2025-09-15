@@ -1,9 +1,0 @@
-Starting ProximaDB benchmark...
-Tracing initialized
-About to initialize hardware capabilities...
-Hardware capabilities initialized
-error: unexpected argument '--verbose' found
-
-Usage: proximadb-bench all
-
-For more information, try '--help'.

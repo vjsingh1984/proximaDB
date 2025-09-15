@@ -75,7 +75,7 @@ pub use crate::proto::proximadb_v1::{
     BatchEdgeRequest, BatchNodeRequest, BatchResponse, Edge, EdgeQuery, EdgeTypeStats, GraphPath,
     GraphStats, LabelStats, Node, NodeQuery, PropertyArray, PropertyFilter, PropertyFilterOperator,
     PropertyObject, PropertyValue, TraversalAlgorithm, TraversalRequest, TraversalResponse,
-    TraversalStats,
+    TraversalStats, property_value::Value,
 };
 
 use crate::core::error::ProximaDBError;

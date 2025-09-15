@@ -411,7 +411,8 @@ impl MetadataSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::{TenantConfig, Industry, ComplianceFramework, SecurityPolicies, ResourceLimits};
+    use crate::storage::tenant::{TenantConfig, Industry, ComplianceFramework, SecurityPolicies};
+    use crate::storage::tenant::context::ResourceLimits;
 
     async fn create_test_setup() -> (TenantAwareEntityStore, UserContext) {
         let tenant_manager = Arc::new(TenantManager::new());

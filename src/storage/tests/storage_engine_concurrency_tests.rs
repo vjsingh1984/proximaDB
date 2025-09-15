@@ -59,6 +59,7 @@ mod tests {
             prefetch_enabled: false,
             prefetch_size_kb: 64,
             decompression_cache_config: None,
+            compaction_config: Default::default(),
         };
 
         // Configure write buffer separately
@@ -310,9 +311,9 @@ mod tests {
         }
 
         // Verify operations completed
-        assert!(results.get(key) > &0);
-        assert!(results.get(key) > &0);
-        assert!(results.get(key) > &0);
+        assert!(results.get("create").unwrap_or(&0) > &0);
+        assert!(results.get("write").unwrap_or(&0) > &0);
+        assert!(results.get("delete").unwrap_or(&0) > &0);
 
         // Cleanup
         let _ = std::fs::remove_dir_all(test_dir);

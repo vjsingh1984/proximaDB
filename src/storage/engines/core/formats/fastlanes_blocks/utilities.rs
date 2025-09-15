@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use super::{FastLanesDataBlock, RowBasedConfig};
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::storage::common::compaction_orchestrator::FilenameCodec;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -605,7 +606,7 @@ mod tests {
 
         // TODO: Update to use proper data structure
         // Temporarily using FastLanesDataBlock
-        let blocks = vec![super::block_structures::FastLanesDataBlock::default()];
+        let blocks = vec![FastLanesDataBlock::default()];
 
         let report = RowBasedUtilities::calculate_memory_usage(&blocks);
 
@@ -655,7 +656,7 @@ mod tests {
         assert!(swift_filename.contains("L2_"));
         assert!(swift_filename.ends_with(".swift"));
 
-        let level = FilenameCodec::new().parse_level(&sst_filename) as u8;
+        let level = FilenameCodec::new().parse_level(&sst_filename);
         assert_eq!(level, Some(3));
     }
 

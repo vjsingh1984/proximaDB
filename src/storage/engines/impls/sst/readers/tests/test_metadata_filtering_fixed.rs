@@ -22,7 +22,7 @@ fn get_metadata_string(
     metadata
         .iter()
         .find(|item| key == key)
-        .and_then(|item| match &value {
+        .and_then(|item| match &item.value {
             Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
                 Some(s.clone())
             }
@@ -38,7 +38,7 @@ fn get_metadata_number(
     metadata
         .iter()
         .find(|item| key == key)
-        .and_then(|item| match &value {
+        .and_then(|item| match &item.value {
             Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => Some(*n),
             _ => None,
         })
@@ -85,17 +85,16 @@ async fn test_metadata_filtering_with_sstable_reader() {
             },
         ];
 
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_a_{}", i),
             vector: vec![i as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: i as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         test_records.push(record);
     }
@@ -127,17 +126,16 @@ async fn test_metadata_filtering_with_sstable_reader() {
             },
         ];
 
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_b_{}", i),
             vector: vec![(i + 10) as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: (i + 5) as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         test_records.push(record);
     }

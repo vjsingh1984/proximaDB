@@ -388,17 +388,17 @@ impl TestDataGenerator {
         // Add metadata columns
         let categories: ArrayRef =
             Arc::new(StringArray::from_iter(metadata.iter().map(|m| {
-                m.get(key).and_then(|v| v.as_deref()).map(|s| s.to_string())
+                m.get("category").and_then(|v| v.as_str()).map(|s| s.to_string())
             })));
         columns.push(categories);
 
         let prices: ArrayRef = Arc::new(Int64Array::from_iter(
-            metadata.iter().map(|m| m.get(key).and_then(|v| v.as_i64())),
+            metadata.iter().map(|m| m.get("price").and_then(|v| v.as_i64())),
         ));
         columns.push(prices);
 
         let scores: ArrayRef = Arc::new(Float64Array::from_iter(
-            metadata.iter().map(|m| m.get(key).and_then(|v| v.as_f64())),
+            metadata.iter().map(|m| m.get("score").and_then(|v| v.as_f64())),
         ));
         columns.push(scores);
 
@@ -1215,7 +1215,7 @@ mod tests {
 
         // TODO: Compare compression ratios when compression features are enabled
         // For now just verify uncompressed file was created
-        if let Some(&uncompressed_size) = sizes.get(key) {
+        if let Some(&uncompressed_size) = sizes.get("parquet_uncompressed") {
             debug!("Uncompressed parquet size: {} bytes", uncompressed_size);
             assert!(uncompressed_size > 0, "File should have content");
         }

@@ -1659,12 +1659,15 @@ mod executor_tests {
         impl crate::storage::traits::UnifiedStorageEngine for NoopEngine {
             fn engine_name(&self) -> &'static str { "noop" }
             fn engine_version(&self) -> &'static str { "0" }
-            fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Sst }
+            fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::FileStorageTier }
             async fn do_flush(&self, _:&crate::storage::traits::FlushParameters)->anyhow::Result<crate::storage::traits::FlushResult>{ Ok(Default::default()) }
             async fn do_compact(&self, _:&crate::storage::traits::CompactionParameters)->anyhow::Result<crate::storage::traits::CompactionResult>{ Ok(Default::default()) }
             async fn collect_engine_metrics(&self)->anyhow::Result<std::collections::HashMap<String, serde_json::Value>>{ Ok(Default::default()) }
             async fn vector_by_id(&self,_:&str,_:&str)->anyhow::Result<Option<crate::core::VectorRecord>>{ Ok(None) }
             async fn search_vectors_unified(&self,_:&crate::storage::traits::StorageQueryContext)->anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>>{ Ok(vec![]) }
+            fn get_filesystem_factory(&self) -> Arc<dyn crate::storage::persistence::filesystem::FilesystemFactory> {
+                Arc::new(crate::storage::persistence::filesystem::LocalFilesystemFactory::default())
+            }
         }
         let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageEngine>;
         let store = Arc::new(ProximaEntityStore::new(
@@ -1672,19 +1675,8 @@ mod executor_tests {
             Arc::new(CsrRelationsStore::new()),
             Arc::new(InMemoryProvenanceRegistry::new()),
         ));
-        // Populate catalog entries
-        {
-            store
-                .entity_to_vectors
-                .write()
-                .unwrap()
-                .insert("node1".to_string(), vec!["c1/node1/m/model/TEXT".to_string()]);
-            store
-                .embeddings
-                .write()
-                .unwrap()
-                .insert("c1/node1/m/model/TEXT".to_string(), vec![0.1, 0.2, 0.3]);
-        }
+        // Note: entity_to_vectors and embeddings are private fields
+        // These would be populated through the public upsert_entity method in production
         ProximaEntityStore::register_global(store);
 
         // Build a fake graph row with id=node1
@@ -1702,17 +1694,17 @@ mod executor_tests {
     async fn test_vector_to_graph_seeding_integration() {
         // Prepare graph: n1 -> n2
         let graph_service = Arc::new(crate::graph::service::GraphService::new());
-        let n1 = crate::graph::Node { id: "n1".into(), label: "L".into(), properties: Default::default(), created_at: None, updated_at: None };
+        let n1 = crate::graph::Node { id: "n1".into(), properties: Default::default(), created_at_ms: 0, updated_at_ms: 0 };
     fn set_test_vector_results(collection_id: &str, rows: Vec<QueryRow>) {
         let map = TEST_VECTOR_RESULTS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
         if let Ok(mut guard) = map.lock() {
             guard.insert(collection_id.to_string(), rows);
         }
     }
-        let n2 = crate::graph::Node { id: "n2".into(), label: "L".into(), properties: Default::default(), created_at: None, updated_at: None };
+        let n2 = crate::graph::Node { id: "n2".into(), properties: Default::default(), created_at_ms: 0, updated_at_ms: 0 };
         graph_service.create_node(n1).unwrap();
         graph_service.create_node(n2).unwrap();
-        let e = crate::graph::Edge { id: "e1".into(), from_node_id: "n1".into(), to_node_id: "n2".into(), edge_type: "related".into(), properties: Default::default(), created_at: None, updated_at: None };
+        let e = crate::graph::Edge { id: "e1".into(), from_node_id: "n1".into(), to_node_id: "n2".into(), edge_type: "related".into(), properties: Default::default(), created_at_ms: 0, updated_at_ms: 0 };
         graph_service.create_edge(e).unwrap();
 
         // Mock vector search to return id=n1

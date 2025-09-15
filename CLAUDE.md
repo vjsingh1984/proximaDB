@@ -515,6 +515,8 @@ ProximaDB delivers exceptional performance with hardware-accelerated SIMD optimi
 | **512D** | DotProduct | **3.8M** | **0.265** |
 | **512D** | Euclidean | **3.7M** | **0.271** |
 
+**Complete Performance Documentation**: See `docs/PERFORMANCE_COMPREHENSIVE.adoc` for detailed benchmarks, competitive analysis, and deployment guidance.
+
 ### Hardware Acceleration Features
 The system automatically detects and uses:
 - SIMD instructions (AVX2/NEON) - **delivering 20M+ ops/sec performance**
