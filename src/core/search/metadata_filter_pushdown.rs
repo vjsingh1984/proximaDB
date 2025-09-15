@@ -610,7 +610,9 @@ impl MetadataBloomBuilder {
 
             // Serialize the metadata value for the bloom filter
             if let Some(ref value) = entry.value {
-                let serialized = serde_json::to_vec(value).unwrap_or_default();
+                // Create parent SqlValue to use custom serde implementation
+                let sql_value = crate::proto::proximadb_v1::SqlValue { value: Some(value.clone()) };
+                let serialized = serde_json::to_vec(&sql_value).unwrap_or_default();
                 builder.add(&serialized);
             }
         }

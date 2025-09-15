@@ -574,7 +574,15 @@ pub mod protocol_conversions {
             .map(|condition| {
                 let field = condition.field.clone();
                 let value = match &condition.value {
-                    Some(v) => serde_json::to_value(v).map_err(|e| e.to_string())?,
+                    Some(v) => {
+                        // Create parent FilterClause to use custom serde implementation
+                        let filter_clause = crate::proto::proximadb_v1::FilterClause {
+                            field: condition.field.clone(),
+                            op: condition.op,
+                            value: Some(v.clone()),
+                        };
+                        serde_json::to_value(&filter_clause).map_err(|e| e.to_string())?
+                    }
                     None => return Err("Missing value in filter condition".to_string()),
                 };
 
