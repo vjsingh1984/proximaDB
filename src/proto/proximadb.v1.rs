@@ -151,6 +151,7 @@ pub struct TypedMetadata {
     #[prost(map = "string, message", tag = "1")]
     pub fields: ::std::collections::HashMap<::prost::alloc::string::String, TypedField>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedField {
@@ -384,6 +385,7 @@ pub mod similar_query {
         RawData(::prost::alloc::vec::Vec<u8>),
     }
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetadataFilter {
@@ -392,6 +394,7 @@ pub struct MetadataFilter {
     #[prost(enumeration = "LogicalOp", tag = "2")]
     pub op: i32,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FilterClause {
@@ -2156,6 +2159,7 @@ pub struct IncludeFields {
         bool,
     >,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MetadataItem {
@@ -2223,6 +2227,7 @@ pub struct SearchOptimization {
     #[prost(map = "string, message", tag = "3")]
     pub filters: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorSearchRequest {
@@ -2241,6 +2246,7 @@ pub struct VectorSearchRequest {
     #[prost(message, optional, tag = "7")]
     pub search_optimization: ::core::option::Option<SearchOptimization>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorRecord {
@@ -2264,6 +2270,7 @@ pub struct VectorRecord {
     #[prost(string, optional, tag = "9")]
     pub source: ::core::option::Option<::prost::alloc::string::String>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorBatchRequest {
@@ -2346,6 +2353,7 @@ pub struct SearchResult {
     #[prost(string, optional, tag = "3")]
     pub collection_id: ::core::option::Option<::prost::alloc::string::String>,
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VectorOperationResponse {
@@ -6173,6 +6181,7 @@ pub mod graph_service_server {
         const NAME: &'static str = "proximadb.v1.GraphService";
     }
 }
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionConfig {
@@ -6360,6 +6369,7 @@ pub struct DeleteCollectionResponse {
     pub success: bool,
 }
 /// Unified collection request message
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionRequest {
@@ -6383,6 +6393,7 @@ pub struct CollectionRequest {
     >,
 }
 /// Unified collection response message
+#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CollectionResponse {

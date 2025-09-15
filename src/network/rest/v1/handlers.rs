@@ -36,27 +36,37 @@ pub struct AppState {
 }
 
 /// Aligned vector search handler
-///
-/// This handler demonstrates the protobuf-first approach:
-/// - Accepts VectorSearchRequest directly as JSON
-/// - Returns VectorOperationResponse directly as JSON
-/// - Uses ApiError for consistent error handling
 pub async fn vector_search(
     State(state): State<AppState>,
-    Json(request): Json<VectorSearchRequest>,
-) -> impl IntoResponse {
-    // Simple working implementation
-    match state.unified_handlers.handle_vector_search_v1(request).await {
-        Ok(response) => JsonResponse(response).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    Json(value): Json<serde_json::Value>,
+) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
+    // Parse the JSON value into VectorSearchRequest
+    let request: VectorSearchRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+
+    if request.collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+    }
+
+    match state
+        .unified_handlers
+        .handle_vector_search_v1(request)
+        .await
+    {
+        Ok(response) => Ok(JsonResponse(response)),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
     }
 }
 
 /// Aligned vector batch operation handler
 pub async fn vector_batch(
     State(state): State<AppState>,
-    Json(request): Json<VectorBatchRequest>,
-) -> impl IntoResponse {
+    Json(value): Json<serde_json::Value>,
+) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
+    // Parse the JSON value into VectorBatchRequest
+    let request: VectorBatchRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+
     info!(
         "Vector batch operation for collection: {}, {} records",
         request.collection_id,
@@ -65,11 +75,11 @@ pub async fn vector_batch(
 
     // Validate request
     if request.collection_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
+        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
     }
 
     if request.vectors.is_empty() {
-        return (StatusCode::BAD_REQUEST, "At least one record is required").into_response();
+        return Err(ApiError::InvalidArgument("At least one record is required".to_string()));
     }
 
     // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
@@ -78,13 +88,10 @@ pub async fn vector_batch(
         .handle_vector_batch_v1(request)
         .await
     {
-        Ok(v1_resp) => {
-            // Convert proto response to JSON wrapper
-            JsonResponse(v1_resp).into_response()
-        }
+        Ok(v1_resp) => Ok(JsonResponse(v1_resp)),
         Err(e) => {
             error!("Vector batch operation failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            Err(ApiError::Internal(e.to_string()))
         }
     }
 }
@@ -92,11 +99,15 @@ pub async fn vector_batch(
 /// Aligned collection operation handler
 pub async fn collection_operation(
     State(state): State<AppState>,
-    Json(request): Json<CollectionRequest>,
-) -> impl IntoResponse {
+    Json(value): Json<serde_json::Value>,
+) -> ApiResult<JsonResponse<proximadb_v1::CollectionResponse>> {
+    // Parse the JSON value into CollectionRequest
+    let request: CollectionRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+
     let operation = match CollectionOperation::try_from(request.operation) {
         Ok(op) => op,
-        Err(_) => return (StatusCode::BAD_REQUEST, "Invalid collection operation").into_response(),
+        Err(_) => return Err(ApiError::InvalidArgument("Invalid collection operation".to_string())),
     };
 
     info!(
@@ -110,10 +121,10 @@ pub async fn collection_operation(
         .handle_collection_operation(request)
         .await
     {
-        Ok(response) => JsonResponse(response).into_response(),
+        Ok(response) => Ok(JsonResponse(response)),
         Err(e) => {
             error!("Collection operation failed: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            Err(ApiError::Internal(e.to_string()))
         }
     }
 }
@@ -253,8 +264,12 @@ pub async fn delete_collection(
 /// Example using JSON wrapper types for consistent structure
 pub async fn vector_search_with_metadata(
     State(state): State<AppState>,
-    Json(request): Json<VectorSearchRequest>,
-) -> impl IntoResponse {
+    Json(value): Json<serde_json::Value>,
+) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
+    // Parse the JSON value into VectorSearchRequest
+    let request: VectorSearchRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
 
@@ -276,12 +291,11 @@ pub async fn vector_search_with_metadata(
                 request_id, elapsed.as_millis()
             );
 
-            // Return the proto response directly
-            JsonResponse(response).into_response()
+            Ok(JsonResponse(response))
         }
         Err(e) => {
             error!("Vector search {} failed: {}", request_id, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+            Err(ApiError::Internal(e.to_string()))
         }
     }
 }
@@ -515,17 +529,17 @@ pub fn create_router(state: AppState) -> axum::Router {
     };
 
     axum::Router::new()
-        // Vector operations - TODO: Fix Handler trait issues
+        // Vector operations
         .route("/api/v1/search", post(vector_search))
         .route("/api/v1/vectors/batch", post(vector_batch))
-        // .route(
-        //     "/api/v1/progressive/search/:collection_id",
-        //     post(crate::network::rest::progressive_search_handler::progressive_search_handler),
-        // )
+        .route(
+            "/api/v1/progressive/search/:collection_id",
+            post(crate::network::rest::progressive_search_handler::progressive_search_handler),
+        )
         // SQL query execution
         .route("/api/v1/sql/execute", post(execute_sql))
         .route("/api/v1/sql/explain", post(explain_sql))
-        // Collection operations - TODO: Fix Handler trait issue
+        // Collection operations
         .route("/api/v1/collections", post(collection_operation))
         .route("/api/v1/collections", get(list_collections))
         .route("/api/v1/collections/:collection_id", get(get_collection))
@@ -537,11 +551,11 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
-        // With metadata endpoints - TODO: Fix Handler trait issue
-        // .route(
-        //     "/api/v1/search/with_metadata",
-        //     post(vector_search_with_metadata),
-        // )
+        // With metadata endpoints
+        .route(
+            "/api/v1/search/with_metadata",
+            post(vector_search_with_metadata),
+        )
         // Graph database endpoints
         .nest(
             "/api/v1/graph",

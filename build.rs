@@ -40,6 +40,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add serde to graph types needed for JSON serialization
         .type_attribute("Node", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("Edge", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to main request/response types for REST API handlers
+        .type_attribute("VectorSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("VectorBatchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("VectorOperationResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to supporting types needed by the request types
+        .type_attribute("VectorQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("VectorRecord", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("MetadataFilter", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("FilterClause", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("MetadataItem", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("TypedField", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         // oneof types (SqlValue, PropertyValue) get custom serde from serde_impls.rs but PartialEq works fine
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(
