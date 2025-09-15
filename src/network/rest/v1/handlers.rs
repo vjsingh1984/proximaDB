@@ -44,7 +44,7 @@ pub struct AppState {
 pub async fn vector_search(
     State(state): State<AppState>,
     Json(request): Json<VectorSearchRequest>,
-) -> Response {
+) -> impl IntoResponse {
     // Simple working implementation
     match state.unified_handlers.handle_vector_search_v1(request).await {
         Ok(response) => JsonResponse(response).into_response(),
@@ -516,8 +516,8 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     axum::Router::new()
         // Vector operations - TODO: Fix Handler trait issues
-        // .route("/api/v1/search", post(vector_search))
-        // .route("/api/v1/vectors/batch", post(vector_batch))
+        .route("/api/v1/search", post(vector_search))
+        .route("/api/v1/vectors/batch", post(vector_batch))
         // .route(
         //     "/api/v1/progressive/search/:collection_id",
         //     post(crate::network::rest::progressive_search_handler::progressive_search_handler),
@@ -526,7 +526,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/api/v1/sql/execute", post(execute_sql))
         .route("/api/v1/sql/explain", post(explain_sql))
         // Collection operations - TODO: Fix Handler trait issue
-        // .route("/api/v1/collections", post(collection_operation))
+        .route("/api/v1/collections", post(collection_operation))
         .route("/api/v1/collections", get(list_collections))
         .route("/api/v1/collections/:collection_id", get(get_collection))
         .route(
