@@ -376,3 +376,42 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataValue {
         Ok(crate::proto::proximadb_v1::MetadataValue { value })
     }
 }
+
+// FilterClause Deserialize implementation
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::FilterClause {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct FilterClauseHelper {
+            field: String,
+            op: i32,
+            string_value: Option<String>,
+            int_value: Option<i64>,
+            double_value: Option<f64>,
+            bool_value: Option<bool>,
+            null_value: Option<serde_json::Value>,
+        }
+
+        let helper = FilterClauseHelper::deserialize(deserializer)?;
+
+        let value = if let Some(v) = helper.string_value {
+            Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(v))
+        } else if let Some(v) = helper.int_value {
+            Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(v))
+        } else if let Some(v) = helper.double_value {
+            Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(v))
+        } else if let Some(v) = helper.bool_value {
+            Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(v))
+        } else {
+            None
+        };
+
+        Ok(crate::proto::proximadb_v1::FilterClause {
+            field: helper.field,
+            op: helper.op,
+            value,
+        })
+    }
+}
