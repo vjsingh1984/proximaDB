@@ -1,20 +1,8 @@
-// Minimal custom serde implementations for ONLY complex oneof types
-// All simple types handled by build.rs auto-derives
-
+// Custom serde implementations for protobuf oneof types ONLY
 use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use crate::utils::encoding::{base64_encode, base64_decode};
 use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlValueVariant};
 use crate::proto::proximadb_v1::{PropertyValue, property_value::Value as PropertyValueVariant};
-
-// Note: This file contains ONLY the absolutely necessary custom serde implementations
-// for protobuf oneof types that cannot be auto-derived due to their complexity.
-// All other types use build.rs auto-derives.
-
-// The essential oneof types that need custom handling:
-// 1. SqlValue (oneof value) - complex with multiple variants
-// 2. PropertyValue (oneof value) - complex with multiple variants  
-// 3. SourceContent (oneof data) - complex with binary data handling
-
 impl Serialize for SqlValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -227,81 +215,5 @@ impl Serialize for crate::proto::proximadb_v1::FilterClause {
         }
         
         map.end()
-    }
-}
-
-// Custom serde for TypedField (has oneof value)
-impl Serialize for crate::proto::proximadb_v1::TypedField {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(1))?;
-
-        match &self.value {
-            Some(crate::proto::proximadb_v1::typed_field::Value::StringValue(v)) => {
-                map.serialize_entry("string_value", v)?;
-            }
-            Some(crate::proto::proximadb_v1::typed_field::Value::IntValue(v)) => {
-                map.serialize_entry("int_value", v)?;
-            }
-            Some(crate::proto::proximadb_v1::typed_field::Value::DoubleValue(v)) => {
-                map.serialize_entry("double_value", v)?;
-            }
-            Some(crate::proto::proximadb_v1::typed_field::Value::BoolValue(v)) => {
-                map.serialize_entry("bool_value", v)?;
-            }
-            Some(crate::proto::proximadb_v1::typed_field::Value::BytesValue(v)) => {
-                map.serialize_entry("bytes_value", &base64_encode(v))?;
-            }
-            Some(crate::proto::proximadb_v1::typed_field::Value::ArrayValue(v)) => {
-                map.serialize_entry("array_value", v)?;
-            }
-            None => {
-                map.serialize_entry("null_value", &serde_json::Value::Null)?;
-            }
-        }
-
-        map.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::TypedField {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct TypedFieldHelper {
-            string_value: Option<String>,
-            int_value: Option<i64>,
-            double_value: Option<f64>,
-            bool_value: Option<bool>,
-            bytes_value: Option<String>, // base64 encoded
-            array_value: Option<crate::proto::proximadb_v1::StringArray>,
-            null_value: Option<serde_json::Value>,
-        }
-
-        let helper = TypedFieldHelper::deserialize(deserializer)?;
-
-        let value = if let Some(v) = helper.string_value {
-            Some(crate::proto::proximadb_v1::typed_field::Value::StringValue(v))
-        } else if let Some(v) = helper.int_value {
-            Some(crate::proto::proximadb_v1::typed_field::Value::IntValue(v))
-        } else if let Some(v) = helper.double_value {
-            Some(crate::proto::proximadb_v1::typed_field::Value::DoubleValue(v))
-        } else if let Some(v) = helper.bool_value {
-            Some(crate::proto::proximadb_v1::typed_field::Value::BoolValue(v))
-        } else if let Some(v) = helper.bytes_value {
-            let bytes = base64_decode(&v).map_err(serde::de::Error::custom)?;
-            Some(crate::proto::proximadb_v1::typed_field::Value::BytesValue(bytes))
-        } else if let Some(v) = helper.array_value {
-            Some(crate::proto::proximadb_v1::typed_field::Value::ArrayValue(v))
-        } else {
-            None
-        };
-
-        Ok(crate::proto::proximadb_v1::TypedField { value })
     }
 }
