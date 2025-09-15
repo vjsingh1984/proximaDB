@@ -147,6 +147,7 @@ curl http://localhost:5678/health
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
     A[Start Deployment] --> B{Health Check}
     B -->|✅ Pass| C[Performance Test]
@@ -157,9 +158,14 @@ flowchart TD
     E -->|❌ Fail| D
     D --> G[Investigate & Fix]
     G --> A
-    
-    style F fill:#4CAF50
-    style D fill:#F44336
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
 ----
 
 === 2. Enterprise Monitoring
@@ -173,29 +179,31 @@ flowchart TD
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
-    subgraph "🎯 Critical Metrics"
-        A[CPU < 80%<br/>✅ Current: 45.2%]
-        B[Memory < 85%<br/>✅ Current: 62.8%]
-        C[Query Latency<br/>✅ P95: 89.2ms]
-        D[Cache Hit Rate<br/>✅ Current: 94.2%]
-        E[Error Rate < 1%<br/>✅ Current: 0.08%]
+    subgraph "Critical Metrics"
+        A[CPU < 80%<br/>Current: 45.2%]
+        B[Memory < 85%<br/>Current: 62.8%]
+        C[Query Latency<br/>P95: 89.2ms]
+        D[Cache Hit Rate<br/>Current: 94.2%]
+        E[Error Rate < 1%<br/>Current: 0.08%]
     end
-    
+
     A --> F[Alert System]
     B --> F
-    C --> F  
+    C --> F
     D --> F
     E --> F
-    
+
     F --> G[Enterprise Dashboard<br/>Real-time Monitoring]
-    
-    style A fill:#4CAF50
-    style B fill:#4CAF50
-    style C fill:#4CAF50
-    style D fill:#4CAF50
-    style E fill:#4CAF50
-    style G fill:#2196F3
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
 ----
 
 **Performance Thresholds**:
@@ -224,18 +232,19 @@ graph LR
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
     subgraph "Enterprise Dashboard Tabs"
-        A[🔍 System Overview<br/>Health & Status]
-        B[📊 Collections<br/>Data Management]
-        C[⚡ Performance<br/>Real-time Metrics]
-        D[💾 Cache<br/>Analytics & Efficiency]
-        E[🔒 Security<br/>Events & Compliance]
-        F[🚨 Alerts<br/>Management & Config]
-        G[📈 Metrics<br/>Visualization & Export]
-        H[🔧 Diagnostics<br/>Health & Debug]
+        A[System Overview<br/>Health & Status]
+        B[Collections<br/>Data Management]
+        C[Performance<br/>Real-time Metrics]
+        D[Cache<br/>Analytics & Efficiency]
+        E[Security<br/>Events & Compliance]
+        F[Alerts<br/>Management & Config]
+        G[Metrics<br/>Visualization & Export]
+        H[Diagnostics<br/>Health & Debug]
     end
-    
+
     A --> B
     B --> C
     C --> D
@@ -243,15 +252,15 @@ graph LR
     E --> F
     F --> G
     G --> H
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#F44336
-    style F fill:#795548
-    style G fill:#607D8B
-    style H fill:#009688
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
 ----
 
 [[performance-tuning]]
@@ -276,21 +285,27 @@ export PROXIMADB_UNIFIED_CACHE=true
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
     A{Workload Type} --> B[OLTP Writes]
     A --> C[Analytics Queries]
     A --> D[Mixed Workloads]
     A --> E[Time-Series Data]
-    
-    B --> F[SST Engine<br/>✅ High-throughput Writes<br/>Three-stage Filtering]
-    C --> G[VIPER Engine<br/>✅ Columnar Analytics<br/>Parquet Optimization]
-    D --> H[NOVA Engine<br/>✅ Progressive Analytics<br/>Hierarchical Stats]
-    E --> I[HELIX Engine<br/>✅ Time-Series Optimized<br/>Spiral Pattern Storage]
-    
-    style F fill:#4CAF50
-    style G fill:#2196F3
-    style H fill:#FF9800
-    style I fill:#9C27B0
+
+    B --> F[SST Engine<br/>High-throughput Writes<br/>Three-stage Filtering]
+    C --> G[VIPER Engine<br/>Columnar Analytics<br/>Parquet Optimization]
+    D --> H[NOVA Engine<br/>Progressive Analytics<br/>Hierarchical Stats]
+    E --> I[HELIX Engine<br/>Time-Series Optimized<br/>Spiral Pattern Storage]
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 [[security-operations]]
@@ -300,50 +315,61 @@ graph TD
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    subgraph "🔐 Authentication Layer"
-        A[API Keys<br/>✅ Production Ready]
-        B[JWT Tokens<br/>✅ Secure Validation]
-        C[OAuth2<br/>✅ Enterprise SSO]
-        D[mTLS Certificates<br/>✅ Mutual Auth]
+    subgraph "Authentication Layer"
+        A[API Keys<br/>Production Ready]
+        B[JWT Tokens<br/>Secure Validation]
+        C[OAuth2<br/>Enterprise SSO]
+        D[mTLS Certificates<br/>Mutual Auth]
     end
-    
-    subgraph "🛡️ Authorization Layer"
-        E[RBAC System<br/>✅ Role-based Access]
-        F[Collection Permissions<br/>✅ Fine-grained Control]
-        G[Tenant Isolation<br/>✅ Multi-tenant Ready]
+
+    subgraph "Authorization Layer"
+        E[RBAC System<br/>Role-based Access]
+        F[Collection Permissions<br/>Fine-grained Control]
+        G[Tenant Isolation<br/>Multi-tenant Ready]
     end
-    
-    subgraph "🔒 Encryption Layer"
-        H[TLS 1.3<br/>✅ Transport Security]
-        I[AES-256<br/>✅ Data at Rest]
-        J[Key Management<br/>✅ Secure Storage]
+
+    subgraph "Encryption Layer"
+        H[TLS 1.3<br/>Transport Security]
+        I[AES-256<br/>Data at Rest]
+        J[Key Management<br/>Secure Storage]
     end
-    
-    subgraph "📋 Compliance Layer"
-        K[SOC 2 Type II<br/>✅ Certified Ready]
-        L[GDPR<br/>✅ Compliant]
-        M[HIPAA<br/>✅ Ready]
-        N[Audit Logging<br/>✅ Complete Trail]
+
+    subgraph "Compliance Layer"
+        K[SOC 2 Type II<br/>Certified Ready]
+        L[GDPR<br/>Compliant]
+        M[HIPAA<br/>Ready]
+        N[Audit Logging<br/>Complete Trail]
     end
-    
+
     A --> E
     B --> E
     C --> E
     D --> E
-    
+
     E --> H
     F --> I
     G --> J
-    
+
     H --> K
     I --> L
     J --> M
-    
-    style A fill:#4CAF50
-    style E fill:#2196F3
-    style H fill:#FF9800
-    style K fill:#9C27B0
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style I fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style J fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style K fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style L fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style M fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style N fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 ==== Security Configuration
@@ -373,24 +399,32 @@ export PROXIMADB_AUDIT_PATH="/var/log/proximadb/audit.log"
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
-    A[System Metrics<br/>CPU/Memory/Disk] --> D[MetricsCollector<br/>✅ Unified Collection]
+    A[System Metrics<br/>CPU/Memory/Disk] --> D[MetricsCollector<br/>Unified Collection]
     B[Query Metrics<br/>Latency/Throughput] --> D
     C[Cache Metrics<br/>Hit Rates/Memory] --> D
-    
-    D --> E[CrossCacheOrchestrator<br/>✅ Metric Aggregation]
-    E --> F[EnterpriseDashboard<br/>✅ Real-time Display]
-    E --> G[Prometheus Export<br/>✅ External Integration]
-    E --> H[Alert System<br/>✅ Smart Notifications]
-    
-    F --> I[8 Dashboard Tabs<br/>✅ Comprehensive View]
+
+    D --> E[CrossCacheOrchestrator<br/>Metric Aggregation]
+    E --> F[EnterpriseDashboard<br/>Real-time Display]
+    E --> G[Prometheus Export<br/>External Integration]
+    E --> H[Alert System<br/>Smart Notifications]
+
+    F --> I[8 Dashboard Tabs<br/>Comprehensive View]
     G --> J[Grafana<br/>External Visualization]
     H --> K[Multi-channel Alerts<br/>Email/Slack/Webhook]
-    
-    style D fill:#4CAF50
-    style E fill:#2196F3
-    style F fill:#FF9800
-    style H fill:#F44336
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style H fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
 ----
 
 === 7. Backup & Recovery
@@ -399,19 +433,20 @@ flowchart LR
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 stateDiagram-v2
     [*] --> Continuous_Backup
     Continuous_Backup --> Incremental_Backup : Every 6 hours
     Incremental_Backup --> Full_Backup : Daily
     Full_Backup --> Archive : Weekly
     Archive --> Retention_Policy : 30 days
-    
+
     Continuous_Backup --> Point_in_Time_Recovery
     Point_in_Time_Recovery --> [*]
-    
-    note right of Continuous_Backup : ✅ WAL-based continuous backup
-    note right of Full_Backup : ✅ Complete system snapshot
-    note right of Archive : ✅ Long-term storage
+
+    note right of Continuous_Backup : WAL-based continuous backup
+    note right of Full_Backup : Complete system snapshot
+    note right of Archive : Long-term storage
 ----
 
 [source,bash]
@@ -492,23 +527,31 @@ flowchart TD
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
     A[High Memory Alert] --> B{Check Cache Usage}
     B -->|> 85%| C[Cache Optimization]
     B -->|Normal| D[Check Memory Pools]
-    
+
     C --> E[Reduce Cache Size<br/>kubectl patch configmap]
     D --> F[Optimize Pool Settings<br/>Restart Service]
-    
+
     E --> G[Monitor Dashboard<br/>Memory Tab]
     F --> G
     G --> H{Memory Normalized?}
-    H -->|Yes| I[✅ Resolved]
+    H -->|Yes| I[Resolved]
     H -->|No| J[Escalate to Engineering]
-    
-    style A fill:#FF9800
-    style I fill:#4CAF50
-    style J fill:#F44336
+
+    style A fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style J fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
 ----
 
 === Query Performance Issues
@@ -573,36 +616,46 @@ curl -X POST http://localhost:5678/v1/explain \
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TD
-    A[🔐 Security Validation] --> B[TLS 1.3 Enabled?]
-    B -->|✅ Yes| C[Authentication Configured?]
-    B -->|❌ No| L[❌ Failed]
-    
-    C -->|✅ Yes| D[RBAC Policies Active?]
-    C -->|❌ No| L
-    
-    D -->|✅ Yes| E[Encryption at Rest?]
-    D -->|❌ No| L
-    
-    E -->|✅ Yes| F[Audit Logging Active?]
-    E -->|❌ No| L
-    
-    F -->|✅ Yes| G[Security Scanning Complete?]
-    F -->|❌ No| L
-    
-    G -->|✅ Yes| H[Compliance Requirements Met?]
-    G -->|❌ No| L
-    
-    H -->|✅ Yes| I[✅ Security Approved]
-    H -->|❌ No| L
-    
-    I --> J[🚀 Production Deployment]
-    L --> K[🔧 Fix Security Issues]
+    A[Security Validation] --> B[TLS 1.3 Enabled?]
+    B -->|Yes| C[Authentication Configured?]
+    B -->|No| L[Failed]
+
+    C -->|Yes| D[RBAC Policies Active?]
+    C -->|No| L
+
+    D -->|Yes| E[Encryption at Rest?]
+    D -->|No| L
+
+    E -->|Yes| F[Audit Logging Active?]
+    E -->|No| L
+
+    F -->|Yes| G[Security Scanning Complete?]
+    F -->|No| L
+
+    G -->|Yes| H[Compliance Requirements Met?]
+    G -->|No| L
+
+    H -->|Yes| I[Security Approved]
+    H -->|No| L
+
+    I --> J[Production Deployment]
+    L --> K[Fix Security Issues]
     K --> A
-    
-    style I fill:#4CAF50
-    style J fill:#2196F3
-    style L fill:#F44336
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style L fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
 ----
 
 **Security Checklist**: ✅ **ALL ITEMS COMPLETED**
@@ -620,29 +673,37 @@ graph TD
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
-    A[🔍 Issue Detection] --> B{Severity Level}
-    
-    B -->|Level 1<br/>Info| C[📊 Dashboard Alerts<br/>Automated Recovery]
-    B -->|Level 2<br/>Warning| D[📧 On-call Notification<br/>Engineering Review]
-    B -->|Level 3<br/>Critical| E[📞 Senior Engineering<br/>Immediate Response]
-    B -->|Level 4<br/>Emergency| F[🚨 Emergency Response<br/>Team Activation]
-    
-    C --> G[✅ Self-Healing]
-    D --> H[👨‍💻 Engineer Assignment]
-    E --> I[🔧 Priority Fix]
-    F --> J[🏃‍♂️ All-Hands Response]
-    
-    H --> K[📋 Resolution & Documentation]
+    A[Issue Detection] --> B{Severity Level}
+
+    B -->|Level 1<br/>Info| C[Dashboard Alerts<br/>Automated Recovery]
+    B -->|Level 2<br/>Warning| D[On-call Notification<br/>Engineering Review]
+    B -->|Level 3<br/>Critical| E[Senior Engineering<br/>Immediate Response]
+    B -->|Level 4<br/>Emergency| F[Emergency Response<br/>Team Activation]
+
+    C --> G[Self-Healing]
+    D --> H[Engineer Assignment]
+    E --> I[Priority Fix]
+    F --> J[All-Hands Response]
+
+    H --> K[Resolution & Documentation]
     I --> K
     J --> K
-    K --> L[✅ Issue Resolved]
-    
-    style C fill:#4CAF50
-    style D fill:#FF9800
-    style E fill:#F44336
-    style F fill:#D32F2F
-    style L fill:#4CAF50
+    K --> L[Issue Resolved]
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style K fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
 **Support Information**:
@@ -657,35 +718,39 @@ graph TB
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
-    subgraph "💻 Compute Resources"
-        A[CPU: 4 cores<br/>✅ Current Usage: 45.2%]
-        B[Memory: 8GB<br/>✅ Current Usage: 62.8%]
-        C[Network: 1Gbps<br/>✅ Current: 156.8 Mbps]
+    subgraph "Compute Resources"
+        A[CPU: 4 cores<br/>Current Usage: 45.2%]
+        B[Memory: 8GB<br/>Current Usage: 62.8%]
+        C[Network: 1Gbps<br/>Current: 156.8 Mbps]
     end
-    
-    subgraph "💾 Storage Resources"
-        D[Data: 100GB<br/>✅ Primary Storage]
-        E[Cache: 50GB<br/>✅ Cache Storage]
-        F[Backup: 200GB<br/>✅ Backup Storage]
+
+    subgraph "Storage Resources"
+        D[Data: 100GB<br/>Primary Storage]
+        E[Cache: 50GB<br/>Cache Storage]
+        F[Backup: 200GB<br/>Backup Storage]
     end
-    
-    subgraph "📊 Performance Targets"
-        G[QPS: 2,847+<br/>✅ Achieved]
-        H[Latency: 23.4ms avg<br/>✅ Excellent]
-        I[Cache: 94.2% hit rate<br/>✅ Optimized]
+
+    subgraph "Performance Targets"
+        G[QPS: 2,847+<br/>Achieved]
+        H[Latency: 23.4ms avg<br/>Excellent]
+        I[Cache: 94.2% hit rate<br/>Optimized]
     end
-    
+
     A --> G
     B --> H
     D --> I
-    
-    style A fill:#4CAF50
-    style B fill:#4CAF50
-    style C fill:#4CAF50
-    style G fill:#2196F3
-    style H fill:#2196F3
-    style I fill:#2196F3
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
 ----
 
 **Resource Guidelines**:
