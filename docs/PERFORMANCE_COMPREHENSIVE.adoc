@@ -12,11 +12,11 @@ toc::[]
 
 ProximaDB delivers **exceptional performance** with up to **20.6 million operations per second** for distance computations, leveraging advanced SIMD optimization and hardware acceleration. The unified distance computation engine provides consistent, high-throughput vector similarity calculations across multiple dimensions and metrics.
 
-**Key Performance Highlights**:
-- **Distance Computation**: Up to 20.6M ops/sec (128D DotProduct)
-- **Vector Creation**: Up to 31.5M vectors/sec
-- **HNSW Indexing**: Up to 550K searches/sec
-- **Competitive Advantage**: 2-3x faster than industry leaders
+**Verified Performance Results**:
+- **Distance Computation**: Up to 20.6M ops/sec (128D DotProduct, verified on AMD Ryzen 9 7950X)
+- **Vector Creation**: Up to 31.5M vectors/sec (verified on test hardware)
+- **HNSW Indexing**: Up to 550K searches/sec (verified with M=16, ef=100 configuration)
+- **LSH Indexing**: Up to 174K searches/sec (verified with 8 tables, 10 hashes configuration)
 
 == Hardware Environment
 
@@ -317,46 +317,31 @@ flowchart LR
 
 *Configuration: 8 tables, 10 hashes*
 
-== Competitive Analysis
+== Performance Analysis
 
-=== Industry Comparison
+=== Verified Results Summary
 
-[cols="2,2,2,2,2"]
+[cols="2,2,2,2"]
 |===
-|System |128D Euclidean (ops/sec) |512D Euclidean (ops/sec) |ProximaDB Advantage |Market Position
+|Dimension |Best Metric |Verified Throughput |Test Environment
 
-|**ProximaDB**
-|**18,094,962**
-|**3,709,446**
-|**Baseline**
-|**Leader**
+|**128D**
+|DotProduct
+|**20,624,936 ops/sec**
+|AMD Ryzen 9 7950X, AVX512
 
-|Pinecone
-|~8,000,000
-|~1,500,000
-|**2.3x faster**
-|Challenger
+|**256D**
+|DotProduct
+|**8,381,457 ops/sec**
+|AMD Ryzen 9 7950X, AVX512
 
-|Weaviate
-|~6,000,000
-|~1,200,000
-|**3.0x faster**
-|Challenger
-
-|Qdrant
-|~10,000,000
-|~2,000,000
-|**1.8x faster**
-|Strong Competitor
-
-|Chroma
-|~5,000,000
-|~1,000,000
-|**3.6x faster**
-|Niche Player
+|**512D**
+|DotProduct
+|**3,779,175 ops/sec**
+|AMD Ryzen 9 7950X, AVX512
 |===
 
-NOTE: Competitor numbers are approximate based on published benchmarks and may vary by configuration
+NOTE: Results verified through multiple benchmark runs on consistent hardware configuration
 
 == Deployment Recommendations
 
@@ -435,20 +420,24 @@ NOTE: Competitor numbers are approximate based on published benchmarks and may v
 |14.1M+ ops/sec (128D)
 |===
 
-== Future Optimization Roadmap
+== Technical Implementation Notes
 
-=== Planned Enhancements
+=== SIMD Optimization Details
 
-* **GPU Acceleration**: CUDA/ROCm/MPS support for extreme scale
-* **Advanced Quantization**: Neural compression with AI-optimized vector quantization
-* **Distributed Computing**: Multi-node scaling for massive datasets
-* **Enhanced Caching**: Advanced memory hierarchy utilization
+ProximaDB automatically detects and utilizes available SIMD instructions:
 
-=== Research Areas
+* **Runtime Detection**: Hardware capabilities detected at startup and cached
+* **Instruction Selection**: Optimal SIMD instructions selected based on available CPU features
+* **Fallback Support**: Scalar implementations ensure compatibility across all hardware
 
-* **Quantum-inspired algorithms**: Novel distance computation approaches
-* **Neural compression**: AI-optimized vector quantization
-* **Adaptive SIMD**: Dynamic instruction selection based on workload
+=== Benchmark Methodology
+
+All performance results collected using:
+
+* **Consistent Hardware**: AMD Ryzen 9 7950X 16-Core Processor
+* **Controlled Environment**: WSL2 Linux with dedicated resources
+* **Multiple Runs**: Results averaged across multiple benchmark executions
+* **Production Build**: Release optimizations enabled (-O3 equivalent)
 
 ---
 
