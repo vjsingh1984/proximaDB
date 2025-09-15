@@ -459,12 +459,12 @@ mod tests {
         let key1_item = deserialized[0]
             .metadata
             .iter()
-            .find(|item| key == "key1")
+            .find(|item| item.key == "key1")
             .unwrap();
         let key2_item = deserialized[0]
             .metadata
             .iter()
-            .find(|item| key == "key2")
+            .find(|item| item.key == "key2")
             .unwrap();
         assert!(
             matches!(&key1_item.value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "value1")

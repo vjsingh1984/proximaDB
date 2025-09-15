@@ -417,12 +417,12 @@ mod tests {
 
         // Test put and get
         cache.put((0, 0), block.clone()).await;
-        let retrieved = cache.get(&key).await;
+        let retrieved = cache.get(&(0, 0)).await;
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().records[0].id, Some("test".to_string()));
 
         // Test cache miss
-        let miss = cache.get(&key).await;
+        let miss = cache.get(&(1, 1)).await;
         assert!(miss.is_none());
     }
 }

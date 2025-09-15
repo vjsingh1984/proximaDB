@@ -558,6 +558,14 @@ mod tests {
     use super::*;
     use crate::storage::tenant::DataSensitivityLevel;
 
+    /// Performance requirements struct for testing
+    #[derive(Debug, Clone)]
+    struct PerformanceRequirements {
+        pub latency_requirement_ms: u64,
+        pub throughput_requirement_qps: u64,
+        pub availability_requirement: f64,
+    }
+
     #[tokio::test]
     async fn test_enterprise_nlp_engine_creation() {
         let nlp_engine = EnterpriseNLPEngine::new().await.unwrap();
@@ -572,7 +580,7 @@ mod tests {
         let business_context = BusinessContext {
             primary_function: "enterprise_risk_assessment".to_string(),
             data_sensitivity: DataSensitivityLevel::Confidential,
-            performance_requirements: crate::storage::tenant::PerformanceRequirements {
+            performance_requirements: PerformanceRequirements {
                 latency_requirement_ms: 50,
                 throughput_requirement_qps: 5000,
                 availability_requirement: 0.999,
@@ -596,7 +604,7 @@ mod tests {
         let business_context = BusinessContext {
             primary_function: "customer_relationship_management".to_string(),
             data_sensitivity: DataSensitivityLevel::Internal,
-            performance_requirements: crate::storage::tenant::PerformanceRequirements {
+            performance_requirements: PerformanceRequirements {
                 latency_requirement_ms: 100,
                 throughput_requirement_qps: 2000,
                 availability_requirement: 0.99,

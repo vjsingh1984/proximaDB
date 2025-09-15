@@ -230,13 +230,13 @@ async fn test_viper_engine_metrics_collection() -> Result<()> {
     assert!(metrics.contains_key("collection_count"));
 
     // Verify metric values exist (u64 values are always >= 0)
-    if let Some(serde_json::Value::Number(ops)) = metrics.get(key) {
+    if let Some(serde_json::Value::Number(ops)) = metrics.get("flush_operations") {
         let _ = ops.as_u64(); // Just verify it can be parsed as u64
     }
-    if let Some(serde_json::Value::Number(mem)) = metrics.get(key) {
+    if let Some(serde_json::Value::Number(mem)) = metrics.get("memory_usage_bytes") {
         let _ = mem.as_u64(); // Just verify it can be parsed as u64
     }
-    if let Some(serde_json::Value::Number(cols)) = metrics.get(key) {
+    if let Some(serde_json::Value::Number(cols)) = metrics.get("collection_count") {
         let _ = cols.as_u64(); // Just verify it can be parsed as u64
     }
 

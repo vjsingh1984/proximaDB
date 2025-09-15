@@ -717,7 +717,8 @@ impl OptimizationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::{DataSensitivityLevel, PerformanceRequirements};
+    use crate::storage::tenant::{DataSensitivityLevel};
+    use crate::storage::tenant::context::{PerformanceRequirements, DomainStatus};
 
     #[tokio::test]
     async fn test_domain_knowledge_graph_creation() {
@@ -737,7 +738,7 @@ mod tests {
             domain_name: "risk".to_string(),
             business_context,
             created_at: Utc::now(),
-            status: super::domain::DomainStatus::Active,
+            status: DomainStatus::Active,
             collections: Arc::new(DashMap::new()),
         };
         
@@ -758,7 +759,7 @@ mod tests {
             domain_name: "customer".to_string(),
             business_context,
             created_at: Utc::now(),
-            status: super::domain::DomainStatus::Active,
+            status: DomainStatus::Active,
             collections: Arc::new(DashMap::new()),
         };
         

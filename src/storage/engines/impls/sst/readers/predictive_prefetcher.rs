@@ -654,7 +654,7 @@ mod tests {
         let pattern = prefetcher
             .access_patterns
             .sequential_patterns
-            .get(key)
+            .get("test.sstable")
             .unwrap();
 
         assert_eq!(pattern.stride, 1);
@@ -696,7 +696,7 @@ mod tests {
         }
 
         // Check hot blocks were identified
-        let pattern = prefetcher.access_patterns.random_patterns.get(key).unwrap();
+        let pattern = prefetcher.access_patterns.random_patterns.get("random.sstable").unwrap();
 
         assert_eq!(pattern.hot_blocks[&5], 20);
         assert_eq!(pattern.hot_blocks[&10], 20);
@@ -752,7 +752,7 @@ mod tests {
             let pattern = prefetcher
                 .access_patterns
                 .sequential_patterns
-                .get(key)
+                .get("predict.sstable")
                 .unwrap();
             // Pattern should have detected stride of 2
             assert_eq!(pattern.stride, 2);

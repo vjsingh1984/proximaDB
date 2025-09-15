@@ -4,6 +4,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use uuid::Uuid;
 
 use super::block_structures::BlockLocation;
 use crate::core::bloom::{

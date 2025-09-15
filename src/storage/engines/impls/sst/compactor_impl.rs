@@ -1025,7 +1025,7 @@ mod tests {
             base_config,
         ));
 
-        let sst_config = SstQuantizationConfig::default();
+        // Note: Using StorageQuantizationConfig instead of undefined SstQuantizationConfig
         // Create storage quantization engine
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
@@ -1073,7 +1073,7 @@ mod tests {
         );
 
         // Create compactor with PQ sorting
-        let compactor = SstCompactor::new(filesystem_factory, None).with_pq_sorting(adapter);
+        let compactor = SstCompactor::new(filesystem_factory, None).with_pq_sorting(quantization_engine);
 
         // Verify that the sorting strategy is set correctly
         assert!(matches!(

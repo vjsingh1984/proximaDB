@@ -620,7 +620,7 @@ mod tests {
         assert!(cache.get(&key).await.is_some());
 
         // Test put and hit
-        let block = DataBlock::new(1, vec![]);
+        let block = FastLanesDataBlock::new(1, vec![]);
         cache
             .put(
                 key.clone(),
@@ -669,7 +669,7 @@ mod tests {
                 });
             }
 
-            let block = DataBlock::new(i, records);
+            let block = FastLanesDataBlock::new(i, records);
             cache.put(key, block, None).await.unwrap();
         }
 

@@ -85,7 +85,7 @@ mod tests {
 
         let sst_engine = Arc::new(
             SstStorage::new(
-                config.storage.sst_config.clone(),
+                crate::storage::engines::impls::sst::SstStorageConfig::default(),
                 filesystem.clone(),
                 distance_compute,
             )
@@ -96,7 +96,7 @@ mod tests {
         // Create WAL manager
         let wal_config = WALConfig::default();
         let strategy_type =
-            crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::Bincode;
+            crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
         let strategy = crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
             strategy_type,
             &wal_config,
@@ -110,7 +110,22 @@ mod tests {
             .expect("Failed to create WAL manager"),
         );
 
-        let service = VectorOperationsService::new(sst_engine, wal_manager);
+        // Create required services for VectorOperationsService
+        let axis_manager = Arc::new(crate::index::AxisManager::new(crate::index::axis::config::AxisConfig::default()));
+        let collection_service = Arc::new(
+            crate::services::collection::manager::CollectionService::new(
+                Arc::new(crate::services::collection::provider::InMemoryCollectionProvider::new()),
+                config.storage.clone(),
+            )
+        );
+
+        let service = VectorOperationsService::new(
+            sst_engine,
+            wal_manager,
+            axis_manager,
+            collection_service,
+            Default::default(),
+        );
 
         (service, temp_dir)
     }

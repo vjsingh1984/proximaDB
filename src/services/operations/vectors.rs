@@ -2398,24 +2398,21 @@ mod migration_example {
     impl OldVectorOperationsService {
         async fn old_search_with_filters(&self) -> Result<Vec<VectorRecord>> {
             // Problem 1: Two separate optimization calls
-            // NOTE: These are placeholder variables for migration example
-            let search_context = "example_context";
-            let filter = "example_filter";
+            // NOTE: This is a conceptual example showing the old way
 
-            let search_strategy = self
-                .search_optimizer
-                .optimize_search(search_context)
-                .await?;
-            let filter_plan = self.filter_optimizer.optimize_filter(&filter).await?;
+            // OLD: Separate optimization calls (commented out for compilation)
+            // let search_strategy = self.search_optimizer.optimize_search(search_context).await?;
+            // let filter_plan = self.filter_optimizer.optimize_filter(&filter).await?;
 
-            // Problem 2: Manual coordination required
-            let filtered_ids = self.execute_filter(filter_plan)?;
-            let search_results = self.execute_search(search_strategy, Some(filtered_ids))?;
+            // OLD: Manual coordination required (commented out for compilation)
+            // let filtered_ids = self.execute_filter(filter_plan)?;
+            // let search_results = self.execute_search(search_strategy, Some(filtered_ids))?;
 
             // Problem 3: No cross-optimization possible
             // Filters and search are optimized independently
 
-            Ok(search_results)
+            // Return placeholder for example
+            Ok(vec![])
         }
     }
 

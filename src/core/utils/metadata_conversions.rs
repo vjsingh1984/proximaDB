@@ -280,7 +280,7 @@ mod tests {
         let proto_metadata = json_to_proto_metadata(json_map);
 
         assert_eq!(proto_metadata.len(), 2);
-        assert!(proto_metadata.iter().any(|item| key == "active"));
-        assert!(proto_metadata.iter().any(|item| key == "score"));
+        assert!(proto_metadata.iter().any(|item| item.key == "active"));
+        assert!(proto_metadata.iter().any(|item| item.key == "score"));
     }
 }

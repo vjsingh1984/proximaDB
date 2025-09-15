@@ -13,6 +13,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::RwLock;
+
 use tracing::{debug, info, warn};
 
 /// Tracks memory status of indexes for each collection
@@ -315,7 +316,7 @@ pub struct MemoryStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::index::axis::*;
+    use super::*;
 
     #[tokio::test]
     async fn test_memory_tracking() {
@@ -365,7 +366,7 @@ mod tests {
         tracker.record_access("collection1").await;
         tracker.record_fallback("collection1").await;
 
-        let status = tracker.get_memory_status("collection1").await.unwrap();
+        let status = tracker.memory_status("collection1").await.unwrap();
         assert_eq!(status.access_count, 2);
         assert_eq!(status.fallback_count, 1);
     }

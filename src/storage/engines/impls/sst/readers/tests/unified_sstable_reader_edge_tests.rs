@@ -32,7 +32,11 @@ mod edge_tests {
     async fn create_test_reader() -> UnifiedSstableReader {
         let config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-        UnifiedSstableReader::new(filesystem)
+        UnifiedSstableReader::new(
+            filesystem,
+            Arc::new(crate::storage::persistence::zero_copy::orchestrator::ZeroCopyIOSystem::new()),
+            "test_collection".to_string(),
+        )
     }
 
     // Helper to create test collection context

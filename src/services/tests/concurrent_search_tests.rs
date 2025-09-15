@@ -318,8 +318,8 @@ mod tests {
 
                 // All layers should have the same filter
                 wal.contains(&expected_filter.to_string())
-                    && (index.contains_hash(&expected_filter.to_string())
-                        || storage.contains_hash(&expected_filter.to_string()))
+                    && (index.contains(&expected_filter.to_string())
+                        || storage.contains(&expected_filter.to_string()))
             }
         }
 

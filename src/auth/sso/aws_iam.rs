@@ -383,6 +383,12 @@ pub struct AWSUserInfo {
 mod tests {
     use super::*;
 
+    /// SSO Provider enum for testing
+    #[derive(Debug, Clone, PartialEq)]
+    enum SSOProvider {
+        AWSIAM,
+    }
+
     #[test]
     fn test_sso_token_creation() {
         let token = SSOToken::new(

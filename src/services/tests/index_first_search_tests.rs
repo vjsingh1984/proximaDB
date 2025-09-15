@@ -43,20 +43,15 @@ mod tests {
             let mut collections = self.collections.write().await;
 
             let config = CollectionConfig {
+                name: id.to_string(),
                 dimension: 128,
                 distance_metric: DistanceMetric::Cosine as i32,
                 storage_engine: StorageEngine::Viper as i32,
-                primary_indexing_algorithm: if has_index {
-                    IndexingAlgorithm::Hnsw as i32
-                } else {
-                    IndexingAlgorithm::IndexingAlgorithmUnspecified as i32
-                },
                 ..Default::default()
             };
 
             let collection = Collection {
                 id: id.to_string(),
-                name: id.to_string(),
                 config: Some(config),
                 ..Default::default()
             };

@@ -485,7 +485,7 @@ mod tests {
     fn test_p2_matrix_building() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = get_hardware_capabilities();
+        let hardware = crate::core::hardware_capabilities::HardwareCapabilities::detect();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
 
         let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Cosine);
@@ -506,7 +506,7 @@ mod tests {
     fn test_k2_matrix_building() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = get_hardware_capabilities();
+        let hardware = crate::core::hardware_capabilities::HardwareCapabilities::detect();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
 
         let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Euclidean);

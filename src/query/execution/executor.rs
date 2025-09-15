@@ -1666,7 +1666,8 @@ mod executor_tests {
             async fn vector_by_id(&self,_:&str,_:&str)->anyhow::Result<Option<crate::core::VectorRecord>>{ Ok(None) }
             async fn search_vectors_unified(&self,_:&crate::storage::traits::StorageQueryContext)->anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>>{ Ok(vec![]) }
             fn get_filesystem_factory(&self) -> Arc<dyn crate::storage::persistence::filesystem::FilesystemFactory> {
-                Arc::new(crate::storage::persistence::filesystem::LocalFilesystemFactory::default())
+                // TODO: Placeholder for test - FilesystemFactory::new is async
+                unimplemented!("Test method - requires async FilesystemFactory::new")
             }
         }
         let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageEngine>;

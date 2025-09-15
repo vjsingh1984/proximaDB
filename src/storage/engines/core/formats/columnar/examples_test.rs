@@ -22,7 +22,7 @@ pub async fn viper_optimization_example() -> Result<()> {
     println!("=== VIPER Engine Optimization Example ===");
 
     // Initialize hardware capabilities
-    let _ = HardwareCapabilities::initialize_hardware_capabilities_default()?;
+    let _ = HardwareCapabilities::detect();
 
     // Setup
     let temp_dir = tempdir()?;
@@ -88,7 +88,7 @@ pub async fn viper_optimization_example() -> Result<()> {
             metadata.insert(
                 "batch_id".to_string(),
                 SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::IntValue(i / 1000)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i / 1000)),
                 },
             );
 
@@ -101,6 +101,8 @@ pub async fn viper_optimization_example() -> Result<()> {
                 vector,
                 metadata,
                 timestamp: i as i64,
+                quantized_vector: vec![],
+                source: None,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
@@ -269,7 +271,7 @@ pub async fn nova_optimization_example() -> Result<()> {
             metadata.insert(
                 "project_id".to_string(),
                 SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::IntValue(i / 5000)),
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i / 5000)),
                 },
             );
             metadata.insert(
@@ -294,6 +296,8 @@ pub async fn nova_optimization_example() -> Result<()> {
                 vector,
                 metadata,
                 timestamp: (1700000000 + i) as i64,
+                quantized_vector: vec![],
+                source: None,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),

@@ -210,22 +210,23 @@ struct SchemaMetadata {
 }
 
 // Extension traits for specialized caches (would be in actual implementation)
-impl VectorStore {
-    async fn find_similar(&self, _vector: &[f32], _threshold: f32) -> Vec<VectorRecord> {
-        Vec::new() // Placeholder
-    }
-
-    async fn get_batch(&self, keys: &[String]) -> Vec<VectorRecord> {
-        // TODO: Implement proper batch get for BaseCacheImpl
-        let mut results = Vec::new();
-        // for key in keys {
-        //     if let Some(record) = self.get_with_hooks(key).await {
-        //         results.push(record);
-        //     }
-        // }
-        results
-    }
-}
+// Note: Commented out due to trait bound issues with VectorRecord not implementing CacheValue
+// impl VectorStore {
+//     async fn find_similar(&self, _vector: &[f32], _threshold: f32) -> Vec<String> {
+//         Vec::new() // Placeholder
+//     }
+//
+//     async fn get_batch(&self, keys: &[String]) -> Vec<String> {
+//         // TODO: Implement proper batch get for BaseCacheImpl
+//         let mut results = Vec::new();
+//         // for key in keys {
+//         //     if let Some(record) = self.get_with_hooks(key).await {
+//         //         results.push(record);
+//         //     }
+//         // }
+//         results
+//     }
+// }
 
 impl QueryCache {
     fn generate_key(&self, vector: &[f32], k: usize, _filter: Option<&str>) -> String {

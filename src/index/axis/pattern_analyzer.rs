@@ -353,6 +353,6 @@ mod tests {
 
         // Test storage tier mapping
         let storage_tier = integration.map_axis_tier_to_storage(&TierLevel::Memory);
-        assert_eq!(storage_tier, super::StorageTier::Memory);
+        assert_eq!(storage_tier, crate::storage::persistence::filesystem::FileStorageTier::Memory);
     }
 }

@@ -224,9 +224,10 @@ pub mod viper_pipeline_tests {
 
         for level in levels {
             match level {
-                QuantizationLevel::PQ4 | QuantizationLevel::PQ8 | QuantizationLevel::PQ16 | QuantizationLevel::PQ32 => assert!(true),
-                QuantizationLevel::INT8 | QuantizationLevel::Binary => assert!(true),
-                QuantizationLevel::NONE => assert!(true),
+                QuantizationLevel::Pq(_) => assert!(true),
+                QuantizationLevel::Scalar(_) | QuantizationLevel::Binary(_) => assert!(true),
+                QuantizationLevel::None(_) => assert!(true),
+                QuantizationLevel::Uniform(_) | QuantizationLevel::Custom(_) => assert!(true),
             }
         }
     }

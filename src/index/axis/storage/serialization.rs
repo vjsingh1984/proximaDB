@@ -647,6 +647,14 @@ impl DeltaManager {
 mod tests {
     use crate::index::axis::*;
 
+    /// Index type enum for testing
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    enum Index {
+        Hnsw,
+        Ivf,
+        Flat,
+    }
+
     #[test]
     fn test_metadata_serialization() {
         let metadata = IndexMetadata {

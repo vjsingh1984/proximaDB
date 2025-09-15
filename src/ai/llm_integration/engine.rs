@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error};
 use async_trait::async_trait;
+use chrono::Utc;
 
 /// Main LLM Integration Engine that manages multiple providers
 #[derive(Clone)]
@@ -396,6 +397,14 @@ impl std::fmt::Display for LLMProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Finish reason enum for testing
+    #[derive(Debug, Clone)]
+    enum FinishReason {
+        Stop,
+        Length,
+        ContentFilter,
+    }
 
     #[test]
     fn test_llm_request_creation() {

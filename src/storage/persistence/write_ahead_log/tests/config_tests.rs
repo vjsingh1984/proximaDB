@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::services::collection::service_types::CompressionAlgorithm;
+    use crate::core::compression::CompressionAlgorithm;
     use crate::storage::persistence::write_ahead_log::config::{
         CompressionConfig, DiskDistributionStrategy, MemTableConfig, MemTableType, MultiDiskConfig,
         PerformanceConfig, WALConfig, WriteBufferStrategyType,

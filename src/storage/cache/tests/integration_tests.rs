@@ -192,7 +192,7 @@ async fn test_cache_under_memory_pressure() {
             version: Some(1),
         };
         vector_cache
-            .put_with_hooks(format!("pressure_vec_{}", i), crate::storage::cache::Value::VectorRecord(record))
+            .put_with_hooks(format!("pressure_vec_{}", i), record)
             .await;
     }
 
@@ -216,7 +216,7 @@ async fn test_cache_under_memory_pressure() {
         version: Some(1),
     };
     vector_cache
-        .put_with_hooks("test".to_string(), crate::storage::cache::Value::VectorRecord(test_record.clone()))
+        .put_with_hooks("test".to_string(), test_record.clone())
         .await;
     let retrieved = vector_cache.get_with_hooks(&"test".to_string()).await;
     assert!(retrieved.is_some());
@@ -301,7 +301,7 @@ async fn simulate_vector_workload(orchestrator: &CrossCacheOrchestrator, cache: 
             version: Some(1),
         };
 
-        cache.put_with_hooks(format!("vec{}", i), crate::storage::cache::Value::VectorRecord(record)).await;
+        cache.put_with_hooks(format!("vec{}", i), record).await;
         orchestrator
             .on_vector_access(&format!("vec{}", i))
             .await

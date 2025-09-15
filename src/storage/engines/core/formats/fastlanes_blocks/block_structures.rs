@@ -1184,7 +1184,7 @@ mod tests {
 
         let compression_config = BlockCompressionConfig::default();
 
-        let block = RowBasedDataBlock::new(records, compression_config);
+        let block = FastLanesDataBlock::new(records, compression_config);
 
         assert_eq!(block.metadata.record_count, 2);
         assert_eq!(block.id_range.0, "vec_1");
@@ -1196,7 +1196,7 @@ mod tests {
     fn test_superblock_management() {
         let mut superblock = SuperBlock::new(1, "/path/to/file".to_string());
 
-        let block = RowBasedDataBlock::new(
+        let block = FastLanesDataBlock::new(
             vec![VectorRecord::default()],
             BlockCompressionConfig::default(),
         );
@@ -1215,7 +1215,7 @@ mod tests {
             ..Default::default()
         }];
 
-        let block = RowBasedDataBlock::new(records, BlockCompressionConfig::default());
+        let block = FastLanesDataBlock::new(records, BlockCompressionConfig::default());
 
         assert!(block.find_record_by_id("test_id").is_some());
         assert!(block.find_record_by_id("non_existent").is_none());

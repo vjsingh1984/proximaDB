@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -446,7 +446,7 @@ mod tests {
             OptimizedSearchRecord::new("test".to_string(), 0.9)
                 .with_similarity(0.1)
                 .add_vector(vec![1.0, 2.0, 3.0])
-                .with_metadata(TypedMetadata::new())
+                .with_metadata(Default::default())
                 .with_version_info(0, 0),
         ];
 

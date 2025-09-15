@@ -75,17 +75,16 @@ async fn test_metadata_filtering_basic() {
             },
         ];
 
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_a_{}", i),
             vector: vec![i as f32; 3],
             metadata,
             timestamp: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: i as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         records.insert(record.id.clone(), record);
     }
@@ -117,17 +116,16 @@ async fn test_metadata_filtering_basic() {
             },
         ];
 
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_b_{}", i),
             vector: vec![(i + 10) as f32; 3],
             metadata,
             timestamp: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: (i + 5) as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         records.insert(record.id.clone(), record);
     }
@@ -336,17 +334,16 @@ async fn test_metadata_bloom_filter_optimization() {
             },
         ];
 
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_{}", i),
             vector: vec![i as f32; 3],
             metadata,
             timestamp: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: i as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         records.insert(record.id.clone(), record);
     }

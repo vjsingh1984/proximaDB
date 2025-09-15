@@ -10,6 +10,28 @@ mod tests {
     use anyhow::Result;
     use tempfile::TempDir;
 
+    /// Mock P2Matrix struct for testing
+    #[derive(Debug, Clone)]
+    pub struct P2Matrix {
+        pub num_vectors: usize,
+        pub distances: Vec<u16>,
+        pub min_distance: f32,
+        pub max_distance: f32,
+        pub compression: FastLanesScheme,
+        pub compressed_size: usize,
+    }
+
+    impl P2Matrix {
+        pub fn get_distance(&self, i: usize, j: usize) -> u16 {
+            if i == j {
+                return 0;
+            }
+            let (row, col) = if i < j { (i, j) } else { (j, i) };
+            let index = row * self.num_vectors + col - (row * (row + 1)) / 2 - row - 1;
+            self.distances[index]
+        }
+    }
+
     /// Test P² matrix creation with upper triangle indexing
     #[test]
     fn test_p2_matrix_upper_triangle_indexing() {

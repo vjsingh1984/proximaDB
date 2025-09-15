@@ -10,7 +10,7 @@ mod tests {
     };
     use super::super::{
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
-        SystemMetadata, write_ahead_log::MetadataWALConfig, CollectionMetadata, AccessPattern,
+        SystemMetadata, write_ahead_log::{MetadataWALConfig, AccessPattern}, CollectionMetadata,
     };
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
@@ -293,6 +293,30 @@ mod tests {
                 wal_entries: 0,
                 wal_size_bytes: 0,
             })
+        }
+
+        async fn begin_transaction(&self) -> Result<String> {
+            Ok(Uuid::new_v4().to_string())
+        }
+
+        async fn commit_transaction(&self, _transaction_id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn rollback_transaction(&self, _transaction_id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn backup(&self, _backup_path: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn restore(&self, _backup_path: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<()> {
+            Ok(())
         }
 
         async fn health_check(&self) -> Result<bool> {

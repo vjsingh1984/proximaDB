@@ -60,7 +60,7 @@ mod tests {
     fn test_phase1_boundary_detection_basic() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = get_hardware_capabilities();
+        let hardware = crate::core::hardware_capabilities::HardwareCapabilities::detect();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
         let builder = MatrixBuilder::new(
             distance_compute.clone(),
@@ -134,7 +134,7 @@ mod tests {
     fn test_phase2_spillover_detection() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = get_hardware_capabilities();
+        let hardware = crate::core::hardware_capabilities::HardwareCapabilities::detect();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
         let builder =
             MatrixBuilder::new(distance_compute.clone(), hardware, DistanceMetric::Cosine);

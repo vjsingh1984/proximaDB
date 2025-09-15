@@ -772,7 +772,7 @@ mod tests {
         let config = StrategyConfig::default();
         let strategy_selector = SmartExecutionStrategy::new(config);
 
-        let _search_params = SearchParams::default();
+        let search_params = SearchParams::default();
 
         let strategy = strategy_selector
             .select_strategy("test_collection", &search_params, None)

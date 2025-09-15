@@ -30,7 +30,7 @@ mod tests {
                 DistanceMetric::Euclidean,
                 DistanceMetric::DotProduct,
             ] {
-                let calc = create_distance_calculator(metric);
+                let calc = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(metric);
 
                 // Warmup
                 for _ in 0..100 {
