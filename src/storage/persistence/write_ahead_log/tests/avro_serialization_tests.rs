@@ -8,7 +8,7 @@
 //! - Stats tracking
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -61,7 +61,6 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         version: Some(1),
         quantized_vector: vec![],
         source: None,
-        ..Default::default()
     }
 }
 
@@ -138,7 +137,7 @@ async fn test_avro_write_and_read_batch() {
     // Collect IDs and verify all are present (order not guaranteed)
     let mut ids: Vec<String> = retrieved
         .iter()
-        .map(|v| v.id.as_ref().unwrap().clone())
+        .map(|v| v.id.clone())
         .collect();
     ids.sort();
     assert_eq!(ids, vec!["vec1", "vec2", "vec3"]);
@@ -169,7 +168,7 @@ async fn test_avro_search_by_id() {
         .expect("Failed to search");
 
     assert!(found.is_some());
-    assert_eq!(found.unwrap().id.as_ref().unwrap(), "search_test");
+    assert_eq!(found.unwrap().id, "search_test");
 
     // Search for non-existing vector
     let not_found = strategy
@@ -235,7 +234,7 @@ async fn test_avro_stats_tracking() {
     create_collection_write_buffer_dir(collection_id).await;
 
     // Get initial stats
-    let initial_stats = strategy.stats().await.expect("Failed to get stats");
+    let initial_stats = strategy.get_strategy_stats().await.expect("Failed to get stats");
 
     assert_eq!(initial_stats.total_entries, 0);
     assert_eq!(initial_stats.memory_entries, 0);
@@ -253,7 +252,7 @@ async fn test_avro_stats_tracking() {
         .expect("Failed to write batch");
 
     // Check updated stats
-    let updated_stats = strategy.stats().await.expect("Failed to get stats");
+    let updated_stats = strategy.get_strategy_stats().await.expect("Failed to get stats");
 
     assert_eq!(updated_stats.total_entries, 2);
     assert_eq!(updated_stats.memory_entries, 2);
@@ -286,7 +285,7 @@ async fn test_avro_collection_stats() {
 
     // Get collection-specific stats
     let col_stats = strategy
-        .collection_stats(collection_id)
+        .get_collection_stats(collection_id)
         .await
         .expect("Failed to get collection stats");
 
@@ -383,7 +382,7 @@ async fn test_avro_empty_collection_operations() {
     assert_eq!(search_results.len(), 0);
 
     let stats = strategy
-        .collection_stats(collection_id)
+        .get_collection_stats(collection_id)
         .await
         .expect("Failed to get stats for empty collection");
     assert_eq!(stats.total_entries, 0);
@@ -425,16 +424,12 @@ async fn test_avro_multiple_collections() {
         assert!(
             vectors[0]
                 .id
-                .as_ref()
-                .unwrap()
-                .contains_hash(&format!("col{}_", i))
+                .contains(&format!("col{}_", i))
         );
         assert!(
             vectors[1]
                 .id
-                .as_ref()
-                .unwrap()
-                .contains_hash(&format!("col{}_", i))
+                .contains(&format!("col{}_", i))
         );
     }
 }
@@ -471,14 +466,14 @@ mod integration_tests {
 
             Ok(FlushResult {
                 success: true,
-                entries_flushed: 10,
-                bytes_written: 1024,
-                files_created: 1,
-                duration_ms: 100,
+                collections_affected: vec![],
+                entries_flushed: Some(10),
+                bytes_written: Some(1024),
+                files_created: Some(1),
+                duration_ms: Some(100),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
                 compaction_triggered: false,
-                collections_affected: vec![],
                 flushed_batch_ids: vec![],
             })
         }
@@ -516,13 +511,10 @@ mod integration_tests {
             Ok(None)
         }
 
-        async fn search_vectors(
+        async fn search_vectors_unified(
             &self,
-            _query_context: &crate::storage::traits::StorageQueryContext,
-            _operation_name: &str,
-            _query_vector: &[f32],
-            _top_k: usize,
-        ) -> Result<Vec<VectorRecord>> {
+            _ctx: &crate::storage::traits::StorageQueryContext,
+        ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(vec![])
         }
 

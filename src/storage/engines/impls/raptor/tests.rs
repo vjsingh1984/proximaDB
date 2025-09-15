@@ -5,6 +5,7 @@ mod tests {
     use crate::storage::traits::UnifiedStorageEngine;
     use anyhow::Result;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     async fn create_test_engine() -> Result<RaptorEngine> {
         let config = RaptorConfig {
@@ -34,13 +35,14 @@ mod tests {
             dimension: 4,
             compaction_config: None,
             compaction_min_size_mb: 10,
+            enable_clustering_aware_compaction: false,
+            max_parallel_reads: 4,
         };
 
         let cache = Arc::new(
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(
-                crate::storage::cache::config::CacheConfig::default(),
+                1024 * 1024 * 10, // 10MB cache
             )
-            .await?,
         );
 
         let engine = RaptorEngine::new(

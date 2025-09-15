@@ -1334,13 +1334,15 @@ mod tests {
         // Write some test records
         for i in 0..25 {
             let record = VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
-                metadata: None,
-                timestamp: i as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             };
 
             writer.write_record(record).await.unwrap();
@@ -1363,13 +1365,15 @@ mod tests {
 
         let records: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
-                id: Some(format!("batch_vec_{}", i)),
+                id: format!("batch_vec_{}", i),
                 vector: (0..256).map(|j| (i + j) as f32 * 0.001).collect(),
-                metadata: None,
-                timestamp: i as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             })
             .collect();
 
@@ -1411,13 +1415,15 @@ mod tests {
             let vector = (0..64).map(|j| base_value + (j as f32 * 0.01)).collect();
 
             records.push(VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector,
-                metadata: None,
-                timestamp: i as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             });
         }
 
@@ -1444,22 +1450,26 @@ mod tests {
     fn test_pq_codebook_generation() {
         let records = vec![
             VectorRecord {
-                id: Some("test1".to_string()),
+                id: "test1".to_string(),
                 vector: vec![1.0, 2.0, 3.0, 4.0],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
-                id: Some("test2".to_string()),
+                id: "test2".to_string(),
                 vector: vec![1.1, 2.1, 3.1, 4.1],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
         ];
 

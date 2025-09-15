@@ -545,24 +545,26 @@ mod tests {
         // Create test vectors
         let records = vec![
             VectorRecord {
-                id: Some("vec1".to_string()),
+                id: "vec1".to_string(),
                 vector: vec![0.1, 0.2, 0.3, 0.4],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
+                source: Some("test".to_string()),
             },
             VectorRecord {
-                id: Some("vec2".to_string()),
+                id: "vec2".to_string(),
                 vector: vec![0.5, 0.6, 0.7, 0.8],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
+                source: Some("test".to_string()),
             },
         ];
 
@@ -573,8 +575,8 @@ mod tests {
             ResolutionLevel::PQ8,
             ResolutionLevel::FP32,
         ] {
-            let serialized = serializer.serialize_resolution(&records, level)?;
-            let (deserialized, metadata) = serializer.deserialize_resolution(&serialized)?;
+            let serialized = serializer.serialize_resolution(&records, level).await?;
+            let (deserialized, metadata) = serializer.deserialize_resolution(&serialized).await?;
 
             assert_eq!(deserialized.len(), records.len());
             assert_eq!(metadata.resolution_level, level);

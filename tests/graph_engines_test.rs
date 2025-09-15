@@ -141,8 +141,8 @@ async fn test_pulsar_edge_operations() {
         updated_at_ms: 0,
     };
 
-    engine.add_node(node1).unwrap();
-    engine.add_node(node2).unwrap();
+    engine.insert_node(node1).unwrap();
+    engine.insert_node(node2).unwrap();
 
     // Create edge
     let edge = Edge {
@@ -156,23 +156,23 @@ async fn test_pulsar_edge_operations() {
         updated_at_ms: 0,
     };
 
-    let inserted_edge = engine.add_edge(edge).unwrap();
+    let inserted_edge = engine.insert_edge(edge).unwrap();
     assert_eq!(inserted_edge.id, "edge1");
 
     // Wait for async operations
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Test edge retrieval
-    let retrieved_edge = engine.get_edge_by_id("edge1").unwrap().unwrap();
+    let retrieved_edge = engine.get_edge("edge1").unwrap().unwrap();
     assert_eq!(retrieved_edge.edge_type, "KNOWS");
 
     // Test outgoing edges
-    let outgoing = engine.get_edges_from_node("node1", None).unwrap();
+    let outgoing = engine.get_outgoing_edges("node1", None).unwrap();
     assert_eq!(outgoing.len(), 1);
     assert_eq!(outgoing[0].to_node_id, "node2");
 
     // Test neighbors
-    let neighbors = engine.get_connected_nodes("node1", None).unwrap();
+    let neighbors = engine.get_neighbors("node1", None).unwrap();
     assert_eq!(neighbors.len(), 1);
     assert_eq!(neighbors[0].id, "node2");
 }
@@ -195,11 +195,11 @@ async fn test_quasar_tiering_behavior() {
             labels: vec!["TestNode".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at_ms: None,
-            updated_at_ms: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
-        engine.add_node(node).unwrap();
+        engine.insert_node(node).unwrap();
     }
 
     // Wait for background migration
@@ -295,10 +295,10 @@ async fn test_pulsar_cross_shard_operations() {
             labels: vec!["Person".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at_ms: None,
-            updated_at_ms: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
-        engine.add_node(node).unwrap();
+        engine.insert_node(node).unwrap();
     }
 
     // Wait for async operations
@@ -311,7 +311,7 @@ async fn test_pulsar_cross_shard_operations() {
     assert!(nodes.len() >= 1);
 
     // Test nodes by label (cross-shard query)
-    let person_nodes = engine.get_nodes_with_label("Person").unwrap();
+    let person_nodes = engine.get_nodes_by_label("Person").unwrap();
     assert_eq!(person_nodes.len(), 5);
 
     let stats = engine.get_stats().await;

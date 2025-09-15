@@ -7,7 +7,7 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::SimilarityResult;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-    use crate::core::{String, VectorRecord};
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::proto::proximadb_v1::MetadataItem;
     use crate::storage::engines::core::formats::columnar::{
         CollectionContext, UnifiedParquetReader,
@@ -27,7 +27,7 @@ mod tests {
     async fn create_test_reader() -> UnifiedParquetReader {
         let config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-        UnifiedParquetReader::new(filesystem).await
+        UnifiedParquetReader::new(filesystem).await.unwrap()
     }
 
     fn create_test_context() -> CollectionContext {
@@ -160,7 +160,7 @@ mod tests {
         let fields = extract_filter_fields(&filter);
         assert_eq!(fields.len(), 2);
         assert!(fields.contains(&"status".to_string()));
-        assert!(fields.contains_hash(&"priority".to_string()));
+        assert!(fields.contains(&"priority".to_string()));
     }
 
     // Helper function to extract fields from filter
@@ -227,7 +227,7 @@ mod tests {
     }
 
     fn coalesce_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
-        if ranges.is_none() {
+        if ranges.is_empty() {
             return ranges;
         }
 
@@ -341,12 +341,22 @@ mod tests {
                         Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             s.clone()
                         }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::IntValue(n)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                             n.to_string()
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                             b.to_string()
                         }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                            i.to_string()
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(bytes)) => {
+                            format!("{:?}", bytes)
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                            "null".to_string()
+                        }
+                        _ => "unknown".to_string(),
                         None => String::new(),
                     };
                     struct_builder
@@ -402,36 +412,24 @@ mod tests {
         let mut vectors = Vec::new();
 
         for i in 0..count {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("cat_{}", i % 3))),
+            });
+            metadata.insert("score".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue((i as f32 * 0.5).to_string())),
+            });
+
             let vector = VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vec![i as f32 * 0.1; dim],
-                metadata: vec![
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
-                                "cat_{}",
-                                i % 3
-                            )),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "score".to_string(),
-                        value: Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                (i as f32 * 0.5).to_string(),
-                            ),
-                        ),
-                    },
-                ],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                metadata,
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: Some(i as f32),
-                similarity: None,
-                ..Default::default()
+                quantized_vector: vec![],
+                source: Some("test".to_string()),
             };
             vectors.push(vector);
         }
@@ -492,7 +490,7 @@ mod tests {
         let mut test_vectors = Vec::new();
         for i in 0..5 {
             let mut vec = create_test_vectors(1, 3)[0].clone();
-            vec.id = Some(format!("vec_{}", i));
+            vec.id = format!("vec_{}", i);
             vec.vector = match i {
                 0 => vec![1.0, 0.0, 0.0],
                 1 => vec![0.0, 1.0, 0.0],
@@ -527,6 +525,10 @@ mod tests {
             enable_two_stage: None,
             enable_clustering_hint: None,
             enable_metadata_filtering_hint: None,
+            enable_progressive_search: None,
+            filters: None,
+            optimization_hint: None,
+            use_hybrid_search: None,
             timeout_ms: None,
         };
 

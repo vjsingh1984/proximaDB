@@ -20,7 +20,9 @@ use super::super::batch_strategy::WALBatchStrategy;
 use super::super::config::{DurabilityLevel, SyncMode, WriteBufferStrategyType};
 use super::super::proto_serialization_strategy::ProtoSerializationStrategy;
 use super::super::*;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::proximadb_v1::SqlValue;
+use std::collections::HashMap;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -84,17 +86,15 @@ async fn test_durability_level_no_sync() {
 
     let collection_id = "test_collection";
     let vectors = vec![VectorRecord {
-        id: Some("vec1".to_string()),
+        id: "vec1".to_string(),
         vector: vec![1.0, 2.0, 3.0],
-        metadata: vec![],
+        metadata: HashMap::new(),
         timestamp: 0,
+        quantized_vector: vec![],
+        source: None,
         updated_at: None,
         expires_at: None,
-        similarity: None,
-        // rank removed -  None,
-        similarity: None,
-        version: None,
-        ..Default::default()
+        version: Some(1),
     }];
 
     // Insert vectors - should not call sync
@@ -298,7 +298,7 @@ async fn test_recovery_skips_corrupted_checksum() {
 
     // Write a batch to file
     let serializer = ProtocolBuffersSerializer::new();
-    let rec = crate::core::VectorRecord { id: Some("v1".into()), vector: vec![0.1,0.2], metadata: vec![], timestamp: 0, updated_at: None, expires_at: None, version: Some(1), quantized_vector: vec![], source: None };
+    let rec = VectorRecord { id: "v1".to_string(), vector: vec![0.1,0.2], metadata: HashMap::new(), timestamp: 0, updated_at: None, expires_at: None, version: Some(1), quantized_vector: vec![], source: None };
     let data = serializer.serialize_batch(&vec![rec]).unwrap();
     let bid = BatchId::new();
     dm.write_batch(cid, &bid, &data, crate::storage::persistence::write_ahead_log::serialization::SerializationFormat::ProtocolBuffers).await.unwrap();
@@ -314,11 +314,12 @@ async fn test_recovery_skips_corrupted_checksum() {
         fn engine_name(&self) -> &'static str { "Mock" }
         fn engine_version(&self) -> &'static str { "1" }
         fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy { crate::storage::traits::StorageEngineStrategy::Lsm }
-        async fn do_flush(&self, p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult, crate::core::StorageError> { let mut g = self.cnt.lock().await; *g += p.vector_records.len() as u64; Ok(Default::default()) }
-        async fn do_compact(&self, _: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult, crate::core::StorageError> { Ok(Default::default()) }
-        async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>, crate::core::StorageError> { Ok(HashMap::new()) }
-        async fn vector_by_id(&self, _: &str, _: &str) -> Result<Option<crate::core::VectorRecord>, crate::core::StorageError> { Ok(None) }
-        async fn search_vectors_unified(&self, _: &crate::storage::traits::StorageQueryContext) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, crate::core::StorageError> { Ok(vec![]) }
+        fn get_filesystem_factory(&self) -> Arc<crate::storage::persistence::filesystem::FilesystemFactory> { unimplemented!() }
+        async fn do_flush(&self, p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult, anyhow::Error> { let mut g = self.cnt.lock().await; *g += p.vector_records.len() as u64; Ok(Default::default()) }
+        async fn do_compact(&self, _: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult, anyhow::Error> { Ok(Default::default()) }
+        async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>, anyhow::Error> { Ok(HashMap::new()) }
+        async fn vector_by_id(&self, _: &str, _: &str) -> Result<Option<VectorRecord>, anyhow::Error> { Ok(None) }
+        async fn search_vectors_unified(&self, _: &crate::storage::traits::StorageQueryContext) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, anyhow::Error> { Ok(vec![]) }
     }
 
     let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default()));

@@ -683,7 +683,10 @@ pub fn create_lsh_index_for_collection(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::index::axis::*;
+    use crate::proto::proximadb_v1::VectorRecord;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_lsh_basic_operations() {
@@ -707,16 +710,15 @@ mod tests {
 
         for (i, vector) in vectors.iter().enumerate() {
             let record = VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vector.clone(),
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: Some(0),
+                updated_at: 0,
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: None,
+                source: "test".to_string(),
             };
             index
                 .add(format!("vec_{}", i), Arc::new(record))
@@ -757,16 +759,15 @@ mod tests {
 
         for (i, vector) in vectors.iter().enumerate() {
             let record = VectorRecord {
-                id: Some(format!("binary_{}", i)),
+                id: format!("binary_{}", i),
                 vector: vector.clone(),
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: Some(0),
+                updated_at: 0,
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: None,
+                source: "test".to_string(),
             };
             index
                 .add(format!("binary_{}", i), Arc::new(record))

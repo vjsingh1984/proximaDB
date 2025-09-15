@@ -21,12 +21,16 @@ fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
         .map(|i| VectorRecord {
             id: format!("vec_{}", i),
             vector: (0..dims).map(|d| (i * dims + d) as f32 / 100.0).collect(),
-            metadata: Some(HashMap::from([
-                ("type".to_string(), "test".to_string()),
-                ("index".to_string(), i.to_string()),
-            ])),
+            metadata: HashMap::from([
+                ("type".to_string(), crate::proto::proximadb_v1::SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string())) }),
+                ("index".to_string(), crate::proto::proximadb_v1::SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string())) }),
+            ]),
             timestamp: i as i64,
             expires_at: None,
+            quantized_vector: vec![],
+            source: None,
+            updated_at: None,
+            version: Some(1),
         })
         .collect()
 }
@@ -71,9 +75,10 @@ async fn test_flush_operation() {
 
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        records: records.clone(),
-        collection_config: None,
-        level: None,
+        force: false,
+        synchronous: true,
+        hints: HashMap::new(),
+        timeout_ms: None,
     };
 
     let result = engine.do_flush(&params).await.unwrap();
@@ -103,9 +108,10 @@ async fn test_vector_search() {
     let records = create_test_records(50, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        records: records.clone(),
-        collection_config: None,
-        level: None,
+        force: false,
+        synchronous: true,
+        hints: HashMap::new(),
+        timeout_ms: None,
     };
 
     engine.do_flush(&params).await.unwrap();
@@ -165,9 +171,10 @@ async fn test_vector_by_id() {
     let records = create_test_records(10, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        records: records.clone(),
-        collection_config: None,
-        level: None,
+        force: false,
+        synchronous: true,
+        hints: HashMap::new(),
+        timeout_ms: None,
     };
 
     engine.do_flush(&params).await.unwrap();
@@ -362,10 +369,12 @@ mod clustering_tests {
 
     #[test]
     fn test_hilbert_2d_ordering() {
-        let key00 = clustering::hilbert_encode_2d(0, 0);
-        let key01 = clustering::hilbert_encode_2d(0, u32::MAX);
-        let key10 = clustering::hilbert_encode_2d(u32::MAX, 0);
-        let key11 = clustering::hilbert_encode_2d(u32::MAX, u32::MAX);
+        use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
+        let curve = HilbertCurve::new(2, 16);
+        let key00 = curve.encode(&[0, 0]);
+        let key01 = curve.encode(&[0, u32::MAX >> 16]);
+        let key10 = curve.encode(&[u32::MAX >> 16, 0]);
+        let key11 = curve.encode(&[u32::MAX >> 16, u32::MAX >> 16]);
 
         // Basic ordering test
         assert!(key00 < key11);

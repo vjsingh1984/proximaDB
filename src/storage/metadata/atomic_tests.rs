@@ -10,7 +10,7 @@ mod tests {
     };
     use super::super::{
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
-        SystemMetadata, write_ahead_log::MetadataWALConfig,
+        SystemMetadata, write_ahead_log::MetadataWALConfig, CollectionMetadata, AccessPattern,
     };
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,

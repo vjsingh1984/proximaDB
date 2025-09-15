@@ -111,7 +111,6 @@ fn create_test_collection(
             dimension: 128,
             distance_metric: 0,            // Cosine
             storage_engine: 0,             // VIPER
-            primary_indexing_algorithm: 0, // HNSW
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -120,42 +119,40 @@ fn create_test_collection(
             description: None,
             tags: vec![],
             owner: None,
-            compression: None,
-            storage_location: None,
-            optimization_hints: None,
         }),
         stats: None,
-        timestamp: chrono::Utc::now().timestamp(),
+        // timestamp field not available in Collection
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp(),
+            backup_paths: vec![],
+            engine: 0,
+            engine_config: std::collections::HashMap::new(),
+            replication_factor: 1,
         }),
     }
 }
 
 /// Create test vector
 fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("test_key".to_string(), crate::proto::proximadb_v1::SqlValue {
+        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string())),
+    });
+
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: (0..dimension)
             .map(|i| (i as f32) / (dimension as f32))
             .collect(),
-        metadata: vec![MetadataItem {
-            key: "test_key".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "test_value".to_string(),
-                ),
-            ),
-        }],
-        timestamp: chrono::Utc::now().timestamp() as u32,
-        updated_at: Some(chrono::Utc::now().timestamp() as u32),
+        metadata,
+        timestamp: chrono::Utc::now().timestamp(),
+        updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: Some("test".to_string()),
     }
 }
 

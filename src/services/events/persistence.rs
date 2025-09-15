@@ -343,31 +343,32 @@ mod tests {
     #[tokio::test]
     async fn test_wal_persistence_and_recovery() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let mut wal = EventLogWAL::new(temp_dir.path()).await?;
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory).await?;
 
         // Create test events
         let event1 = IndexEvent {
             event_id: "event_1".to_string(),
-            event_type: EventType::Flush,
+            operation_type: EventType::Flush,
             collection_id: "test_collection".to_string(),
-            data_files: vec!["file1.sstable".to_string()],
+            file_paths: vec!["file1.sstable".to_string()],
             vector_count: 100,
             has_quantized: false,
             has_fp32: true,
             storage_engine: StorageEngineType::SST,
-            timestamp: chrono::Utc::now(),
+            timestamp: chrono::Utc::now().timestamp() as u64,
         };
 
         let event2 = IndexEvent {
             event_id: "event_2".to_string(),
-            event_type: EventType::Compaction,
+            operation_type: EventType::Compaction,
             collection_id: "test_collection".to_string(),
-            data_files: vec!["output.sstable".to_string()],
+            file_paths: vec!["output.sstable".to_string()],
             vector_count: 200,
             has_quantized: true,
             has_fp32: true,
             storage_engine: StorageEngineType::SST,
-            timestamp: chrono::Utc::now(),
+            timestamp: chrono::Utc::now().timestamp() as u64,
         };
 
         // Persist events
@@ -398,14 +399,14 @@ mod tests {
         // Create large event that will trigger rotation
         let event = IndexEvent {
             event_id: "large_event".to_string(),
-            event_type: EventType::Flush,
+            operation_type: EventType::Flush,
             collection_id: "test_collection".to_string(),
-            data_files: (0..100).map(|i| format!("file_{}.sstable", i)).collect(),
+            file_paths: (0..100).map(|i| format!("file_{}.sstable", i)).collect(),
             vector_count: 10000,
             has_quantized: false,
             has_fp32: true,
             storage_engine: StorageEngineType::SST,
-            timestamp: chrono::Utc::now(),
+            timestamp: chrono::Utc::now().timestamp() as u64,
         };
 
         // This should trigger rotation
@@ -436,14 +437,14 @@ mod tests {
         for i in 0..5 {
             let event = IndexEvent {
                 event_id: format!("event_{}", i),
-                event_type: EventType::Flush,
+                operation_type: EventType::Flush,
                 collection_id: "test_collection".to_string(),
-                data_files: vec![format!("file_{}.sstable", i)],
+                file_paths: vec![format!("file_{}.sstable", i)],
                 vector_count: 100,
                 has_quantized: false,
                 has_fp32: true,
                 storage_engine: StorageEngineType::SST,
-                timestamp: chrono::Utc::now(),
+                timestamp: chrono::Utc::now().timestamp() as u64,
             };
             wal.persist_event(&event).await?;
         }

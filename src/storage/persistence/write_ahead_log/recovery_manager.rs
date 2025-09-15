@@ -745,8 +745,10 @@ mod tests {
         let flush_coordinator = Arc::new(WALFlushCoordinator::new());
 
         // Create recovery manager
+        let config = crate::storage::persistence::write_ahead_log::config::WALConfig::default();
+        let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default()));
         let recovery_manager =
-            RecoveryManager::new(disk_manager.clone(), flush_coordinator.clone(), filesystem_factory.clone());
+            RecoveryManager::new(config, wal_behavior, filesystem_factory.clone());
 
         (disk_manager, flush_coordinator, recovery_manager, temp_dir)
     }
@@ -839,7 +841,7 @@ mod tests {
         );
 
         // Check stats
-        let stats = recovery_manager.stats().await.expect("Failed to get stats");
+        let stats = recovery_manager.get_stats().await.expect("Failed to get stats");
         assert_eq!(stats.total_vectors_recovered, 3);
         assert_eq!(stats.total_files_recovered, 3);
     }
@@ -881,11 +883,11 @@ mod tests {
 
                 Ok(FlushResult {
                     success: true,
-                    collections_affected: vec![params.collection_id.clone().clone()],
-                    entries_flushed: params.vector_records.len() as u64,
-                    bytes_written: params.vector_records.len() as u64 * 256,
-                    files_created: 1,
-                    duration_ms: 10,
+                    collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                    entries_flushed: Some(params.vector_records.len() as u64),
+                    bytes_written: Some(params.vector_records.len() as u64 * 256),
+                    files_created: Some(1),
+                    duration_ms: Some(10),
                     completed_at: chrono::Utc::now(),
                     engine_metrics: HashMap::new(),
                     compaction_triggered: false,
@@ -896,7 +898,7 @@ mod tests {
             async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
                 Ok(CompactionResult {
                     success: true,
-                    collections_affected: vec![params.collection_id.clone().clone()],
+                    collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
                     entries_processed: 0,
                     entries_removed: 0,
                     bytes_read: 0,
@@ -921,13 +923,10 @@ mod tests {
                 Ok(None)
             }
 
-            async fn search_vectors(
+            async fn search_vectors_unified(
                 &self,
                 _query_context: &crate::storage::traits::StorageQueryContext,
-                _operation_name: &str,
-                _query_vector: &[f32],
-                _top_k: usize,
-            ) -> Result<Vec<VectorRecord>> {
+            ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
                 Ok(Vec::new())
             }
 

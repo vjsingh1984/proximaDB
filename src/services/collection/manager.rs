@@ -1465,6 +1465,7 @@ mod tests {
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test".to_string()),
+            embedding_models: vec![],
         };
 
         // Test create with valid config
@@ -1474,9 +1475,6 @@ mod tests {
         // Test empty name
         let empty_name = CollectionConfig {
             name: "".to_string(),
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
             ..valid_config.clone()
         };
         let result = service.create_collection(&empty_name).await.unwrap();
@@ -1486,9 +1484,6 @@ mod tests {
         // Test short name (less than 8 characters)
         let short_name = CollectionConfig {
             name: "short".to_string(),
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
             ..valid_config.clone()
         };
         let result = service.create_collection(&short_name).await.unwrap();
@@ -1496,17 +1491,15 @@ mod tests {
         assert_eq!(result.error_code, Some("INVALID_NAME_LENGTH".to_string()));
         assert!(
             result
-                .error_message
+                .error_details
+                .as_ref()
                 .unwrap()
-                .contains_hash("at least 8 characters")
+                .contains("at least 8 characters")
         );
 
         // Test exactly 8 characters (should pass)
         let eight_chars = CollectionConfig {
             name: "exactly8".to_string(),
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
             ..valid_config.clone()
         };
         let result = service.create_collection(&eight_chars).await.unwrap();
@@ -1516,9 +1509,6 @@ mod tests {
         let invalid_dimension = CollectionConfig {
             name: "valid_dimension_test".to_string(),
             dimension: 0,
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
             ..valid_config.clone()
         };
         let result = service.create_collection(&invalid_dimension).await.unwrap();

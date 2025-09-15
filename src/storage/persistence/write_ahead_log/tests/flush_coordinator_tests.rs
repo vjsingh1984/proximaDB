@@ -46,15 +46,14 @@ impl UnifiedStorageEngine for MockStorageEngine {
 
         Ok(FlushResult {
             success: true,
-            entries_flushed: params.vector_records.len() as u64,
-            bytes_written: (params.vector_records.len() * 100) as u64,
-            files_created: 1,
-            duration_ms: 10,
+            collections_affected: vec![],
+            entries_flushed: Some(100),
+            bytes_written: Some(1000),
+            files_created: Some(1),
+            duration_ms: Some(10),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,
-            collections_affected: vec![],
-            flushed_batch_ids: params.batch_ids.clone(),
         })
     }
 
@@ -65,13 +64,13 @@ impl UnifiedStorageEngine for MockStorageEngine {
         Ok(crate::storage::traits::CompactionResult {
             success: true,
             collections_affected: vec![],
-            entries_processed: 0,
-            entries_removed: 0,
-            bytes_read: 0,
-            bytes_written: 0,
-            input_files: 0,
-            output_files: 0,
-            duration_ms: 0,
+            entries_processed: Some(0),
+            entries_removed: Some(0),
+            bytes_read: Some(0),
+            bytes_written: Some(0),
+            input_files: Some(0),
+            output_files: Some(0),
+            duration_ms: Some(0),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
         })
@@ -93,15 +92,8 @@ impl UnifiedStorageEngine for MockStorageEngine {
 
     async fn search_vectors_unified(
         &self,
-        _collection_id: &str,
-        _storage_url: &str,
-        _query_vector: &[f32],
-        _k: usize,
-        _distance_metric: &crate::compute::distance_computation::DistanceMetric,
-        _metadata_filters: Option<&crate::core::search::FilterExpression>,
-        _include_vectors: bool,
-        _include_metadata: bool,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        _ctx: &crate::storage::traits::StorageQueryContext,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         Ok(vec![])
     }
 

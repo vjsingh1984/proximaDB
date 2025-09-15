@@ -1461,7 +1461,8 @@ impl RaptorEngine {
         registry.active_files.len() >= self.config.compaction_threshold_files
     }
 
-    fn determine_storage_tier(base_path: &str) -> FileStorageTier {
+    #[cfg(test)]
+    pub fn determine_storage_tier(base_path: &str) -> FileStorageTier {
         if base_path.starts_with("s3://") {
             if base_path.contains("express") {
                 FileStorageTier::S3Express

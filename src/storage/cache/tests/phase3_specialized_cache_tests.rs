@@ -159,7 +159,8 @@ async fn test_query_result_cache_subqueries() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
+    use crate::proto::proximadb_v1::SqlValue;
     use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryKey};
     use std::time::SystemTime;
 
@@ -173,33 +174,33 @@ async fn test_query_result_cache_subqueries() {
                 vector: vec![],
                 metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],
-                source: None,
+                source: Some("test".to_string()),
             },
             VectorRecord {
                 id: "vec2".to_string(),
                 vector: vec![],
                 metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],
-                source: None,
+                source: Some("test".to_string()),
             },
             VectorRecord {
                 id: "vec3".to_string(),
                 vector: vec![],
                 metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],
-                source: None,
+                source: Some("test".to_string()),
             },
         ],
         cached_at: SystemTime::now(),
@@ -214,22 +215,22 @@ async fn test_query_result_cache_subqueries() {
                 vector: vec![],
                 metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],
-                source: None,
+                source: Some("test".to_string()),
             },
             VectorRecord {
                 id: "vec2".to_string(),
                 vector: vec![],
                 metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],
-                source: None,
+                source: Some("test".to_string()),
             },
         ],
         cached_at: SystemTime::now(),
@@ -239,7 +240,6 @@ async fn test_query_result_cache_subqueries() {
     let subquery2 = CachedQueryResult {
         results: vec![VectorRecord {
             id: "vec3".to_string(),
-            // similarity field no longer exists in VectorRecord
             timestamp: 0,
             updated_at: None,
             expires_at: None,
@@ -247,8 +247,7 @@ async fn test_query_result_cache_subqueries() {
             quantized_vector: vec![],
             source: None,
             vector: vec![],
-            metadata: vec![],
-            // rank removed -  None,
+            metadata: std::collections::HashMap::new(),
         }],
         cached_at: SystemTime::now(),
         file_dependencies: vec![],
@@ -357,25 +356,13 @@ impl QueryCache {
             QueryResult {
                 query_id: "sub1".to_string(),
                 results: vec!["vec1".to_string()],
-                // similarity field no longer exists in VectorRecord
-                timestamp: 0,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                quantized_vector: vec![],
-                source: None,
+                similarity: 0.95,
                 execution_time_ms: 5.0,
             },
             QueryResult {
                 query_id: "sub2".to_string(),
                 results: vec!["vec2".to_string()],
-                // similarity field no longer exists in VectorRecord
-                timestamp: 0,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                quantized_vector: vec![],
-                source: None,
+                similarity: 0.88,
                 execution_time_ms: 3.0,
             },
         ]
@@ -385,13 +372,7 @@ impl QueryCache {
         Some(QueryResult {
             query_id: "combined".to_string(),
             results: vec!["vec1".to_string(), "vec2".to_string(), "vec3".to_string()],
-            // similarity field no longer exists in VectorRecord
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            quantized_vector: vec![],
-            source: None,
+            similarity: 0.92,
             execution_time_ms: 10.0,
         })
     }

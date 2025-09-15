@@ -1728,7 +1728,6 @@ mod tests {
             dimension: 128,
             distance_metric: 1,            // Cosine
             storage_engine: 1,             // Viper
-            primary_indexing_algorithm: 1, // HNSW
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
@@ -1737,9 +1736,8 @@ mod tests {
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test".to_string()),
-            compression: None,
-            storage_location: None,
-            optimization_hints: None,
+            storage_config: None,
+            embedding_models: vec![],
         };
 
         // Create a proto collection
@@ -1751,8 +1749,8 @@ mod tests {
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
-            timestamp: chrono::Utc::now().timestamp_micros(),
-            updated_at: chrono::Utc::now().timestamp_micros(),
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
             storage_assignment: None,
         };
 
@@ -1820,7 +1818,6 @@ mod integration_tests {
                 dimension: 128,
                 distance_metric: 0, // Cosine
                 storage_engine: 0,  // VIPER
-                primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
@@ -1829,16 +1826,15 @@ mod integration_tests {
                 description: Some("Test atomic collection".to_string()),
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
-                compression: None,
-                storage_location: None,
-                optimization_hints: None,
+                storage_config: None,
+                embedding_models: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
-            timestamp: std::time::SystemTime::now()
+            created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,
@@ -1924,7 +1920,7 @@ mod integration_tests {
                 index_size_bytes: 0,
                 data_size_bytes: 0,
             }),
-            timestamp: std::time::SystemTime::now()
+            created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,

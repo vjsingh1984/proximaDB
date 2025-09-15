@@ -13,8 +13,8 @@ use tracing::{debug, error, info, warn};
 
 use proximadb::core::VectorRecord;
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
-use proximadb::proto::proximadb::MetadataItem;
-use proximadb::storage::engines::viper::optimized_vector_writer::{
+use proximadb::proto::proximadb_v1::SqlValue;
+use proximadb::storage::engines::impls::viper::optimized_vector_writer::{
     OptimizedVectorWriter, OptimizedVectorWriterConfig,
 };
 
@@ -38,34 +38,21 @@ fn create_test_vector(dimension: usize, sparsity: f32) -> Vec<f32> {
 
 /// Create test VectorRecord with metadata
 fn create_test_record(id: &str, vector: Vec<f32>, category: &str) -> VectorRecord {
+    use std::collections::HashMap;
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector,
-        metadata: vec![
-            MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                        category.to_string(),
-                    ),
-                ),
-            },
-            MetadataItem {
-                key: "confidence".to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(0.85)),
-            },
-            MetadataItem {
-                key: "active".to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::BoolValue(true)),
-            },
-        ],
+        metadata: HashMap::from([
+            ("category".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(category.to_string())) }),
+            ("confidence".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::DoubleValue(0.85)) }),
+            ("active".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(true)) }),
+        ]),
         timestamp: 1234567890,
-        updated_at: Some(1234567890),
+        updated_at: None,
         expires_at: None,
         version: Some(1),
-        rank: None,
-        score: None,
-        distance: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
 
@@ -313,28 +300,13 @@ fn test_metadata_serialization() {
 
     // Create record with comprehensive metadata
     let mut record = create_test_record("metadata_test", vec![1.0, 2.0, 3.0], "test");
-    record.metadata = vec![
-        MetadataItem {
-            key: "string_field".to_string(),
-            value: Some(
-                proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                    "test_value".to_string(),
-                ),
-            ),
-        },
-        MetadataItem {
-            key: "int_field".to_string(),
-            value: Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(42.0)),
-        },
-        MetadataItem {
-            key: "float_field".to_string(),
-            value: Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(3.14)),
-        },
-        MetadataItem {
-            key: "bool_field".to_string(),
-            value: Some(proximadb::proto::proximadb::metadata_item::Value::BoolValue(true)),
-        },
-    ];
+    use std::collections::HashMap;
+    record.metadata = HashMap::from([
+        ("string_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string())) }),
+        ("int_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::DoubleValue(42.0)) }),
+        ("float_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::DoubleValue(3.14)) }),
+        ("bool_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(true)) }),
+    ]);
 
     let schema = writer.create_optimized_schema().unwrap();
     let batch = writer

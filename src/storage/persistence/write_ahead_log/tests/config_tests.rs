@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::CompressionAlgorithm;
+    use crate::services::collection::service_types::CompressionAlgorithm;
     use crate::storage::persistence::write_ahead_log::config::{
         CompressionConfig, DiskDistributionStrategy, MemTableConfig, MemTableType, MultiDiskConfig,
         PerformanceConfig, WALConfig, WriteBufferStrategyType,
@@ -18,7 +18,8 @@ mod tests {
         assert_eq!(format!("{:?}", bincode_strategy), "BincodeBatch");
 
         let cloned_avro = avro_strategy.clone();
-        assert_eq!(avro_strategy, cloned_avro);
+        assert!(matches!(avro_strategy, WriteBufferStrategyType::AvroBatch));
+        assert!(matches!(cloned_avro, WriteBufferStrategyType::AvroBatch));
     }
 
     #[tokio::test]
@@ -38,7 +39,7 @@ mod tests {
     async fn test_compression_config_default() {
         let config = CompressionConfig::default();
 
-        assert_eq!(config.algorithm, CompressionAlgorithm::default());
+        assert!(matches!(config.algorithm, CompressionAlgorithm::Zstd));
         assert!(!config.compress_memory);
         assert!(config.compress_disk);
         assert_eq!(config.min_compress_size, 1024);
@@ -51,22 +52,16 @@ mod tests {
         assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // Updated to 2MB for faster recovery
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024);
         assert_eq!(config.write_buffer_size, 8 * 1024 * 1024);
-        assert_eq!(
-            config.sync_mode,
-            crate::storage::persistence::write_ahead_log::config::SyncMode::PerBatch
-        );
+        assert!(matches!(config.sync_mode, crate::storage::persistence::write_ahead_log::config::SyncMode::PerBatch));
     }
 
     #[tokio::test]
     async fn test_wal_config_default() {
         let config = WALConfig::default();
 
-        assert_eq!(config.strategy_type, WriteBufferStrategyType::BincodeBatch);
-        assert_eq!(config.memtable.memtable_type, MemTableType::Art);
-        assert_eq!(
-            config.multi_disk.distribution_strategy,
-            DiskDistributionStrategy::LoadBalanced
-        );
+        assert!(matches!(config.strategy_type, WriteBufferStrategyType::BincodeBatch));
+        assert!(matches!(config.memtable.memtable_type, MemTableType::Art));
+        assert!(matches!(config.multi_disk.distribution_strategy, DiskDistributionStrategy::LoadBalanced));
         assert!(!&config.compression.compress_memory);
         assert!(&config.compression.compress_disk);
     }
@@ -106,6 +101,7 @@ mod tests {
                 global_shrink_factor: 0.8,
                 ttl_cleanup_interval_secs: 600,
                 sync_mode: crate::storage::persistence::write_ahead_log::config::SyncMode::Always,
+                sync_interval_seconds: 1,
                 enable_optimized_write_buffer_writer: None,
                 background_writer_threads: None,
                 write_buffer_batch_size: None,
@@ -121,22 +117,16 @@ mod tests {
             optimized_writer_enable_combining: None,
         };
 
-        assert_eq!(config.strategy_type, WriteBufferStrategyType::BincodeBatch);
-        assert_eq!(config.memtable.memtable_type, MemTableType::SkipList);
-        assert_eq!(
-            config.multi_disk.distribution_strategy,
-            DiskDistributionStrategy::Hash
-        );
-        assert_eq!(&config.compression.algorithm, CompressionAlgorithm::Zstd);
+        assert!(matches!(config.strategy_type, WriteBufferStrategyType::BincodeBatch));
+        assert!(matches!(config.memtable.memtable_type, MemTableType::SkipList));
+        assert!(matches!(config.multi_disk.distribution_strategy, DiskDistributionStrategy::Hash));
+        assert!(matches!(config.compression.algorithm, CompressionAlgorithm::Zstd));
         assert!(&config.compression.compress_memory);
         assert_eq!(
             config.performance.memory_flush_size_bytes,
             128 * 1024 * 1024
         );
-        assert_eq!(
-            config.performance.sync_mode,
-            crate::storage::persistence::write_ahead_log::config::SyncMode::Always
-        );
+        assert!(matches!(config.performance.sync_mode, crate::storage::persistence::write_ahead_log::config::SyncMode::Always));
     }
 
     #[tokio::test]
@@ -173,8 +163,8 @@ mod tests {
         assert!(serialized.is_ok());
 
         let json_str = serialized.unwrap();
-        assert!(json_str.contains_hash("Avro"));
-        assert!(json_str.contains_hash("Art"));
-        assert!(json_str.contains_hash("LoadBalanced"));
+        assert!(json_str.contains("Avro"));
+        assert!(json_str.contains("Art"));
+        assert!(json_str.contains("LoadBalanced"));
     }
 }

@@ -181,7 +181,7 @@ mod base_traits_tests {
         };
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains_hash("Name cannot be empty"));
+        assert!(result.unwrap_err().contains("Name cannot be empty"));
     }
 
     #[test]
@@ -328,12 +328,12 @@ mod base_traits_tests {
             healthy: false,
         };
 
-        let metrics = service.metrics().await;
+        let metrics = service.get_metrics().await;
         assert_eq!(metrics.get("running").unwrap(), &serde_json::Value::Bool(false));
         assert_eq!(metrics.get("healthy").unwrap(), &serde_json::Value::Bool(false));
 
         service.start().await.unwrap();
-        let metrics = service.metrics().await;
+        let metrics = service.get_metrics().await;
         assert_eq!(metrics.get("running").unwrap(), &serde_json::Value::Bool(true));
         assert_eq!(metrics.get("healthy").unwrap(), &serde_json::Value::Bool(true));
     }
@@ -554,7 +554,7 @@ mod generic_types_tests {
         let config = GenericConfig::new(data.clone());
         
         assert_eq!(config.data, data);
-        assert!(config.validation_rules.is_none());
+        assert!(config.validation_rules.is_empty());
     }
 
     #[test]
@@ -597,7 +597,7 @@ mod generic_types_tests {
         let result = config.validate();
         
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains_hash("Validation failed"));
+        assert!(result.unwrap_err().contains("Validation failed"));
     }
 
     #[test]
@@ -611,12 +611,12 @@ mod generic_types_tests {
         assert_eq!(metadata.id, "test_id");
         assert_eq!(metadata.data, data);
         assert_eq!(metadata.version, 1);
-        assert!(metadata.tags.is_none());
-        assert!(metadata.properties.is_none());
+        assert!(metadata.tags.is_empty());
+        assert!(metadata.properties.is_empty());
         
         // Timestamps should be recent
         let now = Utc::now();
-        assert!((now - metadata.created_at).num_seconds() < 1);
+        assert!((now - metadata.created_at()).num_seconds() < 1);
         assert!((now - metadata.updated_at).num_seconds() < 1);
     }
 

@@ -4,9 +4,9 @@
 //! the CompositeBloomFilter implementation which supports both key
 //! and metadata bloom filters.
 
-use crate::core::VectorRecord;
-use crate::storage::engines::impls::sst::SstableWriter;
-// use crate::core::config::{BloomFilterConfig, SstConfig};
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::engines::impls::sst::{SstableWriter, SstRecord};
+use crate::storage::engines::impls::sst::{SstConfig, BloomFilterConfig};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
 use crate::storage::engines::impls::sst::readers::{CollectionContext, UnifiedSstableReader};
@@ -79,8 +79,8 @@ async fn test_metadata_filtering_basic() {
             id: format!("vec_a_{}", i),
             vector: vec![i as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
             expires_at: None,
             version: Some(1),
             is_tombstone: false,
@@ -121,8 +121,8 @@ async fn test_metadata_filtering_basic() {
             id: format!("vec_b_{}", i),
             vector: vec![(i + 10) as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
             expires_at: None,
             version: Some(1),
             is_tombstone: false,
@@ -340,8 +340,8 @@ async fn test_metadata_bloom_filter_optimization() {
             id: format!("vec_{}", i),
             vector: vec![i as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
             expires_at: None,
             version: Some(1),
             is_tombstone: false,

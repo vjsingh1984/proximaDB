@@ -153,13 +153,11 @@ mod tests {
             updated_at: Some(1640995200000000),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
         };
 
-        let proto_record = avro_to_proto(&service_record, "test-collection");
+        let proto_record = service_to_proto(&service_record, "test-collection");
 
-        assert_eq!(proto_record.id, Some("test-vector-1".to_string()));
+        assert_eq!(proto_record.id, "test-vector-1".to_string());
         assert_eq!(proto_record.vector, vec![1.0, 2.0, 3.0, 4.0]);
         assert_eq!(proto_record.timestamp, 1640995200); // Converted from microseconds to seconds
         assert_eq!(proto_record.version, Some(1));
@@ -167,12 +165,12 @@ mod tests {
 
         // Check metadata items
         let metadata_items = &proto_record.metadata;
-        assert!(metadata_items.iter().any(|item| key == "category" && 
-            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "test")));
-        assert!(metadata_items.iter().any(|item| key == "score" && 
-            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) if *n == 42.0)));
-        assert!(metadata_items.iter().any(|item| key == "active" && 
-            matches!(&value, Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) if *b)));
+        assert!(metadata_items.iter().any(|(key, sql_value)| key == "category" &&
+            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) if s == "test")));
+        assert!(metadata_items.iter().any(|(key, sql_value)| key == "score" &&
+            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) if n == 42.0)));
+        assert!(metadata_items.iter().any(|(key, sql_value)| key == "active" &&
+            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) if b)));
     }
 
     #[test]
@@ -197,15 +195,15 @@ mod tests {
         ];
 
         let proto_record = ProtoVectorRecord {
-            id: Some("test-vector-1".to_string()),
+            id: "test-vector-1".to_string(),
             vector: vec![1.0, 2.0, 3.0, 4.0],
-            metadata,
+            metadata: std::collections::HashMap::new(), // Use HashMap for new format
             timestamp: 1640995200, // Converted from microseconds to seconds
-            updated_at: Some(1640995200),
+            updated_at: 1640995200,
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
+            quantized_vector: None,
+            source: "test".to_string(),
         };
 
         let service_record = proto_to_service(&proto_record, "test-collection");

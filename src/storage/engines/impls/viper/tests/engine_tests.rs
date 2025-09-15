@@ -12,7 +12,7 @@ use tempfile::TempDir;
 use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::SqlValue;
 use std::collections::HashMap;
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
@@ -212,17 +212,19 @@ async fn test_single_vector_operations() {
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
+    let query_context = crate::storage::traits::StorageQueryContext {
+        collection_id: collection_id.to_string(),
+        query_vector: vector.vector.clone(),
+        top_k: 1,
+        distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
+        filter: None,
+        metadata_filter: None,
+        threshold: None,
+        include_vector: true,
+        include_metadata: true,
+    };
     let results = engine
-        .search_vectors_unified(
-            collection_id,
-            &storage_url,
-            &vector.vector,
-            1,
-            &crate::compute::distance_computation::DistanceMetric::Cosine,
-            None, // No filters
-            true, // Include vectors
-            true, // Include metadata
-        )
+        .search_vectors_unified(&query_context)
         .await
         .expect("Failed to search");
 
@@ -274,11 +276,11 @@ async fn test_batch_insertion_and_flush() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
+        estimated_size: vectors.len() * 256,
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
-        estimated_size: 4096, // Test size estimate
     };
 
     let flush_result = engine
@@ -287,9 +289,9 @@ async fn test_batch_insertion_and_flush() {
         .expect("Failed to flush");
 
     assert!(flush_result.success);
-    assert_eq!(flush_result.entries_flushed, 100);
-    assert!(flush_result.bytes_written > 0);
-    assert!(flush_result.files_created > 0);
+    assert_eq!(flush_result.entries_flushed, Some(100));
+    assert!(flush_result.bytes_written.unwrap_or(0) > 0);
+    assert!(flush_result.files_created.unwrap_or(0) > 0);
 }
 
 #[tokio::test]
@@ -330,16 +332,16 @@ async fn test_similarity_search() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
+        estimated_size: 20 * 256,
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
-        estimated_size: 4096, // Test size estimate
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
     assert!(
-        flush_result.files_created > 0,
+        flush_result.files_created.unwrap_or(0) > 0,
         "Should create at least one file"
     );
 
@@ -407,11 +409,11 @@ async fn test_collection_operations() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
+        estimated_size: 50 * 256,
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
-        estimated_size: 4096, // Test size estimate
     };
     engine.do_flush(&flush_params).await.unwrap();
 
@@ -421,7 +423,7 @@ async fn test_collection_operations() {
         .await
         .expect("Failed to get metrics");
 
-    assert!(!metrics.is_none());
+    assert!(!metrics.is_empty());
 }
 
 #[tokio::test]
@@ -467,6 +469,7 @@ async fn test_compaction() {
             vector_records: vectors,
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
+            estimated_size: 4096,
             timeout_ms: None,
             trigger_compaction: false,
 
@@ -486,12 +489,12 @@ async fn test_compaction() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
-
+        estimated_input_size: 5 * 20 * 256,
         collection_config: Some(create_test_collection(
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
-        estimated_size: 4096, // Test size estimate
+        // estimated_size field not available in CompactionParameters
     };
 
     let compacted = engine
@@ -551,7 +554,7 @@ async fn test_multi_collection_isolation() {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-
+            estimated_size: 10 * 256,
             collection_config: Some(create_test_collection(&collection, base_path)),
         };
         engine.do_flush(&flush_params).await.unwrap();
@@ -571,7 +574,7 @@ async fn test_multi_collection_isolation() {
             .unwrap();
 
         for result in results {
-            let id = &result.id;
+            let id = &result.vector_record.as_ref().unwrap().id;
             assert!(
                 id.starts_with(collection),
                 "Vector {} in wrong collection",
@@ -631,7 +634,7 @@ async fn test_persistence_across_restarts() {
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
         assert!(flush_result.success, "Flush should succeed");
         assert!(
-            flush_result.files_created > 0,
+            flush_result.files_created.unwrap_or(0) > 0,
             "Should create at least one file"
         );
 
@@ -721,12 +724,12 @@ async fn test_search_vectors_unified() {
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
-        estimated_size: 4096, // Test size estimate
+        // estimated_size field not available in CompactionParameters
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
     assert!(
-        flush_result.files_created > 0,
+        flush_result.files_created.unwrap_or(0) > 0,
         "Should create at least one file"
     );
 
@@ -1102,12 +1105,12 @@ async fn test_concurrent_operations() {
             collection_id,
             temp_dir.path().to_str().unwrap(),
         )),
-        estimated_size: 4096, // Test size estimate
+        // estimated_size field not available in CompactionParameters
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
     assert!(
-        flush_result.files_created > 0,
+        flush_result.files_created.unwrap_or(0) > 0,
         "Should create at least one file"
     );
 
