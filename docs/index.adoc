@@ -36,7 +36,7 @@ graph LR
 |===
 | Resource | Duration | Description
 
-| **link:business/value_proposition.adoc[Enterprise Value Proposition]**
+| **link:ENTERPRISE_VALUE_PROPOSITION.adoc[Enterprise Value Proposition]**
 | 10 minutes
 | Complete ROI analysis, competitive positioning, and business impact
 
@@ -44,7 +44,7 @@ graph LR
 | 5 minutes
 | High-level platform capabilities and value demonstration
 
-| **link:ENTERPRISE_EXECUTIVE_SUMMARY.adoc[Executive Summary]**
+| **link:09-roadmap/executive_summary.adoc[Executive Summary]**
 | 15 minutes
 | Comprehensive business case with industry use cases
 
@@ -130,16 +130,16 @@ graph LR
 | 20 minutes
 | Enterprise security, authentication, and compliance
 
-| **link:features/performance_validation.adoc[Performance Optimization]**
+| **link:PERFORMANCE_METRICS.adoc[Performance Metrics]**
 | 15 minutes
-| Tuning guide for maximum performance
+| Validated benchmarks and performance optimization
 |===
 
 **Operations Features**:
-- ✅ **Enterprise Dashboard**: 8-tab monitoring interface
-- ✅ **Health Monitoring**: Comprehensive health checks and metrics
-- ✅ **High Availability**: Multi-node deployment with automatic failover
-- ✅ **Security**: Multi-method auth, RBAC, TLS encryption, audit logging
+- ✅ **Production Monitoring**: Comprehensive health checks and performance metrics
+- ✅ **Graph Intelligence**: 3 specialized graph engines (ORION, PULSAR, QUASAR)
+- ✅ **Enterprise Security**: Multi-method auth, RBAC, TLS encryption, audit logging
+- ✅ **AI Integration**: 8 LLM providers with business intelligence capabilities
 
 == Platform Architecture Overview
 
@@ -357,8 +357,8 @@ git clone https://github.com/proximadb/proximadb.git
 cd proximadb
 docker-compose up -d
 
-# Access enterprise dashboard
-open http://localhost:5678/dashboard
+# Verify health endpoint
+curl http://localhost:5678/health
 ```
 
 === Enterprise Consultation
@@ -383,5 +383,5 @@ _One Platform • Complete Intelligence • Enterprise Ready • Production Prov
 
 ---
 
-_Last Updated: September 14, 2025_ +
-_ProximaDB Enterprise v1.0.4 - Production Documentation Hub_
+_Last Updated: September 15, 2025_ +
+_ProximaDB Enterprise v0.1.4 - Production Documentation Hub_

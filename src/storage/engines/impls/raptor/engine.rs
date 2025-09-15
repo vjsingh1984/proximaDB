@@ -1528,6 +1528,19 @@ impl RaptorEngine {
             ..Default::default()
         })
     }
+
+    /// Determine storage tier from base path
+    fn determine_storage_tier(base_path: &str) -> crate::storage::engines::impls::raptor::common::StorageTier {
+        use crate::storage::engines::impls::raptor::common::StorageTier;
+
+        if base_path.contains("s3://") || base_path.contains("azure://") || base_path.contains("gcs://") {
+            StorageTier::Cloud
+        } else if base_path.contains("/tmp") || base_path.contains("memory") {
+            StorageTier::Memory
+        } else {
+            StorageTier::Local
+        }
+    }
 }
 
 #[async_trait]

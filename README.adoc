@@ -61,7 +61,7 @@ graph TB
         A[Enterprise Vector Database<br/>20M+ ops/sec Performance<br/>7 Specialized Storage Engines]
         B[Native Graph Intelligence<br/>Real-time Relationships<br/>1M+ Edges/Second]
         C[Semantic Knowledge Store<br/>AI-Powered Analytics<br/>8 LLM Provider Ecosystem]
-        D[Unified Query Interface<br/>SQL + SKS + GraphQL<br/>Single API for Everything]
+        D[Unified Query Interface<br/>SQL + SKS + Graph Traversal<br/>Single API for Everything]
     end
 
     subgraph "ENTERPRISE BENEFITS"
@@ -90,11 +90,12 @@ graph TB
 
 ### 🚀 Unmatched Performance
 
-**Validated Performance Metrics**:
-- **20.6 Million operations/second** for distance computation
-- **2,847+ queries/second** sustained throughput
-- **94.2% cache efficiency** across 14 specialized cache types
-- **60-80% memory optimization** through intelligent pooling
+**Multi-Platform Validated Performance** (September 2025):
+- **Peak Performance**: 20.6M ops/sec (x86_64 AVX2) | 16.8M ops/sec (Apple M1 Max ARM64 NEON)
+- **Cross-Platform Excellence**: High performance on both Intel/AMD and Apple Silicon
+- **Enterprise Workloads**: 16M+ ops/sec sustained performance across platforms
+- **Hardware-Optimized SIMD**: Automatic AVX2/NEON detection and acceleration
+- **📊 Complete Performance Analysis**: link:docs/PERFORMANCE_COMPREHENSIVE.adoc[Detailed cross-platform benchmarks]
 
 ### 🔐 Enterprise-Grade Security
 
@@ -106,19 +107,19 @@ graph TB
 
 ### 🤖 Complete AI Platform
 
-**8 LLM Provider Ecosystem**:
-- OpenAI, Anthropic, Cohere, Ollama
-- AWS Bedrock, Azure OpenAI, vLLM, HuggingFace
-- Natural Language Business Intelligence
-- Automated Report Generation
+**Complete 8 LLM Provider Ecosystem** (All Verified Implementations):
+- **OpenAI**, **Anthropic**, **Cohere**, **Ollama**
+- **AWS Bedrock**, **Azure OpenAI**, **vLLM**, **HuggingFace**
+- **Natural Language Business Intelligence** with automated insight generation
+- **Executive Report Generation** with trend analysis
 
-### 📊 Real-Time Enterprise Monitoring
+### 📊 Graph Intelligence Platform
 
-**8-Tab Enterprise Dashboard**:
-- System health and resource monitoring
-- Performance analytics and optimization
-- Security events and compliance tracking
-- Automated alerting and incident response
+**3 Graph Engines for Complete Graph Analytics**:
+- **ORION**: In-memory CSR format, 1M+ edges/second traversal
+- **PULSAR**: Distributed sharding for 1B+ node graphs
+- **QUASAR**: Hybrid hot/cold tiering with 80-90% cost savings
+- **Real-time relationship analysis** and network intelligence
 
 ## Industry Use Cases
 
@@ -193,12 +194,13 @@ graph LR
 # Step 1: Clone and deploy (2 minutes)
 git clone https://github.com/proximadb/proximadb.git
 cd proximadb
-./scripts/enterprise_deploy.sh --env production
+cargo build --release
 
-# Step 2: Access enterprise dashboard (1 minute)
-open http://localhost:5678/dashboard
+# Step 2: Start production server (1 minute)
+cargo run --release --bin proximadb-server
 
-# Step 3: Start building intelligence (2 minutes)
+# Step 3: Verify health and create collection (2 minutes)
+curl http://localhost:5678/health
 curl -X POST http://localhost:5678/v1/collections \
   -H "Content-Type: application/json" \
   -d '{"name": "enterprise_knowledge", "dimension": 1536}'
@@ -295,8 +297,8 @@ graph TB
 
     subgraph "INTELLIGENCE LAYER"
         D[Unified Query Engine<br/>SQL + SKS + GraphQL<br/>Query Plan Caching]
-        E[7 Storage Engines<br/>SST, VIPER, NOVA<br/>SWIFT, RAPTOR, PRISM, HELIX]
-        F[AI Platform<br/>8 LLM Providers<br/>Business Intelligence]
+        E[7 Production Storage Engines<br/>SST, VIPER, NOVA, SWIFT<br/>RAPTOR, PRISM, HELIX]
+        F[Complete AI Platform<br/>8 LLM Providers + 3 Graph Engines<br/>Business Intelligence + Graph Analytics]
     end
 
     subgraph "OPTIMIZATION LAYER"
@@ -325,39 +327,32 @@ graph TB
     style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
 ----
 
-### Storage Engine Specialization
+### Complete Platform Architecture
 
 [cols="2,3,3", options="header"]
 |===
-| Storage Engine | Optimization | Best Use Cases
+| Component | Specialization | Production Use Cases
 
-| **SST Engine**
-| High-throughput writes, real-time queries
-| OLTP workloads, real-time applications
+| **7 Storage Engines**
+| SST (OLTP), VIPER (Analytics), NOVA (Mixed),
+SWIFT (Low-latency), RAPTOR (Adaptive),
+PRISM (Memory-optimized), HELIX (Time-series)
+| Complete workload coverage from real-time to analytics
 
-| **VIPER Engine**
-| Columnar analytics, advanced compression
-| Data warehousing, analytical workloads
+| **3 Graph Engines**
+| ORION (In-memory CSR), PULSAR (Distributed),
+QUASAR (Hot/cold tiering)
+| Real-time traversal to billion-node distributed graphs
 
-| **NOVA Engine**
-| Progressive search, multi-level optimization
-| Mixed workloads, complex queries
+| **8 LLM Providers**
+| OpenAI, Anthropic, Cohere, AWS Bedrock,
+Azure OpenAI, HuggingFace, vLLM, Ollama
+| Complete AI ecosystem integration
 
-| **SWIFT Engine**
-| Low-latency operations, FastLanes encoding
-| High-frequency trading, real-time systems
-
-| **RAPTOR Engine**
-| Graph + HNSW, adaptive management
-| Social networks, recommendation systems
-
-| **PRISM Engine**
-| Memory optimization, multi-resolution
-| Memory-constrained environments
-
-| **HELIX Engine**
-| Unified operations, spiral patterns
-| Time-series data, IoT applications
+| **Business Intelligence**
+| Automated insight generation, trend analysis,
+executive reporting, natural language queries
+| Enterprise decision support and analytics
 |===
 
 ## Enterprise Support & Resources
@@ -436,7 +431,7 @@ flowchart LR
 **Option 1: Immediate Evaluation**
 ```bash
 git clone https://github.com/proximadb/proximadb.git
-cd proximadb && ./scripts/enterprise_deploy.sh --env demo
+cd proximadb && cargo run --release --bin proximadb-server
 ```
 
 **Option 2: Enterprise Consultation**
@@ -464,4 +459,4 @@ Explore integration opportunities and ecosystem development for your platform.
 [.small.text-center]
 © 2025 ProximaDB Project • Open Source • Apache 2.0 License • **The Future of Unified AI**
 
-_Enterprise Production Ready • Build: v1.0.4 • Last Updated: September 14, 2025_
+_Enterprise Production Ready • Build: v0.1.4 • Last Updated: September 15, 2025_
