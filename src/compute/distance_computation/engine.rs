@@ -546,6 +546,11 @@ impl UnifiedDistanceCompute {
             .as_ref()
     }
 
+    /// Get the preferred backend for this instance
+    pub fn get_preferred_backend(&self) -> HardwareBackend {
+        self.preferred_backend
+    }
+
     /// Get available hardware backends
     pub fn available_backends(&self) -> Vec<HardwareBackend> {
         let mut backends = vec![self.hardware_backend];

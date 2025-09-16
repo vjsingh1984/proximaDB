@@ -762,22 +762,22 @@ mod generic_types_tests {
         
         assert!(result.success);
         assert_eq!(result.data, Some(data));
-        assert!(result.error_message.is_none());
+        assert!(result.error_code.is_none());
         assert!(result.error_code.is_none());
         assert!(result.processing_time_us.is_none());
-        assert!(result.metadata.is_none());
+        assert!(result.metadata.is_empty());
     }
 
     #[test]
     fn test_generic_result_error() {
-        let result: GenericResult<TestData> = GenericResult::error("Test error".to_string());
+        let mut result: GenericResult<TestData> = GenericResult::error();
+        result.error_code = Some("Test error".to_string());
         
         assert!(!result.success);
         assert!(result.data.is_none());
-        assert_eq!(result.error_message, Some("Test error".to_string()));
-        assert!(result.error_code.is_none());
+        assert_eq!(result.error_code, Some("Test error".to_string()));
         assert!(result.processing_time_us.is_none());
-        assert!(result.metadata.is_none());
+        assert!(result.metadata.is_empty());
     }
 
     #[test]
@@ -793,8 +793,8 @@ mod generic_types_tests {
 
     #[test]
     fn test_generic_result_with_error_code() {
-        let result: GenericResult<TestData> = GenericResult::error("Error message".to_string())
-            .with_error_code("ERR_001".to_string());
+        let mut result: GenericResult<TestData> = GenericResult::error();
+        result.error_code = Some("ERR_001".to_string());
         
         assert_eq!(result.error_code, Some("ERR_001".to_string()));
     }
@@ -816,8 +816,9 @@ mod generic_types_tests {
 
     #[test]
     fn test_generic_result_base_trait_error() {
-        let result: GenericResult<TestData> = GenericResult::error("Trait error".to_string())
+        let mut result: GenericResult<TestData> = GenericResult::error()
             .with_processing_time(500);
+        result.error_code = Some("Trait error".to_string());
         
         // Test BaseResult trait methods
         assert!(!result.is_success());
@@ -843,12 +844,12 @@ mod generic_types_tests {
 
     #[test]
     fn test_generic_result_error_chaining() {
-        let result: GenericResult<TestData> = GenericResult::error("Chain error".to_string())
-            .with_error_code("ERR_CHAIN".to_string())
+        let mut result: GenericResult<TestData> = GenericResult::error()
             .with_processing_time(100);
+        result.error_code = Some("ERR_CHAIN".to_string());
         
         assert!(!result.is_success());
-        assert_eq!(result.error().unwrap(), "Chain error");
+        assert_eq!(result.error().unwrap(), "ERR_CHAIN");
         assert_eq!(result.error_code.as_ref().unwrap(), "ERR_CHAIN");
         assert_eq!(result.processing_time_us().unwrap(), 100);
     }

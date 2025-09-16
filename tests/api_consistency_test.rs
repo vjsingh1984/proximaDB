@@ -9,6 +9,7 @@
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionRequest, CollectionResponse, DistanceMetric, SearchQuery,
     StorageEngine, VectorBatchRequest, VectorOperationResponse, VectorRecord, VectorSearchRequest,
+    MetadataFilter, FilterCondition, FilterOperation, SqlValue, sql_value, FilterOperator,
 };
 use serde_json::json;
 use std::time::Duration;
@@ -106,9 +107,9 @@ mod api_consistency_tests {
             }],
             top_k: 10,
             distance_metric_override: Some(DistanceMetric::Cosine as i32),
-            search_params: None,
-            include_fields: None,
-            search_optimization: None,
+            search_params: std::collections::HashMap::new(),
+            include_fields: vec![],
+            search_optimization: std::collections::HashMap::new(),
         };
 
         // Send via REST
@@ -144,7 +145,7 @@ mod api_consistency_tests {
     #[tokio::test]
     async fn test_collection_operations_consistency() {
         let fixture = ApiTestFixture::new().await;
-        let collection_id = format!("test_collection_{}", uuid::Uuid::new_v4());
+        let collection_id = format!("test_collection_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
 
         // Test CREATE operation
         let create_request = CollectionRequest {
@@ -155,7 +156,16 @@ mod api_consistency_tests {
                 dimension: 128,
                 distance_metric: Some(DistanceMetric::Euclidean as i32),
                 storage_engine: Some(StorageEngine::Viper as i32),
-                ..Default::default()
+                compression: None,
+                engine_config: std::collections::HashMap::new(),
+                cache_config: None,
+                quantization_config: None,
+                index_config: None,
+                metadata_config: None,
+                auto_create_shards: None,
+                auto_balance: None,
+                replication_factor: None,
+                consistency_level: None,
             }),
             query_params: Default::default(),
             options: Default::default(),
@@ -215,9 +225,9 @@ mod api_consistency_tests {
             }],
             top_k: 10,
             distance_metric_override: None,
-            search_params: None,
-            include_fields: None,
-            search_optimization: None,
+            search_params: std::collections::HashMap::new(),
+            include_fields: vec![],
+            search_optimization: std::collections::HashMap::new(),
         };
 
         let rest_response: Result<VectorOperationResponse, _> = fixture
@@ -237,9 +247,9 @@ mod api_consistency_tests {
             }],
             top_k: 10,
             distance_metric_override: None,
-            search_params: None,
-            include_fields: None,
-            search_optimization: None,
+            search_params: std::collections::HashMap::new(),
+            include_fields: vec![],
+            search_optimization: std::collections::HashMap::new(),
         };
 
         let rest_response: Result<VectorOperationResponse, _> = fixture
@@ -258,7 +268,7 @@ mod api_consistency_tests {
     #[tokio::test]
     async fn test_batch_operations_consistency() {
         let fixture = ApiTestFixture::new().await;
-        let collection_id = format!("test_batch_{}", uuid::Uuid::new_v4());
+        let collection_id = format!("test_batch_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
 
         // Create batch request with multiple records
         let batch_request = VectorBatchRequest {
@@ -312,26 +322,26 @@ mod api_consistency_tests {
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3, 0.4],
                 id: None,
-                metadata_filter: Some(proximadb::proto::proximadb_v1::MetadataFilter {
-                    conditions: vec![proximadb::proto::proximadb_v1::FilterCondition {
+                metadata_filter: Some(MetadataFilter {
+                    conditions: vec![FilterCondition {
                         field_name: "category".to_string(),
-                        operation: proximadb::proto::proximadb_v1::FilterOperation::Equals as i32,
-                        value: Some(proximadb::proto::proximadb_v1::SqlValue {
+                        operation: FilterOperation::Equals as i32,
+                        value: Some(SqlValue {
                             value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                                sql_value::Value::StringValue(
                                     "electronics".to_string(),
                                 ),
                             ),
                         }),
                     }],
-                    operator: proximadb::proto::proximadb_v1::FilterOperator::And as i32,
+                    operator: FilterOperator::And as i32,
                 }),
             }],
             top_k: 5,
             distance_metric_override: None,
-            search_params: None,
-            include_fields: None,
-            search_optimization: None,
+            search_params: std::collections::HashMap::new(),
+            include_fields: vec![],
+            search_optimization: std::collections::HashMap::new(),
         };
 
         let _rest_response: Result<VectorOperationResponse, _> = fixture

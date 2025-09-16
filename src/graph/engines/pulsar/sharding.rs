@@ -264,10 +264,10 @@ mod tests {
         let ring = ConsistentHashRing::new(4);
 
         // Test that different nodes map to different shards (most of the time)
-        let node1_shard = ring.get_shard("node1");
-        let node2_shard = ring.get_shard("node2");
-        let node3_shard = ring.get_shard("node3");
-        let node4_shard = ring.get_shard("node4");
+        let node1_shard = ring.get_shard(&"node1".to_string());
+        let node2_shard = ring.get_shard(&"node2".to_string());
+        let node3_shard = ring.get_shard(&"node3".to_string());
+        let node4_shard = ring.get_shard(&"node4".to_string());
 
         // All shards should be within expected range
         assert!(node1_shard < 4);
@@ -288,10 +288,10 @@ mod tests {
     fn test_consistent_mapping() {
         let ring = ConsistentHashRing::new(8);
 
-        let node_id = "test_node_123";
-        let shard1 = ring.get_shard(node_id);
-        let shard2 = ring.get_shard(node_id);
-        let shard3 = ring.get_shard(node_id);
+        let node_id = "test_node_123".to_string();
+        let shard1 = ring.get_shard(&node_id);
+        let shard2 = ring.get_shard(&node_id);
+        let shard3 = ring.get_shard(&node_id);
 
         // Same node should always map to same shard
         assert_eq!(shard1, shard2);

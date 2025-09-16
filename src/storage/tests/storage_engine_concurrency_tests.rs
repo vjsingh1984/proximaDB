@@ -41,7 +41,7 @@ mod tests {
             tags: vec!["ssd".to_string()],
         }];
 
-        config.sst_config = SstConfig {
+        config.sst_config = Some(SstConfig {
             level_count: 3,
             compaction_threshold: 2,
             block_size_kb: 4096,
@@ -60,7 +60,7 @@ mod tests {
             prefetch_size_kb: 64,
             decompression_cache_config: None,
             compaction_config: Default::default(),
-        };
+        });
 
         // Configure write buffer separately
         config.wal_config = WriteBufferUserConfig {
@@ -89,16 +89,15 @@ mod tests {
             .as_millis() as i64;
 
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![0.1; 128],
-            metadata: vec![],
-            timestamp: now as u32,
-            updated_at: Some(now as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: now,
+            updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 

@@ -113,10 +113,11 @@ async fn test_vector_search() {
     let records = create_test_records(50, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
+        vector_records: records,
         force: false,
         synchronous: true,
-        hints: HashMap::new(),
-        timeout_ms: None,
+        collection_config: None,
+        ..Default::default()
     };
 
     engine.do_flush(&params).await.unwrap();
@@ -176,10 +177,11 @@ async fn test_vector_by_id() {
     let records = create_test_records(10, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
+        vector_records: records,
         force: false,
         synchronous: true,
-        hints: HashMap::new(),
-        timeout_ms: None,
+        collection_config: None,
+        ..Default::default()
     };
 
     engine.do_flush(&params).await.unwrap();
@@ -216,9 +218,9 @@ async fn test_compaction() {
         let records = create_test_records(50, 128);
         let params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            records,
+            vector_records: records,
             collection_config: None,
-            level: None,
+            ..Default::default()
         };
 
         engine.do_flush(&params).await.unwrap();

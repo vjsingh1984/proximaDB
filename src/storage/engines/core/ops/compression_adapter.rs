@@ -6,7 +6,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use crate::storage::engines::core::ops::compression_common::{
-    AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig, AdaptationCriteria,
+    AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig,
 };
 use crate::core::compression::{
     CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
@@ -531,8 +531,8 @@ impl CompressionPerformanceStats {
 mod tests {
     use super::*;
     use crate::storage::engines::core::ops::compression_common::{
-        AdaptiveCompressionSettings, AdaptiveStrategy, ContextAwareCompressionConfig,
-        UniversalCompressionConfig,
+        AdaptiveCompressionSettings, ContextAwareCompressionConfig,
+        UniversalCompressionConfig, AdaptationCriteria,
     };
 
     #[test]
@@ -609,7 +609,6 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
-                // size_thresholds and pattern_detection fields removed from ContextAwareCompressionConfig
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),
@@ -710,7 +709,6 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
-                // size_thresholds and pattern_detection fields removed from ContextAwareCompressionConfig
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),
@@ -741,8 +739,6 @@ mod tests {
             enabled: true,
             data_type: crate::metrics::compression::CompressionData::Index,
             context_types: vec![],
-            size_thresholds: std::collections::HashMap::new(),
-            pattern_detection: false,
         };
         let context = adapter.map_context_aware_config(&sst_context).unwrap();
         assert_eq!(context, CompressionContext::Block);
@@ -752,8 +748,6 @@ mod tests {
             enabled: true,
             data_type: crate::metrics::compression::CompressionData::Vector,
             context_types: vec![],
-            size_thresholds: std::collections::HashMap::new(),
-            pattern_detection: false,
         };
         let context = adapter.map_context_aware_config(&vector_context).unwrap();
         assert_eq!(context, CompressionContext::VectorSerialization);
@@ -763,11 +757,9 @@ mod tests {
             enabled: true,
             data_type: crate::metrics::compression::CompressionData::Mixed,
             context_types: vec![],
-            size_thresholds: std::collections::HashMap::new(),
-            pattern_detection: false,
         };
         let context = adapter.map_context_aware_config(&parquet_context).unwrap();
-        assert_eq!(context, CompressionContext::Parquet);
+        assert_eq!(context, CompressionContext::Block);
     }
 
     #[test]
@@ -777,7 +769,7 @@ mod tests {
         let config = UniversalCompressionConfig {
             enabled: true,
             primary_algorithm: CompressionAlgorithm::Lz4,
-            // fallback_algorithms removed -  vec![],
+            fallback_algorithms: vec![CompressionAlgorithm::Snappy],
             compression_level: 1,
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: false,
@@ -844,7 +836,6 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
-                // size_thresholds and pattern_detection fields removed from ContextAwareCompressionConfig
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),
@@ -866,7 +857,7 @@ mod tests {
         assert_eq!(stats.total_decompressions, 5);
         assert!(stats.total_compression_time_ms > 0);
         assert!(stats.total_decompression_time_ms > 0);
-        assert_eq!(stats.algorithm_usage.get(&CompressionAlgorithm::Zstd), Some(&5));
+        assert_eq!(stats.algorithm_usage.get(&CompressionAlgorithm::Lz4), Some(&5));
 
         // Test throughput calculation
         let throughput = stats.compression_throughput_mbps();

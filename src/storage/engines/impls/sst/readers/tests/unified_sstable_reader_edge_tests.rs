@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod edge_tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::proto::proximadb_v1::VectorRecord;
+    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
     use crate::core::bloom::BloomFilterConfig;
     use crate::core::config::SstConfig;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
@@ -844,11 +844,13 @@ mod edge_tests {
             VectorRecord {
                 id: "deleted_1".to_string(),
                 vector: vec![],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 100,
                 updated_at: Some(100),
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: String::new(),
                 // is_tombstone field removed
                 // sequence_number field removed
                 // level field removed from VectorRecord
@@ -857,18 +859,19 @@ mod edge_tests {
             VectorRecord {
                 id: "deleted_2".to_string(),
                 vector: vec![],
-                metadata: vec![crate::proto::proximadb_v1::MetadataItem {
-                    key: "deletion_reason".to_string(),
-                    value: Some(
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            "user_requested".to_string(),
-                        ),
-                    ),
-                }],
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("deletion_reason".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue("user_requested".to_string())),
+                    });
+                    metadata
+                },
                 timestamp: 101,
                 updated_at: Some(101),
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: String::new(),
                 // is_tombstone field removed
                 // sequence_number field removed
                 // level field removed from VectorRecord
@@ -877,11 +880,13 @@ mod edge_tests {
             VectorRecord {
                 id: "deleted_3".to_string(),
                 vector: vec![],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 102,
                 updated_at: Some(102),
                 expires_at: Some(103),
                 version: Some(1),
+                quantized_vector: vec![],
+                source: String::new(),
                 // is_tombstone field removed
                 // sequence_number field removed
                 // level field removed from VectorRecord
@@ -954,7 +959,7 @@ mod edge_tests {
                 sstable_files: vec![path.to_string()],
                 total_vectors: 0,
                 metadata_columns: vec![],
-                // level field removed from VectorRecord
+                level: 0,
                 creation_time: Utc::now(),
                 io_optimization_hints: None,
             };
@@ -977,11 +982,13 @@ mod edge_tests {
             let record = VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![0.1; 1024], // Large vector
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: i as i64,
                 updated_at: Some(i as i64),
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: String::new(),
                 // is_tombstone field removed
                 // sequence_number field removed
                 // level field removed from VectorRecord

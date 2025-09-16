@@ -522,12 +522,11 @@ impl GraphEngine for OrionGraphEngine {
     }
 
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
-        Ok(self
-            .memory_pool
-            .nodes
-            .iter()
-            .map(|entry| Arc::clone(entry.value()))
-            .collect())
+        let mut nodes = Vec::new();
+        for entry in self.memory_pool.nodes.iter() {
+            nodes.push(Arc::clone(&*entry));
+        }
+        Ok(nodes)
     }
 }
 
@@ -540,8 +539,7 @@ impl Default for OrionGraphEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::PropertyValue;
-    // PropertyValue is now a struct, not enum - use direct field access;
+    use crate::proto::proximadb_v1::{PropertyValue, property_value};
 
     #[tokio::test]
     async fn test_orion_engine_creation() {
@@ -560,12 +558,12 @@ mod tests {
             properties: std::collections::HashMap::from([(
                 "name".to_string(),
                 PropertyValue {
-                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("Alice".to_string())),
+                    value: Some(property_value::Value::StringValue("Alice".to_string())),
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Insert node
@@ -592,8 +590,8 @@ mod tests {
             labels: vec!["Person".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         let node2 = Node {
@@ -601,8 +599,8 @@ mod tests {
             labels: vec!["Person".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         engine.insert_node(node1).unwrap();
@@ -616,8 +614,8 @@ mod tests {
             edge_type: "KNOWS".to_string(),
             properties: std::collections::HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Insert edge

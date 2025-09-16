@@ -196,12 +196,12 @@ mod tests {
         crate::proto::proximadb_v1::VectorRecord {
             id: id.unwrap_or_default(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![],
-            timestamp,
-            updated_at: Some(timestamp),
-            expires_at,
-            version,
-            quantized_vector: None,
+            metadata: std::collections::HashMap::new(),
+            timestamp: timestamp as i64,
+            updated_at: Some(timestamp as i64),
+            expires_at: expires_at.map(|t| t as i64),
+            version: version.map(|v| v as i64),
+            quantized_vector: vec![],
             source: None,
         }
     }
@@ -396,7 +396,7 @@ mod tests {
         // Find the versioned record
         let versioned_record = resolved
             .iter()
-            .find(|r| r.id.as_deref() == Some("real_id"))
+            .find(|r| r.id.as_str() == "real_id")
             .unwrap();
         assert_eq!(versioned_record.version, Some(2)); // Should get highest version
     }

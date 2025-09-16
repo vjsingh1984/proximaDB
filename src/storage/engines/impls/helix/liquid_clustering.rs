@@ -377,23 +377,35 @@ mod tests {
             VectorRecord {
                 id: "vec1".to_string(),
                 vector: vec![1.0, 2.0],
-                metadata: None,
-                timestamp: 0,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0i64,
+                updated_at: None,
                 expires_at: None,
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
                 id: "vec2".to_string(),
                 vector: vec![3.0, 4.0],
-                metadata: None,
-                timestamp: 0,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0i64,
+                updated_at: None,
                 expires_at: None,
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
                 id: "vec3".to_string(),
                 vector: vec![5.0, 6.0],
-                metadata: None,
-                timestamp: 0,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0i64,
+                updated_at: None,
                 expires_at: None,
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             },
         ];
 
@@ -418,9 +430,13 @@ mod tests {
         let records = vec![VectorRecord {
             id: "vec1".to_string(),
             vector: vec![1.0],
-            metadata: None,
-            timestamp: 0,
+            metadata: std::collections::HashMap::new(),
+            timestamp: 0i64,
+            updated_at: None,
             expires_at: None,
+            version: None,
+            quantized_vector: vec![],
+            source: None,
         }];
 
         let hilbert_keys = vec![100];

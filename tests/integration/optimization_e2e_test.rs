@@ -12,8 +12,8 @@ use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::memory::{PoolConfig, VectorMemoryPool};
 use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
-use proximadb::core::{SstConfig, VectorRecord};
-use proximadb::proto::proximadb_v1::Collection;
+use proximadb::core::SstConfig;
+use proximadb::proto::proximadb_v1::{VectorRecord, Collection, SqlValue, sql_value};
 use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
@@ -115,18 +115,18 @@ fn create_optimization_test_vectors(count: usize) -> Vec<VectorRecord> {
                 vector,
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("pattern".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                    metadata.insert("pattern".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(
                             pattern.to_string()
                         ))
                     });
-                    metadata.insert("dimension".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                    metadata.insert("dimension".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(
                             dimension as f64
                         ))
                     });
-                    metadata.insert("index".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                    metadata.insert("index".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(
                             i as f64
                         ))
                     });
@@ -227,28 +227,20 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let collection = Collection {
         id: "optimization_test".to_string(),
         config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+            name: "optimization_test".to_string(),
             dimension: 2048, // Max dimension in test
-            filterable_columns: vec![
-                proximadb::proto::proximadb_v1::FilterableColumnSpec {
-                    name: "pattern".to_string(),
-                    data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString
-                        as i32,
-                    indexed: true,
-                    supports_range: false,
-                    estimated_cardinality: Some(5),
-                    encoding_hint: None,
-                },
-                proximadb::proto::proximadb_v1::FilterableColumnSpec {
-                    name: "dimension".to_string(),
-                    data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableFloat
-                        as i32,
-                    indexed: true,
-                    supports_range: true,
-                    estimated_cardinality: Some(4),
-                    encoding_hint: None,
-                },
-            ],
-            ..Default::default()
+            distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+            storage_engine: Some(proximadb::proto::proximadb_v1::StorageEngine::Sst as i32),
+            compression: None,
+            engine_config: std::collections::HashMap::new(),
+            cache_config: None,
+            quantization_config: None,
+            index_config: None,
+            metadata_config: None,
+            auto_create_shards: None,
+            auto_balance: None,
+            replication_factor: None,
+            consistency_level: None,
         }),
         storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
             base_location: collection_storage_path.clone(),

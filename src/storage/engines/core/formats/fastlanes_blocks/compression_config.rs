@@ -566,24 +566,22 @@ mod tests {
         let config = RowBasedCompressionConfig::default();
 
         // Should compress large data
-        assert!(config.should_compress(100 * 1024, &CompressionContext::VectorData));
+        assert!(config.should_compress(100 * 1024, &CompressionContext::Vector));
 
         // Should not compress tiny data
-        assert!(!config.should_compress(100, &CompressionContext::VectorData));
+        assert!(!config.should_compress(100, &CompressionContext::Vector));
 
         // Disabled config should not compress
         let mut disabled_config = config.clone();
         disabled_config.enabled = false;
-        assert!(!disabled_config.should_compress(100 * 1024, &CompressionContext::VectorData));
+        assert!(!disabled_config.should_compress(100 * 1024, &CompressionContext::Vector));
     }
 
     #[test]
     fn test_proto_config_conversion() {
         let proto_config = ProtoCompressionConfig {
-            enabled: true,
-            algorithm: "lz4".to_string(),
-            level: 2,
-            compression_ratio: 0.6,
+            algorithm: 1, // LZ4 algorithm enum value
+            level: Some(2),
         };
 
         let config = RowBasedCompressionConfig::from_proto_config(&proto_config);

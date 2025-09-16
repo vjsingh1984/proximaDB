@@ -15,9 +15,9 @@ mod common {
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 // Old test utilities are no longer used - using UnifiedTestEnvironment instead
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use proximadb::core::{SstConfig, VectorRecord};
+use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::{
-    StorageEngine,
+    VectorRecord, StorageEngine, SqlValue, sql_value,
 };
 use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::traits::UnifiedStorageEngine;
@@ -69,13 +69,13 @@ fn create_compressible_test_vectors(
                 None,
                 {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("category".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                    metadata.insert("category".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(
                             format!("cat_{}", i % 3)
                         ))
                     });
-                    metadata.insert("timestamp".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                    metadata.insert("timestamp".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(
                             i as f64
                         ))
                     });

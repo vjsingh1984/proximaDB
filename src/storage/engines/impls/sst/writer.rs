@@ -1354,14 +1354,13 @@ mod tests {
             let record = VectorRecord {
                 id: format!("key{:03}", i),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: vec![],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                metadata: std::collections::HashMap::new(),
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: false,
-                sequence_number: i as u64,
-                level: 0,
+                quantized_vector: vec![],
+                source: None,
             };
             records.insert(record.id.clone(), record);
         }

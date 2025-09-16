@@ -14,7 +14,8 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
-use crate::index::axis::eventlog::IndexEvent;
+use crate::index::axis::eventlog::{IndexEvent, EventType};
+use crate::storage::engines::core::types::StorageEngineType;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// EventLog WAL (Write-Ahead Log) for persistence
@@ -390,7 +391,8 @@ mod tests {
     #[tokio::test]
     async fn test_wal_rotation() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let mut wal = EventLogWAL::new(temp_dir.path()).await?;
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory).await?;
 
         // Set small max file size for testing
         wal.max_file_size = 1024; // 1KB
@@ -418,6 +420,7 @@ mod tests {
                 e.file_name()
                     .to_str()
                     .map(|n| n.starts_with("eventlog_wal_"))
+                    .unwrap_or(false)
             })
             .collect();
 
@@ -430,7 +433,8 @@ mod tests {
     #[tokio::test]
     async fn test_wal_compaction() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let mut wal = EventLogWAL::new(temp_dir.path()).await?;
+        let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+        let mut wal = EventLogWAL::new(temp_dir.path(), filesystem_factory).await?;
 
         // Create and persist multiple events
         for i in 0..5 {
@@ -460,9 +464,9 @@ mod tests {
         let recovered = wal.recover_pending_events().await?;
         assert_eq!(recovered.len(), 2);
 
-        let event_ids: Vec<_> = recovered.iter().map(|e| e.event_id.as_deref()).collect();
-        assert!(event_ids.contains_hash(&"event_1"));
-        assert!(event_ids.contains_hash(&"event_3"));
+        let event_ids: Vec<_> = recovered.iter().map(|e| e.event_id.as_str()).collect();
+        assert!(event_ids.contains(&"event_1"));
+        assert!(event_ids.contains(&"event_3"));
 
         Ok(())
     }

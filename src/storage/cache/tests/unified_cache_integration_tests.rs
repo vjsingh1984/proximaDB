@@ -61,7 +61,7 @@ mod sst_cache_integration {
     #[tokio::test]
     async fn test_sst_vector_block_caching() {
         // TODO: This test needs to be implemented with the current cache architecture
-        let _cache_size = 1024 * 1024 // Mock cache size;
+        let _cache_size = 1024 * 1024; // Mock cache size
         let _block_key = SstBlockKey::new("vectors.sstable".to_string(), 2048, 8192);
 
         // Create vector records as test data (placeholder)
@@ -114,7 +114,7 @@ mod cross_engine_cache_tests {
     #[tokio::test]
     async fn test_shared_cache_coordination() {
         // TODO: Test shared cache coordination between SST and VIPER engines
-        let _cache_size = 1024 * 1024 // Mock cache size;
+        let _cache_size = 1024 * 1024; // Mock cache size
         let _metadata_cache = Arc::new(MetadataStore::new(1024 * 1024));
         assert!(true, "Cross-engine cache coordination test needs to be implemented");
     }
@@ -122,21 +122,21 @@ mod cross_engine_cache_tests {
     #[tokio::test]
     async fn test_cache_invalidation_coordination() {
         // TODO: Test cache invalidation coordination
-        let _cache_size = 1024 * 1024 // Mock cache size;
+        let _cache_size = 1024 * 1024; // Mock cache size
         assert!(true, "Cache invalidation coordination test needs to be implemented");
     }
 
     #[tokio::test]
     async fn test_eviction_pressure_management() {
         // TODO: Test eviction pressure management across engines
-        let _small_cache = 1024 * 1024 // Mock cache size; // 1MB cache - very small
+        let _small_cache = 1024 * 1024; // Mock cache size - 1MB cache - very small
         assert!(true, "Eviction pressure management test needs to be implemented");
     }
 
     #[tokio::test]
     async fn test_compression_algorithm_coordination() {
         // TODO: Test compression algorithm coordination
-        let _cache_size = 1024 * 1024 // Mock cache size;
+        let _cache_size = 1024 * 1024; // Mock cache size
         assert!(true, "Compression algorithm coordination test needs to be implemented");
     }
 }

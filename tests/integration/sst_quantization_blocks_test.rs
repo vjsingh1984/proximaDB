@@ -83,7 +83,7 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
             ..Default::default()
         };
 
-        let flush_result = sst_storage.do_flush(flush_params).await?;
+        let flush_result = sst_storage.do_flush(&flush_params).await?;
 
         info!("\n  ✅ Flush Results:");
         info!("    • Entries flushed: {}", flush_result.entries_flushed);
@@ -311,8 +311,8 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
             id: format!("vec_{}", i),
             vector,
             metadata: std::collections::HashMap::new(),
-            timestamp: 0,
-            updated_at: Some(0),
+            timestamp: 0i64,
+            updated_at: Some(0i64),
             expires_at: None,
             version: Some(1),
             quantized_vector: vec![],

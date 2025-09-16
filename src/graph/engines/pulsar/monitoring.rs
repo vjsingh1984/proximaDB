@@ -301,8 +301,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_pulsar_monitor_creation() {
-        let engine = Arc::new(PulsarGraphEngine::new());
-        let monitor = PulsarMonitor::new(engine);
+        let config = crate::graph::engines::pulsar::PulsarConfig::default();
+        let engine = Arc::new(PulsarGraphEngine::new(config).unwrap());
+        let monitor = PulsarMonitor::new(Arc::clone(&engine));
 
         let health = monitor.get_health().await;
         assert_eq!(health.status, ComponentStatus::Unknown);
@@ -310,8 +311,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_collection() {
-        let engine = Arc::new(PulsarGraphEngine::new());
-        let monitor = PulsarMonitor::new(engine);
+        let config = crate::graph::engines::pulsar::PulsarConfig::default();
+        let engine = Arc::new(PulsarGraphEngine::new(config).unwrap());
+        let monitor = PulsarMonitor::new(Arc::clone(&engine));
 
         let metrics = monitor.get_metrics().await;
         assert_eq!(metrics.active_shards, 1);
@@ -320,8 +322,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check() {
-        let engine = Arc::new(PulsarGraphEngine::new());
-        let monitor = PulsarMonitor::new(engine);
+        let config = crate::graph::engines::pulsar::PulsarConfig::default();
+        let engine = Arc::new(PulsarGraphEngine::new(config).unwrap());
+        let monitor = PulsarMonitor::new(Arc::clone(&engine));
 
         monitor.start_monitoring().await.unwrap();
 
@@ -335,8 +338,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_prometheus_export() {
-        let engine = Arc::new(PulsarGraphEngine::new());
-        let monitor = PulsarMonitor::new(engine);
+        let config = crate::graph::engines::pulsar::PulsarConfig::default();
+        let engine = Arc::new(PulsarGraphEngine::new(config).unwrap());
+        let monitor = PulsarMonitor::new(Arc::clone(&engine));
 
         let prometheus_output = monitor.export_prometheus().await;
         assert!(prometheus_output.contains("pulsar_health_status"));

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::{FastLanesDataBlock, RowBasedConfig};
+use crate::storage::compaction::orchestrator::FilenameCodec;
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
@@ -591,12 +592,12 @@ mod tests {
     fn test_memory_usage_calculation() {
         let records = vec![
             VectorRecord {
-                id: Some("test1".to_string()),
+                id: "test1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 ..Default::default()
             },
             VectorRecord {
-                id: Some("test2".to_string()),
+                id: "test2".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
                 ..Default::default()
             },
@@ -604,7 +605,7 @@ mod tests {
 
         // TODO: Update to use proper data structure
         // Temporarily using FastLanesDataBlock
-        let blocks = vec![FastLanesDataBlock::default()];
+        let blocks = vec![FastLanesDataBlock { records: vec![], quantized_vectors: None, block_id: 0 }];
 
         let report = RowBasedUtilities::calculate_memory_usage(&blocks);
 
@@ -617,19 +618,19 @@ mod tests {
     fn test_record_validation() {
         let records = vec![
             VectorRecord {
-                id: Some("valid".to_string()),
+                id: "valid".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 timestamp: 1000,
                 ..Default::default()
             },
             VectorRecord {
-                id: None, // Invalid - no ID
+                id: "".to_string(), // Invalid - no ID
                 vector: vec![4.0, 5.0, 6.0],
                 timestamp: 2000,
                 ..Default::default()
             },
             VectorRecord {
-                id: Some("invalid_vector".to_string()),
+                id: "invalid_vector".to_string(),
                 vector: vec![f32::NAN, 2.0, f32::INFINITY], // Invalid - NaN and Infinity
                 timestamp: 3000,
                 ..Default::default()

@@ -725,9 +725,13 @@ mod tests {
     #[tokio::test]
     async fn test_zero_copy_filesystem_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let local_fs = Arc::new(LocalFileSystem::new(temp_dir.path().to_path_buf()));
+        let config = crate::storage::persistence::filesystem::local::LocalConfig {
+            base_path: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let local_fs = Arc::new(LocalFileSystem::new(config).await.unwrap());
 
-        let io_system = ZeroCopyIOSystemBuilder::new().build().unwrap();
+        let io_system = ZeroCopyIOSystemBuilder::new().build().await.unwrap();
 
         let zero_copy_fs = ZeroCopyFilesystemBuilder::new()
             .with_collection_id("test_collection".to_string())
@@ -743,9 +747,13 @@ mod tests {
     #[tokio::test]
     async fn test_fallback_behavior() {
         let temp_dir = TempDir::new().unwrap();
-        let local_fs = Arc::new(LocalFileSystem::new(temp_dir.path().to_path_buf()));
+        let config = crate::storage::persistence::filesystem::local::LocalConfig {
+            base_path: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+        let local_fs = Arc::new(LocalFileSystem::new(config).await.unwrap());
 
-        let io_system = ZeroCopyIOSystemBuilder::new().build().unwrap();
+        let io_system = ZeroCopyIOSystemBuilder::new().build().await.unwrap();
 
         let zero_copy_fs = ZeroCopyFilesystemBuilder::new()
             .with_collection_id("test_collection".to_string())
@@ -757,6 +765,6 @@ mod tests {
         // Test that non-existent files are handled gracefully
         let result = zero_copy_fs.read("non_existent_file.sst").await;
         // Should either return error or empty vec based on optimization
-        assert!(result.is_err() || result.unwrap().is_none());
+        assert!(result.is_err() || result.unwrap().is_empty());
     }
 }

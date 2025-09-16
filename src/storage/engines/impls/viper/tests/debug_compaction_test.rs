@@ -6,8 +6,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::{debug, error, info};
 
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
@@ -110,26 +109,28 @@ fn create_test_collection(
             name: collection_id.to_string(),
             dimension: 128,
             distance_metric: 0,            // Cosine
-            storage_engine: 0,             // VIPER
+            storage_engine: 1,             // VIPER
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
+            storage_config: None,
             primary_index: String::new(),
             auto_index_selection: false,
             description: None,
             tags: vec![],
             owner: None,
+            embedding_models: vec![],
         }),
         stats: None,
-        // timestamp field not available in Collection
+        created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
+            primary_path: format!("file://{}", base_path),
+            backup_paths: vec![],
+            engine: 1,
+            engine_config: std::collections::HashMap::new(),
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp(),
-            backup_paths: vec![],
-            engine: 0,
-            engine_config: std::collections::HashMap::new(),
-            replication_factor: 1,
         }),
     }
 }
@@ -137,8 +138,8 @@ fn create_test_collection(
 /// Create test vector
 fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
     let mut metadata = std::collections::HashMap::new();
-    metadata.insert("test_key".to_string(), crate::proto::proximadb_v1::SqlValue {
-        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string())),
+    metadata.insert("test_key".to_string(), SqlValue {
+        value: Some(sql_value::Value::StringValue("test_value".to_string())),
     });
 
     VectorRecord {
@@ -216,8 +217,8 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
         collection_config: Some(create_test_collection(collection_id, base_path)),
+        estimated_size: 1024, // Estimated size for 10 vectors
     };
 
     let flush_result = engine.do_flush(&flush_params).await?;
@@ -288,7 +289,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     for entry in entries_after {
         if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
             debug!("  📄 Found: {}", entry.name);
-            if entry.name.contains_hash("compacted") {
+            if entry.name.contains("compacted") {
                 compacted_files.push(entry.url.clone());
             }
         }

@@ -195,28 +195,27 @@ async fn test_atomic_wal_to_storage_flow() {
     // Write WAL batch data
     let vectors = vec![
         VectorRecord {
-            id: Some("vec1".to_string()),
+            id: "vec1".to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
-            similarity: None,
-            // rank removed -  None,
-            similarity: None,
             version: None,
+            source: None,
+            quantized_vector: vec![],
             ..Default::default()
         },
         VectorRecord {
-            id: Some("vec2".to_string()),
+            id: "vec2".to_string(),
             vector: vec![4.0, 5.0, 6.0],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
-            similarity: None,
-            // rank removed -  None,
-            similarity: None,
+            version: None,
+            source: None,
+            quantized_vector: vec![],
             version: None,
             ..Default::default()
         },

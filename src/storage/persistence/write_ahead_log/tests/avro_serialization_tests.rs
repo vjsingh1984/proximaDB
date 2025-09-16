@@ -8,8 +8,7 @@
 //! - Stats tracking
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -48,15 +47,15 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         id: id.to_string(),
         vector: vec![0.1; dimension],
         metadata: std::collections::HashMap::from([
-            ("category".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string())),
+            ("category".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue("test".to_string())),
             }),
-            ("priority".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("1".to_string())),
+            ("priority".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue("1".to_string())),
             }),
         ]),
-        timestamp: 1234567890,
-        updated_at: Some(1234567890),
+        timestamp: 1234567890i64,
+        updated_at: Some(1234567890i64),
         expires_at: None,
         version: Some(1),
         quantized_vector: vec![],
@@ -234,7 +233,7 @@ async fn test_avro_stats_tracking() {
     create_collection_write_buffer_dir(collection_id).await;
 
     // Get initial stats
-    let initial_stats = strategy.get_strategy_stats().await.expect("Failed to get stats");
+    let initial_stats = strategy.get_stats().await.expect("Failed to get stats");
 
     assert_eq!(initial_stats.total_entries, 0);
     assert_eq!(initial_stats.memory_entries, 0);
@@ -252,7 +251,7 @@ async fn test_avro_stats_tracking() {
         .expect("Failed to write batch");
 
     // Check updated stats
-    let updated_stats = strategy.get_strategy_stats().await.expect("Failed to get stats");
+    let updated_stats = strategy.get_stats().await.expect("Failed to get stats");
 
     assert_eq!(updated_stats.total_entries, 2);
     assert_eq!(updated_stats.memory_entries, 2);
@@ -485,13 +484,13 @@ mod integration_tests {
             Ok(crate::storage::traits::CompactionResult {
                 success: true,
                 collections_affected: vec![],
-                entries_processed: 0,
-                entries_removed: 0,
-                bytes_read: 0,
-                bytes_written: 0,
-                input_files: 0,
-                output_files: 0,
-                duration_ms: 0,
+                entries_processed: Some(0),
+                entries_removed: Some(0),
+                bytes_read: Some(0),
+                bytes_written: Some(0),
+                input_files: Some(0),
+                output_files: Some(0),
+                duration_ms: Some(0),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: std::collections::HashMap::new(),
             })
@@ -562,7 +561,7 @@ mod integration_tests {
             .expect("Failed to flush");
 
         assert!(flush_result.success);
-        assert_eq!(flush_result.entries_flushed, 10); // From mock
+        assert_eq!(flush_result.entries_flushed, Some(10)); // From mock
 
         // Verify storage engine was called
         let flush_called = mock_engine.flush_called.lock().await;

@@ -3,7 +3,12 @@
 //! Orchestrates one-click enterprise deployment across different platforms
 //! with automatic configuration generation and validation.
 
-use crate::deployment::discovery::{DetectedEnvironment, PlatformType};
+use crate::deployment::discovery::{
+    DetectedEnvironment, PlatformType, ResourceAvailability, CapacityEstimate, PerformanceProfile,
+    NetworkConfig, SecurityConstraints, OptimalConfig, DeploymentRecommendation,
+    ComplianceFramework, EncryptionRequirements, DeploymentStrategy, ScalingConfig,
+    MonitoringConfig, BackupStrategy
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
@@ -193,7 +198,7 @@ impl DeploymentProvisioner {
             .await?;
 
         // Step 5: Setup monitoring and alerting
-        let monitoring_setup = self.setup_monitoring(&deployment_id, &request).await?;
+        let _monitoring_setup = self.setup_monitoring(&deployment_id, &request).await?;
 
         // Step 6: Generate customer documentation and next steps
         let next_steps = self.generate_customer_next_steps(&request, &platform_result).await?;
@@ -294,13 +299,13 @@ impl DeploymentProvisioner {
         info!("📊 Setting up monitoring for deployment: {}", deployment_id);
 
         // Configure enterprise dashboard
-        let dashboard_config = self.generate_dashboard_config(request).await?;
+        let _dashboard_config = self.generate_dashboard_config(request).await?;
 
         // Setup alerting rules
-        let alerting_rules = self.generate_alerting_rules(request).await?;
+        let _alerting_rules = self.generate_alerting_rules(request).await?;
 
         // Configure log aggregation
-        let logging_config = self.setup_log_aggregation(deployment_id).await?;
+        let _logging_config = self.setup_log_aggregation(deployment_id).await?;
 
         Ok(MonitoringSetupResult {
             dashboard_configured: true,
@@ -943,4 +948,33 @@ pub struct LoggingConfig {
     pub log_level: String,
     pub retention_days: u32,
     pub aggregation_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NextStepAction {
+    pub step_type: String,
+    pub description: String,
+    pub url: Option<String>,
+    pub estimated_time_minutes: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityFeatures {
+    pub tls_enabled: bool,
+    pub audit_logging: bool,
+    pub sso_integration: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AIProviderConfig {
+    pub provider_name: String,
+    pub enabled: bool,
+    pub config: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupSchedule {
+    pub frequency: String,
+    pub retention_days: u32,
+    pub backup_type: String,
 }

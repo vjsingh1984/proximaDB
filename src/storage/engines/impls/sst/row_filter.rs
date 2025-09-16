@@ -454,7 +454,7 @@ mod tests {
             .filter_vector_records_fast(&records, &filter)
             .unwrap();
 
-        assert!(!indices.is_none(), "Should find some matching records");
+        assert!(!indices.is_empty(), "Should find some matching records");
         debug!(
             "SST Row Filter found {} matches out of {} records",
             indices.len(),
@@ -493,7 +493,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!indices.is_none(), "Should find some matching records");
+        assert!(!indices.is_empty(), "Should find some matching records");
         debug!("Parallel filter found {} matches", indices.len());
     }
 
@@ -535,17 +535,25 @@ mod tests {
                 ),
             });
 
+            let mut map_metadata = std::collections::HashMap::new();
+            for item in metadata {
+                if let Some(key) = item.key {
+                    map_metadata.insert(key, crate::proto::proximadb_v1::SqlValue {
+                        value: Some(item.value.unwrap())
+                    });
+                }
+            }
+
             records.push(VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vec![0.1; 128], // Dummy vector
-                metadata,
-                timestamp: 1000000 + i as u32,
+                metadata: map_metadata,
+                timestamp: 1000000 + i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             });
         }
 

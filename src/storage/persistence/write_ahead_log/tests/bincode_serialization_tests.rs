@@ -7,7 +7,8 @@
 //! - Memory management and flush operations
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use std::collections::HashMap;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -60,8 +61,8 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
             });
             metadata
         },
-        timestamp: 1234567890,
-        updated_at: Some(1234567890),
+        timestamp: 1234567890i64,
+        updated_at: Some(1234567890i64),
         expires_at: None,
         version: Some(1),
         quantized_vector: vec![],
@@ -362,9 +363,8 @@ async fn test_bincode_edge_cases() {
         .expect("Failed to write empty batch");
     assert_eq!(empty_sequences.len(), 0);
 
-    // Test vectors with no ID
-    let mut no_id_vector = create_test_vector("", 64, 0.5);
-    no_id_vector.id = None;
+    // Test vectors with empty ID
+    let no_id_vector = create_test_vector("", 64, 0.5);
     let no_id_batch = create_test_batch(vec![no_id_vector]);
 
     let no_id_sequences = strategy
@@ -455,31 +455,17 @@ async fn test_bincode_batch_metadata() {
     let mut vectors = Vec::new();
     for i in 0..5 {
         let mut vector = create_test_vector(&format!("meta_{}", i), 128, 0.1);
-        vector.metadata = vec![
-            MetadataItem {
-                key: "index".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(i.to_string()),
-                ),
-            },
-            MetadataItem {
-                key: "binary_data".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
-                        "{:08b}",
-                        i
-                    )),
-                ),
-            },
-            MetadataItem {
-                key: "timestamp".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        (1234567890 + i * 1000).to_string(),
-                    ),
-                ),
-            },
-        ];
+        vector.metadata.insert("index".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue(i.to_string())),
+        });
+        vector.metadata.insert("binary_data".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue(format!("{:08b}", i))),
+        });
+        vector.metadata.insert("timestamp".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue(
+                (1234567890 + i * 1000).to_string()
+            ))
+        });
         vectors.push(vector);
     }
 
@@ -498,12 +484,13 @@ async fn test_bincode_batch_metadata() {
     assert_eq!(retrieved.len(), 5);
 
     for vector in retrieved {
-        assert_eq!(vector.metadata.len(), 3);
+        assert_eq!(vector.metadata.len(), 5);
 
         // Verify metadata keys exist
-        let keys: Vec<_> = vector.metadata.iter().map(|m| &m.key).collect();
-        assert!(keys.contains_hash(&&"index".to_string()));
-        assert!(keys.contains_hash(&&"binary_data".to_string()));
-        assert!(keys.contains_hash(&&"timestamp".to_string()));
+        assert!(vector.metadata.contains_key("type"));
+        assert!(vector.metadata.contains_key("value"));
+        assert!(vector.metadata.contains_key("index"));
+        assert!(vector.metadata.contains_key("binary_data"));
+        assert!(vector.metadata.contains_key("timestamp"));
     }
 }
