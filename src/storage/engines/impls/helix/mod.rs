@@ -31,6 +31,7 @@ pub mod pca_manager;
 pub mod progressive_search;
 pub mod query_optimization;
 pub mod readers;
+pub mod spiral_pattern;
 pub mod zone_maps;
 
 #[cfg(test)]

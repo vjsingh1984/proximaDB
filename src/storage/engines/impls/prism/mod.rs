@@ -15,6 +15,7 @@ pub mod cache;
 pub mod compaction;
 pub mod fastlanes_serializer;
 pub mod memory_optimizer;
+pub mod memory_optimization;
 
 // Configuration structures
 pub use engine::*;
