@@ -441,6 +441,149 @@ All performance results collected using:
 
 == Cross-Platform Performance Comparison
 
+=== Apple M1 Max Results (September 15, 2025)
+
+**Hardware Configuration:**
+- **Model**: MacBook Pro (Apple M1 Max)
+- **Chip**: Apple M1 Max
+- **CPU Cores**: 10 (8 performance + 2 efficiency)
+- **Memory**: 64 GB unified memory
+- **OS**: Darwin 24.6.0 (macOS)
+- **SIMD**: ARM64 NEON
+- **Test Date**: September 15, 2025
+
+==== Distance Computation Performance - Apple M1 Max
+
+[cols=\"2,2,2,2\"]
+|===
+|Dimension |Metric |Throughput (ops/sec) |ARM64 NEON Performance
+
+|**128D**
+|Manhattan
+|**16,139,705**
+|Peak ARM64 performance
+
+|**128D**
+|DotProduct
+|**15,883,605**
+|Excellent SIMD optimization
+
+|**128D**
+|Euclidean
+|**14,302,878**
+|Strong NEON acceleration
+
+|**128D**
+|Cosine
+|**10,033,512**
+|Good normalized processing
+
+|**256D**
+|Manhattan
+|**7,100,558**
+|Consistent scaling
+
+|**256D**
+|DotProduct
+|**7,094,261**
+|Maintained performance
+
+|**256D**
+|Euclidean
+|**6,882,691**
+|Good dimension scaling
+
+|**256D**
+|Cosine
+|**4,524,027**
+|Reliable performance
+
+|**512D**
+|Manhattan
+|**2,694,205**
+|High-dimension capable
+
+|**512D**
+|DotProduct
+|**2,642,301**
+|Strong 512D performance
+
+|**512D**
+|Euclidean
+|**2,562,460**
+|Consistent execution
+
+|**512D**
+|Cosine
+|**2,113,236**
+|Reliable high-dim processing
+|===
+
+==== Vector Operations Performance - Apple M1 Max
+
+[cols=\"2,2,2,2\"]
+|===
+|Dimension |Creation Rate (vectors/sec) |Latency (μs) |Performance Tier
+
+|**128D**
+|**21,191,161**
+|**4.71**
+|Ultra High
+
+|**256D**
+|**14,152,860**
+|**7.07**
+|High
+
+|**512D**
+|**9,302,523**
+|**10.75**
+|Good
+|===
+
+==== Index Operations Performance - Apple M1 Max
+
+[cols=\"2,2,2,2,2\"]
+|===
+|Dimension |Index Type |Insert Rate (vectors/sec) |Search Rate (searches/sec) |Use Case
+
+|**128D**
+|HNSW
+|**276,622**
+|**331,400**
+|Real-time similarity search
+
+|**128D**
+|LSH
+|**116,149**
+|**139,974**
+|Approximate large-scale
+
+|**256D**
+|HNSW
+|**192,012**
+|**222,037**
+|Balanced workloads
+
+|**256D**
+|LSH
+|**64,376**
+|**65,698**
+|Scalable analytics
+
+|**512D**
+|HNSW
+|**135,461**
+|**144,092**
+|High-precision search
+
+|**512D**
+|LSH
+|**28,764**
+|**29,021**
+|Large-scale processing
+|===
+
 === Apple M4 Pro Results (macOS)
 
 **Hardware Configuration:**
