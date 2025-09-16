@@ -66,6 +66,7 @@ use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing;
 
 /// ORION Graph Engine with CSR format for high-performance traversal
 #[derive(Debug)]

@@ -27,7 +27,7 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::core::hardware_capabilities::HardwareBackend;
-    use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::query::sql_engine::parser::{
         ComparisonOp, Condition, OrderByClause, OrderType, SortDirection, Value as SqlValue,
         WhereClause,

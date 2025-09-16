@@ -50,9 +50,8 @@ async fn test_sstable_format_with_bloom_filter() {
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            // is_tombstone field removed
-            // sequence_number field removed
-            // level field removed
+            quantized_vector: vec![],
+            source: None,
         };
         records.insert(record.id.clone(), record);
     }
@@ -105,7 +104,7 @@ async fn test_sstable_format_with_bloom_filter() {
     match reader.vector(&file_url, "vec_005").await {
         Ok(Some(vector)) => {
             debug!("✓ Found vector: {:?}", vector.id);
-            assert_eq!(vector.id, Some("vec_005".to_string()));
+            assert_eq!(vector.id, "vec_005".to_string());
         }
         Ok(None) => {
             panic!("Vector vec_005 not found in SSTable");
@@ -144,10 +143,10 @@ async fn test_sstable_empty_file_handling() {
     let error_msg = result.unwrap_err().to_string();
     debug!("Actual error: {}", error_msg);
     assert!(
-        error_msg.contains_hash("Failed to read header length")
-            || error_msg.contains_hash("expected at least 4 bytes")
-            || error_msg.contains_hash("unexpected end of file")
-            || error_msg.contains_hash("SSTable file too small"),
+        error_msg.contains("Failed to read header length")
+            || error_msg.contains("expected at least 4 bytes")
+            || error_msg.contains("unexpected end of file")
+            || error_msg.contains("SSTable file too small"),
         "Expected error about file size/header, got: {}",
         error_msg
     );
@@ -184,11 +183,11 @@ async fn test_sstable_truncated_file_handling() {
     let error_msg = result.unwrap_err().to_string();
     debug!("Actual error for truncated file: {}", error_msg);
     assert!(
-        error_msg.contains_hash("Failed to read complete header")
-            || error_msg.contains_hash("Failed to read header")
-            || error_msg.contains_hash("unexpected end of file")
-            || error_msg.contains_hash("failed to fill whole buffer")
-            || error_msg.contains_hash("SSTable file too small"),
+        error_msg.contains("Failed to read complete header")
+            || error_msg.contains("Failed to read header")
+            || error_msg.contains("unexpected end of file")
+            || error_msg.contains("failed to fill whole buffer")
+            || error_msg.contains("SSTable file too small"),
         "Expected error about incomplete header or file size, got: {}",
         error_msg
     );

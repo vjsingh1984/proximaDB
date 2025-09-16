@@ -42,7 +42,7 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
         // Setup SST with specific block size
         let mut sst_config = SstConfig::default();
         sst_config.block_size_kb = block_size_kb;
-        sst_config.compression = "zstd".to_string();
+        sst_config.compression = Some(proximadb::core::compression::CompressionAlgorithm::Zstd);
         sst_config.compression_level = 3;
 
         let fs_config = FilesystemConfig {
@@ -152,7 +152,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
 
     // Setup quantization adapter
     let pq_config = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Pq(PqConfig {
+        level_type: Some(proximadb::compute::quantization::unified_quantization_level::LevelType::Pq(PqConfig {
             num_subvectors: 8,
             bits_per_code: 8,
             codebook_id: None,
@@ -160,7 +160,8 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
         })),
     };
 
-    let adapter = SstQuantizationAdapter::new();
+    // TODO: Implement SstQuantizationAdapter when available
+    // let adapter = SstQuantizationAdapter::new();
 
     // Test with 256KB blocks
     let temp_dir = TempDir::new()?;
@@ -168,7 +169,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
 
     let mut sst_config = SstConfig::default();
     sst_config.block_size_kb = 256;
-    sst_config.compression = "zstd".to_string();
+    sst_config.compression = Some(proximadb::core::compression::CompressionAlgorithm::Zstd);
     sst_config.compression_level = 3;
 
     info!("\n📊 Configuration:");
@@ -206,9 +207,17 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     // Create SST engine
     let fs_config = FilesystemConfig {
         default_fs: Some(format!("file://{}", base_path)),
+        local: None,
+        global_options: Default::default(),
+        auth_config: None,
+        performance_config: Default::default(),
+        scheme_mapping: std::collections::HashMap::new(),
     };
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
-    let mut sst_storage = SstStorage::new(sst_config, filesystem, None, None, None).await?;
+    let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
+        proximadb::compute::distance_computation::DistanceMetric::Cosine,
+    ));
+    let mut sst_storage = SstStorage::new(sst_config, filesystem, distance_compute).await?;
 
     // Insert and flush
     sst_storage.insert_batch(vectors.clone()).await?;
@@ -220,7 +229,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
         ..Default::default()
     };
 
-    let flush_result = sst_storage.flush(flush_params).await?;
+    let flush_result = sst_storage.do_flush(&flush_params).await?;
 
     info!("\n✅ Results with 256KB blocks:");
     info!(
@@ -273,8 +282,8 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
                 id: format!("vec_{}", global_idx),
                 vector,
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: Some(0),
+                timestamp: 0i64,
+                updated_at: Some(0i64),
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],

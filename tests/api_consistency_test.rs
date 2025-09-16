@@ -6,7 +6,7 @@
 //! 3. Handle errors consistently
 //! 4. Provide equivalent functionality
 
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionRequest, CollectionResponse, DistanceMetric, SearchQuery,
     StorageEngine, VectorBatchRequest, VectorOperationResponse, VectorRecord, VectorSearchRequest,
 };
@@ -148,7 +148,7 @@ mod api_consistency_tests {
 
         // Test CREATE operation
         let create_request = CollectionRequest {
-            operation: proximadb::proto::proximadb::CollectionOperation::Create as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::Create as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: Some(CollectionConfig {
                 name: collection_id.clone(),
@@ -168,7 +168,7 @@ mod api_consistency_tests {
 
         // Test GET operation
         let get_request = CollectionRequest {
-            operation: proximadb::proto::proximadb::CollectionOperation::Get as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::Get as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: None,
             query_params: Default::default(),
@@ -185,7 +185,7 @@ mod api_consistency_tests {
 
         // Test DELETE operation
         let delete_request = CollectionRequest {
-            operation: proximadb::proto::proximadb::CollectionOperation::Delete as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::Delete as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: None,
             query_params: Default::default(),
@@ -267,20 +267,24 @@ mod api_consistency_tests {
                 VectorRecord {
                     id: "record1".to_string(),
                     vector: vec![0.1, 0.2, 0.3, 0.4],
-                    metadata: vec![],
-                    timestamp: 0,
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: 0i64,
                     updated_at: None,
                     expires_at: None,
                     version: None,
+                    quantized_vector: vec![],
+                    source: None,
                 },
                 VectorRecord {
                     id: "record2".to_string(),
                     vector: vec![0.5, 0.6, 0.7, 0.8],
-                    metadata: vec![],
-                    timestamp: 0,
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: 0i64,
                     updated_at: None,
                     expires_at: None,
                     version: None,
+                    quantized_vector: vec![],
+                    source: None,
                 },
             ],
             auto_create_collection: Some(true),
@@ -308,19 +312,19 @@ mod api_consistency_tests {
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3, 0.4],
                 id: None,
-                metadata_filter: Some(proximadb::proto::proximadb::MetadataFilter {
-                    conditions: vec![proximadb::proto::proximadb::FilterCondition {
+                metadata_filter: Some(proximadb::proto::proximadb_v1::MetadataFilter {
+                    conditions: vec![proximadb::proto::proximadb_v1::FilterCondition {
                         field_name: "category".to_string(),
-                        operation: proximadb::proto::proximadb::FilterOperation::Equals as i32,
-                        value: Some(proximadb::proto::proximadb::MetadataValue {
+                        operation: proximadb::proto::proximadb_v1::FilterOperation::Equals as i32,
+                        value: Some(proximadb::proto::proximadb_v1::SqlValue {
                             value: Some(
-                                proximadb::proto::proximadb::metadata_value::Value::StringValue(
+                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
                                     "electronics".to_string(),
                                 ),
                             ),
                         }),
                     }],
-                    operator: proximadb::proto::proximadb::FilterOperator::And as i32,
+                    operator: proximadb::proto::proximadb_v1::FilterOperator::And as i32,
                 }),
             }],
             top_k: 5,

@@ -252,7 +252,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     // Create proper VIPER config with compression
     let viper_config = proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
-        compression: "zstd".to_string(),
+        compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd),
         compression_level: 3,
         ..Default::default()
     };
@@ -377,7 +377,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     // Create proper VIPER config with compression
     let viper_config = proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
-        compression: "zstd".to_string(),
+        compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd),
         compression_level: 3,
         ..Default::default()
     };
@@ -389,9 +389,9 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
         id: "search_test".to_string(),
         config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
             dimension: 512,
-            filterable_columns: vec![proximadb::proto::proximadb::FilterableColumnSpec {
+            filterable_columns: vec![proximadb::proto::proximadb_v1::FilterableColumnSpec {
                 name: "pattern".to_string(),
-                data_type: proximadb::proto::proximadb::FilterableDataType::FilterableString as i32,
+                data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
                 indexed: true,
                 supports_range: false,
                 estimated_cardinality: Some(10),
@@ -700,7 +700,14 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let mut config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: algo.to_string(),
+            compression: Some(match algo {
+                "zstd" => proximadb::core::compression::CompressionAlgorithm::Zstd,
+                "snappy" => proximadb::core::compression::CompressionAlgorithm::Snappy,
+                "gzip" => proximadb::core::compression::CompressionAlgorithm::Gzip,
+                "lz4" => proximadb::core::compression::CompressionAlgorithm::Lz4,
+                "brotli" => proximadb::core::compression::CompressionAlgorithm::Brotli,
+                _ => proximadb::core::compression::CompressionAlgorithm::None,
+            }),
             compression_level: level,
             enable_statistics: true,
             data_directory: temp_dir
@@ -734,7 +741,14 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         // Create proper VIPER config
         let viper_config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: algo.to_string(),
+            compression: Some(match algo {
+                "zstd" => proximadb::core::compression::CompressionAlgorithm::Zstd,
+                "snappy" => proximadb::core::compression::CompressionAlgorithm::Snappy,
+                "gzip" => proximadb::core::compression::CompressionAlgorithm::Gzip,
+                "lz4" => proximadb::core::compression::CompressionAlgorithm::Lz4,
+                "brotli" => proximadb::core::compression::CompressionAlgorithm::Brotli,
+                _ => proximadb::core::compression::CompressionAlgorithm::None,
+            }),
             compression_level: level,
             ..Default::default()
         };
@@ -817,7 +831,7 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let config = Arc::new(proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: "zstd".to_string(), // Default compression for this test
+            compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd), // Default compression for this test
             compression_level: 3,
             enable_statistics: true,
             data_directory: temp_dir
@@ -852,9 +866,9 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         let viper_config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
             compression: if compression {
-                "zstd".to_string()
+                Some(proximadb::core::compression::CompressionAlgorithm::Zstd)
             } else {
-                "none".to_string()
+                Some(proximadb::core::compression::CompressionAlgorithm::None)
             },
             compression_level: 3,
             ..Default::default()
