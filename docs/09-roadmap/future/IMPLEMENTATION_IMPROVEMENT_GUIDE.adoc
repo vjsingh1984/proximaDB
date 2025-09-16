@@ -29,8 +29,8 @@
 
 | **RAPTOR Engine Completion**
 | P2 - Medium
-| ⏳ **Pending**
-| Week 3-4
+| 🔄 **IN PROGRESS**
+| Week 3-4 - Adaptive optimization module created, PxK algorithm implemented
 
 | **PRISM Engine Completion**
 | P2 - Medium
