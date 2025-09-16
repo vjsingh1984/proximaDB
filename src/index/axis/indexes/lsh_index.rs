@@ -712,15 +712,15 @@ mod tests {
                 id: format!("vec_{}", i),
                 vector: vector.clone(),
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: 0,
+                timestamp: 0i64,
+                updated_at: None,
                 expires_at: None,
-                version: Some(1),
-                quantized_vector: None,
-                source: "test".to_string(),
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             };
             index
-                .add(format!("vec_{}", i), Arc::new(record))
+                .add(format!("vec_{}", i), record)
                 .await
                 .unwrap();
         }
@@ -761,15 +761,15 @@ mod tests {
                 id: format!("binary_{}", i),
                 vector: vector.clone(),
                 metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: 0,
+                timestamp: 0i64,
+                updated_at: None,
                 expires_at: None,
-                version: Some(1),
-                quantized_vector: None,
-                source: "test".to_string(),
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             };
             index
-                .add(format!("binary_{}", i), Arc::new(record))
+                .add(format!("binary_{}", i), record)
                 .await
                 .unwrap();
         }

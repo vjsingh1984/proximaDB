@@ -256,21 +256,21 @@ mod tests {
             comparison
                 .recommendation
                 .to_lowercase()
-                .contains_hash("avro")
+                .contains("avro")
         );
         assert!(
             comparison
                 .recommendation
                 .to_lowercase()
-                .contains_hash("bincode")
+                .contains("bincode")
         );
 
         // Should mention key decision factors
         let rec_lower = comparison.recommendation.to_lowercase();
         assert!(
-            rec_lower.contains_hash("schema")
-                || rec_lower.contains_hash("performance")
-                || rec_lower.contains_hash("rust")
+            rec_lower.contains("schema")
+                || rec_lower.contains("performance")
+                || rec_lower.contains("rust")
         );
     }
 
@@ -283,10 +283,10 @@ mod tests {
             let info = WALBatchFactory::get_strategy_info(strategy_type);
 
             // All fields should be populated
-            assert!(!info.name.is_none());
+            assert!(!info.name.is_empty());
             assert!(!info.description.is_empty());
-            assert!(!info.serialization.is_none());
-            assert!(!info.performance_profile.is_none());
+            assert!(!info.serialization.is_empty());
+            assert!(!info.performance_profile.is_empty());
             assert!(!info.recommended_use_cases.is_empty());
 
             // batch_native should always be true for new strategies

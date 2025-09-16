@@ -394,32 +394,32 @@ mod tests {
         let cache = BlockCache::new(1024 * 1024); // 1MB cache
 
         let block = Arc::new(FastLanesDataBlock {
-            id: 0,
-            offset_in_superblock: 0,
-            compressed_size: 0,
+            block_id: 0,
             uncompressed_size: 0,
             records: vec![VectorRecord {
-                id: Some("test".to_string()),
+                id: "test".to_string(),
                 vector: vec![1.0; 768],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
+                quantized_vector: vec![],
+                source: None,
             }],
             quantized_vectors: None, // Quantization handled by universal adapter
             quantization_level: None,
             id_range: ("test".to_string(), "test".to_string()),
             // min_timestamp removed -  0,
             // max_timestamp removed -  0,
-            metadata_stats: HashMap::new(),
+            metadata_stats: None,
         });
 
         // Test put and get
         cache.put((0, 0), block.clone()).await;
         let retrieved = cache.get(&(0, 0)).await;
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().records[0].id, Some("test".to_string()));
+        assert_eq!(retrieved.unwrap().records[0].id, "test".to_string());
 
         // Test cache miss
         let miss = cache.get(&(1, 1)).await;

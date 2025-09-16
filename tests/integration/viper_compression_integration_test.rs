@@ -46,9 +46,8 @@ fn find_parquet_files_recursive(dir: &str) -> Vec<std::path::PathBuf> {
 
 use arrow_array::{Array, BinaryArray, RecordBatch};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::{VectorRecord, Collection, StorageEngine, SqlValue, sql_value};
 use proximadb::core::search::{FilterExpression, SearchParams};
-use proximadb::proto::proximadb_v1::{Collection, StorageEngine};
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataStore;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -165,13 +164,13 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
                 vector,
                 metadata: {
                     let mut metadata = std::collections::HashMap::new();
-                    metadata.insert("category".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                    metadata.insert("category".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(
                             format!("cat_{}", i % 5)
                         )),
                     });
-                    metadata.insert("pattern".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                    metadata.insert("pattern".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(
                             match i % 4 {
                                 0 => "sparse",
                                 1 => "sequential",
@@ -180,8 +179,8 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
                             }.to_string()
                         )),
                     });
-                    metadata.insert("value".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                    metadata.insert("value".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(
                             i as f64
                         )),
                     });
@@ -252,7 +251,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     // Create proper VIPER config with compression
     let viper_config = proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
-        compression: "zstd".to_string(),
+        compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd),
         compression_level: 3,
         ..Default::default()
     };
@@ -263,28 +262,20 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     let collection = Collection {
         id: "test_collection".to_string(),
         config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+            name: "test_collection".to_string(),
             dimension: 256,
-            filterable_columns: vec![
-                proximadb::proto::proximadb_v1::FilterableColumnSpec {
-                    name: "category".to_string(),
-                    data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString
-                        as i32,
-                    indexed: true,
-                    supports_range: false,
-                    estimated_cardinality: Some(10),
-                    encoding_hint: None,
-                },
-                proximadb::proto::proximadb_v1::FilterableColumnSpec {
-                    name: "pattern".to_string(),
-                    data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString
-                        as i32,
-                    indexed: true,
-                    supports_range: false,
-                    estimated_cardinality: Some(10),
-                    encoding_hint: None,
-                },
-            ],
-            ..Default::default()
+            distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Viper as i32),
+            compression: None,
+            engine_config: std::collections::HashMap::new(),
+            cache_config: None,
+            quantization_config: None,
+            index_config: None,
+            metadata_config: None,
+            auto_create_shards: None,
+            auto_balance: None,
+            replication_factor: None,
+            consistency_level: None,
         }),
         storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
             base_location: temp_dir.path().to_str().unwrap().to_string(),
@@ -377,7 +368,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     // Create proper VIPER config with compression
     let viper_config = proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
-        compression: "zstd".to_string(),
+        compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd),
         compression_level: 3,
         ..Default::default()
     };
@@ -388,16 +379,20 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     let collection = Collection {
         id: "search_test".to_string(),
         config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+            name: "search_test".to_string(),
             dimension: 512,
-            filterable_columns: vec![proximadb::proto::proximadb::FilterableColumnSpec {
-                name: "pattern".to_string(),
-                data_type: proximadb::proto::proximadb::FilterableDataType::FilterableString as i32,
-                indexed: true,
-                supports_range: false,
-                estimated_cardinality: Some(10),
-                encoding_hint: None,
-            }],
-            ..Default::default()
+            distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
+            storage_engine: Some(StorageEngine::Viper as i32),
+            compression: None,
+            engine_config: std::collections::HashMap::new(),
+            cache_config: None,
+            quantization_config: None,
+            index_config: None,
+            metadata_config: None,
+            auto_create_shards: None,
+            auto_balance: None,
+            replication_factor: None,
+            consistency_level: None,
         }),
         ..Default::default()
     };
@@ -700,7 +695,14 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let mut config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: algo.to_string(),
+            compression: Some(match algo {
+                "zstd" => proximadb::core::compression::CompressionAlgorithm::Zstd,
+                "snappy" => proximadb::core::compression::CompressionAlgorithm::Snappy,
+                "gzip" => proximadb::core::compression::CompressionAlgorithm::Gzip,
+                "lz4" => proximadb::core::compression::CompressionAlgorithm::Lz4,
+                "brotli" => proximadb::core::compression::CompressionAlgorithm::Brotli,
+                _ => proximadb::core::compression::CompressionAlgorithm::None,
+            }),
             compression_level: level,
             enable_statistics: true,
             data_directory: temp_dir
@@ -734,7 +736,14 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         // Create proper VIPER config
         let viper_config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: algo.to_string(),
+            compression: Some(match algo {
+                "zstd" => proximadb::core::compression::CompressionAlgorithm::Zstd,
+                "snappy" => proximadb::core::compression::CompressionAlgorithm::Snappy,
+                "gzip" => proximadb::core::compression::CompressionAlgorithm::Gzip,
+                "lz4" => proximadb::core::compression::CompressionAlgorithm::Lz4,
+                "brotli" => proximadb::core::compression::CompressionAlgorithm::Brotli,
+                _ => proximadb::core::compression::CompressionAlgorithm::None,
+            }),
             compression_level: level,
             ..Default::default()
         };
@@ -745,8 +754,20 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         let collection = Collection {
             id: "algo_test".to_string(),
             config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+                name: "algo_test".to_string(),
                 dimension: 512,
-                ..Default::default()
+                distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
+                compression: None,
+                engine_config: std::collections::HashMap::new(),
+                cache_config: None,
+                quantization_config: None,
+                index_config: None,
+                metadata_config: None,
+                auto_create_shards: None,
+                auto_balance: None,
+                replication_factor: None,
+                consistency_level: None,
             }),
             storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
                 base_location: temp_dir.path().to_str().unwrap().to_string(),
@@ -817,7 +838,7 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let config = Arc::new(proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: "zstd".to_string(), // Default compression for this test
+            compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd), // Default compression for this test
             compression_level: 3,
             enable_statistics: true,
             data_directory: temp_dir
@@ -852,9 +873,9 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         let viper_config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
             compression: if compression {
-                "zstd".to_string()
+                Some(proximadb::core::compression::CompressionAlgorithm::Zstd)
             } else {
-                "none".to_string()
+                Some(proximadb::core::compression::CompressionAlgorithm::None)
             },
             compression_level: 3,
             ..Default::default()
@@ -866,8 +887,20 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         let collection = Collection {
             id: "compression_test".to_string(),
             config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+                name: "compression_test".to_string(),
                 dimension: 256, // Common embedding dimension (sentence-transformers, etc.)
-                ..Default::default()
+                distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
+                compression: None,
+                engine_config: std::collections::HashMap::new(),
+                cache_config: None,
+                quantization_config: None,
+                index_config: None,
+                metadata_config: None,
+                auto_create_shards: None,
+                auto_balance: None,
+                replication_factor: None,
+                consistency_level: None,
             }),
             storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
                 base_location: temp_dir.path().to_str().unwrap().to_string(),

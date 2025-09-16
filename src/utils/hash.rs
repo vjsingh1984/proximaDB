@@ -202,6 +202,19 @@ impl Default for HashBuilder {
     }
 }
 
+/// Default implementations for use with BuildHasherDefault
+impl Default for XxHash64 {
+    fn default() -> Self {
+        XxHash64::new(0)
+    }
+}
+
+impl Default for Fnv1a64 {
+    fn default() -> Self {
+        Fnv1a64::new()
+    }
+}
+
 /// Standard Hasher implementation for use with HashMap
 impl Hasher for XxHash64 {
     fn write(&mut self, bytes: &[u8]) {

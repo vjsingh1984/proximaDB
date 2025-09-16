@@ -7,8 +7,7 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::SimilarityResult;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-    use crate::proto::proximadb_v1::VectorRecord;
-    use crate::proto::proximadb_v1::MetadataItem;
+    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
     use crate::storage::engines::core::formats::columnar::{
         CollectionContext, UnifiedParquetReader,
     };
@@ -315,7 +314,7 @@ mod tests {
         ));
 
         for record in &vectors {
-            ids.push(record.id.clone().clone());
+            ids.push(record.id.clone());
             collection_ids.push("test_collection".to_string());
             versions.push(record.version.map(|v| v as i8));
             updated_at_values.push(record.updated_at.map(|v| v as i64));
@@ -413,11 +412,11 @@ mod tests {
 
         for i in 0..count {
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("cat_{}", i % 3))),
+            metadata.insert("category".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 3))),
             });
-            metadata.insert("score".to_string(), crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue((i as f32 * 0.5).to_string())),
+            metadata.insert("score".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue((i as f32 * 0.5).to_string())),
             });
 
             let vector = VectorRecord {
@@ -562,7 +561,7 @@ mod tests {
         // Also print the actual vectors to verify they were correctly written
         debug!("Test vectors created:");
         for vec in test_vectors_debug.iter() {
-            debug!("  {} -> {:?}", vec.id.as_ref(), vec.vector);
+            debug!("  {} -> {:?}", vec.id, vec.vector);
         }
 
         assert_eq!(results[0].id, "vec_0", "First result should be exact match");
@@ -647,16 +646,15 @@ mod tests {
 
         // Create simple test vector
         let test_vector = VectorRecord {
-            id: Some("debug_vec".to_string()),
+            id: "debug_vec".to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: Some("test".to_string()),
         };
 
         // Write to parquet file

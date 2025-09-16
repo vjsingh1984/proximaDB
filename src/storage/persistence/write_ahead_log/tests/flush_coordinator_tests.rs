@@ -6,8 +6,7 @@
 //! - Handling memory vs disk WAL modes
 //! - Cleanup instructions after successful flushes
 
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use crate::storage::persistence::write_ahead_log::{
     FlushDataSource, WALFlushCoordinator, config::SyncMode,
 };
@@ -86,7 +85,7 @@ impl UnifiedStorageEngine for MockStorageEngine {
         &self,
         _collection_id: &str,
         _vector_id: &str,
-    ) -> Result<Option<crate::core::VectorRecord>> {
+    ) -> Result<Option<VectorRecord>> {
         Ok(None)
     }
 
@@ -106,22 +105,21 @@ impl UnifiedStorageEngine for MockStorageEngine {
 
 /// Create test vector
 fn create_test_vector(id: &str) -> VectorRecord {
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("test".to_string(), SqlValue {
+        value: Some(sql_value::Value::StringValue("true".to_string())),
+    });
+
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: vec![0.1; 128],
-        metadata: vec![MetadataItem {
-            key: "test".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue("true".to_string()),
-            ),
-        }],
-        timestamp: 1234567890,
-        updated_at: Some(1234567890),
+        metadata,
+        timestamp: 1234567890i64,
+        updated_at: Some(1234567890i64),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
 

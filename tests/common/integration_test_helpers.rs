@@ -914,7 +914,7 @@ pub fn setup_test_assignment() -> StorageAssignment {
         assigned_at: chrono::Utc::now().timestamp_millis(),
         backup_paths: vec![],
         engine: StorageEngine::Sst as i32,
-        engine_config: None,
+        engine_config: std::collections::HashMap::new(),
     }
 }
 
@@ -938,7 +938,7 @@ pub fn create_test_collection_with_storage(name: &str, base_location: String) ->
         assigned_at: chrono::Utc::now().timestamp_millis(),
         backup_paths: vec![],
         engine: StorageEngine::Sst as i32,
-        engine_config: None,
+        engine_config: std::collections::HashMap::new(),
     };
 
     let config = CollectionConfig {

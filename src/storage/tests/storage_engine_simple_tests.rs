@@ -55,7 +55,7 @@ async fn test_storage_engine_creation() {
 
     // Test configuration access
     let config = storage_engine.get_config();
-    assert!(!config.storage_locations.is_none());
+    assert!(!config.storage_locations.is_empty());
 
     // Test distance compute access
     let distance_compute = storage_engine.distance_compute();
@@ -78,7 +78,7 @@ async fn test_write_buffer_manager_access() {
     let (storage_engine, _temp_dir) = create_basic_storage_engine().await;
 
     // Test get write buffer manager
-    let write_buffer_manager = storage_engine.get_write_ahead_log_manager();
+    let write_buffer_manager = storage_engine.get_write_ahead_log();
 
     // Test that the write buffer manager is accessible (basic functionality test)
     // WriteAheadLogManager is wrapped in Arc, so we just check it's accessible
@@ -151,7 +151,7 @@ async fn test_batch_write_empty_vectors() {
     );
 
     let inserted_ids = result.unwrap();
-    assert!(inserted_ids.is_none(), "Should return empty ID list");
+    assert!(inserted_ids.is_empty(), "Should return empty ID list");
 }
 
 #[tokio::test]
@@ -216,12 +216,12 @@ async fn test_get_all_vectors_empty_collection() {
     let (storage_engine, _temp_dir) = create_basic_storage_engine().await;
 
     // Test get all vectors from empty collection
-    let result = storage_engine.get_all_vectors("empty_collection").await;
+    let result = storage_engine.get_vectors("empty_collection", 100, None).await;
     assert!(result.is_ok(), "Get all vectors should not fail");
 
     let vectors = result.unwrap();
     assert!(
-        vectors.is_none(),
+        vectors.is_empty(),
         "Should return empty vector list for empty collection"
     );
 }
@@ -248,7 +248,7 @@ async fn test_recovered_collections_metadata_empty() {
 
     let collections = result.unwrap();
     assert!(
-        collections.is_none(),
+        collections.is_empty(),
         "Should return empty collections for new storage"
     );
 }
@@ -271,7 +271,7 @@ async fn test_create_test_vector_function() {
     // Test the test utility function itself
     let vector = create_test_vector("test_id", vec![1.0, 2.0, 3.0]);
 
-    assert_eq!(vector.id, Some("test_id".to_string()));
+    assert_eq!(vector.id, "test_id".to_string());
     assert_eq!(vector.vector, vec![1.0, 2.0, 3.0]);
     assert_eq!(vector.metadata.len(), 1);
     assert_eq!(vector.version, Some(1));
@@ -305,7 +305,7 @@ async fn test_vector_with_no_id() {
 
     // Test vector with no ID
     let mut no_id_vector = create_test_vector("temp", vec![1.0, 2.0]);
-    no_id_vector.id = None;
+    no_id_vector.id = "".to_string();
 
     let result = storage_engine.write("test_collection", &no_id_vector).await;
     // This will fail because write buffer is not available

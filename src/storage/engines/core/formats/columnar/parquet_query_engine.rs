@@ -2199,8 +2199,8 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemConfig;
     #[tokio::test]
     async fn test_unified_parquet_reader_creation() {
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).unwrap());
-        let reader = UnifiedParquetReader::new(filesystem).await;
+        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+        let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
         assert_eq!(reader.config.enable_predicate_pushdown, true);
         assert_eq!(reader.config.enable_projection, true);
         assert_eq!(reader.config.enable_row_group_pruning, true);
@@ -2208,8 +2208,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_management() {
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).unwrap());
-        let reader = UnifiedParquetReader::new(filesystem).await;
+        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+        let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
         // Initially empty
         let (metadata_count, row_group_count, cache_size) = reader.get_cache_stats().await;
         assert_eq!(metadata_count, 0);

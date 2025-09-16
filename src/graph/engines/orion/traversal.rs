@@ -1319,8 +1319,8 @@ mod tests {
                 labels: vec!["Node".to_string()],
                 properties: std::collections::HashMap::new(),
                 embedding: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
             };
             engine.insert_node(node).unwrap();
         }
@@ -1341,8 +1341,8 @@ mod tests {
                 edge_type: "CONNECTS".to_string(),
                 properties: std::collections::HashMap::new(),
                 weight: None,
-                created_at: None,
-                updated_at: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
             };
             engine.insert_edge(edge).unwrap();
         }

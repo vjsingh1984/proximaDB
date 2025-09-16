@@ -382,7 +382,7 @@ pub struct AWSUserInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::types::SSOProvider;
+    use super::super::types::SSOProvider;
 
     // Use the SSOProvider from super::types module
 
@@ -431,8 +431,8 @@ mod tests {
         let json = serde_json::to_string(&token_data).unwrap();
         let deserialized: AWSTokenData = serde_json::from_str(&json).unwrap();
         
-        assert_eq!(token_data.access_key_id, deserialized.access_key_id);
-        assert_eq!(token_data.user_name, deserialized.user_name);
-        assert_eq!(token_data.mfa_authenticated, deserialized.mfa_authenticated);
+        assert_eq!(token_data.sub, deserialized.sub);
+        assert_eq!(token_data.account_id, deserialized.account_id);
+        assert_eq!(token_data.role_arn, deserialized.role_arn);
     }
 }

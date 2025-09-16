@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::viper::ViperEngine;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
@@ -42,35 +42,24 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
         .map(|i| {
             let now = chrono::Utc::now().timestamp_millis();
             VectorRecord {
-                id: Some(format!("test_vector_{}", i)),
+                id: format!("test_vector_{}", i),
                 vector: vec![0.1 * i as f32, 0.2 * i as f32, 0.3 * i as f32],
-                metadata: vec![
-                    crate::proto::proximadb_v1::MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
-                                "category_{}",
-                                i % 3
-                            )),
-                        ),
-                    },
-                    crate::proto::proximadb_v1::MetadataItem {
-                        key: "priority".to_string(),
-                        value: Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                i.to_string(),
-                            ),
-                        ),
-                    },
-                ],
-                timestamp: now as u32,
-                updated_at: Some(now as u32),
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("category_{}", i % 3)))
+                    });
+                    metadata.insert("priority".to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
+                    });
+                    metadata
+                },
+                timestamp: now,
+                updated_at: Some(now),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: Some(1.0 - (i as f32 * 0.1)),
-                similarity: Some(i as f32 * 0.1),
-                ..Default::default()
+                quantized_vector: vec![],
+                source: None,
             }
         })
         .collect()

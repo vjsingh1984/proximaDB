@@ -1687,8 +1687,8 @@ mod tests {
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Test node creation
@@ -1697,16 +1697,16 @@ mod tests {
         assert_eq!(created_node.labels[0], "Person");
 
         // Test node retrieval
-        let retrieved_node = service.get_node("test_node_1").unwrap().unwrap();
+        let retrieved_node = service.get_node(&"test_node_1".to_string()).unwrap().unwrap();
         assert_eq!(retrieved_node.id, "test_node_1");
         assert!(Arc::ptr_eq(&created_node, &retrieved_node));
 
         // Test node deletion
-        let deleted_node = service.delete_node("test_node_1").unwrap().unwrap();
+        let deleted_node = service.delete_node(&"test_node_1".to_string()).unwrap().unwrap();
         assert_eq!(deleted_node.id, "test_node_1");
 
         // Verify node is deleted
-        let missing_node = service.get_node("test_node_1").unwrap();
+        let missing_node = service.get_node(&"test_node_1".to_string()).unwrap();
         assert!(missing_node.is_none());
     }
 
@@ -1721,8 +1721,8 @@ mod tests {
             labels: vec!["Person".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Should fail in vector-only mode

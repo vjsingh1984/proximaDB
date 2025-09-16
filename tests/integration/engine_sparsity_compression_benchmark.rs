@@ -12,9 +12,9 @@ mod common {
 use common::integration_test_helpers::UnifiedTestEnvironment;
 
 use anyhow::Result;
-use proximadb::StorageEngine;
+use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::CompressionAlgorithm as ProtoCompressionAlgorithm;
+use proximadb::proto::proximadb_v1::CompressionAlgorithm as ProtoCompressionAlgorithm;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -38,16 +38,15 @@ fn create_vectors_with_sparsity(
             }
 
             VectorRecord {
-                id: Some(format!("sparse_{}_{}", sparsity_percent, i)),
+                id: format!("sparse_{}_{}", sparsity_percent, i),
                 vector,
-                metadata: vec![],
-                timestamp: 0,
+                metadata: std::collections::HashMap::new(),
+                timestamp: 0i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: vec![],
+                source: None,
             }
         })
         .collect()
@@ -116,12 +115,9 @@ async fn benchmark_configuration(
             }
             "VIPER" => {
                 let mut config = env_uncompressed.viper_config.clone();
-                config
-                    .storage_config
-                    .as_ref()
-                    .and_then(|s| s.compression.as_ref()) = "none".to_string();
+                config.compression = Some(proximadb::core::compression::CompressionAlgorithm::None);
 
-                let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
+                let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
                     config,
                     env_uncompressed.filesystem.clone(),
                 )
@@ -159,7 +155,7 @@ async fn benchmark_configuration(
             } as i32;
 
             // Create collection config once with compression
-            let compression_config = proximadb::proto::proximadb::CompressionConfig {
+            let compression_config = proximadb::proto::proximadb_v1::CompressionConfig {
                 algorithm: algorithm_enum,
                 level: Some(level),
                 block_size_kb: Some(2048), // 2MB blocks for SST
@@ -195,13 +191,16 @@ async fn benchmark_configuration(
         }
         "VIPER" => {
             let mut config = env.viper_config.clone();
-            config
-                .storage_config
-                .as_ref()
-                .and_then(|s| s.compression.as_ref()) = algorithm.to_string();
+            config.compression = Some(match algorithm {
+                "zstd" => proximadb::core::compression::CompressionAlgorithm::Zstd,
+                "lz4" => proximadb::core::compression::CompressionAlgorithm::Lz4,
+                "snappy" => proximadb::core::compression::CompressionAlgorithm::Snappy,
+                "gzip" => proximadb::core::compression::CompressionAlgorithm::Gzip,
+                _ => proximadb::core::compression::CompressionAlgorithm::None,
+            });
             config.compression_level = level;
 
-            let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
+            let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
                 config,
                 env.filesystem.clone(),
             )

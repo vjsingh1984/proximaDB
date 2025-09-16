@@ -2,9 +2,8 @@
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::MetadataItem;
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use std::sync::Arc;
@@ -16,7 +15,7 @@ mod common {
 }
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use common::unique_collection_id;
-use proximadb::proto::proximadb::StorageEngine;
+use proximadb::proto::proximadb_v1::StorageEngine;
 use tempfile::TempDir;
 use tokio;
 
@@ -58,12 +57,13 @@ async fn test_sst_atomic_flush_creates_staging_directory() {
         vec![1.0, 2.0, 3.0],
         1000,
         None,
-        vec![MetadataItem {
-            key: "category".to_string(),
-            value: Some(
-                proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string()),
-            ),
-        }],
+        {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("category".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue("A".to_string())),
+            });
+            metadata
+        },
     )];
 
     // Use production code directly with proper parameters
@@ -137,17 +137,15 @@ async fn test_sst_atomic_flush_rollback_on_failure() {
 
     // Prepare test vectors with invalid data that will cause serialization to fail
     let vectors = vec![VectorRecord {
-        id: Some("vec1".to_string()),
+        id: "vec1".to_string(),
         vector: vec![], // Empty vector should cause validation to fail
-        metadata: vec![],
-        timestamp: 0,
+        metadata: std::collections::HashMap::new(),
+        timestamp: 0i64,
         updated_at: None,
         expires_at: None,
-        distance: None,
-        rank: None,
-        score: None,
         version: None,
-        ..Default::default()
+        quantized_vector: vec![],
+        source: None,
     }];
 
     // Create flush parameters
@@ -243,15 +241,13 @@ async fn test_concurrent_flushes_across_collections() {
                 vec![i as f32, 1.0, 2.0],
                 1000,
                 None,
-                vec![MetadataItem {
-                    key: "collection".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(format!(
-                            "col_{}",
-                            i
-                        )),
-                    ),
-                }],
+                {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("collection".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(format!("col_{}", i))),
+                    });
+                    metadata
+                },
             )];
 
             // Use production code directly with proper parameters

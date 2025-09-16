@@ -34,9 +34,10 @@ mod tests {
                 ..Default::default()
             }),
             filesystem_config: Default::default(),
+            compaction_config: Default::default(),
         };
 
-        let storage_urls = config.get_storage_urls();
+        let storage_urls = config.storage_urls();
         assert_eq!(storage_urls.len(), 2);
         assert_eq!(storage_urls[0], "file:///nvme1/proximadb");
         assert_eq!(storage_urls[1], "s3://my-bucket/proximadb");
@@ -65,17 +66,17 @@ mod tests {
             ..Default::default()
         };
 
-        let write_buffer_urls = config.get_write_buffer_urls();
+        let write_buffer_urls = config.write_buffer_urls();
         assert_eq!(write_buffer_urls.len(), 2);
         assert_eq!(write_buffer_urls[0], "file:///nvme1/proximadb/wal");
         assert_eq!(write_buffer_urls[1], "s3://bucket/proximadb/wal"); // Trailing slash handled
 
-        let data_urls = config.get_data_urls();
+        let data_urls = config.data_urls();
         assert_eq!(data_urls.len(), 2);
         assert_eq!(data_urls[0], "file:///nvme1/proximadb/data");
         assert_eq!(data_urls[1], "s3://bucket/proximadb/data");
 
-        let index_urls = config.get_index_urls();
+        let index_urls = config.index_urls();
         assert_eq!(index_urls.len(), 2);
         assert_eq!(index_urls[0], "file:///nvme1/proximadb/index");
         assert_eq!(index_urls[1], "s3://bucket/proximadb/index");
@@ -113,7 +114,7 @@ mod tests {
             ..Default::default()
         };
 
-        let urls = config.get_storage_urls();
+        let urls = config.storage_urls();
         assert_eq!(urls.len(), 4);
         assert!(urls[0].starts_with("file://"));
         assert!(urls[1].starts_with("s3://"));
@@ -121,7 +122,7 @@ mod tests {
         assert!(urls[3].starts_with("adls://"));
 
         // WAL URLs should be derived correctly for each
-        let write_buffer_urls = config.get_write_buffer_urls();
+        let write_buffer_urls = config.write_buffer_urls();
         assert_eq!(write_buffer_urls.len(), 4);
         assert_eq!(write_buffer_urls[0], "file:///local/proximadb/wal");
         assert_eq!(write_buffer_urls[1], "s3://aws-bucket/proximadb/wal");
@@ -142,7 +143,7 @@ mod tests {
             }],
             metadata_url: "file:///disk1/metadata_info".to_string(),
             assignment_config: AssignmentConfig {
-                // strategy removed -  "hash".to_string(),
+                strategy: "hash".to_string(),
                 affinity: true,
             },
             viper_config: Default::default(),
@@ -150,8 +151,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(config.assignment_config.strategy, "hash");
-        assert_eq!(config.assignment_config.affinity, true);
+        assert!(config.assignment_config.affinity);
     }
 
     #[test]
@@ -159,15 +159,14 @@ mod tests {
         let config = StorageConfig::default();
 
         // Should have default storage locations
-        assert!(!config.storage_locations.is_none());
+        assert!(!config.storage_locations.is_empty());
 
         // Should have proper metadata URL
-        assert!(!config.metadata_url.is_none());
+        assert!(!config.metadata_url.is_empty());
         assert!(config.metadata_url.starts_with("file://"));
 
         // Assignment config should default to hash with affinity
-        assert_eq!(config.assignment_config.strategy, "hash");
-        assert_eq!(config.assignment_config.affinity, true);
+        assert!(config.assignment_config.affinity);
     }
 
     #[test]

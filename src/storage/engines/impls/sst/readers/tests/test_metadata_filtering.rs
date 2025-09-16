@@ -4,7 +4,7 @@
 //! the CompositeBloomFilter implementation which supports both key
 //! and metadata bloom filters.
 
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use crate::storage::engines::impls::sst::SstableWriter;
 use crate::storage::engines::impls::sst::{SstConfig, BloomFilterConfig};
 use crate::compute::distance_computation::DistanceMetric;
@@ -24,6 +24,17 @@ fn create_test_config() -> SstConfig {
 }
 use serde_json::json;
 use tracing::{debug, error, info};
+
+// Helper function to compare SqlValue with JSON
+fn sql_value_matches_json(sql_value: &SqlValue, json_value: &serde_json::Value) -> bool {
+    match (&sql_value.value, json_value) {
+        (Some(sql_value::Value::StringValue(s)), serde_json::Value::String(json_s)) => s == json_s,
+        (Some(sql_value::Value::IntValue(i)), serde_json::Value::Number(n)) => *i == n.as_i64().unwrap_or(0),
+        (Some(sql_value::Value::FloatValue(f)), serde_json::Value::Number(n)) => (*f - n.as_f64().unwrap_or(0.0)).abs() < f64::EPSILON,
+        (Some(sql_value::Value::BoolValue(b)), serde_json::Value::Bool(json_b)) => b == json_b,
+        _ => false,
+    }
+}
 
 #[tokio::test]
 #[ignore = "Needs investigation - Bincode deserialization issue"]
@@ -52,28 +63,16 @@ async fn test_metadata_filtering_basic() {
 
     // Category A records
     for i in 0..5 {
-        let metadata = vec![
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string()),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "score".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue((i * 10) as f64),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "document".to_string(),
-                    ),
-                ),
-            },
-        ];
+        let mut metadata = HashMap::new();
+        metadata.insert("category".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue("A".to_string())),
+        });
+        metadata.insert("score".to_string(), SqlValue {
+            value: Some(sql_value::Value::NumberValue((i * 10) as f64)),
+        });
+        metadata.insert("type".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue("document".to_string())),
+        });
 
         let record = VectorRecord {
             id: format!("vec_a_{}", i),
@@ -91,30 +90,16 @@ async fn test_metadata_filtering_basic() {
 
     // Category B records
     for i in 0..5 {
-        let metadata = vec![
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("B".to_string()),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "score".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                        (i * 10 + 5) as f64,
-                    ),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "image".to_string(),
-                    ),
-                ),
-            },
-        ];
+        let mut metadata = HashMap::new();
+        metadata.insert("category".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue("B".to_string())),
+        });
+        metadata.insert("score".to_string(), SqlValue {
+            value: Some(sql_value::Value::NumberValue((i * 10 + 5) as f64)),
+        });
+        metadata.insert("type".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue("image".to_string())),
+        });
 
         let record = VectorRecord {
             id: format!("vec_b_{}", i),
@@ -141,7 +126,8 @@ async fn test_metadata_filtering_basic() {
     info!("Wrote SSTable with 10 records (5 category A, 5 category B)");
 
     // Create reader and load metadata
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let io_system = Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new());
+    let reader = UnifiedSstableReader::new(filesystem.clone(), io_system, "test_collection".to_string());
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.unwrap();
 
@@ -185,7 +171,7 @@ async fn test_metadata_filtering_basic() {
             "All results should be category A"
         );
         let category = result.metadata.get("category").unwrap();
-        assert_eq!(category, &json!("A"), "Category should be A");
+        assert!(sql_value_matches_json(category, &json!("A")), "Category should be A");
     }
 
     // Test 2: Filter by type = image
@@ -213,7 +199,7 @@ async fn test_metadata_filtering_basic() {
             "All image results should be category B"
         );
         let type_val = result.metadata.get("type").unwrap();
-        assert_eq!(type_val, &json!("image"), "Type should be image");
+        assert!(sql_value_matches_json(type_val, &json!("image")), "Type should be image");
     }
 
     // Test 3: Filter by score > 25 (numeric filter)
@@ -265,8 +251,8 @@ async fn test_metadata_filtering_basic() {
     for result in &results {
         let category = result.metadata.get("category").unwrap();
         let type_val = result.metadata.get("type").unwrap();
-        assert_eq!(category, &json!("B"), "Category should be B");
-        assert_eq!(type_val, &json!("image"), "Type should be image");
+        assert!(sql_value_matches_json(category, &json!("B")), "Category should be B");
+        assert!(sql_value_matches_json(type_val, &json!("image")), "Type should be image");
     }
 
     // Test 5: No results filter
@@ -315,24 +301,23 @@ async fn test_metadata_bloom_filter_optimization() {
     // Create records
     let mut records = BTreeMap::new();
     for i in 0..20 {
-        let metadata = vec![
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        if i % 2 == 0 { "even" } else { "odd" }.to_string(),
-                    ),
-                ),
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "category".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(
+                    if i % 2 == 0 { "even" } else { "odd" }.to_string(),
+                )),
             },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "status".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        if i < 10 { "active" } else { "inactive" }.to_string(),
-                    ),
-                ),
+        );
+        metadata.insert(
+            "status".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(
+                    if i < 10 { "active" } else { "inactive" }.to_string(),
+                )),
             },
-        ];
+        );
 
         let record = VectorRecord {
             id: format!("vec_{}", i),
@@ -358,7 +343,8 @@ async fn test_metadata_bloom_filter_optimization() {
     info!("Wrote SSTable with metadata bloom filters");
 
     // Create reader
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let io_system = Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new());
+    let reader = UnifiedSstableReader::new(filesystem.clone(), io_system, "test_collection".to_string());
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.unwrap();
 

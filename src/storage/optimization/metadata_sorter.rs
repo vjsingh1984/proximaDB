@@ -14,8 +14,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::FilterableColumnSpec;
+use crate::proto::proximadb_v1::{VectorRecord, FilterableColumnSpec, SqlValue, sql_value};
 
 /// Configuration for metadata-based sorting
 #[derive(Debug, Clone)]
@@ -335,37 +334,27 @@ impl SortConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::MetadataItem;
+    // Import removed - using HashMap metadata now
 
     fn create_test_record(id: &str, category: &str, priority: &str) -> VectorRecord {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("category".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue(category.to_string())),
+        });
+        metadata.insert("priority".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue(priority.to_string())),
+        });
+
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            category.to_string(),
-                        ),
-                    ),
-                },
-                MetadataItem {
-                    key: "priority".to_string(),
-                    value: Some(
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            priority.to_string(),
-                        ),
-                    ),
-                },
-            ],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata,
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 

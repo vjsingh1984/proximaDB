@@ -166,7 +166,7 @@ impl QueryEngine {
 }
 
 /// Execution strategy determined by query analysis
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ExecutionStrategy {
     /// Vector-only queries (similarity search, metadata filtering)
     VectorOnly,

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
 use proximadb::proto::proximadb_v1::SqlValue;
 use proximadb::storage::engines::impls::viper::vector_writer::{
@@ -47,7 +47,7 @@ fn create_test_record(id: &str, vector: Vec<f32>, category: &str) -> VectorRecor
             ("confidence".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::DoubleValue(0.85)) }),
             ("active".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(true)) }),
         ]),
-        timestamp: 1234567890,
+        timestamp: 1234567890i64,
         updated_at: None,
         expires_at: None,
         version: Some(1),
@@ -434,17 +434,15 @@ fn test_empty_and_edge_cases() {
 
     // Test empty vectors
     let record_with_empty_vector = VectorRecord {
-        id: Some("empty_vector".to_string()),
+        id: "empty_vector".to_string(),
         vector: vec![], // Empty vector
-        metadata: vec![],
-        timestamp: 1234567890,
+        metadata: std::collections::HashMap::new(),
+        timestamp: 1234567890i64,
         updated_at: None,
         expires_at: None,
         version: None,
-        rank: None,
-        score: None,
-        distance: None,
-        ..Default::default()
+        quantized_vector: vec![],
+        source: None,
     };
 
     // Test single record

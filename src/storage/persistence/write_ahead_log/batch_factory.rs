@@ -169,9 +169,9 @@ mod tests {
     fn test_available_strategies() {
         let strategies = WALBatchFactory::available_strategies();
         assert_eq!(strategies.len(), 3);
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::AvroBatch));
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::BincodeBatch));
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::ProtoBatch));
+        assert!(strategies.contains(&WriteBufferStrategyType::AvroBatch));
+        assert!(strategies.contains(&WriteBufferStrategyType::BincodeBatch));
+        assert!(strategies.contains(&WriteBufferStrategyType::ProtoBatch));
     }
 
     #[test]
@@ -196,9 +196,9 @@ mod tests {
     #[test]
     fn test_strategy_comparison() {
         let comparison = WALBatchFactory::compare_strategies();
-        assert!(!comparison.avro_advantages.is_none());
-        assert!(!comparison.bincode_advantages.is_none());
-        assert!(!comparison.proto_advantages.is_none());
-        assert!(!comparison.recommendation.is_none());
+        assert!(!comparison.avro_advantages.is_empty());
+        assert!(!comparison.bincode_advantages.is_empty());
+        assert!(!comparison.proto_advantages.is_empty());
+        assert!(!comparison.recommendation.is_empty());
     }
 }

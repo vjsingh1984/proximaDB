@@ -714,13 +714,15 @@ mod tests {
         // Write small batches (streaming pattern)
         for i in 0..10 {
             let records = vec![VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vec![0.1; 128],
-                metadata: None,
-                timestamp: i as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
-                version: Some(1),
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             }];
 
             writer.write(records).await.unwrap();
@@ -750,13 +752,15 @@ mod tests {
         // Write large batch (batch pattern)
         let records: Vec<_> = (0..1000)
             .map(|i| VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vec![0.1; 128],
-                metadata: None,
-                timestamp: i as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
-                version: Some(1),
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             })
             .collect();
 
