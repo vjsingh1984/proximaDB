@@ -5,12 +5,11 @@
 
 use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMResponse, LLMError};
 use crate::ai::llm_integration::types::LLMRequestContext;
-use super::schema_context::{SchemaContext, SchemaContextBuilder};
-use super::sql_validator::{SQLValidator, ValidationResult};
+use super::schema_context::SchemaContext;
+use super::sql_validator::SQLValidator;
 use super::prompt_builder::{PromptBuilder, PromptTemplate};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tracing::{debug, warn, error, info};

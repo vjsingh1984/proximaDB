@@ -6,7 +6,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use super::compression_common::{
-    AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig, AdaptationCriteria,
+    AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig,
 };
 use crate::core::compression::{
     CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,

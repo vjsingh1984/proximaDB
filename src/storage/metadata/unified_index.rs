@@ -20,7 +20,6 @@
 //! Designed for horizontal compute scaling with state persistence in cloud object stores.
 
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::proto::proximadb_v1::Collection;

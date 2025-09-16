@@ -21,7 +21,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use tracing::{info, warn, debug};
+use tracing::info;
 
 /// Trait for storage engine flush and compaction handlers
 #[async_trait]

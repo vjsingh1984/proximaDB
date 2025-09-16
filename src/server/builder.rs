@@ -15,7 +15,6 @@
 //! Each subsystem has its own focused builder, maintaining separation of concerns.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::storage::builder::{StorageSystem, StorageSystemBuilder};

@@ -11,7 +11,6 @@ pub mod performance_optimization;
 
 // Import common types used across the module
 use crate::core::search::FilterExpression;
-use serde::{Deserialize, Serialize};
 
 /// Filterable metadata column configuration
 #[derive(Debug, Clone)]

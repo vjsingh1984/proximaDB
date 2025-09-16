@@ -18,7 +18,7 @@
 
 use crate::network::auth::{AuthError, AuthResult, AuthMethod, Permission, AuthProvider};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use reqwest::Client;
 

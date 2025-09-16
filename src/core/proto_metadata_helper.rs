@@ -1,6 +1,6 @@
 // Helper functions for proto metadata conversion with repeated MetadataItem
 
-use crate::proto::proximadb_v1::{MetadataItem, metadata_item, SqlValue, sql_value};
+use crate::proto::proximadb_v1::{MetadataItem, metadata_item, SqlValue};
 use std::collections::HashMap;
 
 /// Convert repeated MetadataItem to serde_json Value map for REST API compatibility

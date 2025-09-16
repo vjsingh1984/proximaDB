@@ -1670,7 +1670,7 @@ impl HybridQueryEngine {
         end_node_id: &NodeId,
         parent: &HashMap<NodeId, (NodeId, EdgeId)>,
     ) -> QueryResult<Vec<PathStep>> {
-        let mut path: Vec<PathStep> = Vec::new();
+        let path: Vec<PathStep> = Vec::new();
         let mut current_id = end_node_id.clone();
 
         // Build path backwards

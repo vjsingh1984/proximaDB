@@ -17,7 +17,6 @@
 //! Engine-specific configuration for compaction and storage operations
 
 use super::compaction_utils::StorageEngineType;
-use serde::{Deserialize, Serialize};
 
 /// Configuration for engine-specific compaction behavior
 #[derive(Debug, Clone)]

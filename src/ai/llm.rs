@@ -3,12 +3,11 @@
 use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use std::sync::Arc;
-use std::collections::HashMap;
-use tracing::{info, debug};
+use tracing::info;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::storage::tenant::{BusinessContext, UserContext};
+use crate::storage::tenant::BusinessContext;
 use crate::auth::sso::EnterpriseUserContext;
 
 /// AI intelligence foundation with LLM integration

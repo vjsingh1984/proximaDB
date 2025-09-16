@@ -223,7 +223,7 @@ impl SksExecutor {
         );
 
         // 1. Gather context from multiple sources
-        let mut assembled_context: Vec<AssembledContext> = Vec::new();
+        let assembled_context: Vec<AssembledContext> = Vec::new();
 
         for item_id in context_items {
             // TODO: Retrieve context from entity store, vector collections, graph relationships

@@ -1,15 +1,13 @@
 //! Comprehensive audit correlation system for multi-provider enterprise environments
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::collections::HashMap;
-use tracing::{info, debug, warn};
+use tracing::{info, debug};
 use chrono::{DateTime, Utc, Duration};
 use serde::{Deserialize, Serialize};
 
-use crate::auth::sso::{SSOProvider, EnterpriseUserContext};
-use crate::storage::tenant::UserContext;
 
 /// Comprehensive audit correlation engine
 pub struct AuditCorrelationEngine {

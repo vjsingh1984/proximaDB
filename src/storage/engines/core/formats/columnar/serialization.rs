@@ -6,10 +6,9 @@
 
 use anyhow::{Context, Result};
 use arrow_array::builder::{FixedSizeBinaryBuilder, Float32Builder, Int8Builder};
-use arrow_array::{Array, ArrayRef, BinaryArray, FixedSizeBinaryArray, Float32Array, Int8Array};
+use arrow_array::{Array, ArrayRef, FixedSizeBinaryArray, Float32Array, Int8Array};
 use arrow_schema::{DataType, Schema};
 use bytemuck::{cast_slice, try_cast_slice};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, trace, warn};

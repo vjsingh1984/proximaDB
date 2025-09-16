@@ -53,12 +53,12 @@
 //! ```
 
 use crate::core::error::ProximaDBError;
-use crate::graph::{EdgeId, GraphMemoryPool, NodeId};
+use crate::graph::GraphMemoryPool;
 use crate::utils::Uuid;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 
 /// Main monitoring system for graph operations

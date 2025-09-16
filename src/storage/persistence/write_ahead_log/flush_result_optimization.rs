@@ -16,8 +16,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use super::enhanced_flush_result::EnhancedFlushResult;
-use crate::proto::proximadb_v1::{VectorRecord, SqlValue};
-use std::collections::HashMap;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::FlushResult;
 
 /// Optimized flush result that minimizes memory allocations

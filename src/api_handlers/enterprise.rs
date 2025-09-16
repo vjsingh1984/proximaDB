@@ -2,7 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
-use tracing::{info, debug, warn};
+use tracing::info;
 
 use crate::auth::{EnterpriseAuthManager, SSOToken, EnterpriseUserContext};
 use crate::storage::tenant::{

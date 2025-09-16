@@ -7,7 +7,7 @@ use axum::{
     extract::{Path, State},
     response::Json,
 };
-use tracing::{error, info};
+use tracing::error;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::v1::handlers::AppState;

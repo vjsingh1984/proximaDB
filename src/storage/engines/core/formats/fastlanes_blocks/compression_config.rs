@@ -1,7 +1,6 @@
 // Shared Compression Configuration for SST and SWIFT engines
 // Unified compression strategies and configuration management
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::core::compression::{CompressionAlgorithm, CompressionContext};

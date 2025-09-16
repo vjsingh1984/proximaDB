@@ -13,7 +13,7 @@
 
 use anyhow::Result;
 use moka::future::Cache;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

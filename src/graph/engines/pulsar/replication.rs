@@ -24,10 +24,10 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use crate::graph::{Edge, EdgeId, Node, NodeId};
 use dashmap::DashMap;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 
 /// Replication manager for PULSAR engine
 #[derive(Debug)]

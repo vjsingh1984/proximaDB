@@ -212,7 +212,6 @@ pub use self::schema::Alert;
 pub use exporters::{MetricsSnapshot, SystemMetrics};
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 /// Configuration for the metrics system
 #[derive(Debug, Clone)]

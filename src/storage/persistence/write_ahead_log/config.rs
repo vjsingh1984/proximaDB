@@ -5,7 +5,6 @@
 
 //! WAL Configuration with Smart Defaults for Performance
 
-use serde::{Deserialize, Serialize};
 
 // NOTE: CompressionAlgorithm moved to unified_types.rs
 // Write Buffer-specific configuration uses the unified type

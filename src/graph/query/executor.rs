@@ -19,11 +19,11 @@
 //! This module implements the query executor, responsible for taking a generated
 //! `QueryPlan` and executing it against the graph data, returning the results.
 
-use super::planner::{PlanStep, PlanStepType, QueryPlan, TraversalAlgorithm};
-use super::{QueryContext, QueryResult, QueryStats};
+use super::planner::{PlanStepType, QueryPlan};
+use super::{QueryContext, QueryResult};
 use crate::core::QueryError;
 use crate::core::error::{ProximaDBError, VectorDBError};
-use crate::graph::{Edge, GraphMemoryPool, GraphService, Node, NodeId};
+use crate::graph::GraphService;
 use std::collections::HashMap;
 use std::sync::Arc;
 

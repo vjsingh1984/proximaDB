@@ -61,8 +61,7 @@ use tracing::{debug, error, info};
 use crate::metrics::query_service::{MetricsQueryOptions, MetricsQueryService};
 
 use crate::proto::proximadb_v1::{
-    Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorBatchRequest,
-    VectorOperation, VectorOperationResponse, VectorRecord, VectorSearchRequest,
+    Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorRecord,
 };
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::VectorOperationsService;

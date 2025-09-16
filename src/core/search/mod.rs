@@ -19,7 +19,6 @@ mod early_termination_tests;
 #[cfg(test)]
 mod optimization_tests;
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Custom recall rates for progressive search stages

@@ -11,7 +11,6 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
-use crate::core::metadata_types::TypedMetadata;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 

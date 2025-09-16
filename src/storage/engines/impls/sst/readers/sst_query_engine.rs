@@ -26,7 +26,7 @@
 //! RENAME SUGGESTION: This file should be renamed to `sst_query_engine.rs`
 //! to match the suggested parquet naming convention
 
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::core::metadata_types::MetadataValue;
 use crate::core::search::OptimizedSearchRecord;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -2364,7 +2364,7 @@ impl UnifiedSstableReader {
                 let mut metadata_map = std::collections::HashMap::new();
                 for (key, item) in &record.metadata {
                     if let Some(value) = &item.value {
-                        use crate::proto::proximadb_v1::sql_value;
+                        
                         let typed_value = match value {
                             crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                 MetadataValue::String(std::sync::Arc::from(s.as_str()))

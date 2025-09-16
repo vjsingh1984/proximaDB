@@ -32,7 +32,6 @@ use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

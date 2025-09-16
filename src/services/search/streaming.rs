@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::core::metadata_types::MetadataValue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
 use crate::services::operations::vectors::VectorOperationsService;

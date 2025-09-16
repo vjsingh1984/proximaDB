@@ -15,7 +15,6 @@ pub use migrator::{EngineMigrator, MigrationPlan, MigrationProgress, MigrationRe
 // pub use rollback::{RollbackManager, RollbackPlan, RollbackResult};
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;

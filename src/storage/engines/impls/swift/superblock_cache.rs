@@ -4,7 +4,6 @@
 use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::Result;
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

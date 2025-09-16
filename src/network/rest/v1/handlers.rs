@@ -8,20 +8,18 @@
 use axum::{
     extract::{Json, Path, Query, State},
     http::StatusCode,
-    response::{Json as JsonResponse, IntoResponse, Response},
-    routing::{get, post},
+    response::{Json as JsonResponse, IntoResponse},
 };
 use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::{health, proto_json::ProtoApiResponse};
+use crate::network::rest::health;
 use crate::proto::proximadb_v1;
-use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest, CollectionResponse};
+use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{
     VectorBatchRequest,
-    VectorOperationResponse,
     VectorSearchRequest,
 };
 use crate::query::QueryEngine;

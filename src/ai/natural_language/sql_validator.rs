@@ -7,7 +7,7 @@ use crate::ai::natural_language::translator::UserContext;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use anyhow::{Result, anyhow};
-use tracing::{debug, warn, error};
+use tracing::{debug, error};
 use sqlparser::ast::Query;
 
 /// SQL Validator for security and safety
@@ -150,7 +150,7 @@ impl SQLValidator {
 
     /// Comprehensive SQL validation
     async fn validate_sql(&self, sql: &str, user_context: &UserContext) -> Result<ValidationResult> {
-        let mut warnings = Vec::new();
+        let warnings = Vec::new();
         let mut errors = Vec::new();
         let mut security_issues = Vec::new();
 
@@ -225,10 +225,10 @@ impl SQLValidator {
     fn parse_and_sanitize_sql(&self, sql: &str, user_context: &UserContext) -> Result<String> {
         use sqlparser::parser::Parser;
         use sqlparser::dialect::PostgreSqlDialect;
-        use sqlparser::ast::{Statement, Query, Select, SetExpr, TableFactor, Expr};
+        use sqlparser::ast::Statement;
 
         let dialect = PostgreSqlDialect {};
-        let mut parser = Parser::new(&dialect);
+        let parser = Parser::new(&dialect);
 
         // Parse SQL
         let statements = parser.try_with_sql(sql)
@@ -276,7 +276,7 @@ impl SQLValidator {
     }
 
     /// Add tenant filtering to query
-    fn add_tenant_filtering(&self, mut query: Query, user_context: &UserContext) -> Result<Query> {
+    fn add_tenant_filtering(&self, query: Query, user_context: &UserContext) -> Result<Query> {
         // This is a simplified implementation
         // In practice, would need to traverse the AST and add WHERE clauses
 

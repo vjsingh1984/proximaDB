@@ -20,7 +20,6 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
-use crate::core::metadata_types::TypedMetadata;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,

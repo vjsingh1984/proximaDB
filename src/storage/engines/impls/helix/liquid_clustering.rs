@@ -4,7 +4,6 @@
 //! based on query patterns to optimize for frequently accessed regions.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;

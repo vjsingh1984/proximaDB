@@ -10,7 +10,6 @@
 //! - Compression metadata for quantization
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::core::error::{ProximaDBError, StorageError};

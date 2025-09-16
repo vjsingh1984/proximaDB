@@ -281,7 +281,7 @@ static OTEL_INIT: std::sync::Once = std::sync::Once::new();
 /// Initialize global OpenTelemetry manager
 pub fn initialize_opentelemetry(config: OpenTelemetryConfig) -> Result<()> {
     OTEL_INIT.call_once(|| {
-        let mut manager = OpenTelemetryManager::new(config);
+        let manager = OpenTelemetryManager::new(config);
         // Note: Can't use async in Once::call_once, so we defer initialization
         if let Ok(mut global_manager) = GLOBAL_OTEL_MANAGER.lock() {
             *global_manager = Some(manager);

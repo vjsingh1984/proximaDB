@@ -111,7 +111,6 @@ pub use sst_io_layer::{
 // NEW: Export zero-copy metadata serialization components
 pub use sst_metadata::{SstBlockHeader, SstGlobalHeader, SstMetadata, SstMetadataSerializer};
 
-use serde::{Deserialize, Serialize};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::CompressionAlgorithm;

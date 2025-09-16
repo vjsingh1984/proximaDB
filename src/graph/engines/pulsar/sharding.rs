@@ -21,7 +21,7 @@
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
-use crate::graph::{EdgeId, NodeId};
+use crate::graph::NodeId;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 

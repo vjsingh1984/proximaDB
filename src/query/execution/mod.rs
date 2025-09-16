@@ -11,10 +11,9 @@ pub mod planner;
 
 use crate::core::search::FilterExpression;
 use crate::graph::service::GraphService;
-use crate::query::ast::{Query, Select};
+use crate::query::ast::Query;
 use crate::services::operations::vectors::VectorOperationsService;
 use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Unified query engine that replaces sql_engine with AST-based execution

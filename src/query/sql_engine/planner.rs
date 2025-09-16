@@ -19,7 +19,6 @@
 //! Converts parsed SQL queries into execution plans.
 
 use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
 
 use super::parser::{
     ComparisonOp, Condition, OrderType, ParsedQuery, SelectField, Value, WhereClause,

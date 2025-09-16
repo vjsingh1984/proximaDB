@@ -3,11 +3,11 @@
 use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use std::sync::Arc;
-use tracing::{info, debug};
+use tracing::info;
 use chrono::{DateTime, Utc};
 
-use super::{TenantContext, BusinessContext, DataSensitivityLevel};
-use crate::storage::tenant::entity_store::{TenantAwareEntityStore, UserContext};
+use super::BusinessContext;
+use crate::storage::tenant::entity_store::UserContext;
 
 /// Domain manager for business context separation
 pub struct DomainManager {

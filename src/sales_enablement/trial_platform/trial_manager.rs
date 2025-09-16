@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use chrono::{DateTime, Utc, Duration};
 use uuid::Uuid;
 use anyhow::{Result, anyhow};
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug};
 
 /// Enterprise trial management for self-service customer evaluation
 #[derive(Debug, Clone)]

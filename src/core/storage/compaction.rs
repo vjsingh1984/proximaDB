@@ -1,7 +1,6 @@
 //! Compaction and WAL configuration types
 
 use crate::core::foundation::BaseConfig;
-use serde::{Deserialize, Serialize};
 
 /// Compaction strategy for storage optimization
 #[derive(Debug, Clone)]

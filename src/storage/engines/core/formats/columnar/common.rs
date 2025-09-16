@@ -7,7 +7,6 @@
 use anyhow::Result;
 use arrow_array::ArrayRef;
 use arrow_schema::Schema;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;

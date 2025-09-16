@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::Result;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Schema context for natural language translation
 #[derive(Debug, Clone)]

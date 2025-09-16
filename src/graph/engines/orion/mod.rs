@@ -64,7 +64,6 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};
 use dashmap::DashMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

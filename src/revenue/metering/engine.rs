@@ -7,9 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc, Duration};
-use uuid::Uuid;
 use anyhow::{Result, anyhow};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 
 /// Enterprise usage metering engine for real-time billing
 pub struct UsageMeteringEngine {

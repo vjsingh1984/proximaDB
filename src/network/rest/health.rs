@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, warn};
+use tracing::debug;
 
 use crate::api_handlers::UnifiedHandlers;
-use crate::errors::{ApiError, ApiResult};
+use crate::errors::ApiResult;
 
 /// Health check query parameters
 #[derive(Debug, Deserialize)]

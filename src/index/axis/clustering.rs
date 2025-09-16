@@ -4,7 +4,6 @@
 //! It supports various clustering algorithms and integrates with the adaptive indexing strategy.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

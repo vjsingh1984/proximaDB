@@ -4,7 +4,6 @@
 //! deployments where configuration changes need to be applied without restart.
 
 use anyhow::{Result, Context};
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, RwLock, watch};

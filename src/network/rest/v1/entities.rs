@@ -11,7 +11,6 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{Json, IntoResponse},
-    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -415,7 +414,7 @@ pub struct ListEntitiesQuery {
 
 /// Configure REST API routes for entities
 pub fn configure_routes() -> axum::Router<EntityApiState> {
-    use axum::routing::{delete, get, post};
+    use axum::routing::{get, post};
 
     axum::Router::new()
         .route(

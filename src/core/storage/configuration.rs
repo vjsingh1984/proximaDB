@@ -2,7 +2,6 @@
 
 use super::{CompressionConfig, StorageEngine};
 use crate::core::foundation::BaseConfig;
-use serde::{Deserialize, Serialize};
 
 /// Unified storage configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

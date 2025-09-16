@@ -10,7 +10,6 @@
 //! and storage layout strategies.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use super::persistence::write_ahead_log::config::{MemTableType, WriteBufferStrategyType};

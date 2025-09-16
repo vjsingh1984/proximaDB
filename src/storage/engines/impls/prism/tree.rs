@@ -6,7 +6,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Tree node for hierarchical navigation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,7 +110,7 @@ impl PrismTree {
         accuracy_threshold: f64,
         max_results: usize,
     ) -> Result<Vec<SearchResult>> {
-        let mut results: Vec<SearchResult> = Vec::new();
+        let results: Vec<SearchResult> = Vec::new();
         let mut current_accuracy = 0.0;
         
         // Start with binary quantization for speed

@@ -10,12 +10,12 @@ use anyhow::{Result, anyhow};
 use sqlparser::ast::{
     BinaryOperator, Expr as SqlExpr, Function, FunctionArg, FunctionArgExpr,
     OrderByExpr as SqlOrderByExpr, Query as SqlQuery, Select as SqlSelect, SelectItem, Statement,
-    TableFactor, TableWithJoins, UnaryOperator, Value,
+    TableFactor, TableWithJoins, Value,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::query::ast::{BinaryOp, Expr, Join, Literal, OrderByExpr, Query, Select, TableRef, UnaryOp};
+use crate::query::ast::{BinaryOp, Expr, Join, Literal, OrderByExpr, Query, Select, TableRef};
 use crate::services::collection::manager::CollectionService;
 use std::sync::Arc;
 

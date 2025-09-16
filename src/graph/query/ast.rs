@@ -20,7 +20,7 @@
 //! for Cypher-like graph query patterns. These structures are used by the parser
 //! to represent a parsed query and by the planner and executor for processing.
 
-use crate::graph::{Edge, EdgeId, Node, NodeId};
+use crate::graph::{Edge, Node};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

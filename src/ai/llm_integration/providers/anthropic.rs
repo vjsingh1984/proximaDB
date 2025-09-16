@@ -8,9 +8,8 @@ use crate::ai::llm_integration::types::{LLMRequest, LLMResponse, LLMError, LLMPr
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::time::Instant;
-use tracing::{debug, warn, error};
+use tracing::debug;
 
 /// Anthropic API client implementation
 #[derive(Debug, Clone)]

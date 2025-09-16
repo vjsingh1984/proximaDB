@@ -8,7 +8,7 @@ use super::storage::AuditStorage;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::collections::HashMap;
-use chrono::{DateTime, Utc, Duration, Timelike};
+use chrono::{Utc, Duration, Timelike};
 use uuid::Uuid;
 use anyhow::{Result, anyhow};
 use tracing::{debug, info, warn, error};

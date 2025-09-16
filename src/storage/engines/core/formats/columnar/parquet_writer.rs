@@ -23,7 +23,6 @@ use tracing::{debug, info, trace};
 
 use crate::core::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
-use crate::proto::proximadb_v1::metadata_item;
 use crate::storage::engines::core::formats::columnar::QuantizationConfig;
 use crate::storage::engines::core::formats::columnar::native_metadata::NativeMetadataHandler;
 

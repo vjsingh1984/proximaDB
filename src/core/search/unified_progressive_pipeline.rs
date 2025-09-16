@@ -12,7 +12,6 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::metadata_types::TypedMetadata;
 use crate::core::search::FilterExpression;
 use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
 use crate::core::search::results::OptimizedSearchRecord;
@@ -703,7 +702,7 @@ impl UnifiedProgressiveSearchPipeline {
 
         for (key, entry) in &record.metadata {
             if let Some(ref proto_value) = entry.value {
-                use crate::proto::proximadb_v1::sql_value;
+                
                 use serde_json::Value;
 
                 let json_value = match proto_value {

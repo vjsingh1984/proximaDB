@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use arrow_array::{Array, RecordBatch};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 /// Consolidated RAPTOR reader that eliminates duplication by using unified components
 /// Replaces: reader.rs (1,243 lines) + unified_reader.rs (951 lines) + rowgroup_cache.rs (771 lines)

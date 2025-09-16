@@ -5,7 +5,6 @@ use anyhow::Result;
 // Use core bloom filter implementation
 use crate::core::bloom::factory::BloomFilterFactory;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Artus-style column statistics for intelligent bloom filter sizing

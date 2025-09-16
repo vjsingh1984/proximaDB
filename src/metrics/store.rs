@@ -6,7 +6,6 @@
 //! Persistent metrics storage with filesystem abstraction
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -16,7 +15,7 @@ use super::MetricsConfig;
 use super::schema::{CollectionMetrics, GlobalMetrics};
 use super::updater::MetricsUpdate;
 use crate::storage::persistence::filesystem::{FileOptions, FilesystemFactory};
-use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
+use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 
 /// Metrics persistence layer with cross-cloud support
 pub struct MetricsPersistenceLayer {

@@ -8,7 +8,6 @@
 //! Bit-packed bloom filter implementation optimized for memory efficiency
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 

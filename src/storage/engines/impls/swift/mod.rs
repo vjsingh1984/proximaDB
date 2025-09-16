@@ -51,13 +51,12 @@ pub use superblock_cache::{
 };
 
 use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
 // use std::collections::HashMap; // Unused import
 use std::sync::Arc;
-use tracing::{debug, warn, info, error};
+use tracing::debug;
 
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::{DistanceMetric, VectorRecord};
+use crate::core::VectorRecord;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
 use crate::core::bloom::SstableBloomFilter;

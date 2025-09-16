@@ -4,7 +4,7 @@
 //! to enable fine-grained pruning during query execution.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 
 use crate::core::VectorRecord;

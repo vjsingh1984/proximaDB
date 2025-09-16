@@ -8,7 +8,6 @@
 //! Composite bloom filter supporting both keys and metadata
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::ByteAlignedBloomFilter;

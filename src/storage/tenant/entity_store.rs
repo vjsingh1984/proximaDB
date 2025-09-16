@@ -1,13 +1,13 @@
 //! Tenant-aware entity store implementation - clean and efficient
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use dashmap::DashMap;
 use std::sync::Arc;
-use tracing::{info, debug, warn};
+use tracing::debug;
 use chrono::{DateTime, Utc};
 
-use crate::proto::proximadb_v1::{Entity, MetadataFilter};
-use crate::storage::tenant::{TenantContext, TenantManager};
+use crate::proto::proximadb_v1::Entity;
+use crate::storage::tenant::TenantManager;
 
 /// Enhanced entity store with clean tenant separation
 pub struct TenantAwareEntityStore {

@@ -7,13 +7,13 @@ use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest, LLMConfig};
 use crate::ai::llm_integration::types::LLMRequestContext;
 use crate::ai::natural_language::{NLQueryTranslator, TranslationResult};
 use crate::ai::natural_language::translator::UserContext;
-use crate::ai::business_intelligence::{BusinessIntelligenceEngine, BusinessInsight};
+use crate::ai::business_intelligence::BusinessIntelligenceEngine;
 use crate::ai::business_intelligence::engine::ExecutiveDashboard;
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use anyhow::{Result, anyhow};
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, warn};
 
 /// Complete executive dashboard with AI integration
 #[derive(Clone)]

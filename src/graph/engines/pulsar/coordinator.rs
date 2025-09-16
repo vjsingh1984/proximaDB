@@ -24,12 +24,12 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::sharding::ConsistentHashRing;
 use crate::graph::engines::orion::OrionGraphEngine;
 use crate::graph::engines::GraphEngine;
-use crate::graph::{Edge, EdgeId, Node, NodeId};
+use crate::graph::{Node, NodeId};
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 
 /// Query coordinator for distributed graph operations
 #[derive(Debug)]

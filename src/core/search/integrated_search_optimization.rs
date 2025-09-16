@@ -571,7 +571,7 @@ impl AdvancedSearchOptimizer {
             for search_result in cached_v1 {
                 for record in search_result.results {
                     // Use SqlValue metadata directly - no conversion needed!
-                    let mut rec =
+                    let rec =
                         OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
                             .add_vector(record.vector.clone())
                             .with_metadata(record.metadata);

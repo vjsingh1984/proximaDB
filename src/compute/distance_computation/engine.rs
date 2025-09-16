@@ -76,8 +76,6 @@ pub use crate::core::hardware_capabilities::HardwareBackend;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::*;
 
 // ============================================================================
 // Hardware Backend Caching (from original engine.rs)
@@ -673,7 +671,7 @@ impl UnifiedDistanceCompute {
     }
 
     #[cfg(target_arch = "aarch64")]
-    unsafe fn cosine_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn cosine_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
         use std::arch::aarch64::*;
 
         let chunks = a.len() / 4;
@@ -713,7 +711,7 @@ impl UnifiedDistanceCompute {
         }
 
         1.0 - (dot_final / (norm_a_final.sqrt() * norm_b_final.sqrt()))
-    }
+    }}
 
     fn cosine_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut dot = 0.0;
@@ -779,7 +777,7 @@ impl UnifiedDistanceCompute {
     }
 
     #[cfg(target_arch = "aarch64")]
-    unsafe fn euclidean_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn euclidean_distance_neon(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
         use std::arch::aarch64::*;
 
         let chunks = a.len() / 4;
@@ -803,7 +801,7 @@ impl UnifiedDistanceCompute {
         }
 
         result.sqrt()
-    }
+    }}
 
     fn euclidean_distance_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;
@@ -858,7 +856,7 @@ impl UnifiedDistanceCompute {
     }
 
     #[cfg(target_arch = "aarch64")]
-    unsafe fn dot_product_neon(&self, a: &[f32], b: &[f32]) -> f32 {
+    unsafe fn dot_product_neon(&self, a: &[f32], b: &[f32]) -> f32 { unsafe {
         use std::arch::aarch64::*;
 
         let chunks = a.len() / 4;
@@ -880,7 +878,7 @@ impl UnifiedDistanceCompute {
         }
 
         result
-    }
+    }}
 
     fn dot_product_scalar(&self, a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0;

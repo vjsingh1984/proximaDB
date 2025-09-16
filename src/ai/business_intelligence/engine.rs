@@ -8,7 +8,7 @@ use crate::ai::llm_integration::types::LLMRequestContext;
 use crate::ai::natural_language::NLQueryTranslator;
 use crate::ai::natural_language::translator::UserContext;
 use super::insight_generator::{InsightGenerator, BusinessInsight};
-use super::report_generator::{ReportGenerator, ExecutiveReport};
+use super::report_generator::ReportGenerator;
 use super::trend_analyzer::{TrendAnalyzer, TrendAnalysis};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

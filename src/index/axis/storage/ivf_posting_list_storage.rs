@@ -24,7 +24,6 @@
 //! - Disk ↔ Cloud movement preserves format (no conversion)
 
 use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info};
 

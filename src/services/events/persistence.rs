@@ -8,14 +8,13 @@
 //! EventLog persistence for crash recovery
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
-use crate::index::axis::eventlog::{EventType, IndexEvent, StorageEngineType};
+use crate::index::axis::eventlog::IndexEvent;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// EventLog WAL (Write-Ahead Log) for persistence

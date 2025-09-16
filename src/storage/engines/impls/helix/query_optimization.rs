@@ -3,10 +3,9 @@
 //! This module provides predictive prefetching and result caching to improve
 //! query performance through intelligent resource management.
 
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 

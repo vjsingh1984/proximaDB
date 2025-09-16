@@ -13,7 +13,6 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::core::VectorRecord;
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 
 /// Configuration for the universal search pipeline
@@ -464,7 +463,7 @@ impl UniversalSearchPipeline {
             // Convert metadata_map (HashMap<String, serde_json::Value>) to TypedMetadata
             let mut typed_metadata_map = std::collections::HashMap::new();
             for (key, value) in metadata_map {
-                use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
+                use crate::proto::proximadb_v1::{self as proximadb_v1};
                 let sql_value = match value {
                     serde_json::Value::String(s) => proximadb_v1::SqlValue {
                         value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),

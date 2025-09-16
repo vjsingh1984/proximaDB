@@ -29,9 +29,7 @@
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Edge, EdgeId, Node, NodeId, PropertyValue};
-use dashmap::DashMap;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 
 /// Property index for efficient property-based queries
 #[derive(Debug)]

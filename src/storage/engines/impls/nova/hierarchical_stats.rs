@@ -3,7 +3,6 @@
 
 use anyhow::Result;
 use parquet::file::metadata::RowGroupMetaData;
-use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 // Note: Using string representation instead of proto enum for consistency

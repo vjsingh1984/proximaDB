@@ -2,7 +2,6 @@
 
 use crate::utils::uuid::Uuid;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;

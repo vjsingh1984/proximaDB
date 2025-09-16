@@ -73,7 +73,7 @@ use tracing::{debug, error, info, warn};
 
 // Use proto types directly with custom serde implementations
 use crate::proto::proximadb_v1::{
-    Edge, EdgeQuery, Node, NodeQuery, TraversalRequest,
+    Edge, Node,
 };
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{PropertyValue, EmbeddingVersion};

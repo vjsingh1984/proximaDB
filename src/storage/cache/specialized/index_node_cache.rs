@@ -2,7 +2,6 @@ use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::metrics::CacheMetrics;
 use crate::storage::cache::traits::{BaseCache, CacheValue};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Index node that can be cached

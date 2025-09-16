@@ -13,7 +13,6 @@ use super::{RaptorConfig, RaptorWriter, RowGroups, consolidated_reader::RaptorRe
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
-use crate::core::metadata_types::TypedMetadata;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,

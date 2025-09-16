@@ -35,7 +35,6 @@ use crate::storage::engines::core::ops::performance_optimization::{
 };
 // VectorMemoryPool now managed by universal optimizer
 use super::types::*;
-use crate::core::metadata_types::TypedMetadata;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FileStorageTier;

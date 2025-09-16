@@ -23,10 +23,7 @@ use crate::proto::proximadb_v1::{
 use crate::storage::engines::UnifiedStorageEngine;
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::proto::proximadb_v1::SqlValue;
-use serde::{Deserialize, Serialize};
-use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use std::path::PathBuf;
 use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
 use crate::storage::kv::{StorageKV, FsKV};
 

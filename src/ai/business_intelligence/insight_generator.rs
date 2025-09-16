@@ -2,15 +2,14 @@
 //!
 //! Generates automated business insights from data analysis using AI.
 
-use crate::ai::llm_integration::{LLMIntegrationEngine, LLMRequest};
-use crate::ai::llm_integration::types::LLMRequestContext;
-use crate::ai::business_intelligence::engine::{BusinessMetrics, QueryResult};
+use crate::ai::llm_integration::LLMIntegrationEngine;
+use crate::ai::business_intelligence::engine::BusinessMetrics;
 use super::trend_analyzer::TrendAnalysis;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use anyhow::Result;
-use tracing::{debug, info};
+use tracing::info;
 
 /// Insight generator for automated business intelligence
 #[derive(Clone)]

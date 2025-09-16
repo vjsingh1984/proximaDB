@@ -3,7 +3,6 @@
 //! Analyzes data trends and patterns for business intelligence.
 
 use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc};
 use anyhow::Result;
 
 /// Trend analyzer for business data

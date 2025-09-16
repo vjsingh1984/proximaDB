@@ -4,17 +4,10 @@
 //! with automatic configuration generation and validation.
 
 use crate::deployment::discovery::{DetectedEnvironment, PlatformType};
-use crate::deployment::discovery::environment_detector::{
-    DetectionConfig, ResourceAvailability, CapacityEstimate, NetworkConfig,
-    SecurityConstraints, ComplianceFramework, EncryptionRequirements,
-    PerformanceProfile, OptimalConfig, DeploymentRecommendation,
-    DeploymentStrategy, ScalingConfig, MonitoringConfig, BackupStrategy
-};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
-use tracing::{info, debug, warn, error};
-use chrono::{DateTime, Utc};
+use tracing::{info, debug};
 use uuid::Uuid;
 
 /// Enterprise deployment provisioner for automated setup
@@ -651,7 +644,7 @@ impl ValidationEngine {
     pub async fn validate_deployment(&self, deployment_id: &str, platform_result: &PlatformDeploymentResult) -> Result<Vec<HealthCheck>> {
         info!("🏥 Validating deployment health: {}", deployment_id);
 
-        let mut health_checks = vec![
+        let health_checks = vec![
             self.check_api_endpoints(&platform_result.endpoints).await?,
             self.check_database_connectivity(&platform_result.endpoints).await?,
             self.check_multi_tenant_functionality(&platform_result.endpoints).await?,

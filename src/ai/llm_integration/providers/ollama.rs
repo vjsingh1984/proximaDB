@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Ollama API client implementation
 #[derive(Debug, Clone)]

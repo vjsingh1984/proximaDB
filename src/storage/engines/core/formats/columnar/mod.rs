@@ -196,7 +196,6 @@ pub use common::{
 use anyhow::Result;
 use arrow_schema::Schema;
 use parquet::file::metadata::RowGroupMetaData;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 

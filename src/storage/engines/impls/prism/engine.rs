@@ -78,7 +78,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 // Duration for cache TTL
 use crate::utils::uuid::Uuid;
-use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
 // Performance optimization handled internally

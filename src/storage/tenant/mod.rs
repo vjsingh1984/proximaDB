@@ -20,10 +20,7 @@ pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
 pub use knowledge_graph::{DomainKnowledgeGraph, CollectionDomainBridge};
 pub use performance::{TenantPerformanceMonitor, TenantMetrics, TenantSLA, SLACheckResult};
 
-use anyhow::Result;
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Industry classification for tenant business context
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

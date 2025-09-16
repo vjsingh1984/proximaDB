@@ -8,7 +8,6 @@
 //! Simple bloom filter implementation for small datasets and testing
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 

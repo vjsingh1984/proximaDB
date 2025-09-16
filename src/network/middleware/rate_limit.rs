@@ -22,7 +22,7 @@ use axum::{
     middleware::Next,
     response::{Json, Response},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;

@@ -1,7 +1,6 @@
 //! Cache configuration for production deployment
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 /// Complete cache configuration for production deployment
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

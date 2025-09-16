@@ -6,7 +6,6 @@ use arrow_schema::DataType;
 
 use anyhow::Result;
 use arrow_schema::{Field, Schema, TimeUnit};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

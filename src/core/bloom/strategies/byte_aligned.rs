@@ -8,7 +8,6 @@
 //! Byte-aligned bloom filter implementation optimized for disk storage
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 

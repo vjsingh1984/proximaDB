@@ -4,7 +4,6 @@
 //! It handles writing WAL data to disk, reading it back, and managing WAL files.
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 

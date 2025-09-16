@@ -6,7 +6,6 @@
 use super::common::{
     VectorCentroidCompressionMetadata, VectorCentroidMatrix, VectorCentroidStorageStrategy,
 };
-use serde::{Deserialize, Serialize};
 use super::config::{CompressionStrategy, PxKStrategy};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;

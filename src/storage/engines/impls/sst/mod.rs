@@ -164,7 +164,6 @@ pub use readers::UnifiedSstableReader;
 pub use writer::SstableWriter;
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
-use crate::core::metadata_types::TypedMetadata;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::{SstConfig, VectorRecord};
 // SearchResult is now proto type, not in core::search
@@ -186,7 +185,6 @@ use crate::storage::traits::{
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 // Unified search engine removed - using direct search methods
 // MetadataItem is part of VectorRecord proto
-use crate::query::unified_query_optimizer::UnifiedMetadataFilter;
 use anyhow::Context;
 use async_trait::async_trait;
 use chrono::Utc;
@@ -4790,7 +4788,7 @@ impl SstStorage {
         offset: usize,
         limit: Option<usize>,
     ) -> Result<Vec<crate::core::service_types::VectorRecord>> {
-        let mut results = Vec::new();
+        let results = Vec::new();
         let storage_url = self.get_collection_storage_url(collection_id).await?;
         
         // SST storage scans directly from disk files

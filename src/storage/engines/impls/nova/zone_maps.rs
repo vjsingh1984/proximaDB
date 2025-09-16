@@ -3,7 +3,6 @@
 
 use anyhow::Result;
 use parquet::file::metadata::RowGroupMetaData;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::instrument;
 

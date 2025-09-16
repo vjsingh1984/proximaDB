@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use anyhow::{Result, anyhow};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// License tier enforcement system
 #[derive(Debug, Clone)]
@@ -290,7 +290,6 @@ impl Default for EnforcementConfig {
 }
 
 use chrono::{DateTime, Utc};
-use super::license_manager::UsageContext;
 
 #[cfg(test)]
 mod tests {

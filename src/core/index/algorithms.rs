@@ -1,6 +1,5 @@
 //! Index algorithm implementations
 
-use serde::{Deserialize, Serialize};
 
 /// Index algorithm configuration placeholder
 #[derive(Debug, Clone)]

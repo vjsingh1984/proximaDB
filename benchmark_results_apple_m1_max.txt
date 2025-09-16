@@ -1,0 +1,158 @@
+Starting ProximaDB benchmark...
+Tracing initialized
+About to initialize hardware capabilities...
+Hardware capabilities initialized
+CLI parsed
+ProximaDB Unified Benchmark Suite
+==================================
+Starting Distance Computation Benchmarks
+Starting Distance Computation Benchmarks
+Dimensions: [128, 256, 512], Iterations: 1000
+About to create engines with GPU disabled...
+Creating UnifiedDistanceCompute for metric: Cosine
+Created engine for Cosine
+Creating UnifiedDistanceCompute for metric: Euclidean
+Created engine for Euclidean
+Creating UnifiedDistanceCompute for metric: DotProduct
+Created engine for DotProduct
+Creating UnifiedDistanceCompute for metric: Manhattan
+Created engine for Manhattan
+All engines created successfully
+Testing dimension: 128
+
+Testing dimension: 128
+  Testing metric: Cosine
+  Running warm-up...
+  Warm-up complete
+  Cosine @ 128D: 10033512 ops/sec (0ms total)
+  Cosine @ 128D: 10033512 ops/sec
+  Testing metric: Euclidean
+  Running warm-up...
+  Warm-up complete
+  Euclidean @ 128D: 14302878 ops/sec (0ms total)
+  Euclidean @ 128D: 14302878 ops/sec
+  Testing metric: DotProduct
+  Running warm-up...
+  Warm-up complete
+  DotProduct @ 128D: 15883605 ops/sec (0ms total)
+  DotProduct @ 128D: 15883605 ops/sec
+  Testing metric: Manhattan
+  Running warm-up...
+  Warm-up complete
+  Manhattan @ 128D: 16139705 ops/sec (0ms total)
+  Manhattan @ 128D: 16139705 ops/sec
+Testing dimension: 256
+
+Testing dimension: 256
+  Testing metric: Cosine
+  Running warm-up...
+  Warm-up complete
+  Cosine @ 256D: 4524027 ops/sec (0ms total)
+  Cosine @ 256D: 4524027 ops/sec
+  Testing metric: Euclidean
+  Running warm-up...
+  Warm-up complete
+  Euclidean @ 256D: 6882691 ops/sec (0ms total)
+  Euclidean @ 256D: 6882691 ops/sec
+  Testing metric: DotProduct
+  Running warm-up...
+  Warm-up complete
+  DotProduct @ 256D: 7094261 ops/sec (0ms total)
+  DotProduct @ 256D: 7094261 ops/sec
+  Testing metric: Manhattan
+  Running warm-up...
+  Warm-up complete
+  Manhattan @ 256D: 7100558 ops/sec (0ms total)
+  Manhattan @ 256D: 7100558 ops/sec
+Testing dimension: 512
+
+Testing dimension: 512
+  Testing metric: Cosine
+  Running warm-up...
+  Warm-up complete
+  Cosine @ 512D: 2113236 ops/sec (0ms total)
+  Cosine @ 512D: 2113236 ops/sec
+  Testing metric: Euclidean
+  Running warm-up...
+  Warm-up complete
+  Euclidean @ 512D: 2562460 ops/sec (0ms total)
+  Euclidean @ 512D: 2562460 ops/sec
+  Testing metric: DotProduct
+  Running warm-up...
+  Warm-up complete
+  DotProduct @ 512D: 2642301 ops/sec (0ms total)
+  DotProduct @ 512D: 2642301 ops/sec
+  Testing metric: Manhattan
+  Running warm-up...
+  Warm-up complete
+  Manhattan @ 512D: 2694205 ops/sec (0ms total)
+  Manhattan @ 512D: 2694205 ops/sec
+Starting Vector Operations Benchmarks
+Dimensions: [128, 256, 512], Vectors: 1000
+
+Testing dimension: 128
+  Chunk [0-100] creation: 7.75µs (12903226 vectors/sec)
+  Chunk [100-200] creation: 4.542µs (22016733 vectors/sec)
+  Chunk [200-300] creation: 4.583µs (21819769 vectors/sec)
+  Chunk [300-400] creation: 4.458µs (22431584 vectors/sec)
+  Chunk [400-500] creation: 4.541µs (22021581 vectors/sec)
+  Chunk [500-600] creation: 4.625µs (21621622 vectors/sec)
+  Chunk [600-700] creation: 4.459µs (22426553 vectors/sec)
+  Chunk [700-800] creation: 4.458µs (22431584 vectors/sec)
+  Chunk [800-900] creation: 4.542µs (22016733 vectors/sec)
+  Chunk [900-1000] creation: 4.5µs (22222222 vectors/sec)
+  Average creation rate: 21191161 vectors/sec
+
+Testing dimension: 256
+  Chunk [0-100] creation: 10.334µs (9676795 vectors/sec)
+  Chunk [100-200] creation: 7.125µs (14035088 vectors/sec)
+  Chunk [200-300] creation: 6.625µs (15094340 vectors/sec)
+  Chunk [300-400] creation: 6.875µs (14545455 vectors/sec)
+  Chunk [400-500] creation: 6.667µs (14999250 vectors/sec)
+  Chunk [500-600] creation: 6.75µs (14814815 vectors/sec)
+  Chunk [600-700] creation: 6.75µs (14814815 vectors/sec)
+  Chunk [700-800] creation: 6.875µs (14545455 vectors/sec)
+  Chunk [800-900] creation: 6.875µs (14545455 vectors/sec)
+  Chunk [900-1000] creation: 6.917µs (14457135 vectors/sec)
+  Average creation rate: 14152860 vectors/sec
+
+Testing dimension: 512
+  Chunk [0-100] creation: 23.417µs (4270402 vectors/sec)
+  Chunk [100-200] creation: 9.375µs (10666667 vectors/sec)
+  Chunk [200-300] creation: 9.25µs (10810811 vectors/sec)
+  Chunk [300-400] creation: 9.25µs (10810811 vectors/sec)
+  Chunk [400-500] creation: 9.209µs (10858942 vectors/sec)
+  Chunk [500-600] creation: 9.25µs (10810811 vectors/sec)
+  Chunk [600-700] creation: 9.292µs (10761946 vectors/sec)
+  Chunk [700-800] creation: 23.083µs (4332193 vectors/sec)
+  Chunk [800-900] creation: 12.167µs (8218953 vectors/sec)
+  Chunk [900-1000] creation: 8.708µs (11483693 vectors/sec)
+  Average creation rate: 9302523 vectors/sec
+Starting Index Operations Benchmarks
+Dimensions: [128, 256, 512], Vectors: 1000
+
+=== Testing dimension: 128 ===
+  HNSW Index:
+    Insert time: 3.615042ms (276622 vectors/sec)
+    Search time: 301.75µs (331400 searches/sec)
+  LSH Index:
+    Insert time: 8.609625ms (116149 vectors/sec)
+    Search time: 714.417µs (139974 searches/sec)
+
+=== Testing dimension: 256 ===
+  HNSW Index:
+    Insert time: 5.208ms (192012 vectors/sec)
+    Search time: 450.375µs (222037 searches/sec)
+  LSH Index:
+    Insert time: 15.533708ms (64376 vectors/sec)
+    Search time: 1.522125ms (65698 searches/sec)
+
+=== Testing dimension: 512 ===
+  HNSW Index:
+    Insert time: 7.382208ms (135461 vectors/sec)
+    Search time: 694µs (144092 searches/sec)
+  LSH Index:
+    Insert time: 34.76625ms (28764 vectors/sec)
+    Search time: 3.445792ms (29021 searches/sec)
+
+Benchmark suite completed successfully!

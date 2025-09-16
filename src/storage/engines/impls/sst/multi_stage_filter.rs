@@ -18,8 +18,6 @@ use tracing::{debug, info, warn};
 use crate::core::VectorRecord;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use super::VectorFormat;
-use crate::proto::proximadb_v1::SqlValue;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use crate::storage::engines::impls::sst::IndexEntry;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::ReadStrategy;

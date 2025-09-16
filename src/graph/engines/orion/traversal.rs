@@ -34,7 +34,6 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 // Using HashSet instead of BitVec for visited tracking
 // This provides better performance for sparse graphs
-use tokio::sync::Mutex;
 use crate::storage::cache::orchestrator::{CrossCacheOrchestrator, CacheType};
 
 /// Traversal results containing nodes, paths, and statistics
@@ -1123,7 +1122,7 @@ pub async fn page_rank(
     // For now, we'll start with a simple approach
     let mut node_scores = HashMap::new();
     let mut node_out_degrees = HashMap::new();
-    let mut all_nodes: Vec<NodeId> = Vec::new();
+    let all_nodes: Vec<NodeId> = Vec::new();
 
     // This is a simplified version - in reality we'd need to get all nodes from the engine
     // TODO: Add method to get all node IDs from OrionGraphEngine
@@ -1144,7 +1143,7 @@ pub async fn page_rank(
         let mut max_change: f64 = 0.0;
 
         for node_id in &all_nodes {
-            let mut score = (1.0 - damping_factor) / all_nodes.len() as f64;
+            let score = (1.0 - damping_factor) / all_nodes.len() as f64;
 
             // Get incoming edges - we'd need to implement this in the engine
             // let incoming_edges = engine.get_incoming_edges(node_id, None)?;

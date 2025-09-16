@@ -58,7 +58,6 @@
 use crate::core::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, NodeId, NodeQuery, OperationMode,
-    TraversalRequest, TraversalResponse,
     engines::{GraphEngine, orion::{OrionGraphEngine, traversal::TraversalConfig}},
 };
 use crate::metrics::updater::OperationMetricsUpdate;
@@ -68,8 +67,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::storage::cache::orchestrator::{CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats};
 use std::time::Instant;
-use tracing::{debug, info, warn};
-use tokio::sync::RwLock;
+use tracing::debug;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
@@ -420,7 +418,7 @@ impl GraphService {
     /// Add a unique constraint for a label/property. Scans existing nodes to build index.
     pub fn add_unique_constraint(&self, label: &str, property: &str) -> Result<()> {
         let key = (label.to_string(), property.to_string());
-        let mut map: DashMap<String, String> = DashMap::new();
+        let map: DashMap<String, String> = DashMap::new();
         // Build from existing nodes
         for entry in self.memory_pool.nodes.iter() {
             let node = entry.value();
@@ -960,7 +958,7 @@ impl GraphService {
 
         // Filter by edge property filters
         if !query.filters.is_empty() {
-            use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+            
             results.retain(|edge| {
                 for filter in &query.filters {
                     use crate::proto::proximadb_v1::PropertyFilterOperator as Op;

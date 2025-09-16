@@ -23,7 +23,6 @@ use crate::core::error::{ProximaDBError, StorageError, VectorDBError};
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::ColdStorageBackend as BackendType;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
-use prost_types;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

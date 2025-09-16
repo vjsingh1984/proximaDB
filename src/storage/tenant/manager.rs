@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;
-use tracing::{info, warn, debug};
+use tracing::{info, warn};
 
 /// Clean tenant manager without over-engineering
 pub struct TenantManager {

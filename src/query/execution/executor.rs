@@ -884,7 +884,7 @@ impl QueryExecutor {
         right: &Vec<QueryRow>,
         all: bool,
     ) -> Result<Vec<QueryRow>> {
-        use std::collections::{HashSet, HashMap};
+        use std::collections::HashSet;
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         

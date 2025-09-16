@@ -21,7 +21,7 @@ pub use engine::*;
 
 // Additional modules for PRISM infrastructure
 pub mod config {
-    use serde::{Deserialize, Serialize};
+    
 
     /// PRISM engine configuration
     #[derive(Debug, Clone)]
