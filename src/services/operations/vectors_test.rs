@@ -14,7 +14,7 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::{Config, VectorRecord};
     use crate::proto::proximadb_v1::{
-        MetadataItem, VectorRecord as ProtoVectorRecord, metadata_item,
+        VectorRecord as ProtoVectorRecord,
     };
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::impls::sst::SstStorage;
@@ -28,20 +28,23 @@ mod tests {
         metadata: Vec<(&str, &str)>,
     ) -> ProtoVectorRecord {
         ProtoVectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector,
-            metadata: metadata
-                .into_iter()
-                .map(|(k, v)| MetadataItem {
-                    key: k.to_string(),
-                    value: Some(metadata_item::Value::StringValue(v.to_string())),
-                })
-                .collect(),
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: {
+                let mut map = std::collections::HashMap::new();
+                for (k, v) in metadata {
+                    map.insert(k.to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string())),
+                    });
+                }
+                map
+            },
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -49,13 +52,14 @@ mod tests {
     fn create_core_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
         VectorRecord {
             id: id.to_string(),
-            collection_id: "test_collection".to_string(),
             vector,
             metadata: HashMap::new(),
             timestamp: chrono::Utc::now().timestamp(),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -146,14 +150,14 @@ mod tests {
         let metadata = vec![("key1", "value1"), ("key2", "value2")];
 
         let proto_record = create_test_vector_record("test_id", vector.clone(), metadata);
-        assert_eq!(proto_record.id, Some("test_id".to_string()));
+        assert_eq!(proto_record.id, "test_id".to_string());
         assert_eq!(proto_record.vector, vector);
         assert_eq!(proto_record.metadata.len(), 2);
 
         let core_record = create_core_test_vector("test_id", vector.clone());
         assert_eq!(core_record.id, "test_id");
         assert_eq!(core_record.vector, vector);
-        assert_eq!(core_record.collection_id, "test_collection");
+        // Core VectorRecord no longer has collection_id field
     }
 
     #[tokio::test]

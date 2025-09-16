@@ -18,7 +18,7 @@
 
 use proximadb::core::config::{MetadataBackendConfig, StorageConfig};
 use proximadb::network::multi_server::SharedServices;
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     Collection as ProtoCollection, CollectionConfig as ProtoCollectionConfig, CollectionStats,
     DistanceMetric, StorageEngine as ProtoStorageEngine,
 };
@@ -74,7 +74,7 @@ async fn test_single_metadata_backend_instance() {
 
     // Create SharedServices which creates the single metadata backend
     let (shared_services, collection_service) =
-        SharedServices::new(None, &storage_config).await.unwrap();
+        SharedServices::new(None, &storage_config, None, None).await.unwrap();
 
     // Verify collection service was injected into storage engine
     {
@@ -95,9 +95,9 @@ async fn test_single_metadata_backend_instance() {
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
-        embedding_models: None,
-        primary_index: Some("default".to_string()),
-        auto_index_selection: Some(false),
+        embedding_models: vec![],
+        primary_index: "default".to_string(),
+        auto_index_selection: false,
         description: Some("Test collection".to_string()),
         tags: vec!["test".to_string()],
         owner: Some("test_user".to_string()),
@@ -163,7 +163,7 @@ async fn test_collection_service_dependency_injection() {
     // This avoids the complex dependency injection that causes stack overflow
 
     // Create a collection record directly
-    let collection_record = proximadb::proto::proximadb::Collection {
+    let collection_record = proximadb::proto::proximadb_v1::Collection {
         id: "test-injection-uuid".to_string(),
         config: Some(ProtoCollectionConfig {
             name: "test_injection".to_string(),
@@ -174,14 +174,14 @@ async fn test_collection_service_dependency_injection() {
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
-            embedding_models: None,
-            primary_index: Some("default".to_string()),
-            auto_index_selection: Some(false),
+            embedding_models: vec![],
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
             description: Some("Test proto-first collection".to_string()),
             tags: vec!["test".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
         }),
-        stats: Some(proximadb::proto::proximadb::CollectionStats {
+        stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
             vector_count: 0,
             index_size_bytes: 0,
             data_size_bytes: 0,
@@ -271,17 +271,17 @@ async fn test_metadata_backend_persistence() {
                     storage_engine: ProtoStorageEngine::Viper as i32,
                     storage_config: None,
                     filterable_columns: vec![
-                        proximadb::proto::proximadb::FilterableColumnSpec {
+                        proximadb::proto::proximadb_v1::FilterableColumnSpec {
                             name: "category".to_string(),
-                            data_type: proximadb::proto::proximadb::FilterableDataType::FilterableString as i32,
+                            data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
                             indexed: true,
                             supports_range: false,
                             estimated_cardinality: Some(100),
                         encoding_hint: None,
                     },
-                        proximadb::proto::proximadb::FilterableColumnSpec {
+                        proximadb::proto::proximadb_v1::FilterableColumnSpec {
                             name: "timestamp".to_string(),
-                            data_type: proximadb::proto::proximadb::FilterableDataType::FilterableDatetime as i32,
+                            data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableDatetime as i32,
                             indexed: true,
                             supports_range: true,
                             estimated_cardinality: None,
@@ -290,9 +290,9 @@ async fn test_metadata_backend_persistence() {
                     ],
                     index_configs: vec![],
                     quantization: None,
-                    embedding_models: None,
-                    primary_index: Some("default".to_string()),
-                    auto_index_selection: Some(false),
+                    embedding_models: vec![],
+                    primary_index: "default".to_string(),
+                    auto_index_selection: false,
                     description: Some(format!("Proto-first collection {}", i)),
                     tags: vec![format!("proto-tag{}", i), "persist-test".to_string()],
                     owner: Some("test_user".to_string()),
@@ -418,9 +418,9 @@ async fn test_metadata_backend_deletion() {
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
-                embedding_models: None,
-                primary_index: Some("default".to_string()),
-                auto_index_selection: Some(false),
+                embedding_models: vec![],
+                primary_index: "default".to_string(),
+                auto_index_selection: false,
                 description: None,
                 tags: vec!["deletable".to_string()],
                 owner: None,
@@ -526,9 +526,9 @@ async fn test_concurrent_metadata_operations() {
                     filterable_columns: vec![],
                     index_configs: vec![],
                     quantization: None,
-                    embedding_models: None,
-                    primary_index: Some("default".to_string()),
-                    auto_index_selection: Some(false),
+                    embedding_models: vec![],
+                    primary_index: "default".to_string(),
+                    auto_index_selection: false,
                     description: None,
                     tags: vec!["concurrent".to_string()],
                     owner: None,
@@ -619,9 +619,9 @@ async fn test_metadata_backend_updates() {
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
-            embedding_models: None,
-            primary_index: Some("default".to_string()),
-            auto_index_selection: Some(false),
+            embedding_models: vec![],
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
             description: Some("Initial description".to_string()),
             tags: vec!["v1".to_string()],
             owner: Some("user1".to_string()),
@@ -741,7 +741,7 @@ async fn test_metadata_backend_trait_implementation() {
     let provider = metadata_backend.clone();
 
     // Create a proto-first collection directly through the metadata backend
-    let collection_record = proximadb::proto::proximadb::Collection {
+    let collection_record = proximadb::proto::proximadb_v1::Collection {
         id: "trait-test-uuid".to_string(),
         config: Some(ProtoCollectionConfig {
             name: "trait_test_proto".to_string(),
@@ -750,18 +750,18 @@ async fn test_metadata_backend_trait_implementation() {
             storage_engine: ProtoStorageEngine::Viper as i32,
             storage_config: None,
             filterable_columns: vec![
-                proximadb::proto::proximadb::FilterableColumnSpec {
+                proximadb::proto::proximadb_v1::FilterableColumnSpec {
                     name: "category".to_string(),
-                    data_type: proximadb::proto::proximadb::FilterableDataType::FilterableString
+                    data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString
                         as i32,
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(50),
                     encoding_hint: None,
                 },
-                proximadb::proto::proximadb::FilterableColumnSpec {
+                proximadb::proto::proximadb_v1::FilterableColumnSpec {
                     name: "score".to_string(),
-                    data_type: proximadb::proto::proximadb::FilterableDataType::FilterableFloat
+                    data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableFloat
                         as i32,
                     indexed: true,
                     supports_range: true,
@@ -771,14 +771,14 @@ async fn test_metadata_backend_trait_implementation() {
             ],
             index_configs: vec![],
             quantization: None,
-            embedding_models: None,
-            primary_index: Some("default".to_string()),
-            auto_index_selection: Some(false),
+            embedding_models: vec![],
+            primary_index: "default".to_string(),
+            auto_index_selection: false,
             description: Some("Testing proto-first trait implementation".to_string()),
             tags: vec!["trait".to_string(), "proto-first".to_string()],
             owner: Some("test_user".to_string()),
         }),
-        stats: Some(proximadb::proto::proximadb::CollectionStats {
+        stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
             vector_count: 0,
             index_size_bytes: 0,
             data_size_bytes: 0,

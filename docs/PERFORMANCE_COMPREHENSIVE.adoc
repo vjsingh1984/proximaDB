@@ -439,12 +439,118 @@ All performance results collected using:
 * **Multiple Runs**: Results averaged across multiple benchmark executions
 * **Production Build**: Release optimizations enabled (-O3 equivalent)
 
+== Cross-Platform Performance Comparison
+
+=== Apple M4 Pro Results (macOS)
+
+**Hardware Configuration:**
+- **Model**: MacBook Pro (Mac16,7)
+- **Chip**: Apple M4 Pro
+- **CPU Cores**: 14 (10 performance + 4 efficiency)
+- **Memory**: 48 GB
+- **OS**: macOS 15.6.1 (24G90)
+- **SIMD**: NEON (ARM64)
+- **Test Date**: September 15, 2025
+
+==== Distance Computation Performance - Apple M4 Pro
+
+[cols="2,2,2,2"]
+|===
+|Dimension |Metric |AMD Ryzen 9 7950X |Apple M4 Pro |Performance Delta
+
+|**128D**
+|Manhattan
+|17.6M ops/sec
+|**33.7M ops/sec**
+|**+91% faster**
+
+|**128D**
+|Euclidean
+|18.1M ops/sec
+|**24.4M ops/sec**
+|**+35% faster**
+
+|**128D**
+|DotProduct
+|20.6M ops/sec
+|**21.0M ops/sec**
+|**+2% faster**
+
+|**128D**
+|Cosine
+|14.1M ops/sec
+|**16.4M ops/sec**
+|**+16% faster**
+
+|**256D**
+|Manhattan
+|7.0M ops/sec
+|**13.7M ops/sec**
+|**+96% faster**
+
+|**256D**
+|Euclidean
+|7.9M ops/sec
+|**10.9M ops/sec**
+|**+38% faster**
+
+|**256D**
+|DotProduct
+|8.4M ops/sec
+|**13.8M ops/sec**
+|**+64% faster**
+
+|**256D**
+|Cosine
+|7.0M ops/sec
+|**8.0M ops/sec**
+|**+14% faster**
+
+|**512D**
+|Manhattan
+|3.7M ops/sec
+|**5.9M ops/sec**
+|**+59% faster**
+
+|**512D**
+|Euclidean
+|3.7M ops/sec
+|**5.5M ops/sec**
+|**+49% faster**
+
+|**512D**
+|DotProduct
+|3.8M ops/sec
+|**5.9M ops/sec**
+|**+55% faster**
+
+|**512D**
+|Cosine
+|3.5M ops/sec
+|**3.7M ops/sec**
+|**+6% faster**
+|===
+
+==== Key Cross-Platform Insights
+
+1. **Apple M4 Pro Dominance**: The M4 Pro consistently outperforms AMD Ryzen 9 7950X across all metrics, with particularly strong advantages in Manhattan distance calculations.
+
+2. **NEON vs AVX512**: Despite having fewer SIMD lanes than AVX512, Apple's NEON implementation with M4 Pro achieves superior throughput through architectural efficiency.
+
+3. **Memory Bandwidth**: 48GB unified memory architecture provides excellent memory bandwidth for vector operations.
+
+4. **Scaling Excellence**: Apple M4 Pro shows better scaling characteristics, maintaining performance advantages across all tested dimensions.
+
+5. **Production Ready**: Both platforms deliver production-ready performance levels, with M4 Pro providing additional headroom for demanding workloads.
+
 ---
 
-*Performance metrics collected using ProximaDB unified benchmark suite on AMD Ryzen 9 7950X with WSL2 Linux environment. Results validated through multiple test runs with thermal and frequency consistency controls.*
+*Performance metrics collected using ProximaDB unified benchmark suite across multiple hardware platforms. Results validated through multiple test runs with thermal and frequency consistency controls.*
 
-**Test Environment**: WSL2 Linux 5.15.167.4, AMD Ryzen 9 7950X 16-Core @ 4.5GHz, 157GB RAM, AVX512 SIMD support
+**Primary Test Environment**: WSL2 Linux 5.15.167.4, AMD Ryzen 9 7950X 16-Core @ 4.5GHz, 157GB RAM, AVX512 SIMD support
 
-**Benchmark Date**: September 14, 2025
+**Secondary Test Environment**: macOS 15.6.1, Apple M4 Pro 14-Core (10P+4E), 48GB RAM, NEON SIMD support
+
+**Benchmark Dates**: September 14-15, 2025
 
 **Methodology**: Zero compilation error codebase with production-ready optimizations

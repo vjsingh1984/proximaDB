@@ -79,13 +79,18 @@ async fn test_flush_operation() {
         synchronous: true,
         hints: HashMap::new(),
         timeout_ms: None,
+        vector_records: records,
+        trigger_compaction: false,
+        batch_ids: vec![],
+        collection_config: None,
+        estimated_size: 0,
     };
 
     let result = engine.do_flush(&params).await.unwrap();
 
-    assert_eq!(result.vectors_flushed, 100);
-    assert!(result.bytes_written > 0);
-    assert_eq!(result.files_created.len(), 1);
+    assert_eq!(result.entries_flushed, Some(100));
+    assert!(result.bytes_written.unwrap_or(0) > 0);
+    assert_eq!(result.files_created, Some(1));
 }
 
 #[tokio::test]
@@ -232,7 +237,7 @@ async fn test_compaction() {
     let result = engine.do_compact(&compact_params).await.unwrap();
 
     assert!(result.files_compacted > 0);
-    assert!(result.bytes_written > 0);
+    assert!(result.bytes_written.unwrap_or(0) > 0);
 }
 
 #[tokio::test]

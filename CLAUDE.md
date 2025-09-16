@@ -301,6 +301,7 @@ make integration-full       # Full integration test with server
 make test-python-install    # Install Python test dependencies
 make docker-build           # Build Docker image
 make docker-run             # Run ProximaDB in Docker
+make docs-update-gaps       # Update critical documentation gaps
 ```
 
 ## Architecture Overview

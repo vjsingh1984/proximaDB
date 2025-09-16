@@ -8,7 +8,6 @@
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -45,33 +44,28 @@ fn create_test_config() -> WALConfig {
 /// Create test vector with specific patterns
 fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: vec![value; dimension],
-        metadata: vec![
-            MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "bincode_test".to_string(),
-                    ),
-                ),
-            },
-            MetadataItem {
-                key: "value".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        value.to_string(),
-                    ),
-                ),
-            },
-        ],
+        metadata: {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("type".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "bincode_test".to_string()
+                ))
+            });
+            metadata.insert("value".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    value.to_string()
+                ))
+            });
+            metadata
+        },
         timestamp: 1234567890,
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
 

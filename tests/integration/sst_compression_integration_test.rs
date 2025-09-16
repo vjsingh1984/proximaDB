@@ -12,20 +12,15 @@
 mod common {
     include!("../common/mod.rs");
 }
-use crate::integration::viper_compression_integration_test::create_test_vectors;
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 // Old test utilities are no longer used - using UnifiedTestEnvironment instead
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use proximadb::core::compression::CompressionAlgorithm;
-use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::core::{SstConfig, VectorRecord};
-use proximadb::proto::proximadb::{
-    CompressionAlgorithm as ProtoCompressionAlgorithm, MetadataItem, StorageEngine,
+use proximadb::proto::proximadb_v1::{
+    StorageEngine,
 };
-use proximadb::storage::engines::sst::{DataBlock, DataBlockCompressionConfig, SstStorage};
-use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
-use proximadb::storage::transaction_coordinator::TransactionCoordinator;
+use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -36,10 +31,8 @@ fn create_sst_config_with_algorithm(
     level: i32,
 ) -> SstConfig {
     let mut config = env.sst_config.clone();
-    config
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = algorithm.to_string();
+    // Use string-based compression field in SstConfig
+    config.compression = algorithm.to_string();
     config.compression_level = level;
     config.block_size_kb = 4096; // 4MB for optimal compression
     config
@@ -72,26 +65,22 @@ fn create_compressible_test_vectors(
             env.create_test_vector_record(
                 format!("{}_{}", prefix, i),
                 vector,
-                (1000 + i) as u32,
+                (1000 + i) as i64,
                 None,
-                vec![
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                                format!("cat_{}", i % 3),
-                            ),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "timestamp".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                                i as f64,
-                            ),
-                        ),
-                    },
-                ],
+                {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("category".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            format!("cat_{}", i % 3)
+                        ))
+                    });
+                    metadata.insert("timestamp".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                            i as f64
+                        ))
+                    });
+                    metadata
+                },
             )
         })
         .collect()
@@ -108,9 +97,8 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     // Create SST config with compression enabled
     let mut config = env.sst_config.clone();
     config
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+        // Use string-based compression field in SstConfig
+        .compression = "zstd".to_string();
     config.compression_level = 3;
 
     // Create DataBlock with test records
@@ -167,9 +155,8 @@ async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<
     // Create SST engine with compression enabled
     let mut sst_config = env.sst_config.clone();
     sst_config
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+        // Use string-based compression field in SstConfig
+        .compression = "zstd".to_string();
     sst_config.compression_level = 3;
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
@@ -186,12 +173,12 @@ async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<
     let result = engine.do_flush(&flush_params).await?;
     assert!(result.success, "Flush should succeed");
     assert_eq!(
-        result.entries_flushed, 1000,
+        result.entries_flushed, Some(1000),
         "Should flush all 1000 vectors"
     );
     info!(
         "✅ Flushed {} vectors with compression",
-        result.entries_flushed
+        result.entries_flushed.unwrap_or(0)
     );
 
     // Verify search works on compressed data using unified helper
@@ -222,9 +209,8 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
     // Create SST engine with compression enabled and lower compaction threshold
     let mut sst_config = env.sst_config.clone();
     sst_config
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+        // Use string-based compression field in SstConfig
+        .compression = "zstd".to_string();
     sst_config.compression_level = 3;
     sst_config.compaction_threshold = 2; // Lower threshold to trigger compaction
 
@@ -254,7 +240,7 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
         debug!(
             "✅ Batch {} flushed {} entries",
             batch + 1,
-            result.entries_flushed
+            result.entries_flushed.unwrap_or(0)
         );
     }
 
@@ -275,7 +261,7 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
     info!("   - Success: {}", compaction_result.success);
     info!(
         "   - Entries processed: {}",
-        compaction_result.entries_processed
+        compaction_result.entries_processed.unwrap_or(0)
     );
 
     // Note: If compaction processes 0 entries, it's a test setup/configuration issue
@@ -284,7 +270,7 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
     // 2. Missing directory creation before operations
     // 3. Incorrect collection_config in CompactionParameters
     // 4. Path mismatch between flush and compaction operations
-    if compaction_result.entries_processed == 0 {
+    if compaction_result.entries_processed == Some(0) {
         debug!("⚠️  Test setup issue: Compaction processed 0 entries");
         debug!("   This happens when test setup has path/configuration mismatches");
         debug!("   UnifiedTestEnvironment handles all setup correctly");
@@ -323,9 +309,8 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     // Create SST engine with compression enabled
     let mut sst_config = env.sst_config.clone();
     sst_config
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+        // Use string-based compression field in SstConfig
+        .compression = "zstd".to_string();
     sst_config.compression_level = 3;
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
@@ -345,16 +330,17 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
         all_vectors.push(env.create_test_vector_record(
             format!("sparse_{}", i),
             vector,
-            (1000 + i) as u32,
+            (1000 + i) as i64,
             None,
-            vec![MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                        "sparse".to_string(),
-                    ),
-                ),
-            }],
+            {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("type".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "sparse".to_string()
+                    ))
+                });
+                metadata
+            },
         ));
     }
 
@@ -364,16 +350,17 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
         all_vectors.push(env.create_test_vector_record(
             format!("dense_{}", i),
             vector,
-            (2000 + i) as u32,
+            (2000 + i) as i64,
             None,
-            vec![MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                        "dense".to_string(),
-                    ),
-                ),
-            }],
+            {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("type".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "dense".to_string()
+                    ))
+                });
+                metadata
+            },
         ));
     }
 
@@ -387,10 +374,10 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
         operations::build_flush_params(&env, all_vectors, StorageEngine::Sst).await?;
     let result = engine.do_flush(&flush_params).await?;
     assert!(result.success, "Flush should succeed");
-    assert_eq!(result.entries_flushed, 200, "Should flush all 200 vectors");
+    assert_eq!(result.entries_flushed, Some(200), "Should flush all 200 vectors");
     info!(
         "✅ Flushed {} mixed vectors with compression",
-        result.entries_flushed
+        result.entries_flushed.unwrap_or(0)
     );
 
     // Search for sparse vectors using unified helper
@@ -461,9 +448,8 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     // Test with compression enabled
     let mut config_compressed = env_compressed.sst_config.clone();
     config_compressed
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+        // Use string-based compression field in SstConfig
+        .compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
     let compressed_engine = SstStorage::new(
@@ -480,7 +466,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     let compressed_result = compressed_engine.do_flush(&flush_params_compressed).await?;
     assert!(compressed_result.success, "Compressed flush should succeed");
     assert_eq!(
-        compressed_result.entries_flushed, 500,
+        compressed_result.entries_flushed, Some(500),
         "Should flush all 500 vectors"
     );
 
@@ -491,10 +477,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
 
     // Test with compression disabled
     let mut config_uncompressed = env_uncompressed.sst_config.clone();
-    config_uncompressed
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "none".to_string();
+    config_uncompressed.compression = "none".to_string();
     config_uncompressed.compression_level = 0;
 
     let uncompressed_engine = SstStorage::new(
@@ -516,7 +499,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         "Uncompressed flush should succeed"
     );
     assert_eq!(
-        uncompressed_result.entries_flushed, 500,
+        uncompressed_result.entries_flushed, Some(500),
         "Should flush all 500 vectors"
     );
 
@@ -608,7 +591,7 @@ async fn test_all_compression_algorithms_sst() -> anyhow::Result<()> {
         );
 
         let env = UnifiedTestEnvironment::new().await?;
-        let mut sst_config = create_sst_config_with_algorithm(&env, algo, *level);
+        let sst_config = create_sst_config_with_algorithm(&env, algo, *level);
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
@@ -698,10 +681,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
 
         // Configure SST with specific compression level
         let mut config = env.sst_config.clone();
-        config
-            .storage_config
-            .as_ref()
-            .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+        config.compression = "zstd".to_string();
         config.compression_level = level;
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(

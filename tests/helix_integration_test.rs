@@ -7,7 +7,7 @@
 mod helix_integration_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::core::search::SearchParams;
-    use proximadb::proto::proximadb::{Collection, MetadataItem, VectorRecord, metadata_item};
+    use proximadb::proto::proximadb_v1::{Collection, VectorRecord};
     use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
     use proximadb::storage::engines::impls::helix::{HelixConfig, HelixEngine};
     use proximadb::storage::traits::{
@@ -27,23 +27,23 @@ mod helix_integration_tests {
             .map(|i| VectorRecord {
                 id: format!("test_vec_{}", i),
                 vector: (0..dims).map(|_| rng.gen_range(-1.0..1.0)).collect(),
-                metadata: vec![
-                    MetadataItem {
-                        key: "source".to_string(),
-                        value: Some(metadata_item::Value::StringValue(
-                            "integration_test".to_string(),
-                        )),
-                    },
-                    MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(metadata_item::Value::StringValue(i.to_string())),
-                    },
-                ],
-                timestamp: i as u32,
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("source".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "integration_test".to_string()
+                        ))
+                    });
+                    metadata.insert("index".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
+                    });
+                    metadata
+                },
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             })
             .collect()
@@ -246,15 +246,18 @@ mod helix_integration_tests {
             all_vectors.push(VectorRecord {
                 id: format!("cluster1_vec_{}", i),
                 vector,
-                metadata: vec![MetadataItem {
-                    key: "cluster".to_string(),
-                    value: Some(metadata_item::Value::StringValue("1".to_string())),
-                }],
-                timestamp: i as u32,
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("cluster".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("1".to_string()))
+                    });
+                    metadata
+                },
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Some(vec![]),
+                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -266,15 +269,18 @@ mod helix_integration_tests {
             all_vectors.push(VectorRecord {
                 id: format!("cluster2_vec_{}", i),
                 vector,
-                metadata: vec![MetadataItem {
-                    key: "cluster".to_string(),
-                    value: Some(metadata_item::Value::StringValue("2".to_string())),
-                }],
-                timestamp: (50 + i) as u32,
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("cluster".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("2".to_string()))
+                    });
+                    metadata
+                },
+                timestamp: (50 + i) as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Some(vec![]),
+                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -365,25 +371,25 @@ mod helix_integration_tests {
             vectors.push(VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32 / 100.0; 128],
-                metadata: vec![
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(metadata_item::Value::StringValue(if i % 2 == 0 {
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("category".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(if i % 2 == 0 {
                             "even".to_string()
                         } else {
                             "odd".to_string()
-                        })),
-                    },
-                    MetadataItem {
-                        key: "batch".to_string(),
-                        value: Some(metadata_item::Value::NumberValue((i / 10) as f64)),
-                    },
-                ],
-                timestamp: i as u32,
+                        }))
+                    });
+                    metadata.insert("batch".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue((i / 10) as f64))
+                    });
+                    metadata
+                },
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Some(vec![]),
+                quantized_vector: vec![],
                 source: None,
             });
         }

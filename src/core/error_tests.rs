@@ -46,22 +46,22 @@ mod tests {
     #[test]
     fn test_storage_error_variants() {
         let sst_err = StorageError::SstStorage("Compaction failed".to_string());
-        assert!(sst_err.to_string().contains_hash("SST storage error"));
+        assert!(sst_err.to_string().contains("SST storage error"));
 
         let mmap_err = StorageError::Mmap("Memory mapping failed".to_string());
-        assert!(mmap_err.to_string().contains_hash("MMAP error"));
+        assert!(mmap_err.to_string().contains("MMAP error"));
 
         let io_err = StorageError::DiskIO(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "Access denied",
         ));
-        assert!(io_err.to_string().contains_hash("Disk I/O error"));
+        assert!(io_err.to_string().contains("Disk I/O error"));
 
         let corruption_err = StorageError::Corruption("Checksum mismatch".to_string());
         assert!(
             corruption_err
                 .to_string()
-                .contains_hash("Corruption detected")
+                .contains("Corruption detected")
         );
 
         let exists_err = StorageError::AlreadyExists("collection_1".to_string());
@@ -74,10 +74,10 @@ mod tests {
         assert_eq!(not_found_err.to_string(), "Resource not found: vector_123");
 
         let index_err = StorageError::IndexError("Index corrupted".to_string());
-        assert!(index_err.to_string().contains_hash("Index error"));
+        assert!(index_err.to_string().contains("Index error"));
 
         let wal_err = StorageError::WalError("WAL sync failed".to_string());
-        assert!(wal_err.to_string().contains_hash("WAL error"));
+        assert!(wal_err.to_string().contains("WAL error"));
 
         let dimension_err = StorageError::InvalidDimension {
             expected: 128,

@@ -5,7 +5,7 @@ use crate::storage::engines::core::ops::compression_common::CompressionStrategy;
 use anyhow::Result;
 use std::collections::HashMap;
 
-use super::compression_common::{
+use crate::storage::engines::core::ops::compression_common::{
     AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig, AdaptationCriteria,
 };
 use crate::core::compression::{
@@ -547,10 +547,59 @@ mod tests {
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: false,
                 criteria: AdaptationCriteria {
-                    data_characteristics: Default::default(),
-                    performance_thresholds: Default::default(),
-                    resource_constraints: Default::default(),
-                    quality_requirements: Default::default(),
+                    data_characteristics: crate::storage::engines::core::ops::compression_common::DataCharacteristics {
+                        entropy_thresholds: crate::storage::engines::core::ops::compression_common::EntropyThresholds {
+                            low_entropy: 0.5,
+                            high_entropy: 8.0,
+                            calculation_method: crate::storage::engines::core::ops::compression_common::EntropyCalculationMethod::Shannon,
+                        },
+                        size_thresholds: crate::storage::engines::core::ops::compression_common::SizeThresholds {
+                            small_data_threshold: 1024,
+                            large_data_threshold: 1024 * 1024,
+                            block_size_optimization: true,
+                        },
+                        pattern_recognition: crate::storage::engines::core::ops::compression_common::PatternRecognitionConfig {
+                            enabled: false,
+                            pattern_types: vec![],
+                            accuracy_threshold: 0.8,
+                            pattern_cache_size: 1000,
+                        },
+                        data_type_hints: vec![],
+                    },
+                    performance_thresholds: crate::storage::engines::core::ops::compression_common::PerformanceThresholds {
+                        max_compression_latency_ms: 1000.0,
+                        max_decompression_latency_ms: 500.0,
+                        min_throughput_mbps: 10.0,
+                        max_cpu_usage_percent: 80.0,
+                        max_memory_usage_mb: 512,
+                    },
+                    resource_constraints: crate::storage::engines::core::ops::compression_common::ResourceConstraints {
+                        memory_constraints: crate::storage::engines::core::ops::compression_common::MemoryConstraints {
+                            max_working_memory: 512 * 1024 * 1024,
+                            max_buffer_size: 64 * 1024 * 1024,
+                            memory_pressure_threshold: 0.8,
+                            enable_memory_mapping: true,
+                        },
+                        cpu_constraints: crate::storage::engines::core::ops::compression_common::CPUConstraints {
+                            max_cpu_cores: None,
+                            max_cpu_usage_percent: 80.0,
+                            enable_hardware_acceleration: true,
+                            thread_priority: crate::storage::engines::core::ops::compression_common::ThreadPriority::Normal,
+                        },
+                        io_constraints: crate::storage::engines::core::ops::compression_common::IOConstraints {
+                            max_io_bandwidth_mbps: 1000.0,
+                            io_priority: crate::storage::engines::core::ops::compression_common::IOPriority::Normal,
+                            buffer_io: true,
+                            use_direct_io: false,
+                        },
+                        network_constraints: None,
+                    },
+                    quality_requirements: crate::storage::engines::core::ops::compression_common::QualityRequirements {
+                        min_compression_ratio: 1.1,
+                        max_quality_loss_percent: 5.0,
+                        require_lossless: true,
+                        error_tolerance: crate::storage::engines::core::ops::compression_common::ErrorTolerance::Low,
+                    },
                 },
                 max_adaptation_overhead_percent: 10.0,
                 min_adaptation_interval_ms: 1000,
@@ -560,8 +609,7 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
-                size_thresholds: std::collections::HashMap::new(),
-                pattern_detection: false,
+                // size_thresholds and pattern_detection fields removed from ContextAwareCompressionConfig
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),
@@ -600,10 +648,59 @@ mod tests {
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: true,
                 criteria: AdaptationCriteria {
-                    data_characteristics: Default::default(),
-                    performance_thresholds: Default::default(),
-                    resource_constraints: Default::default(),
-                    quality_requirements: Default::default(),
+                    data_characteristics: crate::storage::engines::core::ops::compression_common::DataCharacteristics {
+                        entropy_thresholds: crate::storage::engines::core::ops::compression_common::EntropyThresholds {
+                            low_entropy: 0.5,
+                            high_entropy: 8.0,
+                            calculation_method: crate::storage::engines::core::ops::compression_common::EntropyCalculationMethod::Shannon,
+                        },
+                        size_thresholds: crate::storage::engines::core::ops::compression_common::SizeThresholds {
+                            small_data_threshold: 1024,
+                            large_data_threshold: 1024 * 1024,
+                            block_size_optimization: true,
+                        },
+                        pattern_recognition: crate::storage::engines::core::ops::compression_common::PatternRecognitionConfig {
+                            enabled: false,
+                            pattern_types: vec![],
+                            accuracy_threshold: 0.8,
+                            pattern_cache_size: 1000,
+                        },
+                        data_type_hints: vec![],
+                    },
+                    performance_thresholds: crate::storage::engines::core::ops::compression_common::PerformanceThresholds {
+                        max_compression_latency_ms: 1000.0,
+                        max_decompression_latency_ms: 500.0,
+                        min_throughput_mbps: 10.0,
+                        max_cpu_usage_percent: 80.0,
+                        max_memory_usage_mb: 512,
+                    },
+                    resource_constraints: crate::storage::engines::core::ops::compression_common::ResourceConstraints {
+                        memory_constraints: crate::storage::engines::core::ops::compression_common::MemoryConstraints {
+                            max_working_memory: 512 * 1024 * 1024,
+                            max_buffer_size: 64 * 1024 * 1024,
+                            memory_pressure_threshold: 0.8,
+                            enable_memory_mapping: true,
+                        },
+                        cpu_constraints: crate::storage::engines::core::ops::compression_common::CPUConstraints {
+                            max_cpu_cores: None,
+                            max_cpu_usage_percent: 80.0,
+                            enable_hardware_acceleration: true,
+                            thread_priority: crate::storage::engines::core::ops::compression_common::ThreadPriority::Normal,
+                        },
+                        io_constraints: crate::storage::engines::core::ops::compression_common::IOConstraints {
+                            max_io_bandwidth_mbps: 1000.0,
+                            io_priority: crate::storage::engines::core::ops::compression_common::IOPriority::Normal,
+                            buffer_io: true,
+                            use_direct_io: false,
+                        },
+                        network_constraints: None,
+                    },
+                    quality_requirements: crate::storage::engines::core::ops::compression_common::QualityRequirements {
+                        min_compression_ratio: 1.1,
+                        max_quality_loss_percent: 5.0,
+                        require_lossless: true,
+                        error_tolerance: crate::storage::engines::core::ops::compression_common::ErrorTolerance::Low,
+                    },
                 },
                 max_adaptation_overhead_percent: 10.0,
                 min_adaptation_interval_ms: 1000,
@@ -613,8 +710,7 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
-                size_thresholds: std::collections::HashMap::new(),
-                pattern_detection: false,
+                // size_thresholds and pattern_detection fields removed from ContextAwareCompressionConfig
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),
@@ -686,10 +782,59 @@ mod tests {
             adaptive_settings: AdaptiveCompressionSettings {
                 enabled: false,
                 criteria: AdaptationCriteria {
-                    data_characteristics: Default::default(),
-                    performance_thresholds: Default::default(),
-                    resource_constraints: Default::default(),
-                    quality_requirements: Default::default(),
+                    data_characteristics: crate::storage::engines::core::ops::compression_common::DataCharacteristics {
+                        entropy_thresholds: crate::storage::engines::core::ops::compression_common::EntropyThresholds {
+                            low_entropy: 0.5,
+                            high_entropy: 8.0,
+                            calculation_method: crate::storage::engines::core::ops::compression_common::EntropyCalculationMethod::Shannon,
+                        },
+                        size_thresholds: crate::storage::engines::core::ops::compression_common::SizeThresholds {
+                            small_data_threshold: 1024,
+                            large_data_threshold: 1024 * 1024,
+                            block_size_optimization: true,
+                        },
+                        pattern_recognition: crate::storage::engines::core::ops::compression_common::PatternRecognitionConfig {
+                            enabled: false,
+                            pattern_types: vec![],
+                            accuracy_threshold: 0.8,
+                            pattern_cache_size: 1000,
+                        },
+                        data_type_hints: vec![],
+                    },
+                    performance_thresholds: crate::storage::engines::core::ops::compression_common::PerformanceThresholds {
+                        max_compression_latency_ms: 1000.0,
+                        max_decompression_latency_ms: 500.0,
+                        min_throughput_mbps: 10.0,
+                        max_cpu_usage_percent: 80.0,
+                        max_memory_usage_mb: 512,
+                    },
+                    resource_constraints: crate::storage::engines::core::ops::compression_common::ResourceConstraints {
+                        memory_constraints: crate::storage::engines::core::ops::compression_common::MemoryConstraints {
+                            max_working_memory: 512 * 1024 * 1024,
+                            max_buffer_size: 64 * 1024 * 1024,
+                            memory_pressure_threshold: 0.8,
+                            enable_memory_mapping: true,
+                        },
+                        cpu_constraints: crate::storage::engines::core::ops::compression_common::CPUConstraints {
+                            max_cpu_cores: None,
+                            max_cpu_usage_percent: 80.0,
+                            enable_hardware_acceleration: true,
+                            thread_priority: crate::storage::engines::core::ops::compression_common::ThreadPriority::Normal,
+                        },
+                        io_constraints: crate::storage::engines::core::ops::compression_common::IOConstraints {
+                            max_io_bandwidth_mbps: 1000.0,
+                            io_priority: crate::storage::engines::core::ops::compression_common::IOPriority::Normal,
+                            buffer_io: true,
+                            use_direct_io: false,
+                        },
+                        network_constraints: None,
+                    },
+                    quality_requirements: crate::storage::engines::core::ops::compression_common::QualityRequirements {
+                        min_compression_ratio: 1.1,
+                        max_quality_loss_percent: 5.0,
+                        require_lossless: true,
+                        error_tolerance: crate::storage::engines::core::ops::compression_common::ErrorTolerance::Low,
+                    },
                 },
                 max_adaptation_overhead_percent: 5.0,
                 min_adaptation_interval_ms: 1000,
@@ -699,8 +844,7 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
-                size_thresholds: std::collections::HashMap::new(),
-                pattern_detection: false,
+                // size_thresholds and pattern_detection fields removed from ContextAwareCompressionConfig
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),

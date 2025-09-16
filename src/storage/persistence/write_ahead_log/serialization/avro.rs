@@ -370,26 +370,28 @@ impl super::VectorBatchSerializer for AvroSerializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::MetadataItem;
+    // Note: MetadataItem replaced with HashMap<String, SqlValue>
     use crate::storage::persistence::write_ahead_log::serialization::VectorBatchSerializer;
 
     fn create_test_vector() -> VectorRecord {
         VectorRecord {
-            id: Some("test_vector_1".to_string()),
+            id: "test_vector_1".to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+            metadata: {
+                let mut map = std::collections::HashMap::new();
+                map.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
                         "test".to_string(),
-                    ),
-                ),
-            }],
+                    )),
+                });
+                map
+            },
             timestamp: 1234567890,
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -417,24 +419,20 @@ mod tests {
     fn test_metadata_preservation() {
         let serializer = AvroSerializer::new();
         let mut vector = create_test_vector();
-        vector.metadata = vec![
-            MetadataItem {
-                key: "key1".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "value1".to_string(),
-                    ),
-                ),
-            },
-            MetadataItem {
-                key: "key2".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "value2".to_string(),
-                    ),
-                ),
-            },
-        ];
+        {
+            let mut map = std::collections::HashMap::new();
+            map.insert("key1".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "value1".to_string(),
+                )),
+            });
+            map.insert("key2".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "value2".to_string(),
+                )),
+            });
+            vector.metadata = map;
+        }
 
         let vectors = vec![vector];
         let serialized = serializer
@@ -452,25 +450,17 @@ mod tests {
             .iter()
             .map(|(key, value)| key.clone())
             .collect();
-        assert!(keys.contains_hash("key1"));
-        assert!(keys.contains_hash("key2"));
+        assert!(keys.contains("key1"));
+        assert!(keys.contains("key2"));
 
         // Find and verify each key-value pair
-        let key1_item = deserialized[0]
-            .metadata
-            .iter()
-            .find(|item| item.key == "key1")
-            .unwrap();
-        let key2_item = deserialized[0]
-            .metadata
-            .iter()
-            .find(|item| item.key == "key2")
-            .unwrap();
+        let key1_value = deserialized[0].metadata.get("key1").unwrap();
+        let key2_value = deserialized[0].metadata.get("key2").unwrap();
         assert!(
-            matches!(&key1_item.value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "value1")
+            matches!(&key1_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "value1")
         );
         assert!(
-            matches!(&key2_item.value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "value2")
+            matches!(&key2_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "value2")
         );
     }
 
