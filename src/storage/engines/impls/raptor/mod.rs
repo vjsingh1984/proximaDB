@@ -21,7 +21,6 @@ pub mod config;
 pub mod constants;
 
 // Core modules
-pub mod adaptive_optimization;
 pub mod adaptive_pxk;
 pub mod consolidated_compactor;
 pub mod consolidated_reader;
