@@ -318,4 +318,13 @@ impl crate::index::axis::index_factory::AxisVectorIndex for GlobalIdIndex {
         // Need to store algorithm in struct
         &self.algorithm_config
     }
+
+    fn stats(&self) -> crate::index::axis::index_factory::IndexStats {
+        let map = self.id_map.read().unwrap();
+        crate::index::axis::index_factory::IndexStats {
+            vector_count: map.len(),
+            memory_usage_bytes: map.len() * 128, // Estimated bytes per entry
+            index_type: "GlobalId".to_string(),
+        }
+    }
 }
