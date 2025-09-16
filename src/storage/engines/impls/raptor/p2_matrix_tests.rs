@@ -81,7 +81,7 @@ mod tests {
             distances: vec![10, 20, 30], // Quantized distances: (0,1)=10, (0,2)=20, (1,2)=30
             min_distance: 0.0,
             max_distance: 1.0,
-            compression: FastLanesScheme::None,
+            compression: FastLanesScheme::Dictionary,
             compressed_size: 3,
         };
 
@@ -91,9 +91,9 @@ mod tests {
         assert_eq!(p2_matrix.get_distance(1, 2), p2_matrix.get_distance(2, 1));
 
         // Test self-distance is 0
-        assert_eq!(p2_matrix.get_distance(0, 0), 0.0);
-        assert_eq!(p2_matrix.get_distance(1, 1), 0.0);
-        assert_eq!(p2_matrix.get_distance(2, 2), 0.0);
+        assert_eq!(p2_matrix.get_distance(0, 0), 0);
+        assert_eq!(p2_matrix.get_distance(1, 1), 0);
+        assert_eq!(p2_matrix.get_distance(2, 2), 0);
     }
 
     /// Test P² matrix builder with real vectors
@@ -120,7 +120,8 @@ mod tests {
 
         for i in 0..vectors.len() {
             for j in (i + 1)..vectors.len() {
-                let dist = distance_compute.calculate(&vectors[i], &vectors[j])?;
+                let dist_result = distance_compute.calculate_distance(&vectors[i], &vectors[j], &crate::compute::distance_computation::DistanceMetric::Euclidean);
+                let dist = dist_result.raw_value;
                 distances.push(dist);
             }
         }
@@ -163,7 +164,8 @@ mod tests {
 
         for i in 0..vectors.len() {
             for j in (i + 1)..vectors.len() {
-                let dist = distance_compute.calculate(&vectors[i], &vectors[j])?;
+                let dist_result = distance_compute.calculate_distance(&vectors[i], &vectors[j], &crate::compute::distance_computation::DistanceMetric::Euclidean);
+                let dist = dist_result.raw_value;
                 distances.push(dist);
             }
         }
@@ -173,9 +175,11 @@ mod tests {
         let (quantized, min_dist, max_dist) = quantization_engine.quantize_to_u8(&distances);
 
         // Apply FastLanes encoding
-        let fastlanes_encoder = FastLanesEncoder::new();
-        let scheme = fastlanes_encoder.analyze_and_select_scheme(&quantized)?;
-        let encoded = fastlanes_encoder.encode_u8_slice(&quantized, scheme)?;
+        let fastlanes_encoder = FastLanesEncoder::new(FastLanesScheme::Dictionary);
+        let quantized_i64: Vec<i64> = quantized.iter().map(|&v| v as i64).collect();
+        let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme(&quantized_i64);
+        let quantized_i8: Vec<i8> = quantized.iter().map(|&v| v as i8).collect();
+        let encoded = fastlanes_encoder.encode_int8(&quantized_i8)?;
 
         // Verify compression
         let uncompressed_size = 32 * 31 / 2; // Upper triangle size
@@ -232,7 +236,7 @@ mod tests {
             distances: vec![50, 100, 150, 50, 100, 50], // Some test distances
             min_distance: 0.0,
             max_distance: 1.0,
-            compression: FastLanesScheme::None,
+            compression: FastLanesScheme::Dictionary,
             compressed_size: 6,
         };
 

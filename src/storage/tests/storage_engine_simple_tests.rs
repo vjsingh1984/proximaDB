@@ -8,25 +8,26 @@ use tempfile::TempDir;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::{Config, VectorRecord};
-use crate::proto::proximadb_v1::{MetadataItem, metadata_item};
 use crate::storage::engine::StorageEngine;
 
 /// Create test vector record
 fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector,
-        metadata: vec![MetadataItem {
-            key: "test_key".to_string(),
-            value: Some(metadata_item::Value::StringValue("test_value".to_string())),
-        }],
-        timestamp: chrono::Utc::now().timestamp() as u32,
-        updated_at: Some(chrono::Utc::now().timestamp() as u32),
+        metadata: {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("test_key".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string()))
+            });
+            metadata
+        },
+        timestamp: chrono::Utc::now().timestamp(),
+        updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
 

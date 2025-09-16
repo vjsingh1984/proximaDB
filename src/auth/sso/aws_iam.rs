@@ -382,12 +382,9 @@ pub struct AWSUserInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::types::SSOProvider;
 
-    /// SSO Provider enum for testing
-    #[derive(Debug, Clone, PartialEq)]
-    enum SSOProvider {
-        AWSIAM,
-    }
+    // Use the SSOProvider from super::types module
 
     #[test]
     fn test_sso_token_creation() {
@@ -417,12 +414,18 @@ mod tests {
     #[test]
     fn test_aws_token_data_serialization() {
         let token_data = AWSTokenData {
-            access_key_id: "AKIAIOSFODNN7EXAMPLE".to_string(),
-            secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".to_string(),
-            session_token: Some("session_token_example".to_string()),
-            user_name: "test_user".to_string(),
-            assumed_role_arn: None,
-            mfa_authenticated: true,
+            sub: "user123".to_string(),
+            aud: "proximadb".to_string(),
+            iss: "https://sts.amazonaws.com".to_string(),
+            exp: (chrono::Utc::now() + chrono::Duration::hours(1)).timestamp(),
+            iat: chrono::Utc::now().timestamp(),
+            role_arn: "arn:aws:iam::123456789012:role/ProximaDBRole".to_string(),
+            account_id: "123456789012".to_string(),
+            preferred_username: Some("test_user".to_string()),
+            email: Some("test@example.com".to_string()),
+            cognito_groups: vec!["users".to_string()],
+            custom_tenant_id: None,
+            raw_token: "jwt_token_here".to_string(),
         };
         
         let json = serde_json::to_string(&token_data).unwrap();

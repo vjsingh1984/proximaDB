@@ -212,16 +212,17 @@ async fn test_single_vector_operations() {
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
+    let search_params = crate::core::search::SearchParams {
+        vector: Some(vector.vector.clone()),
+        top_k: Some(1),
+        distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Cosine),
+        ..Default::default()
+    };
+    let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     let query_context = crate::storage::traits::StorageQueryContext {
-        collection_id: collection_id.to_string(),
-        query_vector: vector.vector.clone(),
-        top_k: 1,
-        distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
-        filter: None,
-        metadata_filter: None,
-        threshold: None,
-        include_vector: true,
-        include_metadata: true,
+        search_params: std::sync::Arc::new(search_params),
+        collection: std::sync::Arc::new(collection),
+        metadata: crate::storage::traits::StorageQueryMetadata::default(),
     };
     let results = engine
         .search_vectors_unified(&query_context)
@@ -574,7 +575,7 @@ async fn test_multi_collection_isolation() {
             .unwrap();
 
         for result in results {
-            let id = &result.vector_record.as_ref().unwrap().id;
+            let id = &result.id;
             assert!(
                 id.starts_with(collection),
                 "Vector {} in wrong collection",
@@ -798,7 +799,7 @@ async fn test_search_vectors_unified() {
                 io_optimization_hints: None,
             };
 
-            match reader.search_vectors(&search_params, &context).await {
+            match reader.await.unwrap().search_vectors(&search_params, &context).await {
                 Ok(reader_results) => {
                     debug!("Direct reader found {} results", reader_results.len());
                     for (i, result) in reader_results.iter().take(3).enumerate() {
@@ -938,16 +939,17 @@ async fn test_search_vectors_unified() {
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
+    let search_params = crate::core::search::SearchParams {
+        vector: Some(vec![1.0, 0.0, 0.0]),
+        top_k: Some(3),
+        distance_metric: Some(DistanceMetric::Cosine),
+        ..Default::default()
+    };
+    let collection = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     let query_context = crate::storage::traits::StorageQueryContext {
-        collection_id: collection_id.to_string(),
-        query_vector: vec![1.0, 0.0, 0.0],
-        top_k: 3,
-        distance_metric: DistanceMetric::Cosine,
-        filter: None,
-        metadata_filter: None,
-        threshold: None,
-        include_vector: true,
-        include_metadata: true,
+        search_params: std::sync::Arc::new(search_params),
+        collection: std::sync::Arc::new(collection),
+        metadata: crate::storage::traits::StorageQueryMetadata::default(),
     };
     let results = match engine
         .search_vectors_unified(&query_context)
@@ -991,16 +993,18 @@ async fn test_search_vectors_unified() {
         value: serde_json::Value::String("A".to_string()),
     };
 
+    let search_params_2 = crate::core::search::SearchParams {
+        vector: Some(vec![0.5, 0.5, 0.5]),
+        top_k: Some(10),
+        distance_metric: Some(DistanceMetric::Euclidean),
+        filter_expression: Some(filter_expr),
+        ..Default::default()
+    };
+    let collection_2 = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     let query_context_2 = crate::storage::traits::StorageQueryContext {
-        collection_id: collection_id.to_string(),
-        query_vector: vec![0.5, 0.5, 0.5],
-        top_k: 10,
-        distance_metric: DistanceMetric::Euclidean,
-        filter: Some(filter_expr),
-        metadata_filter: None,
-        threshold: None,
-        include_vector: true,
-        include_metadata: true,
+        search_params: std::sync::Arc::new(search_params_2),
+        collection: std::sync::Arc::new(collection_2),
+        metadata: crate::storage::traits::StorageQueryMetadata::default(),
     };
     let filtered_results = engine
         .search_vectors_unified(&query_context_2)
@@ -1016,16 +1020,17 @@ async fn test_search_vectors_unified() {
     // TODO: Add integration test with proper collection service setup for full metadata filtering test
 
     // Test 3: Search without vectors/metadata included
+    let search_params_3 = crate::core::search::SearchParams {
+        vector: Some(vec![0.0, 1.0, 0.0]),
+        top_k: Some(2),
+        distance_metric: Some(DistanceMetric::DotProduct),
+        ..Default::default()
+    };
+    let collection_3 = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
     let query_context_3 = crate::storage::traits::StorageQueryContext {
-        collection_id: collection_id.to_string(),
-        query_vector: vec![0.0, 1.0, 0.0],
-        top_k: 2,
-        distance_metric: DistanceMetric::DotProduct,
-        filter: None,
-        metadata_filter: None,
-        threshold: None,
-        include_vector: false, // Don't include vectors
-        include_metadata: false, // Don't include metadata
+        search_params: std::sync::Arc::new(search_params_3),
+        collection: std::sync::Arc::new(collection_3),
+        metadata: crate::storage::traits::StorageQueryMetadata::default(),
     };
     let minimal_results = engine
         .search_vectors_unified(&query_context_3)
@@ -1035,7 +1040,7 @@ async fn test_search_vectors_unified() {
     assert!(!minimal_results.is_empty());
     // Vectors and metadata should not be populated when include flags are false
     for result in &minimal_results {
-        assert!(result.vector.is_empty());
+        assert!(result.vector.is_none() || result.vector.as_ref().unwrap().is_empty());
     }
 }
 

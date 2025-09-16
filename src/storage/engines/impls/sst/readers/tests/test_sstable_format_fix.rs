@@ -45,14 +45,14 @@ async fn test_sstable_format_with_bloom_filter() {
         let record = VectorRecord {
             id: format!("vec_{:03}", i),
             vector: vec![i as f32; 3],
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: i as u64,
-            level: 0,
+            // is_tombstone field removed
+            // sequence_number field removed
+            // level field removed
         };
         records.insert(record.id.clone(), record);
     }
@@ -66,7 +66,15 @@ async fn test_sstable_format_with_bloom_filter() {
         .unwrap();
 
     // Read SSTable metadata (this will test bloom filter reading)
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let reader = UnifiedSstableReader::new(
+        filesystem.clone(),
+        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
+            filesystem.clone(),
+            vec![],
+        ).await.unwrap()),
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", sstable_path.display());
 
     // This should not panic with "unexpected end of file"
@@ -119,7 +127,15 @@ async fn test_sstable_empty_file_handling() {
     let empty_file = temp_path.join("empty.sstable");
     tokio::fs::write(&empty_file, b"").await.unwrap();
 
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let reader = UnifiedSstableReader::new(
+        filesystem.clone(),
+        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
+            filesystem.clone(),
+            vec![],
+        ).await.unwrap()),
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", empty_file.display());
 
     // Should handle empty file gracefully
@@ -151,7 +167,15 @@ async fn test_sstable_truncated_file_handling() {
         .await
         .unwrap();
 
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let reader = UnifiedSstableReader::new(
+        filesystem.clone(),
+        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
+            filesystem.clone(),
+            vec![],
+        ).await.unwrap()),
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", truncated_file.display());
 
     // Should handle truncated file gracefully

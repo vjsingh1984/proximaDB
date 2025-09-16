@@ -13,9 +13,9 @@ use proximadb::core::memory::{PoolConfig, VectorMemoryPool};
 use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
 use proximadb::core::{SstConfig, VectorRecord};
-use proximadb::proto::proximadb::{Collection, MetadataItem};
-use proximadb::storage::engines::sst::SstStorage;
-use proximadb::storage::engines::viper::ViperEngine;
+use proximadb::proto::proximadb_v1::{Collection, MetadataItem};
+use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::UnifiedStorageEngine;
@@ -111,41 +111,33 @@ fn create_optimization_test_vectors(count: usize) -> Vec<VectorRecord> {
             }
 
             VectorRecord {
-                id: Some(format!("vec_{}_{}", pattern, i)),
+                id: format!("vec_{}_{}", pattern, i),
                 vector,
-                metadata: vec![
-                    MetadataItem {
-                        key: "pattern".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                                pattern.to_string(),
-                            ),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "dimension".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                                dimension as f64,
-                            ),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                                i as f64,
-                            ),
-                        ),
-                    },
-                ],
-                timestamp: (1000 + i) as u32,
-                updated_at: Some((1000 + i) as u32),
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("pattern".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            pattern.to_string()
+                        ))
+                    });
+                    metadata.insert("dimension".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                            dimension as f64
+                        ))
+                    });
+                    metadata.insert("index".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
+                            i as f64
+                        ))
+                    });
+                    metadata
+                },
+                timestamp: (1000 + i) as i64,
+                updated_at: Some((1000 + i) as i64),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: vec![],
+                source: None,
             }
         })
         .collect()

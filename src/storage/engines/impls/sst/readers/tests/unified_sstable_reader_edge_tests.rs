@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod edge_tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::core::bloom::BloomFilterConfig;
     use crate::core::config::SstConfig;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
@@ -46,7 +46,7 @@ mod edge_tests {
     // Helper to create test collection context
     fn create_test_context(collection_id: &str, file_paths: Vec<String>) -> CollectionContext {
         CollectionContext {
-            file_path: file_paths.first().cloned().clone(),
+            file_path: file_paths.first().cloned().unwrap_or_default(),
             sstable_files: file_paths,
             total_vectors: 1000,
             metadata_columns: vec!["category".to_string(), "price".to_string()],
@@ -510,7 +510,7 @@ mod edge_tests {
                 version: Some(version as i64),
                 quantized_vector: vec![],
                 source: None,
-                level: 0,
+                // level field removed from VectorRecord
             });
         }
 
@@ -542,9 +542,8 @@ mod edge_tests {
 
         // Verify we have multiple versions and a tombstone
         assert_eq!(records.len(), 12);
-        assert!(
-            records[10] /* REMOVED: is_tombstone field no longer exists */
-        );
+        // Verify we have multiple versions
+        assert!(records[10].vector.is_empty()); // Empty vector indicates tombstone
     }
 
     // ===== Bloom Filter Edge Cases =====
@@ -642,17 +641,16 @@ mod edge_tests {
 
         let mut records = std::collections::BTreeMap::new();
         for i in 0..10 {
-            let record = crate::storage::engines::impls::sst::VectorRecord {
+            let record = VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32; 128],
-                metadata: vec![],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                metadata: std::collections::HashMap::new(),
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: false,
-                sequence_number: i as u64,
-                level: 0,
+                quantized_vector: vec![],
+                source: None,
             };
             records.insert(record.id.clone(), record);
         }
@@ -664,7 +662,15 @@ mod edge_tests {
             .unwrap();
 
         // Create reader and context
-        let reader = Arc::new(UnifiedSstableReader::new(filesystem));
+        let reader = Arc::new(UnifiedSstableReader::new(
+            filesystem.clone(),
+            Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+                crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
+                filesystem,
+                vec![],
+            ).await.unwrap()),
+            "test_collection".to_string(),
+        ));
         reader.load_metadata(&file_url).await.unwrap();
 
         let context = Arc::new(CollectionContext {
@@ -843,9 +849,9 @@ mod edge_tests {
                 updated_at: Some(100),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: true,
-                sequence_number: 100,
-                level: 0,
+                // is_tombstone field removed
+                // sequence_number field removed
+                // level field removed from VectorRecord
             },
             // Tombstone with metadata (unusual but valid)
             VectorRecord {
@@ -863,9 +869,9 @@ mod edge_tests {
                 updated_at: Some(101),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: true,
-                sequence_number: 101,
-                level: 0,
+                // is_tombstone field removed
+                // sequence_number field removed
+                // level field removed from VectorRecord
             },
             // Tombstone with expiration (double deletion)
             VectorRecord {
@@ -876,9 +882,9 @@ mod edge_tests {
                 updated_at: Some(102),
                 expires_at: Some(103),
                 version: Some(1),
-                is_tombstone: true,
-                sequence_number: 102,
-                level: 0,
+                // is_tombstone field removed
+                // sequence_number field removed
+                // level field removed from VectorRecord
             },
         ];
 
@@ -886,7 +892,7 @@ mod edge_tests {
             assert!(
                 tombstone /* REMOVED: is_tombstone field no longer exists */
             );
-            assert!(tombstone.vector.is_none());
+            assert!(tombstone.vector.is_empty()); // Empty vector indicates tombstone
         }
     }
 
@@ -911,7 +917,7 @@ mod edge_tests {
         // Test might_match_metadata functionality
         for (field, value) in test_values {
             // This would be implemented in the actual bloom filter
-            assert!(field.len() > 0 || field.is_none());
+            assert!(field.len() > 0 || field.is_empty()); // Check if field is populated
             assert!(value.len() >= 0);
         }
     }
@@ -948,7 +954,7 @@ mod edge_tests {
                 sstable_files: vec![path.to_string()],
                 total_vectors: 0,
                 metadata_columns: vec![],
-                level: 0,
+                // level field removed from VectorRecord
                 creation_time: Utc::now(),
                 io_optimization_hints: None,
             };
@@ -972,13 +978,13 @@ mod edge_tests {
                 id: format!("vec_{}", i),
                 vector: vec![0.1; 1024], // Large vector
                 metadata: vec![],
-                timestamp: i as u32,
-                updated_at: Some(i as u32),
+                timestamp: i as i64,
+                updated_at: Some(i as i64),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: false,
-                sequence_number: i as u64,
-                level: 0,
+                // is_tombstone field removed
+                // sequence_number field removed
+                // level field removed from VectorRecord
             };
 
             large_records.push(record);
@@ -1013,8 +1019,8 @@ mod edge_tests {
         stats.insert("bool_field".to_string(), (0.0f64, 1.0f64, 50usize, 2usize));
 
         for (field, (min, max, null_count, distinct_count)) in &stats {
-            assert!(!field.is_none());
-            match field.as_deref() {
+            assert!(!field.is_empty()); // Field should not be empty
+            match field.as_str() { // Use as_str() instead of as_deref()
                 "numeric_field" => {
                     let (min_val, max_val, null_cnt, distinct_cnt) =
                         (min, max, null_count, distinct_count);

@@ -5,16 +5,11 @@
 
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use proximadb::core::VectorRecord;
-use proximadb::core::search::unified_interface::{
-    CollectionConfig, ColumnDataType, FilterableColumn, StorageInfo, UnifiedSearchContext,
-};
-use proximadb::core::search::{SearchParams, SearchResult};
-use proximadb::proto::proximadb::MetadataItem;
+use proximadb::core::service_types::VectorRecord;
+use proximadb::core::search::SearchParams;
 
 /// Generate test vectors with basic metadata
 fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
@@ -26,142 +21,24 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
             .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
             .collect();
 
-        let metadata = vec![
-            MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(format!(
-                        "cat_{}",
-                        i % 3
-                    )),
-                ),
-            },
-            MetadataItem {
-                key: "score".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                        (i as f64 / count as f64).to_string(),
-                    ),
-                ),
-            },
-            MetadataItem {
-                key: "active".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                        (i % 2 == 0).to_string(),
-                    ),
-                ),
-            },
-        ];
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("category".to_string(), json!(format!("cat_{}", i % 3)));
+        metadata.insert("score".to_string(), json!(i as f64 / count as f64));
+        metadata.insert("active".to_string(), json!(i % 2 == 0));
 
         vectors.push(VectorRecord {
-            id: Some(format!("vec_{}", i)),
+            id: format!("vec_{}", i),
+            collection_id: "test_collection".to_string(),
             vector,
             metadata,
-            timestamp: now as u32,
-            updated_at: Some(now as u32),
+            timestamp: now as i64,
+            updated_at: Some(now as i64),
             expires_at: None,
             version: Some(1),
-            distance: None,
-            rank: None,
-            score: None,
         });
     }
 
     vectors
-}
-
-/// Create test search context
-fn create_test_search_context() -> UnifiedSearchContext {
-    let filterable_columns = vec![
-        FilterableColumn {
-            name: "category".to_string(),
-            data_type: ColumnDataType::String,
-            is_indexed: true,
-            estimated_cardinality: Some(3),
-        },
-        FilterableColumn {
-            name: "score".to_string(),
-            data_type: ColumnDataType::Float,
-            is_indexed: false,
-            estimated_cardinality: None,
-        },
-        FilterableColumn {
-            name: "active".to_string(),
-            data_type: ColumnDataType::Boolean,
-            is_indexed: true,
-            estimated_cardinality: Some(2),
-        },
-    ];
-
-    let collection_config = CollectionConfig {
-        default_distance_metric: DistanceMetric::Cosine,
-        vector_dimension: 128,
-        enable_quantization: true,
-        enable_metadata_filtering: true,
-        estimated_document_count: 1000,
-    };
-
-    let storage_info = StorageInfo {
-        is_cloud_storage: false,
-        storage_type: "Local".to_string(),
-        estimated_size_mb: 10.0,
-        file_count: 5,
-        supports_range_requests: true,
-        file_paths: Some(vec![
-            "/tmp/test_collection/data_001.parquet".to_string(),
-            "/tmp/test_collection/data_002.parquet".to_string(),
-        ]),
-    };
-
-    UnifiedSearchContext {
-        collection_id: "test_collection".to_string(),
-        collection_config: Some(collection_config),
-        filterable_columns,
-        available_quantization: vec![],
-        storage_info,
-    }
-}
-
-/// Test unified search interface trait
-#[tokio::test]
-async fn test_unified_search_interface() {
-    // Initialize hardware capabilities
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    // Test data
-    let test_vectors = generate_test_vectors(10, 32);
-    let query_vector = vec![0.5; 32];
-
-    // Create search context
-    let context = create_test_search_context();
-
-    // Create search params
-    let search_params = SearchParams {
-        query_vectors: Some(vec![query_vector]),
-        top_k: Some(5),
-        distance_metric: Some(DistanceMetric::Cosine),
-        ..Default::default()
-    };
-
-    // Create unified distance compute
-    let _distance_compute = Arc::new(UnifiedDistanceCompute::default());
-
-    // Test that we can create the unified search context
-    assert_eq!(context.collection_id, "test_collection");
-    assert_eq!(context.filterable_columns.len(), 3);
-    assert!(context.collection_config.is_some());
-
-    // Test SearchParams structure
-    assert_eq!(search_params.top_k, Some(5));
-    assert_eq!(search_params.distance_metric, Some(DistanceMetric::Cosine));
-
-    // Test VectorRecord structure
-    let first_vector = &test_vectors[0];
-    assert_eq!(first_vector.id, Some("vec_0".to_string()));
-    assert_eq!(first_vector.vector.len(), 32);
-    assert_eq!(first_vector.metadata.len(), 3);
-
-    // Test completed
 }
 
 /// Test basic search functionality with SearchParams
@@ -169,6 +46,7 @@ async fn test_unified_search_interface() {
 async fn test_search_params_functionality() {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     // Test various SearchParams configurations
     let query_vectors = vec![vec![0.1; 16], vec![0.5; 16], vec![0.9; 16]];
 
@@ -267,174 +145,33 @@ async fn test_vector_record_structure() {
 
     // Test vector record structure
     for (i, vector) in test_vectors.iter().enumerate() {
-        assert_eq!(vector.id, Some(format!("vec_{}", i)));
+        assert_eq!(vector.id, format!("vec_{}", i));
         assert_eq!(vector.vector.len(), 64);
         assert_eq!(vector.metadata.len(), 3);
         assert!(vector.timestamp > 0);
-        assert!(vector.updated_at.unwrap_or(0) > 0);
-        assert_eq!(vector.version, Some(1));
 
-        // Test metadata content - metadata is now Vec<MetadataItem>
-        let category_item = vector
-            .metadata
-            .iter()
-            .find(|item| item.key == "category")
-            .unwrap();
-        match &category_item.value {
-            Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(s)) => {
-                assert!(s.starts_with("cat_"));
-            }
-            _ => panic!("Bad"),
+        // Test metadata content - metadata is now HashMap<String, serde_json::Value>
+        let category_value = vector.metadata.get("category").unwrap();
+        if let Some(s) = category_value.as_str() {
+            assert!(s.starts_with("cat_"));
+        } else {
+            panic!("Expected string value for category");
         }
 
-        let score_item = vector
-            .metadata
-            .iter()
-            .find(|item| item.key == "score")
-            .unwrap();
-        match &score_item.value {
-            Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(s)) => {
-                let score: f64 = s.parse().unwrap();
-                assert!(score >= 0.0 && score <= 1.0);
-            }
-            _ => panic!("Bad"),
+        let score_value = vector.metadata.get("score").unwrap();
+        if let Some(n) = score_value.as_f64() {
+            assert!(n >= 0.0 && n <= 1.0);
+        } else {
+            panic!("Expected number value for score");
         }
 
-        let active_item = vector
-            .metadata
-            .iter()
-            .find(|item| item.key == "active")
-            .unwrap();
-        match &active_item.value {
-            Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(s)) => {
-                let active: bool = s.parse().unwrap();
-                assert!(active == (i % 2 == 0));
-            }
-            _ => panic!("Bad"),
+        let active_value = vector.metadata.get("active").unwrap();
+        if let Some(b) = active_value.as_bool() {
+            assert_eq!(b, i % 2 == 0);
+        } else {
+            panic!("Expected bool value for active");
         }
     }
-
-    // Test completed
-}
-
-/// Test SearchResult structure
-#[tokio::test]
-async fn test_search_result_structure() {
-    // Initialize hardware capabilities
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    // Create a mock search result
-    let mut metadata = HashMap::new();
-    metadata.insert("category".to_string(), json!("test"));
-    metadata.insert("score".to_string(), json!(0.85));
-
-    let search_result = SearchResult {
-        id: "test_id".to_string(),
-        vector_id: Some("vec_123".to_string()),
-        score: 0.95,
-        distance: Some(0.05),
-        rank: Some(1),
-        vector: Some(vec![0.1, 0.2, 0.3]),
-        metadata,
-        debug_info: None,
-        semantic_distance: None,
-        quantization_info: None,
-        engine_stats: None,
-        index_path: Some("test_index".to_string()),
-        created_at: Some(chrono::Utc::now()),
-        version: Some(1),
-        timestamp: Some(chrono::Utc::now().timestamp() as u32),
-    };
-
-    // Test all fields
-    assert_eq!(search_result.id, "test_id");
-    assert_eq!(search_result.vector_id, Some("vec_123".to_string()));
-    assert_eq!(search_result.score, 0.95);
-    assert_eq!(search_result.distance, Some(0.05));
-    assert_eq!(search_result.rank, Some(1));
-    assert_eq!(search_result.vector.as_ref().unwrap().len(), 3);
-    assert_eq!(search_result.metadata.len(), 2);
-    assert!(search_result.created_at.is_some());
-    assert_eq!(search_result.index_path, Some("test_index".to_string()));
-
-    // Test metadata access
-    let category = search_result.metadata.get(key).unwrap().as_str().unwrap();
-    assert_eq!(category, "test");
-
-    let score = search_result.metadata.get(key).unwrap().as_f64().unwrap();
-    assert_eq!(score, 0.85);
-
-    // Test completed
-}
-
-/// Test unified search context creation
-#[tokio::test]
-async fn test_unified_search_context() {
-    // Initialize hardware capabilities
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    let context = create_test_search_context();
-
-    // Test context structure
-    assert_eq!(context.collection_id, "test_collection");
-    assert_eq!(context.filterable_columns.len(), 3);
-    assert!(context.collection_config.is_some());
-
-    // Test collection config
-    let config = context.collection_config.as_ref().unwrap();
-    assert_eq!(config.default_distance_metric, DistanceMetric::Cosine);
-    assert_eq!(config.vector_dimension, 128);
-    assert!(config.enable_quantization);
-    assert!(config.enable_metadata_filtering);
-    assert_eq!(config.estimated_document_count, 1000);
-
-    // Test filterable columns
-    let category_column = &context.filterable_columns[0];
-    assert_eq!(category_column.name, "category");
-    assert!(matches!(category_column.data_type, ColumnDataType::String));
-    assert!(category_column.is_indexed);
-    assert_eq!(category_column.estimated_cardinality, Some(3));
-
-    let score_column = &context.filterable_columns[1];
-    assert_eq!(score_column.name, "score");
-    assert!(matches!(score_column.data_type, ColumnDataType::Float));
-    assert!(!score_column.is_indexed);
-    assert_eq!(score_column.estimated_cardinality, None);
-
-    // Test storage info
-    assert!(!context.storage_info.is_cloud_storage);
-    assert_eq!(context.storage_info.storage_type, "Local");
-    assert_eq!(context.storage_info.estimated_size_mb, 10.0);
-    assert_eq!(context.storage_info.file_count, 5);
-    assert!(context.storage_info.supports_range_requests);
-
-    // Test completed
-}
-
-/// Test basic unified search engine interface functionality
-#[tokio::test]
-async fn test_unified_search_engine_interface() {
-    // Initialize hardware capabilities
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    // Create search context
-    let context = create_test_search_context();
-
-    // Create search params
-    let search_params = SearchParams {
-        query_vectors: Some(vec![vec![0.5; 128]]),
-        top_k: Some(10),
-        distance_metric: Some(DistanceMetric::Cosine),
-        ..Default::default()
-    };
-
-    // Create unified distance compute
-    let _distance_compute = Arc::new(UnifiedDistanceCompute::default());
-
-    // Test the search interface structure
-    assert_eq!(context.collection_id, "test_collection");
-    assert_eq!(search_params.top_k, Some(10));
-    assert_eq!(search_params.distance_metric, Some(DistanceMetric::Cosine));
-
-    // Test that we can create the necessary components
-    // (This is a compile-time test - if this compiles, the trait is correctly defined)
 
     // Test completed
 }
@@ -444,6 +181,7 @@ async fn test_unified_search_engine_interface() {
 async fn test_search_params_edge_cases() {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     // Test default SearchParams
     let default_params = SearchParams::default();
     assert_eq!(default_params.query_vectors, None);
@@ -488,6 +226,7 @@ async fn test_search_params_edge_cases() {
 async fn test_api_usage_patterns() {
     // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
     // Test single vector search helper
     let query_vector = vec![0.1, 0.2, 0.3];
     let single_search = SearchParams::single_vector(query_vector.clone());

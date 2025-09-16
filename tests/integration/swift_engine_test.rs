@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, IndexingAlgorithm, StorageEngine,
 };
 use proximadb::services::collection::manager::CollectionService;
@@ -17,8 +17,16 @@ async fn create_test_setup() -> (Arc<SwiftEngine>, Arc<CollectionService>, TempD
     let filesystem_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
 
+    // TODO: Fix CollectionService constructor - needs metadata backend and storage config
+    // Placeholder for now
+    let metadata_backend = Arc::new(
+        proximadb::storage::metadata::MetadataStore::new(
+            proximadb::storage::metadata::MetadataStoreConfig::default()
+        ).await.unwrap()
+    ) as Arc<dyn proximadb::storage::traits::InternalCollectionProvider>;
+    let storage_config = proximadb::core::config::StorageConfig::default();
     let collection_service = Arc::new(
-        CollectionService::new(filesystem.clone(), temp_dir.path().to_path_buf())
+        CollectionService::new(metadata_backend, storage_config)
             .await
             .unwrap(),
     );
@@ -48,11 +56,12 @@ fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
             VectorRecord {
                 id: format!("vec_{}", i),
                 vector,
-                metadata: Default::default(),
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
-                quantized_vector: None,
+                version: Some(1),
+                quantized_vector: vec![],
                 source: None,
             }
         })
@@ -64,7 +73,6 @@ async fn test_swift_engine_creation_and_insertion() {
     let (swift_engine, collection_service, _temp_dir) = create_test_setup().await;
 
     let config = CollectionConfig {
-        name: "swift_test_collection".to_string(),
         dimension: 128,
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Swift as i32,
@@ -77,7 +85,7 @@ async fn test_swift_engine_creation_and_insertion() {
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("swift_test_collection".to_string()),
         vector_records: vectors,
-        batch_ids: (0..100).map(|i| i.to_string()).collect(),
+        // batch_ids field removed from FlushParameters
         force: true,
         synchronous: true,
         collection_config: Some(

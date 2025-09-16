@@ -1,12 +1,11 @@
 use anyhow::Result;
 use proximadb::compute::quantization::{
-    ProductQuantization as PqConfig, QuantizationLevelType, UnifiedQuantizationLevel,
+    ProductQuantization as PqConfig, UnifiedQuantizationLevel,
 };
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb::VectorRecord;
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::proto::proximadb_v1::VectorRecord;
+use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use proximadb::storage::quantization::sst_adapter::SstQuantizationAdapter;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -43,18 +42,23 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
         // Setup SST with specific block size
         let mut sst_config = SstConfig::default();
         sst_config.block_size_kb = block_size_kb;
-        sst_config
-            .storage_config
-            .as_ref()
-            .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+        sst_config.compression = "zstd".to_string();
         sst_config.compression_level = 3;
 
         let fs_config = FilesystemConfig {
             default_fs: Some(format!("file://{}", base_path)),
+            local: None,
+            global_options: Default::default(),
+            auth_config: None,
+            performance_config: Default::default(),
+            scheme_mapping: std::collections::HashMap::new(),
         };
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+        let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
+            proximadb::compute::distance_computation::DistanceMetric::Cosine,
+        ));
         let mut sst_storage =
-            SstStorage::new(sst_config.clone(), filesystem, None, None, None).await?;
+            SstStorage::new(sst_config.clone(), filesystem, distance_compute).await?;
 
         // Calculate how many vectors fit per block
         let vector_bytes = dimension * 4; // FP32
@@ -72,9 +76,11 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
 
         // Flush with collection config for quantization
         let flush_params = FlushParameters {
+            vector_records: vec![],
             force: false,
             collection_id: Some("test_collection".to_string()),
             collection_config: None,
+            ..Default::default()
         };
 
         let flush_result = sst_storage.do_flush(flush_params).await?;
@@ -162,10 +168,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
 
     let mut sst_config = SstConfig::default();
     sst_config.block_size_kb = 256;
-    sst_config
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "zstd".to_string();
+    sst_config.compression = "zstd".to_string();
     sst_config.compression_level = 3;
 
     info!("\n📊 Configuration:");
@@ -210,9 +213,11 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     // Insert and flush
     sst_storage.insert_batch(vectors.clone()).await?;
     let flush_params = FlushParameters {
+        vector_records: vec![],
         force: false,
         collection_id: Some("test_collection".to_string()),
         collection_config: None,
+        ..Default::default()
     };
 
     let flush_result = sst_storage.flush(flush_params).await?;
@@ -265,16 +270,15 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
 
             let global_idx = cluster_id * vectors_per_cluster + i;
             vectors.push(VectorRecord {
-                id: Some(format!("vec_{}", global_idx)),
+                id: format!("vec_{}", global_idx),
                 vector,
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
-                version: None,
-                rank: None,
-                score: None,
-                distance: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             });
         }
     }
@@ -295,16 +299,15 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
         }
 
         vectors.push(VectorRecord {
-            id: Some(format!("vec_{}", i)),
+            id: format!("vec_{}", i),
             vector,
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
-            updated_at: None,
+            updated_at: Some(0),
             expires_at: None,
-            version: None,
-            rank: None,
-            score: None,
-            distance: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         });
     }
 

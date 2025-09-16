@@ -4,8 +4,8 @@
 //! deserialization issue by using concrete types instead of serde_json::Value.
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
 use crate::core::search::SearchParams;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use serde_json::json;
@@ -16,14 +16,13 @@ use tracing::info;
 
 // Helper function to get string value from metadata
 fn get_metadata_string(
-    metadata: &[crate::proto::proximadb_v1::MetadataItem],
+    metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
     key: &str,
 ) -> Option<String> {
     metadata
-        .iter()
-        .find(|item| key == key)
-        .and_then(|item| match &item.value {
-            Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+        .get(key)
+        .and_then(|sql_value| match &sql_value.value {
+            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                 Some(s.clone())
             }
             _ => None,
@@ -32,14 +31,13 @@ fn get_metadata_string(
 
 // Helper function to get number value from metadata
 fn get_metadata_number(
-    metadata: &[crate::proto::proximadb_v1::MetadataItem],
+    metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
     key: &str,
 ) -> Option<f64> {
     metadata
-        .iter()
-        .find(|item| key == key)
-        .and_then(|item| match &item.value {
-            Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => Some(*n),
+        .get(key)
+        .and_then(|sql_value| match &sql_value.value {
+            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => Some(*n),
             _ => None,
         })
 }
@@ -62,28 +60,16 @@ async fn test_metadata_filtering_with_sstable_reader() {
 
     // Category A records
     for i in 0..5 {
-        let metadata = vec![
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string()),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "score".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue((i * 10) as f64),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "document".to_string(),
-                    ),
-                ),
-            },
-        ];
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("A".to_string())),
+        });
+        metadata.insert("score".to_string(), crate::proto::proximadb_v1::SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue((i * 10) as f64)),
+        });
+        metadata.insert("type".to_string(), crate::proto::proximadb_v1::SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("document".to_string())),
+        });
 
         let record = VectorRecord {
             id: format!("vec_a_{}", i),
@@ -101,30 +87,16 @@ async fn test_metadata_filtering_with_sstable_reader() {
 
     // Category B records
     for i in 0..5 {
-        let metadata = vec![
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("B".to_string()),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "score".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                        (i * 10 + 5) as f64,
-                    ),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "image".to_string(),
-                    ),
-                ),
-            },
-        ];
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("B".to_string())),
+        });
+        metadata.insert("score".to_string(), crate::proto::proximadb_v1::SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue((i * 10 + 5) as f64)),
+        });
+        metadata.insert("type".to_string(), crate::proto::proximadb_v1::SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("image".to_string())),
+        });
 
         let record = VectorRecord {
             id: format!("vec_b_{}", i),
@@ -146,7 +118,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
     info!("\nTest 1: Filter by category = A");
     let category_a_records: Vec<_> = test_records
         .iter()
-        .filter(|r| get_metadata_string(&r.metadata, "category").map(|s| s == "A"))
+        .filter(|r| get_metadata_string(&r.metadata, "category").map_or(false, |s| s == "A"))
         .collect();
 
     assert_eq!(
@@ -165,7 +137,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
     info!("\nTest 2: Filter by type = image");
     let image_records: Vec<_> = test_records
         .iter()
-        .filter(|r| get_metadata_string(&r.metadata, "type").map(|s| s == "image"))
+        .filter(|r| get_metadata_string(&r.metadata, "type").map_or(false, |s| s == "image"))
         .collect();
 
     assert_eq!(
@@ -184,7 +156,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
     info!("\nTest 3: Numeric filter - score = 30");
     let score_30_records: Vec<_> = test_records
         .iter()
-        .filter(|r| get_metadata_number(&r.metadata, "score").map(|n| n as i64 == 30))
+        .filter(|r| get_metadata_number(&r.metadata, "score").map_or(false, |n| n as i64 == 30))
         .collect();
 
     assert_eq!(
@@ -199,8 +171,8 @@ async fn test_metadata_filtering_with_sstable_reader() {
     let multi_filter_records: Vec<_> = test_records
         .iter()
         .filter(|r| {
-            let category_match = get_metadata_string(&r.metadata, "category").map(|s| s == "B");
-            let type_match = get_metadata_string(&r.metadata, "type").map(|s| s == "image");
+            let category_match = get_metadata_string(&r.metadata, "category").map_or(false, |s| s == "B");
+            let type_match = get_metadata_string(&r.metadata, "type").map_or(false, |s| s == "image");
             category_match && type_match
         })
         .collect();
@@ -221,7 +193,7 @@ async fn test_metadata_filtering_with_sstable_reader() {
     info!("\nTest 5: Filter that matches no records");
     let no_match_records: Vec<_> = test_records
         .iter()
-        .filter(|r| get_metadata_string(&r.metadata, "category").map(|s| s == "Z"))
+        .filter(|r| get_metadata_string(&r.metadata, "category").map_or(false, |s| s == "Z"))
         .collect();
 
     assert_eq!(

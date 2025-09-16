@@ -71,17 +71,12 @@ mod tests {
                 primary_index: "default".to_string(),
                 auto_index_selection: true,
                 owner: Some("test_user".to_string()),
-                access_pattern: Some(AccessPattern::Normal as i32),
-                retention_policy: None,
+                embedding_models: vec![],
             }),
             stats: Some(proximadb_v1::CollectionStats {
                 vector_count: 0,
-                total_size_bytes: 0,
                 index_size_bytes: 0,
-                last_updated: 0,
-                avg_vector_size_bytes: 0.0,
-                total_indexed_vectors: 0,
-                compression_ratio: 1.0,
+                data_size_bytes: 0,
             }),
             created_at: Utc::now().timestamp(),
             updated_at: Utc::now().timestamp(),
@@ -100,21 +95,13 @@ mod tests {
             indexing_algorithm: "hnsw".to_string(),
             timestamp: collection.created_at as u32,
             version: Some(1),
-            vector_count: collection.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
-            total_size_bytes: collection.stats.as_ref().map(|s| s.total_size_bytes).unwrap_or(0),
+            vector_count: collection.stats.as_ref().map(|s| s.vector_count).unwrap_or(0) as u64,
+            total_size_bytes: collection.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0) as u64,
             config: std::collections::HashMap::new(),
             description: config.description.clone(),
             tags: config.tags.clone(),
             owner: config.owner.clone(),
-            access_pattern: match config.access_pattern {
-                Some(pattern) => match pattern {
-                    0 => AccessPattern::Hot,
-                    1 => AccessPattern::Cold,
-                    2 => AccessPattern::Archive,
-                    _ => AccessPattern::Normal,
-                },
-                None => AccessPattern::Normal,
-            },
+            access_pattern: AccessPattern::Normal, // Default since no access_pattern in proto
             retention_policy: None,
         }
     }
@@ -266,22 +253,12 @@ mod tests {
                         primary_index: "default".to_string(),
                         auto_index_selection: true,
                         owner: versioned.owner.clone(),
-                        access_pattern: Some(match versioned.access_pattern {
-                            AccessPattern::Hot => 0,
-                            AccessPattern::Cold => 1,
-                            AccessPattern::Archive => 2,
-                            AccessPattern::Normal => 3,
-                        }),
-                        retention_policy: None,
+                        embedding_models: vec![],
                     }),
                     stats: Some(proximadb_v1::CollectionStats {
-                        vector_count: versioned.vector_count,
-                        total_size_bytes: versioned.total_size_bytes,
+                        vector_count: versioned.vector_count as i64,
                         index_size_bytes: 0,
-                        last_updated: versioned.timestamp as u64,
-                        avg_vector_size_bytes: 0.0,
-                        total_indexed_vectors: 0,
-                        compression_ratio: 1.0,
+                        data_size_bytes: versioned.total_size_bytes as i64,
                     }),
                     created_at: versioned.timestamp as i64,
                     updated_at: versioned.timestamp as i64,
@@ -331,22 +308,12 @@ mod tests {
                         primary_index: "default".to_string(),
                         auto_index_selection: true,
                         owner: versioned.owner.clone(),
-                        access_pattern: Some(match versioned.access_pattern {
-                            AccessPattern::Hot => 0,
-                            AccessPattern::Cold => 1,
-                            AccessPattern::Archive => 2,
-                            AccessPattern::Normal => 3,
-                        }),
-                        retention_policy: None,
+                        embedding_models: vec![],
                     }),
                     stats: Some(proximadb_v1::CollectionStats {
-                        vector_count: versioned.vector_count,
-                        total_size_bytes: versioned.total_size_bytes,
+                        vector_count: versioned.vector_count as i64,
                         index_size_bytes: 0,
-                        last_updated: versioned.timestamp as u64,
-                        avg_vector_size_bytes: 0.0,
-                        total_indexed_vectors: 0,
-                        compression_ratio: 1.0,
+                        data_size_bytes: versioned.total_size_bytes as i64,
                     }),
                     created_at: versioned.timestamp as i64,
                     updated_at: versioned.timestamp as i64,
@@ -734,8 +701,8 @@ mod tests {
         assert!(retrieved.is_some());
         let retrieved_metadata = retrieved.unwrap();
         assert_eq!(retrieved_metadata.id, metadata.id);
-        assert_eq!(retrieved_metadata.name, metadata.name);
-        assert_eq!(retrieved_metadata.dimension, metadata.dimension);
+        assert_eq!(retrieved_metadata.config.as_ref().unwrap().name, metadata.config.as_ref().unwrap().name);
+        assert_eq!(retrieved_metadata.config.as_ref().unwrap().dimension, metadata.config.as_ref().unwrap().dimension);
     }
 
     #[tokio::test]
@@ -764,8 +731,10 @@ mod tests {
             .expect("Failed to create collection");
 
         // Update metadata
-        metadata.name = "Updated Collection Name".to_string();
-        metadata.description = Some("Updated description".to_string());
+        if let Some(ref mut config) = metadata.config {
+            config.name = "Updated Collection Name".to_string();
+            config.description = Some("Updated description".to_string());
+        }
 
         // Should update successfully
         store
@@ -916,7 +885,7 @@ mod tests {
 
         assert_eq!(stats.total_collections, 0); // No collections yet
         assert!(stats.cache_hit_rate >= 0.0);
-        assert!(!stats.storage_backend.is_none());
+        assert!(!stats.storage_backend.is_empty());
     }
 
     #[tokio::test]

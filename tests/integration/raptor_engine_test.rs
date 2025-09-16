@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, IndexingAlgorithm, StorageEngine,
 };
 use proximadb::services::collection::manager::CollectionService;
@@ -17,8 +17,16 @@ async fn create_test_setup() -> (Arc<RaptorEngine>, Arc<CollectionService>, Temp
     let filesystem_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
 
+    // TODO: Fix CollectionService constructor - needs metadata backend and storage config
+    // Placeholder for now
+    let metadata_backend = Arc::new(
+        proximadb::storage::metadata::MetadataStore::new(
+            proximadb::storage::metadata::MetadataStoreConfig::default()
+        ).await.unwrap()
+    ) as Arc<dyn proximadb::storage::traits::InternalCollectionProvider>;
+    let storage_config = proximadb::core::config::StorageConfig::default();
     let collection_service = Arc::new(
-        CollectionService::new(filesystem.clone(), temp_dir.path().to_path_buf())
+        CollectionService::new(metadata_backend, storage_config)
             .await
             .unwrap(),
     );
@@ -48,11 +56,12 @@ fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
             VectorRecord {
                 id: format!("vec_{}", i),
                 vector,
-                metadata: Default::default(),
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
-                quantized_vector: None,
+                version: Some(1),
+                quantized_vector: vec![],
                 source: None,
             }
         })
