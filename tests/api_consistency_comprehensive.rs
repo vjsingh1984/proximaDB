@@ -5,9 +5,8 @@
 
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
-    FilterOperator, IncludeFields, MetadataFilter, MetadataItem, SearchQuery,
-    SourceRetrievalOptions, StorageEngine, VectorBatchRequest,
-    VectorOperationResponse, VectorRecord, VectorSearchRequest,
+    FilterOperator, StorageEngine, VectorBatchRequest,
+    VectorOperationResponse, VectorRecord, VectorSearchRequest, SqlValue, sql_value,
 };
 use proximadb::utils::uuid::Uuid;
 use std::time::Duration;
@@ -23,16 +22,11 @@ mod comprehensive_api_tests {
             dimension: 128,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Sst as i32,
-            storage_config: None,
-            index_configs: vec![],
-            primary_index: "".to_string(),
-            auto_index_selection: true,
-            filterable_columns: vec![],
-            quantization: None,
-            embedding_models: vec![],
-            description: Some("Test collection for API consistency".to_string()),
             tags: vec!["test".to_string()],
-            owner: Some("test_user".to_string()),
+            description: Some("Test collection for API consistency".to_string()),
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization: None,
         }
     }
 
@@ -42,24 +36,18 @@ mod comprehensive_api_tests {
             .map(|i| VectorRecord {
                 id: format!("vec_{}", i),
                 vector: (0..dim).map(|j| (i as f32 + j as f32) / 100.0).collect(),
-                metadata: vec![
-                    MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                                i as f64,
-                            ),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                if i % 2 == 0 { "even" } else { "odd" }.to_string(),
-                            ),
-                        ),
-                    },
-                ],
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("index".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(i as f64)),
+                    });
+                    metadata.insert("category".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(
+                            if i % 2 == 0 { "even" } else { "odd" }.to_string()
+                        )),
+                    });
+                    metadata
+                },
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,

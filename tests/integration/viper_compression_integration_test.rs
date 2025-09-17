@@ -46,7 +46,7 @@ fn find_parquet_files_recursive(dir: &str) -> Vec<std::path::PathBuf> {
 
 use arrow_array::{Array, BinaryArray, RecordBatch};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use proximadb::proto::proximadb_v1::{VectorRecord, Collection, StorageEngine, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageAssignment, StorageEngine, DistanceMetric, SqlValue, sql_value};
 use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataStore;
@@ -261,27 +261,24 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     // Register collection (if needed by the engine)
     let collection = Collection {
         id: "test_collection".to_string(),
-        config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+        config: Some(CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 256,
-            distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
-            storage_engine: Some(StorageEngine::Viper as i32),
-            compression: None,
-            engine_config: std::collections::HashMap::new(),
-            cache_config: None,
-            quantization_config: None,
-            index_config: None,
-            metadata_config: None,
-            auto_create_shards: None,
-            auto_balance: None,
-            replication_factor: None,
-            consistency_level: None,
+            distance_metric: DistanceMetric::Euclidean as i32,
+            storage_engine: StorageEngine::Viper as i32,
+            tags: vec![],
+            description: None,
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization: None,
         }),
-        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+        storage_assignment: Some(StorageAssignment {
             base_location: temp_dir.path().to_str().unwrap().to_string(),
             assigned_at: chrono::Utc::now().timestamp_micros(),
         }),
-        ..Default::default()
+        stats: None,
+        created_at: chrono::Utc::now().timestamp(),
+        updated_at: chrono::Utc::now().timestamp(),
     };
 
     // Flush vectors
@@ -299,7 +296,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     let flush_result = engine.do_flush(&flush_params).await?;
 
     assert!(flush_result.success);
-    assert_eq!(flush_result.entries_flushed, 1000);
+    assert_eq!(flush_result.entries_flushed.unwrap_or(0), 1000);
 
     info!("Flushed {:?} records", flush_result.entries_flushed);
 
@@ -378,23 +375,21 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     // Register collection with filterable columns
     let collection = Collection {
         id: "search_test".to_string(),
-        config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+        config: Some(CollectionConfig {
             name: "search_test".to_string(),
             dimension: 512,
-            distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
-            storage_engine: Some(StorageEngine::Viper as i32),
-            compression: None,
-            engine_config: std::collections::HashMap::new(),
-            cache_config: None,
-            quantization_config: None,
-            index_config: None,
-            metadata_config: None,
-            auto_create_shards: None,
-            auto_balance: None,
-            replication_factor: None,
-            consistency_level: None,
+            distance_metric: DistanceMetric::Euclidean as i32,
+            storage_engine: StorageEngine::Viper as i32,
+            tags: vec![],
+            description: None,
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization: None,
         }),
-        ..Default::default()
+        stats: None,
+        created_at: chrono::Utc::now().timestamp(),
+        updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: None,
     };
 
     // Create and flush diverse test data
@@ -463,7 +458,7 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
         info!(
             "✅ Batch {} flushed: {} entries",
             batch + 1,
-            result.entries_flushed
+            result.entries_flushed.unwrap_or(0)
         );
     }
 
@@ -488,14 +483,14 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
     info!("   - Success: {}", compaction_result.success);
     info!(
         "   - Entries processed: {:?}",
-        compaction_result.entries_processed
+        compaction_result.entries_processed.unwrap_or(0)
     );
     info!("   - Input files: {:?}", compaction_result.input_files);
     info!("   - Output files: {:?}", compaction_result.output_files);
 
     assert!(compaction_result.success, "VIPER compaction should succeed");
     assert!(
-        compaction_result.entries_processed > 0,
+        compaction_result.entries_processed.unwrap_or(0) > 0,
         "VIPER compaction should process entries. UnifiedTestEnvironment provides correct configuration."
     );
 
@@ -753,27 +748,24 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         // Register collection
         let collection = Collection {
             id: "algo_test".to_string(),
-            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+            config: Some(CollectionConfig {
                 name: "algo_test".to_string(),
                 dimension: 512,
-                distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
-                storage_engine: Some(StorageEngine::Viper as i32),
-                compression: None,
-                engine_config: std::collections::HashMap::new(),
-                cache_config: None,
-                quantization_config: None,
-                index_config: None,
-                metadata_config: None,
-                auto_create_shards: None,
-                auto_balance: None,
-                replication_factor: None,
-                consistency_level: None,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: StorageEngine::Viper as i32,
+                tags: vec![],
+                description: None,
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
             }),
-            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            storage_assignment: Some(StorageAssignment {
                 base_location: temp_dir.path().to_str().unwrap().to_string(),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
             }),
-            ..Default::default()
+            stats: None,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
         };
 
         // Flush test data
@@ -886,27 +878,24 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         // Register collection with realistic embedding dimensions
         let collection = Collection {
             id: "compression_test".to_string(),
-            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
+            config: Some(CollectionConfig {
                 name: "compression_test".to_string(),
                 dimension: 256, // Common embedding dimension (sentence-transformers, etc.)
-                distance_metric: Some(proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32),
-                storage_engine: Some(StorageEngine::Viper as i32),
-                compression: None,
-                engine_config: std::collections::HashMap::new(),
-                cache_config: None,
-                quantization_config: None,
-                index_config: None,
-                metadata_config: None,
-                auto_create_shards: None,
-                auto_balance: None,
-                replication_factor: None,
-                consistency_level: None,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: StorageEngine::Viper as i32,
+                tags: vec![],
+                description: None,
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
             }),
-            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            storage_assignment: Some(StorageAssignment {
                 base_location: temp_dir.path().to_str().unwrap().to_string(),
                 assigned_at: chrono::Utc::now().timestamp_micros(),
             }),
-            ..Default::default()
+            stats: None,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
         };
 
         // Flush vectors with high compression potential using sparse patterns

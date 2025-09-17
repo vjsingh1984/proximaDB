@@ -15,7 +15,6 @@ use tracing::{error, info};
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::proto_json::ProtoApiResponse;
 use crate::network::rest::health;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};

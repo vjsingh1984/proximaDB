@@ -16,7 +16,6 @@ use crate::compute::quantization::storage_engine::{
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::VectorRecord;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
-use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
 
 /// Helper function to compute L2 distance squared for INT8 vectors
 fn compute_l2_distance_squared_i8(a: &[i8], b: &[i8]) -> Result<f32> {

@@ -5,8 +5,9 @@ use proximadb::storage::persistence::filesystem::FilesystemConfig;
 use tracing::{debug, error, info, warn};
 
 use proximadb::storage::engines::impls::sst::{
-    SstEntry, UnifiedSstableReader, SstableWriter,
+    SstEntry, UnifiedSstableReader, SstableWriter, SstMetadata,
 };
+use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -25,19 +26,19 @@ async fn test_sstable_write_read_format() {
 
     // Create a simple record
     let mut records = BTreeMap::new();
-    let record = SstEntry {
+    let vector_record = VectorRecord {
         id: "test_vec".to_string(),
         vector: vec![1.0, 2.0, 3.0],
-        metadata: vec![],
+        metadata: std::collections::HashMap::new(),
         timestamp: 123456789,
         updated_at: Some(123456789),
         expires_at: None,
         version: Some(1),
-        is_tombstone: false,
-        sequence_number: 1,
-        level: 0,
+        quantized_vector: vec![],
+        source: None,
     };
-    records.insert(record.id.clone(), record);
+    let record = SstEntry::from_vector_record(vector_record, 1, 0);
+    records.insert(record.record.id.clone(), record);
 
     // Write SSTable
     let writer = SstableWriter::new(
@@ -175,7 +176,15 @@ async fn test_sstable_format_inspection() {
     }
 
     // Now try to read with unified reader
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    use proximadb::storage::engines::core::zerocopy::ZeroCopyIOSystem;
+    let zero_copy_system = std::sync::Arc::new(
+        ZeroCopyIOSystem::new(
+            std::path::Path::new("/tmp"),
+            filesystem.clone(),
+            vec![],
+        ).await.unwrap(),
+    );
+    let reader = UnifiedSstableReader::new(filesystem.clone(), zero_copy_system, "test_collection".to_string());
     let file_url = format!("file://{}", sstable_path.display());
     reader
         .load_metadata(&file_url)

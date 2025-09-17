@@ -8,8 +8,7 @@ mod common {
 }
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
-use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb_v1::{MetadataItem, StorageEngine};
+use proximadb::proto::proximadb_v1::{VectorRecord, StorageEngine, SqlValue, sql_value};
 use proximadb::storage::traits::UnifiedStorageEngine;
 use tracing::{debug, info};
 
@@ -34,42 +33,57 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
 
     // Create test vectors
     let vectors = vec![
-        env.create_test_vector_record(
-            format!("{}_vec1", collection_id),
-            vec![1.0, 0.0, 0.0],
-            1000,
-            None,
-            vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string()),
-                ),
-            }],
+        VectorRecord {
+            id: format!("{}_vec1", collection_id),
+            vector: vec![1.0, 0.0, 0.0],
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("A".to_string())),
+                });
+                metadata
+            },
+            timestamp: 1000,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
+        },
+        VectorRecord {
+            id: format!("{}_vec2", collection_id),
+            vector: vec![0.0, 1.0, 0.0],
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("B".to_string())),
+                });
+                metadata
+            },
+            timestamp: 1001,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         ),
-        env.create_test_vector_record(
-            format!("{}_vec2", collection_id),
-            vec![0.0, 1.0, 0.0],
-            1001,
-            None,
-            vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("B".to_string()),
-                ),
-            }],
-        ),
-        env.create_test_vector_record(
-            format!("{}_vec3", collection_id),
-            vec![0.0, 0.0, 1.0],
-            1002,
-            None,
-            vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string()),
-                ),
-            }],
-        ),
+        VectorRecord {
+            id: format!("{}_vec3", collection_id),
+            vector: vec![0.0, 0.0, 1.0],
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("A".to_string())),
+                });
+                metadata
+            },
+            timestamp: 1002,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
+        },
     ];
 
     info!("Test 1: Flush vectors to SST engine");
@@ -80,12 +94,12 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
     // Flush directly to SST engine
     let flush_result = sst_engine.do_flush(&flush_params).await?;
     assert!(flush_result.success, "SST flush should succeed");
-    assert_eq!(flush_result.entries_flushed, 3, "Should flush 3 vectors");
-    assert!(flush_result.files_created > 0, "Should create SST files");
+    assert_eq!(flush_result.entries_flushed.unwrap_or(0), 3, "Should flush 3 vectors");
+    assert!(flush_result.files_created.unwrap_or(0) > 0, "Should create SST files");
 
     debug!(
         "✅ Successfully flushed {} vectors to SST, created {} files",
-        flush_result.entries_flushed, flush_result.files_created
+        flush_result.entries_flushed.unwrap_or(0), flush_result.files_created.unwrap_or(0)
     );
 
     info!("Test 2: Verify SST files were created");

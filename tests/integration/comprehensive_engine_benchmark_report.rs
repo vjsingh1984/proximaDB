@@ -13,11 +13,8 @@ mod common {
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 
 use anyhow::Result;
-use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb_v1::{
-    CompressionAlgorithm as ProtoCompressionAlgorithm, CompressionConfig, StorageEngine,
-};
-use proximadb::storage::engines::impls::viper::engine::ViperEngine;
+use proximadb::proto::proximadb_v1::{VectorRecord, StorageEngine};
+use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 use std::collections::HashMap;
 use std::fs::File;
@@ -952,7 +949,7 @@ async fn run_benchmark(
             viper_config.compression = config.algorithm.clone();
             viper_config.compression_level = config.level;
 
-            let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
+            let engine = ViperEngine::from_core_config(
                 viper_config,
                 env.filesystem.clone(),
             )

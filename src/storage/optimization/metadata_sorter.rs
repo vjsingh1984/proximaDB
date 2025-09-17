@@ -14,7 +14,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::{VectorRecord, FilterableColumnSpec, SqlValue, sql_value};
+use crate::proto::proximadb_v1::{VectorRecord, FilterableColumnSpec};
 
 /// Configuration for metadata-based sorting
 #[derive(Debug, Clone)]

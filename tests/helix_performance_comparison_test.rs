@@ -7,7 +7,7 @@
 mod performance_comparison_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::proto::proximadb_v1::VectorRecord;
-    use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
+    
     use proximadb::storage::engines::impls::helix::{HelixConfig, HelixEngine};
     use proximadb::storage::engines::impls::sst::SstStorage;
     use proximadb::storage::engines::impls::viper::engine::ViperEngine;
