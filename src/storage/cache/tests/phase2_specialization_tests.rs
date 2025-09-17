@@ -84,7 +84,7 @@ async fn test_query_result_cache_specialization() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::proto::proximadb_v1::SearchVectorRecord;
+    use crate::proto::proximadb_v1::{SearchVectorRecord, SearchResult as ProtoSearchResult};
     use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryKey};
     use std::time::SystemTime;
 
@@ -96,7 +96,7 @@ async fn test_query_result_cache_specialization() {
     // Create cached query result
     let query_result = CachedQueryResult {
         results: vec![
-            SearchResult {
+            ProtoSearchResult {
                 results: vec![SearchVectorRecord {
                     id: "vec1".to_string(),
                     score: 0.95,

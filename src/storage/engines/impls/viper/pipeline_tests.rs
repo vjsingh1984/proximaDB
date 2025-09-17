@@ -113,12 +113,7 @@ use crate::compute::quantization::types::*;
             batch_size: 50,
             compression: false,
             sorting_strategy: SortingStrategy::ById,
-            quantization_level: Some(QuantizationLevel::Pq(ProductQuantization {
-                bits_per_code: 8,
-                num_subvectors: 8,
-                codebook_id: None,
-                adaptive_subvectors: false,
-            })),
+            quantization_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::PQ8),
         };
 
         assert!(!config.enable_preprocessing);

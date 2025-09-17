@@ -169,17 +169,8 @@ mod tests {
 
         // Search with filter
         let query = vec![1.0, 0.0, 0.0, 0.0];
-        let filter = |record: &VectorRecord| -> bool {
-            record.metadata.get("category")
-                .and_then(|sql_value| {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &sql_value.value {
-                        Some(s == "1")
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(false)
-        };
+        let mut filter = HashMap::new();
+        filter.insert("category".to_string(), "1".to_string());
 
         let results = index.search(&query, 5, Some(&filter)).await.unwrap();
 

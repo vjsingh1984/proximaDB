@@ -442,11 +442,11 @@ async fn test_end_to_end_search() {
     let search_params = Arc::new(crate::core::search::SearchParams {
         query_vectors: Some(vec![query_vector]),
         top_k: Some(10),
-        distance_metric: Some(crate::core::distance::DistanceMetric::Euclidean),
+        distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean),
         ..Default::default()
     });
 
-    let collection = Arc::new(crate::collections::Collection {
+    let collection = Arc::new(crate::proto::proximadb_v1::Collection {
         id: "test_collection".to_string(),
         config: Some(crate::proto::proximadb_v1::CollectionConfig {
             name: "test_collection".to_string(),
@@ -468,7 +468,7 @@ async fn test_end_to_end_search() {
     let search_context = StorageQueryContext {
         search_params,
         collection,
-        metadata: StorageQueryMetadata::default(),
+        metadata: crate::storage::traits::StorageQueryMetadata::default(),
     };
 
     // Execute search

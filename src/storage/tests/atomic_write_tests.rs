@@ -216,7 +216,6 @@ async fn test_atomic_wal_to_storage_flow() {
             version: None,
             source: None,
             quantized_vector: vec![],
-            version: None,
             ..Default::default()
         },
     ];

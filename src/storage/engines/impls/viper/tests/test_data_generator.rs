@@ -618,7 +618,7 @@ mod tests {
 
             let quantized_distance =
                 distance_compute.calculate_distance(&query, &dequantized, &DistanceMetric::Cosine);
-            let fp32_distance = fp32_distances[idx];
+            let fp32_distance = &fp32_distances[idx];
             let error = (quantized_distance.rank_value - fp32_distance.rank_value).abs();
 
             // INT8 should have reasonable approximation error

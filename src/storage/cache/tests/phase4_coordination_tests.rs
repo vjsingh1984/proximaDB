@@ -221,7 +221,7 @@ async fn test_cache_orchestrator_integration() {
     let orchestrator = CrossCacheOrchestrator::new(1024 * 1024 * 100); // 100MB
 
     // Register caches (API takes MB, not bytes!)
-    // VectorStore type not available - using generic cache
+    // Use MetadataStore for vector metadata serialization
     let vector_cache = Arc::new(MetadataStore::new(40)); // 40MB using MetadataStore
     let query_cache = Arc::new(QueryCache::new(30)); // 30MB
     let filter_cache = Arc::new(BitmapFilterCache::new(15)); // 15MB
@@ -243,8 +243,10 @@ async fn test_cache_orchestrator_integration() {
         quantized_vector: vec![],
         source: None,
     };
+    // Convert VectorRecord to serde_json::Value for MetadataStore
+    let vector_json = serde_json::to_value(&test_vector).unwrap();
     vector_cache
-        .put_with_hooks("vec1".to_string(), test_vector)
+        .put_with_hooks("vec1".to_string(), vector_json)
         .await;
 
     // Test vector access coordination

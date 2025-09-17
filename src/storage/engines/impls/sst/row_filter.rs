@@ -537,9 +537,21 @@ mod tests {
 
             let mut map_metadata = std::collections::HashMap::new();
             for item in metadata {
-                if let Some(key) = item.key {
-                    map_metadata.insert(key, crate::proto::proximadb_v1::SqlValue {
-                        value: Some(item.value.unwrap())
+                if let Some(value) = item.value {
+                    // Convert metadata_item::Value to sql_value::Value
+                    let sql_value = match value {
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s)
+                        },
+                        crate::proto::proximadb_v1::metadata_item::Value::IntValue(i) => {
+                            crate::proto::proximadb_v1::sql_value::Value::IntValue(i)
+                        },
+                        crate::proto::proximadb_v1::metadata_item::Value::FloatValue(f) => {
+                            crate::proto::proximadb_v1::sql_value::Value::FloatValue(f)
+                        },
+                    };
+                    map_metadata.insert(item.key, crate::proto::proximadb_v1::SqlValue {
+                        value: Some(sql_value)
                     });
                 }
             }

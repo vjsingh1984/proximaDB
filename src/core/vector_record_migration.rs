@@ -166,7 +166,7 @@ mod tests {
         // Check metadata items
         let metadata_items = &proto_record.metadata;
         assert!(metadata_items.iter().any(|(key, sql_value)| key == "category" &&
-            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) if s == "test")));
+            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "test")));
         assert!(metadata_items.iter().any(|(key, sql_value)| key == "score" &&
             matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) if *n == 42.0)));
         assert!(metadata_items.iter().any(|(key, sql_value)| key == "active" &&

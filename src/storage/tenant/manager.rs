@@ -170,7 +170,7 @@ pub struct TenantResourceUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::{ResourceLimits, Industry, ComplianceFramework, SecurityPolicies};
+    use crate::storage::tenant::{Industry, ComplianceFramework, SecurityPolicies};
 
     #[tokio::test]
     async fn test_tenant_creation() {

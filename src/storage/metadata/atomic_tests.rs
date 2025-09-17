@@ -86,7 +86,8 @@ mod tests {
 
     /// Convert protobuf Collection to VersionedCollectionMetadata
     fn proto_to_versioned_metadata(collection: &proximadb_v1::Collection) -> VersionedCollectionMetadata {
-        let config = collection.config.as_ref().unwrap_or(&proximadb_v1::CollectionConfig::default());
+        let default_config = proximadb_v1::CollectionConfig::default();
+        let config = collection.config.as_ref().unwrap_or(&default_config);
         VersionedCollectionMetadata {
             id: collection.id.clone(),
             name: config.name.clone(),

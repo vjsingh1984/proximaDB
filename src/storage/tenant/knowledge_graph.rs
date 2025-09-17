@@ -718,7 +718,8 @@ impl OptimizationResult {
 mod tests {
     use super::*;
     use crate::storage::tenant::{DataSensitivityLevel};
-    use crate::storage::tenant::context::{PerformanceRequirements, DomainStatus};
+    use crate::storage::tenant::context::PerformanceRequirements;
+    use crate::storage::tenant::domain::DomainStatus;
 
     #[tokio::test]
     async fn test_domain_knowledge_graph_creation() {

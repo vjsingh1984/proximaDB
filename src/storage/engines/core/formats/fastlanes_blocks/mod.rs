@@ -473,10 +473,10 @@ mod tests {
             recommend_config_for_workload(384, 1_000_000, WorkloadType::HighThroughputWrite);
 
         assert_eq!(config.dimension, 384);
-        assert_eq!(
-            config.compression.block_compression.algorithm,
-            CompressionAlgorithm::Lz4
-        );
+        // Check that compression stages include LZ4
+        assert!(config.compression.block_compression.compression_stages
+            .iter()
+            .any(|stage| stage.algorithm == CompressionAlgorithm::Lz4));
         assert_eq!(config.records_per_block, 4000);
         assert_eq!(config.performance.max_concurrent_operations, 16);
     }

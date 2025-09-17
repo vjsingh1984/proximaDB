@@ -530,7 +530,6 @@ mod tests {
             enable_metadata_filtering_hint: None,
             enable_progressive_search: None,
             filters: None,
-            optimization_hint: None,
             timeout_ms: None,
         };
 
