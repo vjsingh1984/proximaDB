@@ -132,7 +132,7 @@ async fn test_metadata_filtering_basic() {
         zero_copy_config,
         filesystem.clone(),
         serializers,
-    ));
+    ).await.unwrap());
     let reader = UnifiedSstableReader::new(
         filesystem.clone(),
         io_system,
@@ -359,7 +359,7 @@ async fn test_metadata_bloom_filter_optimization() {
         zero_copy_config,
         filesystem.clone(),
         serializers,
-    ));
+    ).await.unwrap());
     let reader = UnifiedSstableReader::new(
         filesystem.clone(),
         io_system,

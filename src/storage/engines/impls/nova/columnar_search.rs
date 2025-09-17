@@ -1119,6 +1119,7 @@ mod tests {
                     serde_json::json!(100.0),
                 ),
             ],
+            logic: FilterLogic::And,
         });
 
         let projection = build_projection_mask(&config, &filter);

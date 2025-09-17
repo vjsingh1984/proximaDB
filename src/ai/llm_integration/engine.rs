@@ -397,13 +397,6 @@ impl std::fmt::Display for LLMProvider {
 mod tests {
     use super::*;
 
-    /// Finish reason enum for testing
-    #[derive(Debug, Clone)]
-    enum FinishReason {
-        Stop,
-        Length,
-        ContentFilter,
-    }
 
     #[test]
     fn test_llm_request_creation() {

@@ -1279,7 +1279,17 @@ async fn test_compaction_with_metadata_filtering() {
         let category_count = search_results
             .iter()
             .flat_map(|sr| sr.results.iter())
-            .filter(|r| r.metadata.get("category").and_then(|v| v.as_deref()) == Some(category))
+            .filter(|r| {
+                if let Some(sql_value) = r.metadata.get("category") {
+                    if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) = sql_value.value {
+                        s == category
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            })
             .count();
 
         assert_eq!(

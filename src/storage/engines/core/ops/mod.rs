@@ -894,7 +894,7 @@ mod tests {
         assert_eq!(config.engine_name, "universal");
         assert_eq!(config.dimension, 768);
         assert!(matches!(config.engine_type, EngineType::RowBased));
-        assert!(config.storage_config.block_config.enable_compression);
+        assert!(config.storage_config.block_config.compression);
     }
 
     #[test]

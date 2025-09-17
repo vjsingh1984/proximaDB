@@ -120,7 +120,7 @@ mod tests {
         let config = HardwareAccelerationConfig::default();
         let capabilities = crate::core::hardware_capabilities::get_hardware_capabilities();
 
-        let manager = HardwareAccelerationManager::new(capabilities.clone());
+        let manager = HardwareAccelerationManager::new((*capabilities).clone());
         // Test the manager was created successfully
         // No get_optimization_strategy method exists, so just test creation was successful
         let _strategy = manager.select_strategy(&crate::storage::engines::universal::conversion::StorageFormat::FP32);

@@ -697,6 +697,14 @@ mod tests {
                 cpu_cost: 20.0,
                 memory_cost: 15.0,
                 estimated_latency_ms: 50.0,
+                confidence: 0.8,
+            },
+            access_stats: AccessStats {
+                access_count: 0,
+                last_access: chrono::Utc::now(),
+                avg_selectivity: 0.5,
+                cache_hit_rate: 0.0,
+                access_frequency: 0.0,
             },
         }];
 

@@ -1273,9 +1273,7 @@ mod tests {
         assert!(config.serialization_config.memory_pools.enable_pooling);
         assert!(config.serialization_config.simd_settings.enable_simd);
 
-        // Test distance config
-        assert!(config.distance_config.progressive_search.enable_progressive);
-        assert!(config.distance_config.distance_caching.enable_pq_caching);
+        // Distance config removed - engines use compute module directly
 
         // Test engine optimizations
         assert!(

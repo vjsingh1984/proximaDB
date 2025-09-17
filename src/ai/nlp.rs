@@ -554,15 +554,7 @@ pub struct RegulatoryImplication {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::DataSensitivityLevel;
-
-    /// Performance requirements struct for testing
-    #[derive(Debug, Clone)]
-    struct PerformanceRequirements {
-        pub latency_requirement_ms: u64,
-        pub throughput_requirement_qps: u64,
-        pub availability_requirement: f64,
-    }
+    use crate::storage::tenant::context::{PerformanceRequirements, DataSensitivityLevel};
 
     #[tokio::test]
     async fn test_enterprise_nlp_engine_creation() {
@@ -581,7 +573,7 @@ mod tests {
             performance_requirements: PerformanceRequirements {
                 latency_requirement_ms: 50,
                 throughput_requirement_qps: 5000,
-                availability_requirement: 0.999,
+                availability_requirement: 0.999_f32,
             },
         };
         
@@ -605,7 +597,7 @@ mod tests {
             performance_requirements: PerformanceRequirements {
                 latency_requirement_ms: 100,
                 throughput_requirement_qps: 2000,
-                availability_requirement: 0.99,
+                availability_requirement: 0.99_f32,
             },
         };
         

@@ -167,7 +167,7 @@ pub struct IndexConfiguration {
 }
 
 /// Type of ID indexing strategy
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum IdIndex {
     /// B+ tree for sorted access
     BTree,
@@ -474,7 +474,7 @@ mod tests {
 
         assert_eq!(config.dimension, 384);
         assert_eq!(
-            config.compression.global_compression.algorithm,
+            config.compression.block_compression.algorithm,
             CompressionAlgorithm::Lz4
         );
         assert_eq!(config.records_per_block, 4000);

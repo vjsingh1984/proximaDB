@@ -701,7 +701,7 @@ mod tests {
             quantization: None,
             filterable_columns: vec![FilterableColumnSpec {
                 name: "category".to_string(),
-                // data_type removed -  FilterableDataType::String,
+                data_type: FilterableData::String,
                 nullable: true,
                 indexed: false,
                 estimated_cardinality: Some(100),

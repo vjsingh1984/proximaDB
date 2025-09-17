@@ -24,7 +24,7 @@ async fn test_sst_storage_new() {
     let distance_compute =
         Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
     let config = SstConfig::default();
-    let sst = SstStorage::new(config, filesystem, distance_compute)
+    let sst = SstStorage::new(config, factory, distance_compute)
         .await
         .unwrap();
     assert_eq!(sst.engine_name(), "sst");
@@ -43,7 +43,7 @@ async fn test_sst_storage_flush_and_search() {
     let distance_compute =
         Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
     let config = SstConfig::default();
-    let sst = SstStorage::new(config, filesystem, distance_compute)
+    let sst = SstStorage::new(config, factory, distance_compute)
         .await
         .unwrap();
 

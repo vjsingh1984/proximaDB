@@ -866,7 +866,7 @@ mod tests {
 
     #[test]
     fn test_swift_file_creation() {
-        let sst = SwiftFile::new("test_collection".to_string(), 768, DistanceMetric::Cosine);
+        let sst = SwiftFile::new("test_collection".to_string(), 768, "cosine".to_string());
 
         assert_eq!(sst.header.collection_id, "test_collection");
         assert_eq!(sst.header.dimension, 768);

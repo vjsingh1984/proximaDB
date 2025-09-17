@@ -438,10 +438,38 @@ async fn test_end_to_end_search() {
 
     // Create search context
     let query_vector = vectors[50].vector.clone(); // Search for a known vector
-    let search_context = StorageQueryContext::new(
-        query_vector.clone(),
-        10, // top-k
-    );
+
+    let search_params = Arc::new(crate::core::search::SearchParams {
+        query_vectors: Some(vec![query_vector]),
+        top_k: Some(10),
+        distance_metric: Some(crate::core::distance::DistanceMetric::Euclidean),
+        ..Default::default()
+    });
+
+    let collection = Arc::new(crate::collections::Collection {
+        id: "test_collection".to_string(),
+        config: Some(crate::proto::proximadb_v1::CollectionConfig {
+            name: "test_collection".to_string(),
+            dimension: 768,
+            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32,
+            storage_engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
+            ..Default::default()
+        }),
+        stats: Some(crate::proto::proximadb_v1::CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        created_at: 0,
+        updated_at: 0,
+        storage_assignment: None,
+    });
+
+    let search_context = StorageQueryContext {
+        search_params,
+        collection,
+        metadata: StorageQueryMetadata::default(),
+    };
 
     // Execute search
     let results = engine

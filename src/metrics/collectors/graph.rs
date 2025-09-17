@@ -442,7 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_graph_metrics_collector() {
-        let graph_service = Arc::new(GraphService::new(OperationMode::GraphOnly));
+        let graph_service = Arc::new(GraphService::new());
         let collector = GraphMetricsCollector::new(graph_service);
 
         let sample = collector.collect().await.unwrap();
