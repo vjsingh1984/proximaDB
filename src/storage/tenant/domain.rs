@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::info;
 use chrono::{DateTime, Utc};
 
-use super::BusinessContext;
+use super::{BusinessContext, DataSensitivityLevel, PerformanceRequirements};
 use crate::storage::tenant::entity_store::UserContext;
 
 /// Domain manager for business context separation
