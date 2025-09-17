@@ -438,7 +438,7 @@ mod tests {
         assert_eq!(csr.get_degree(0).unwrap(), 2);
 
         // Remove one edge
-        csr.remove_edge(0, 1, "e1").unwrap();
+        csr.remove_edge(0, 1, &"e1".to_string()).unwrap();
 
         assert_eq!(csr.get_degree(0).unwrap(), 1);
         let neighbors = csr.get_neighbors(0).unwrap();

@@ -105,7 +105,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     let vectors = create_compressible_test_vectors(&env, 100, 512, "test");
     let sst_records: Vec<_> = vectors
         .into_iter()
-        .map(|v| proximadb::storage::engines::sst::SstRecord::from_vector_record(v))
+        .map(|v| proximadb::storage::engines::impls::sst::SstRecord::from_vector_record(v))
         .collect();
 
     let data_block = DataBlock::new(1, sst_records.clone());

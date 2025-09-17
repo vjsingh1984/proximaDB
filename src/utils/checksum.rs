@@ -678,7 +678,7 @@ mod tests {
     #[test]
     fn test_crc32_vs_crc32c_differences() {
         // Test that CRC32 and CRC32C give different results for same data
-        let test_cases = [
+        let test_cases: Vec<&[u8]> = vec![
             b"",
             b"a",
             b"abc",
@@ -705,7 +705,7 @@ mod tests {
     #[test]
     fn test_crc32_incremental_vs_oneshot() {
         // Test that incremental and one-shot calculations match
-        let data_parts = [
+        let data_parts: Vec<&[u8]> = vec![
             b"Hello", b", ", b"World", b"!", b" This", b" is", b" a", b" test.",
         ];
 

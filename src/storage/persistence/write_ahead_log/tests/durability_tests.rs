@@ -257,10 +257,12 @@ async fn test_manifest_reader_orders_entries() {
             .await
             .expect("fs factory"),
     );
-    let dm = WriteBufferDiskManager::new(fs_factory.clone(), temp_dir.path());
+    let dm = WriteBufferDiskManager::new(fs_factory.clone(), temp_dir.path().to_str().unwrap());
     let manifest = WalManifest::new(Arc::new(dm));
     let cid = "c1";
-    std::fs::create_dir_all(manifest.disk.get_collection_wal_dir(cid)).unwrap();
+    // Create directory directly since disk field is private
+    let collection_wal_dir = format!("{}/{}", temp_dir.path().to_str().unwrap(), cid);
+    std::fs::create_dir_all(&collection_wal_dir).unwrap();
 
     let b1 = super::super::BatchId::new();
     let mut e1 = WalManifestEntry::from_batch(&b1, format!("{}.pbwal", b1.to_base62()), 10, 123);
@@ -291,10 +293,12 @@ async fn test_recovery_skips_corrupted_checksum() {
             .await
             .expect("fs factory"),
     );
-    let dm = Arc::new(WriteBufferDiskManager::new(fs_factory.clone(), temp_dir.path()));
+    let dm = Arc::new(WriteBufferDiskManager::new(fs_factory.clone(), temp_dir.path().to_str().unwrap()));
     let manifest = WalManifest::new(dm.clone());
     let cid = "rcv1";
-    std::fs::create_dir_all(dm.get_collection_wal_dir(cid)).unwrap();
+    // Create directory directly since get_collection_wal_dir is not available
+    let collection_wal_dir = format!("{}/{}", temp_dir.path().to_str().unwrap(), cid);
+    std::fs::create_dir_all(&collection_wal_dir).unwrap();
 
     // Write a batch to file
     let serializer = ProtocolBuffersSerializer::new();

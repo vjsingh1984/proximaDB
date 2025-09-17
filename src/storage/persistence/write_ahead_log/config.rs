@@ -150,7 +150,7 @@ pub enum DurabilityLevel {
 }
 
 /// WAL strategy type selection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum WriteBufferStrategyType {
     /// Modern Avro batch strategy with zero-copy optimization
     AvroBatch,
@@ -238,7 +238,7 @@ pub struct MemTableConfig {
 }
 
 /// Memtable strategy type selection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MemTableType {
     /// Skip List - High write throughput, ordered data (RocksDB/LevelDB default)
     SkipList,

@@ -3,13 +3,14 @@
 //! Main engine for managing multiple LLM providers with fallback support,
 //! implementing the design from task_1_ai_implementation_design.adoc
 
-use super::types::{LLMConfig, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage};
+use super::types::{LLMConfig, LLMRequest, LLMResponse, LLMError, LLMProvider, LLMRequestContext, TokenUsage, FinishReason};
 use super::providers::{LLMClient, OpenAIClient, AnthropicClient, CohereClient, OllamaClient, AWSBedrockClient, AzureOpenAIClient, HuggingFaceClient, VLLMClient};
 use super::metrics::LLMMetrics;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn, error};
+use chrono::Utc;
 
 /// Main LLM Integration Engine that manages multiple providers
 #[derive(Clone)]

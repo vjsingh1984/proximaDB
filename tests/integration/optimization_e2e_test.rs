@@ -470,7 +470,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     );
 
     // for result in &sst_results {
-    //     if let Some(pattern_value) = result.metadata.get(key) {
+    //     if let Some(pattern_value) = result.metadata.get("active") {
     //         if let Some(pattern) = pattern_value.as_str() {
     //             assert_eq!(pattern, "sparse");
     //         } else {

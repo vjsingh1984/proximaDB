@@ -83,7 +83,6 @@ classDiagram
     %% ==============================================
     
     class QueryEngine {
-        -sql_engine: Arc~SqlEngine~
         -vector_ops: Arc~VectorOperationsService~
         -optimizer: UnifiedQueryOptimizer
         +new(services: SharedServices) Self

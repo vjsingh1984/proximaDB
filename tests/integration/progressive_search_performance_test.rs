@@ -14,7 +14,7 @@ use proximadb::compute::quantization::unified::{UnifiedQuantizationEngine, InMem
 use proximadb::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::quantization::{SstQuantizationAdapter, sst_adapter::SstQuantizationConfig};
-use proximadb::storage::engines::sst::{
+use proximadb::storage::engines::impls::sst::{
     SstRecord, SstableWriter,
     readers::unified_sstable_reader::{UnifiedSstableReader, ModularBlockReader},
 };

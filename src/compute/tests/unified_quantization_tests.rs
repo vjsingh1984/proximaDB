@@ -117,6 +117,7 @@ fn test_quantization_equality() {
             bits_per_code: 8,
             num_subvectors: 16,
             codebook_id: None,
+            adaptive_subvectors: false,
         })),
     };
 

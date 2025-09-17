@@ -211,6 +211,7 @@ impl UnifiedTestEnvironment {
         // CRITICAL: base_location must point to parent directory since engines append collection_id
         let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
         let storage_assignment = StorageAssignment {
+            primary_path: format!("file://{}", base_path),
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp_millis(), // Must use millis, not micros!
             backup_paths: vec![],
@@ -475,6 +476,7 @@ impl UnifiedTestEnvironment {
     pub fn setup_test_assignment(&self) -> StorageAssignment {
         let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
         StorageAssignment {
+            primary_path: format!("file://{}", base_path),
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp_millis(),
             backup_paths: vec![],
@@ -509,6 +511,7 @@ impl UnifiedTestEnvironment {
         base_location: String,
     ) -> Collection {
         let storage_assignment = StorageAssignment {
+            primary_path: base_location.clone(),
             base_location,
             assigned_at: chrono::Utc::now().timestamp_millis(),
             backup_paths: vec![],
@@ -796,8 +799,11 @@ pub mod operations {
                     vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
                     metadata: record.metadata,
                     timestamp: record.timestamp.unwrap_or(0),
-                    source: None,
+                    updated_at: None,
+                    expires_at: None,
+                    version: Some(1),
                     quantized_vector: vec![],
+                    source: None,
                 }
             })
             .collect();
@@ -835,8 +841,11 @@ pub mod operations {
                     vector: record.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
                     metadata: record.metadata,
                     timestamp: record.timestamp.unwrap_or(0),
-                    source: None,
+                    updated_at: None,
+                    expires_at: None,
+                    version: Some(1),
                     quantized_vector: vec![],
+                    source: None,
                 }
             })
             .collect();
@@ -910,6 +919,7 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
 pub fn setup_test_assignment() -> StorageAssignment {
     let temp_dir = std::env::temp_dir().join("proximadb_test");
     StorageAssignment {
+        primary_path: format!("file://{}", temp_dir.to_str().unwrap()),
         base_location: format!("file://{}", temp_dir.to_str().unwrap()),
         assigned_at: chrono::Utc::now().timestamp_millis(),
         backup_paths: vec![],
@@ -934,6 +944,7 @@ pub fn create_metadata_store_config() -> proximadb::storage::metadata::MetadataS
 /// Create test collection with storage (global function for backward compatibility)
 pub fn create_test_collection_with_storage(name: &str, base_location: String) -> Collection {
     let storage_assignment = StorageAssignment {
+        primary_path: base_location.clone(),
         base_location,
         assigned_at: chrono::Utc::now().timestamp_millis(),
         backup_paths: vec![],
@@ -1051,6 +1062,7 @@ pub async fn flush_sst_with_block_stats(
     let collection_config = Collection {
         id: "test_collection".to_string(),
         storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: format!("file://{}", environment.temp_dir.path().to_str().unwrap()),
             base_location: format!("file://{}", environment.temp_dir.path().to_str().unwrap()),
             assigned_at: 0,
             backup_paths: vec![],

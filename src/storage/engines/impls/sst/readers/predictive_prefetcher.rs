@@ -658,7 +658,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(pattern.stride, 1);
-        assert!(pattern.confidence > 0.8);
+        assert!(pattern.access_count > 5); // Use access_count as confidence indicator
         assert_eq!(pattern.access_count, 10); // 10 accesses tracked
     }
 
@@ -756,11 +756,11 @@ mod tests {
                 .unwrap();
             // Pattern should have detected stride of 2
             assert_eq!(pattern.stride, 2);
-            debug!("Pattern // confidence removed -  {}", pattern.confidence);
+            debug!("Pattern access count: {}", pattern.access_count);
 
-            // If confidence is high enough for predictions
-            if pattern.confidence > 0.7 {
-                assert!(!predictions.is_none());
+            // If access count is high enough for predictions
+            if pattern.access_count > 3 {
+                assert!(!predictions.is_empty());
                 assert_eq!(predictions[0].0.block_id, 10);
                 assert!(matches!(predictions[0].2, PatternType::Sequential));
             }

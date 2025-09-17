@@ -4,10 +4,9 @@
 //! with automatic configuration generation and validation.
 
 use crate::deployment::discovery::{
-    DetectedEnvironment, PlatformType, ResourceAvailability, CapacityEstimate, PerformanceProfile,
-    NetworkConfig, SecurityConstraints, OptimalConfig, DeploymentRecommendation,
-    ComplianceFramework, EncryptionRequirements, DeploymentStrategy, ScalingConfig,
-    MonitoringConfig, BackupStrategy
+    DetectedEnvironment, PlatformType, ResourceAvailability, PerformanceProfile,
+    NetworkConfig, SecurityConstraints, DeploymentRecommendation, MonitoringConfig, BackupStrategy,
+    ComplianceFramework, EncryptionRequirements, OptimalConfig, DeploymentStrategy, ScalingConfig, CapacityEstimate
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -891,6 +890,9 @@ mod tests {
                 },
                 audit_logging_required: true,
                 network_isolation_required: false,
+                access_control_level: "enterprise".to_string(),
+                compliance_frameworks: vec!["SOC2".to_string()],
+                encryption_required: true,
             },
             performance_characteristics: PerformanceProfile {
                 estimated_qps_capacity: 2000,
@@ -978,3 +980,7 @@ pub struct BackupSchedule {
     pub retention_days: u32,
     pub backup_type: String,
 }
+
+// All required types are imported from crate::deployment::discovery at the top of the file
+
+// Duplicate test module removed - tests are already defined above

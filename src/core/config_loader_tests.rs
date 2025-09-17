@@ -439,6 +439,8 @@ url = "./storage"
             config
                 .storage
                 .sst_config
+                .as_ref()
+                .unwrap()
                 .data_directory
                 .contains(temp_dir.path().to_str().unwrap())
         );

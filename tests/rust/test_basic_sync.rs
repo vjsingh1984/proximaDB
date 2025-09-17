@@ -9,7 +9,7 @@ fn main() {
     let mut btree: BTreeMap<String, i32> = BTreeMap::new();
     btree.insert("key1".to_string(), 100);
     
-    match btree.get(key) {
+    match btree.get("enable_two_stage_search") {
         Some(value) => debug!("✅ BTreeMap test passed: {}", value),
         None => debug!("❌ BTreeMap test failed"),
     }

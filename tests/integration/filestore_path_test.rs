@@ -17,7 +17,7 @@
 //! Integration tests for filestore path handling to prevent path duplication issues
 
 use anyhow::Result;
-use proximadb::proto::proximadb::{Collection, IndexingAlgorithm};
+use proximadb::proto::proximadb_v1::{Collection, IndexingAlgorithm};
 use proximadb::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig,
 };
@@ -58,7 +58,7 @@ fn ensure_test_directories() {
 
 /// Helper to create a test collection
 fn create_test_collection(id: &str, name: &str) -> Collection {
-    use proximadb::proto::proximadb::{CollectionConfig, CollectionStats};
+    use proximadb::proto::proximadb_v1::{CollectionConfig, CollectionStats};
 
     Collection {
         id: id.to_string(),

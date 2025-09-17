@@ -623,9 +623,9 @@ mod tests {
 
         // Check candidates with adjusted thresholds
         let promotion_candidates = manager.get_promotion_candidates(0.1);
-        assert!(promotion_candidates.contains_hash(&hot_id.to_string()));
+        assert!(promotion_candidates.contains(&hot_id.to_string()));
 
         let demotion_candidates = manager.get_demotion_candidates(0.5);
-        assert!(demotion_candidates.contains_hash(&cold_id.to_string()));
+        assert!(demotion_candidates.contains(&cold_id.to_string()));
     }
 }

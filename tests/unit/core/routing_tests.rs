@@ -190,9 +190,9 @@ async fn test_route_builder() {
     // Use route builder pattern
     router
         .route("/api/v1")
-        .get(key))
+        .get("enable_two_stage_search"))
         .post("/collections", MockHandler::new("create_collection"))
-        .get(key))
+        .get("enable_two_stage_search"))
         .delete("/collections/:id", MockHandler::new("delete_collection"));
     
     assert!(router.route_count() >= 4);

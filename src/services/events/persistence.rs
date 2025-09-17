@@ -15,7 +15,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
 use crate::index::axis::eventlog::{IndexEvent, EventType};
-use crate::storage::engines::core::types::StorageEngineType;
+use crate::index::axis::eventlog::StorageEngineType;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// EventLog WAL (Write-Ahead Log) for persistence
@@ -349,7 +349,7 @@ mod tests {
         // Create test events
         let event1 = IndexEvent {
             event_id: "event_1".to_string(),
-            operation_type: EventType::Flush,
+            operation: EventType::Flush,
             collection_id: "test_collection".to_string(),
             file_paths: vec!["file1.sstable".to_string()],
             vector_count: 100,
@@ -361,7 +361,7 @@ mod tests {
 
         let event2 = IndexEvent {
             event_id: "event_2".to_string(),
-            operation_type: EventType::Compaction,
+            operation: EventType::Compaction,
             collection_id: "test_collection".to_string(),
             file_paths: vec!["output.sstable".to_string()],
             vector_count: 200,
@@ -400,7 +400,7 @@ mod tests {
         // Create large event that will trigger rotation
         let event = IndexEvent {
             event_id: "large_event".to_string(),
-            operation_type: EventType::Flush,
+            operation: EventType::Flush,
             collection_id: "test_collection".to_string(),
             file_paths: (0..100).map(|i| format!("file_{}.sstable", i)).collect(),
             vector_count: 10000,
@@ -440,7 +440,7 @@ mod tests {
         for i in 0..5 {
             let event = IndexEvent {
                 event_id: format!("event_{}", i),
-                operation_type: EventType::Flush,
+                operation: EventType::Flush,
                 collection_id: "test_collection".to_string(),
                 file_paths: vec![format!("file_{}.sstable", i)],
                 vector_count: 100,

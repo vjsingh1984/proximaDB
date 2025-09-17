@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::core::SstConfig;
-use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::sst::SstRecord;
+use proximadb::storage::engines::impls::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::impls::sst::SstRecord;
 use proximadb::storage::persistence::write_ahead_log::background_manager::BackgroundMaintenanceManager;
 use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 

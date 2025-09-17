@@ -9,7 +9,7 @@ mod common {
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::{MetadataItem, StorageEngine};
+use proximadb::proto::proximadb_v1::{MetadataItem, StorageEngine};
 use proximadb::storage::traits::UnifiedStorageEngine;
 use tracing::{debug, info};
 
@@ -42,7 +42,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             vec![MetadataItem {
                 key: "category".to_string(),
                 value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string()),
+                    proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string()),
                 ),
             }],
         ),
@@ -54,7 +54,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             vec![MetadataItem {
                 key: "category".to_string(),
                 value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue("B".to_string()),
+                    proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("B".to_string()),
                 ),
             }],
         ),
@@ -66,7 +66,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             vec![MetadataItem {
                 key: "category".to_string(),
                 value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string()),
+                    proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string()),
                 ),
             }],
         ),

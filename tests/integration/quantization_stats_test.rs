@@ -6,8 +6,8 @@ use proximadb::compute::quantization::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb::VectorRecord;
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::proto::proximadb_v1::VectorRecord;
+use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::persistence::filesystem::local::LocalConfig;
 use proximadb::storage::persistence::filesystem::{FileOptions, FilesystemPerformanceConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};

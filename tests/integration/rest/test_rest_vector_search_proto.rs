@@ -329,7 +329,7 @@ async fn test_rest_vector_search_with_quantization() -> Result<()> {
         for item in data {
             if let Some(metadata) = item["metadata"].as_object() {
                 assert_eq!(
-                    metadata.get(key).and_then(|v| v.as_str()),
+                    metadata.get("active").and_then(|v| v.as_str()),
                     Some("test")
                 );
             }

@@ -9,7 +9,7 @@
 //! without depending on VectorOperationsService.
 
 use anyhow::Result;
-use proximadb::proto::proximadb::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::persistence::write_ahead_log::serialization::{
     SerializationFormat, SerializerFactory, VectorBatchSerializer,
 };
@@ -28,18 +28,18 @@ fn create_test_vectors_with_metadata(
             id: Some(format!("vec_{}", i)),
             vector: vec![(i % 256) as f32; dimension],
             metadata: vec![
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "batch_id".to_string(),
                     value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                             (i / 100).to_string(),
                         ),
                     ),
                 },
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "timestamp".to_string(),
                     value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                             chrono::Utc::now().timestamp().to_string(),
                         ),
                     ),

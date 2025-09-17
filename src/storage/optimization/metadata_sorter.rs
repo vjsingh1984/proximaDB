@@ -377,10 +377,10 @@ mod tests {
         let (sorted_records, stats) = sorter.sort_for_encoding(records).unwrap();
 
         // Should be sorted by category first, then priority, then ID
-        assert_eq!(sorted_records[0].id.as_ref().unwrap(), "2"); // A, high
-        assert_eq!(sorted_records[1].id.as_ref().unwrap(), "1"); // A, low
-        assert_eq!(sorted_records[2].id.as_ref().unwrap(), "3"); // B, high
-        assert_eq!(sorted_records[3].id.as_ref().unwrap(), "4"); // B, low
+        assert_eq!(sorted_records[0].id, "2"); // A, high
+        assert_eq!(sorted_records[1].id, "1"); // A, low
+        assert_eq!(sorted_records[2].id, "3"); // B, high
+        assert_eq!(sorted_records[3].id, "4"); // B, low
 
         assert_eq!(stats.records_sorted, 4);
         assert_eq!(stats.sort_keys_used, vec!["category", "priority"]);

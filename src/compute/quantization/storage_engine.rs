@@ -1290,7 +1290,7 @@ mod tests {
         let (quantized, min, max) = engine.quantize_to_u8(&empty);
         assert_eq!(quantized.len(), 0);
         assert!(min.is_infinite());
-        assert!(max.is_neg_infinite());
+        assert!(max.is_infinite() && max.is_sign_negative());
 
         // Test with single value
         let single = vec![3.14];

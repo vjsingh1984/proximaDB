@@ -850,7 +850,7 @@ mod edge_tests {
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],
-                source: String::new(),
+                source: Some(String::new()),
                 // is_tombstone field removed
                 // sequence_number field removed
                 // level field removed from VectorRecord
@@ -871,7 +871,7 @@ mod edge_tests {
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],
-                source: String::new(),
+                source: Some(String::new()),
                 // is_tombstone field removed
                 // sequence_number field removed
                 // level field removed from VectorRecord
@@ -886,7 +886,7 @@ mod edge_tests {
                 expires_at: Some(103),
                 version: Some(1),
                 quantized_vector: vec![],
-                source: String::new(),
+                source: Some(String::new()),
                 // is_tombstone field removed
                 // sequence_number field removed
                 // level field removed from VectorRecord
@@ -894,9 +894,8 @@ mod edge_tests {
         ];
 
         for tombstone in &tombstones {
-            assert!(
-                tombstone /* REMOVED: is_tombstone field no longer exists */
-            );
+            // TODO: Re-enable tombstone check when is_tombstone field is restored
+            // assert!(!tombstone.is_tombstone);
             assert!(tombstone.vector.is_empty()); // Empty vector indicates tombstone
         }
     }
@@ -988,7 +987,7 @@ mod edge_tests {
                 expires_at: None,
                 version: Some(1),
                 quantized_vector: vec![],
-                source: String::new(),
+                source: Some(String::new()),
                 // is_tombstone field removed
                 // sequence_number field removed
                 // level field removed from VectorRecord

@@ -2,9 +2,9 @@
 //! 
 //! This test isolates the metadata filtering problem where filters return incorrect results
 
-use proximadb::proto::proximadb::proxima_db_client::ProximaDbClient;
-use proximadb::proto::proximadb::*;
-use proximadb::proto::proximadb::vector_operation_response::ResultPayload;
+use proximadb::proto::proximadb_v1::proxima_db_client::ProximaDbClient;
+use proximadb::proto::proximadb_v1::*;
+use proximadb::proto::proximadb_v1::vector_operation_response::ResultPayload;
 use tracing::{debug, error, info};
 
 #[tokio::test]

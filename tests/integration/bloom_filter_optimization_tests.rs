@@ -15,7 +15,7 @@ use proximadb::core::search::{FilterExpression, ComparisonOperator, SearchResult
 use proximadb::core::VectorRecord;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper;
-use proximadb::proto::proximadb::MetadataItem;
+use proximadb::proto::proximadb_v1::MetadataItem;
 use proximadb::services::vector_operations_service::VectorOperationsService;
 
 /// Test suite for bloom filter optimization in WAL search
@@ -33,7 +33,7 @@ mod bloom_filter_tests {
         let metadata = metadata_pairs.iter()
             .map(|(key, value)| MetadataItem {
                 key: key.to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(value.to_string())),
+                value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(value.to_string())),
             })
             .collect();
 
@@ -95,7 +95,7 @@ mod bloom_filter_tests {
         assert_eq!(results.len(), 2, "Bloom filter should return 2 vectors with batch=1");
         
         for result in &results {
-            let batch_value = result.metadata.get(key).unwrap();
+            let batch_value = result.metadata.get("active").unwrap();
             assert_eq!(batch_value, &serde_json::json!("1"), "All results should have batch=1");
         }
 
@@ -119,7 +119,7 @@ mod bloom_filter_tests {
         assert_eq!(results.len(), 2, "Bloom filter should return 2 vectors with category=A");
         
         for result in &results {
-            let category_value = result.metadata.get(key).unwrap();
+            let category_value = result.metadata.get("active").unwrap();
             assert_eq!(category_value, &serde_json::json!("A"), "All results should have category=A");
         }
 
@@ -294,7 +294,7 @@ mod bloom_filter_tests {
         assert!(results.len() >= 50, "Should find enough results even with selective filter");
         
         for result in &results {
-            let batch_value = result.metadata.get(key).unwrap();
+            let batch_value = result.metadata.get("active").unwrap();
             assert_eq!(batch_value, &serde_json::json!("1"), "All results should have batch=1");
         }
 
@@ -351,7 +351,7 @@ mod bloom_filter_tests {
         assert!(result.created_at.is_some(), "Created timestamp should be set");
 
         // Verify metadata conversion
-        let test_value = result.metadata.get(key).unwrap();
+        let test_value = result.metadata.get("active").unwrap();
         assert_eq!(test_value, &serde_json::json!("structure"), "Metadata should be correctly converted");
 
         debug!("✅ SearchResult structure test passed");

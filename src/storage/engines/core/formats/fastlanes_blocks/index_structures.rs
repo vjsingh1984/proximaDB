@@ -4,6 +4,7 @@
 use anyhow::Result;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
+use uuid::Uuid;
 
 use super::block_structures::BlockLocation;
 use crate::core::bloom::{
@@ -672,7 +673,7 @@ mod tests {
 
         let location = BlockLocation {
             superblock_id: 1,
-            block_id: Uuid::new_v4(),
+            block_id: 123,
             block_offset: 0,
             record_offset: 0,
             estimated_load_time_ms: 1.0,
@@ -706,7 +707,7 @@ mod tests {
 
         let location = BlockLocation {
             superblock_id: 1,
-            block_id: Uuid::new_v4(),
+            block_id: 123,
             block_offset: 0,
             record_offset: 0,
             estimated_load_time_ms: 1.0,
@@ -736,7 +737,7 @@ mod tests {
 
         let location = BlockLocation {
             superblock_id: 1,
-            block_id: Uuid::new_v4(),
+            block_id: 123,
             block_offset: 0,
             record_offset: 0,
             estimated_load_time_ms: 1.0,

@@ -10,7 +10,7 @@ mod consolidation_tests {
     use std::sync::Arc;
     use std::time::Instant;
     use proximadb::query::unified_query_optimizer::*;
-    use proximadb::proto::proximadb::Collection;
+    use proximadb::proto::proximadb_v1::Collection;
     use proximadb::core::search::SearchParams;
     
     /// Test that consolidated optimizer produces better plans than separate systems

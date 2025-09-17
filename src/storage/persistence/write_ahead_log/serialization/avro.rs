@@ -404,7 +404,7 @@ mod tests {
         let serialized = serializer
             .serialize_batch(&vectors)
             .expect("Failed to serialize batch");
-        assert!(!serialized.is_none());
+        assert!(!serialized.is_empty());
 
         // Deserialize
         let deserialized = serializer

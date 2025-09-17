@@ -15,14 +15,13 @@ use sqlparser::ast::{
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::query::ast::{BinaryOp, Expr, Join, Literal, OrderByExpr, Query, Select, TableRef};
+use crate::query::ast::{BinaryOp, Expr, Join, JoinType, Literal, OrderByExpr, ProjectionItem, Query, Select, TableRef};
 use crate::services::collection::manager::CollectionService;
 use std::sync::Arc;
 
 /// AST Lowering service - converts sqlparser-rs AST to internal representation
 ///
-/// This is the primary entry point for SQL query processing, replacing the custom
-/// sql_engine parser with a standards-compliant sqlparser-rs foundation.
+/// This is the primary entry point for SQL query processing, using a standards-compliant sqlparser-rs foundation.
 pub struct QueryLowering {
     collection_service: Arc<CollectionService>,
     /// Cache for collection schemas to avoid repeated lookups during query planning
@@ -283,6 +282,10 @@ impl QueryLowering {
             self.lower_sks_function(&name, &func.args).await
         }
         // Regular functions
+        else if self.is_aggregate_function(&name) {
+            // Handle aggregate functions
+            Ok(Expr::FuncCall { name, args })
+        }
         else {
             Ok(Expr::FuncCall { name, args })
         }
@@ -324,6 +327,38 @@ impl QueryLowering {
                 })
             }
             SqlExpr::Function(func) => self.lower_function_call(func).await,
+            SqlExpr::Case {
+                operand,
+                conditions,
+                results,
+                else_result,
+            } => {
+                let lowered_operand = if let Some(op) = operand {
+                    Some(Box::new(self.lower_expr(op).await?))
+                } else {
+                    None
+                };
+                let mut lowered_conditions = Vec::new();
+                for (condition, result) in conditions.iter().zip(results.iter()) {
+                    let when_expr = self.lower_expr(condition).await?;
+                    let then_expr = self.lower_expr(result).await?;
+                    lowered_conditions.push((when_expr, then_expr));
+                }
+                let lowered_else_expr = if let Some(el) = else_result {
+                    Some(Box::new(self.lower_expr(el).await?))
+                } else {
+                    None
+                };
+                Ok(Expr::Case {
+                    operand: lowered_operand,
+                    conditions: lowered_conditions,
+                    else_expr: lowered_else_expr,
+                })
+            },
+            SqlExpr::Subquery(subquery) => {
+                let lowered_subquery = self.lower_query(subquery).await?;
+                Ok(Expr::Subquery(Box::new(lowered_subquery)))
+            },
             _ => Err(anyhow!("Unsupported expression type: {:?}", expr)),
         }
         })
@@ -476,6 +511,11 @@ impl QueryLowering {
         })
     }
 
+    /// Check if a function is an aggregate function
+    fn is_aggregate_function(&self, name: &str) -> bool {
+        matches!(name.to_uppercase().as_str(), "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "GROUP_CONCAT")
+    }
+
     /// Lower SKS functions (SIMILAR, FOLLOW, ASSEMBLE) to structured AST nodes
     ///
     /// This method converts SQL function calls to proper AST expressions that
@@ -591,7 +631,8 @@ mod lowering_tests {
         use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
 
         let config = UniversalMetadataConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new());
+        let filesystem_config = Default::default();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
         let backend = crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(config, filesystem_factory).await.unwrap();
         let storage_config = StorageConfig::default();
         Arc::new(CollectionService::new(Arc::new(backend), storage_config).await.unwrap())

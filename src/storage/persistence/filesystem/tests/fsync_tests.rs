@@ -39,7 +39,7 @@ async fn test_local_filesystem_sync_file() {
     let test_path = "test_sync.dat";
     let test_data = b"Critical data that must be synced";
     // Clean up if file exists from previous run
-    if fs.exists(test_path).await {
+    if fs.exists(test_path).await.unwrap_or(false) {
         let _ = fs.delete(test_path).await;
     }
     fs.write(test_path, test_data, None).await.unwrap();
@@ -69,7 +69,7 @@ async fn test_local_filesystem_sync_disabled() {
     let test_path = "test_no_sync.dat";
     let test_data = b"Data without sync";
     // Clean up if file exists from previous run
-    if fs.exists(test_path).await {
+    if fs.exists(test_path).await.unwrap_or(false) {
         let _ = fs.delete(test_path).await;
     }
     fs.write(test_path, test_data, None).await.unwrap();
@@ -125,7 +125,7 @@ async fn test_sync_after_append() {
     let test_path = "append_sync.dat";
 
     // Clean up if file exists from previous run
-    if fs.exists(test_path).await {
+    if fs.exists(test_path).await.unwrap_or(false) {
         let _ = fs.delete(test_path).await;
     }
 
@@ -166,7 +166,7 @@ async fn test_concurrent_sync_operations() {
 
     for (path, data) in &files {
         // Clean up if file exists from previous run
-        if fs.exists(path).await {
+        if fs.exists(path).await.unwrap_or(false) {
             let _ = fs.delete(path).await;
         }
         fs.write(path, &data[..], None).await.unwrap();

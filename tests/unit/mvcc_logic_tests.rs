@@ -2,7 +2,7 @@
 //!
 //! Tests the core MVCC version resolution logic independently of storage engines
 
-use proximadb::core::search::SearchResult;
+use proximadb::proto::proximadb_v1::SearchResult;
 use serde_json::json;
 use std::collections::HashMap;
 

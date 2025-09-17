@@ -42,11 +42,11 @@ fn create_test_vectors_with_metadata(
         }", i)),
             vector: vec![(i % 256) as f32; dimension],
             metadata: vec![
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "batch_id".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i / 100).to_string())),
+                    value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue((i / 100).to_string())),
                 },
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "timestamp".to_string(),
                     value: chrono::Utc::now().timestamp().to_string(),
                 },
@@ -86,7 +86,7 @@ async fn create_test_wal_files(
                 // Use custom serialization for core VectorRecord
                 let mut serialized = Vec::new();
                 for vector in &vectors {
-                    let proto_vector = proximadb::proto::proximadb::VectorRecord::from(vector.clone());
+                    let proto_vector = proximadb::proto::proximadb_v1::VectorRecord::from(vector.clone());
                     let vector_data = bincode::serialize(&proto_vector)?;
                     serialized.extend_from_slice(&(vector_data.len() as u32).to_le_bytes());
                     serialized.extend_from_slice(&vector_data);
@@ -158,7 +158,7 @@ mod recovery_tests {
         
         // Create VectorOperationsService and trigger recovery
         // Use test helper since old constructor signature is incompatible
-        let service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
+        let service = tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService");
         
@@ -202,7 +202,7 @@ mod recovery_tests {
         
         // Recovery should skip corrupted file but process valid ones
         // Use test helper since old constructor signature is incompatible
-        let service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
+        let service = tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService");
         
@@ -236,7 +236,7 @@ mod recovery_tests {
                 // Use custom serialization for core VectorRecord
                 let mut serialized = Vec::new();
                 for vector in &vectors {
-                    let proto_vector = proximadb::proto::proximadb::VectorRecord::from(vector.clone());
+                    let proto_vector = proximadb::proto::proximadb_v1::VectorRecord::from(vector.clone());
                     let vector_data = bincode::serialize(&proto_vector)?;
                     serialized.extend_from_slice(&(vector_data.len() as u32).to_le_bytes());
                     serialized.extend_from_slice(&vector_data);
@@ -273,7 +273,7 @@ mod recovery_tests {
         // Measure recovery time
         let start = std::time::Instant::now();
         // Use test helper since old constructor signature is incompatible
-        let service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
+        let service = tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService");
         let recovery_time = start.elapsed();
@@ -336,7 +336,7 @@ mod recovery_tests {
         
         // Should recover from all directories
         // Use test helper since old constructor signature is incompatible
-        let service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
+        let service = tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService");
         
@@ -368,7 +368,7 @@ mod backward_compatibility_tests {
 /// Helper to create mock VIPER engine for testing
 async fn create_mock_viper_engine() -> Result<Arc<ViperEngine>> {
     use tempfile::TempDir;
-    use proximadb::storage::engines::viper::ViperConfig;
+    use proximadb::storage::engines::impls::viper::ViperConfig;
     
     let temp_dir = TempDir::new()?;
     let mut config = ViperConfig::default();
@@ -388,7 +388,7 @@ async fn create_mock_viper_engine() -> Result<Arc<ViperEngine>> {
 
 /// Helper to create mock SST engine for testing  
 async fn create_mock_sst_engine() -> Result<Arc<LsmTree>> {
-    use proximadb::storage::engines::sst::{SstConfig, LsmTree};
+    use proximadb::storage::engines::impls::sst::{SstConfig, LsmTree};
     
     let mut config = SstConfig::default();
     config.max_memtable_size = 1024 * 1024; // 1MB for tests

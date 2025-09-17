@@ -11,6 +11,7 @@
 //! memory allocations, improve throughput, and reduce latency.
 
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info};

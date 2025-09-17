@@ -9,3 +9,10 @@ macro_rules! is_x86_feature_detected {
         false // Always return false on non-x86 platforms
     };
 }
+
+#[cfg(not(target_arch = "aarch64"))]
+macro_rules! is_aarch64_feature_detected {
+    ($feature:literal) => {
+        false // Always return false on non-aarch64 platforms
+    };
+}

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::core::config::StorageConfig;
-use proximadb::proto::proximadb::{
-    CollectionConfig, DistanceMetric, IndexingAlgorithm, StorageEngine,
+use proximadb::proto::proximadb_v1::{
+    CollectionConfig, DistanceMetric, StorageEngine,
 };
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::metadata::backends::filestore_backend::{

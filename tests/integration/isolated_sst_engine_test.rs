@@ -16,7 +16,7 @@ mod common {
 use common::integration_test_helpers::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-use proximadb::proto::proximadb::{MetadataItem, StorageEngine, VectorRecord, metadata_item};
+use proximadb::proto::proximadb_v1::{MetadataItem, StorageEngine, VectorRecord, metadata_item};
 use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
 use std::sync::Arc;
 

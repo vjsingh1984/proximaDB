@@ -91,16 +91,15 @@ impl NovaEngine {
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 primary_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(32),
+                    crate::compute::quantization::unified::UnifiedQuantizationLevel::Pq8,
                 ),
                 filter_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::binary(),
+                    crate::compute::quantization::unified::UnifiedQuantizationLevel::Binary,
                 ),
                 fast_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
+                    crate::compute::quantization::unified::UnifiedQuantizationLevel::Int8,
                 ),
-                distance_metric:
-                    crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+                distance_metric: DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
                 candidate_multiplier: 10,
@@ -1166,10 +1165,10 @@ mod tests {
     async fn test_nova_feature_support() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let engine = NovaEngine::new().await.unwrap();
-        assert!(engine.supports_feature("id_lookup").await);
-        assert!(engine.supports_feature("columnar_search").await);
-        assert!(engine.supports_feature("predicate_pushdown").await);
-        assert!(engine.supports_feature("projection").await);
-        assert!(!engine.supports_feature("unknown_feature").await);
+        assert!(engine.supports_feature("id_lookup"));
+        assert!(engine.supports_feature("columnar_search"));
+        assert!(engine.supports_feature("predicate_pushdown"));
+        assert!(engine.supports_feature("projection"));
+        assert!(!engine.supports_feature("unknown_feature"));
     }
 }

@@ -11,8 +11,8 @@ mod common {
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::StorageEngine;
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::proto::proximadb_v1::StorageEngine;
+use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -158,19 +158,19 @@ async fn test_compression_for_data(
         if let Some(ref mut config) = collection.config {
             // Map algorithm string to enum value
             let algorithm_enum = match algorithm {
-                "zstd" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionZstd,
-                "lz4" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionLz4,
-                "snappy" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionSnappy,
-                "gzip" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionGzip,
-                "brotli" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionBrotli,
-                _ | "none" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionNone,
+                "zstd" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd,
+                "lz4" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4,
+                "snappy" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionSnappy,
+                "gzip" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionGzip,
+                "brotli" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionBrotli,
+                _ | "none" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionNone,
             };
 
             config
                 .storage_config
                 .as_ref()
                 .and_then(|s| s.compression.as_ref()) =
-                Some(proximadb::proto::proximadb::CompressionConfig {
+                Some(proximadb::proto::proximadb_v1::CompressionConfig {
                     algorithm: algorithm_enum as i32,
                     level: Some(level),
                     adaptive: false,
@@ -367,12 +367,12 @@ async fn test_compression_algorithms_and_levels() -> anyhow::Result<()> {
             };
 
         let dense_ratio = results
-            .get(key)
+            .get("enable_two_stage_search")
             .and_then(|v| v.iter().find(|(a, _)| a.starts_with(algo)).map(|(_, r)| r))
             .unwrap_or(&1.0);
 
         let sparse_ratio = results
-            .get(key)
+            .get("enable_two_stage_search")
             .and_then(|v| v.iter().find(|(a, _)| a.starts_with(algo)).map(|(_, r)| r))
             .unwrap_or(&1.0);
 
@@ -385,7 +385,7 @@ async fn test_compression_algorithms_and_levels() -> anyhow::Result<()> {
     info!("Note: Lower ratio is better (1.0 = no compression)");
 
     // Verify key expectations
-    if let Some(sparse_results) = results.get(key) {
+    if let Some(sparse_results) = results.get("sparse") {
         if let Some((_, zstd_ratio)) = sparse_results.iter().find(|(a, _)| a == "zstd-3") {
             assert!(
                 *zstd_ratio < 0.5,
@@ -395,7 +395,7 @@ async fn test_compression_algorithms_and_levels() -> anyhow::Result<()> {
         }
     }
 
-    if let Some(dense_results) = results.get(key) {
+    if let Some(dense_results) = results.get("sparse") {
         if let Some((_, none_ratio)) = dense_results.iter().find(|(a, _)| a == "none") {
             assert!(
                 *none_ratio >= 0.99 && *none_ratio <= 1.01,

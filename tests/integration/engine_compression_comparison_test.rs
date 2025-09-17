@@ -14,7 +14,7 @@ use common::integration_test_helpers::UnifiedTestEnvironment;
 use anyhow::Result;
 use proximadb::StorageEngine;
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::CompressionAlgorithm as ProtoCompressionAlgorithm;
+use proximadb::proto::proximadb_v1::CompressionAlgorithm as ProtoCompressionAlgorithm;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use std::time::Instant;
 use tracing::info;
@@ -112,7 +112,7 @@ async fn test_engine_compression(
             };
 
             // Create collection config once with compression
-            let compression_config = proximadb::proto::proximadb::CompressionConfig {
+            let compression_config = proximadb::proto::proximadb_v1::CompressionConfig {
                 algorithm: algorithm_enum,
                 level: Some(level),
                 block_size_kb: Some(2048), // 2MB blocks for SST
@@ -151,7 +151,7 @@ async fn test_engine_compression(
                 .as_ref()
                 .and_then(|s| s.compression.as_ref()) = "none".to_string();
 
-            let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
+            let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
                 viper_config,
                 env_uncompressed.filesystem.clone(),
             )
@@ -182,7 +182,7 @@ async fn test_engine_compression(
                 .and_then(|s| s.compression.as_ref()) = algorithm.to_string();
             viper_config.compression_level = level;
 
-            let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
+            let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
                 viper_config,
                 env_compressed.filesystem.clone(),
             )

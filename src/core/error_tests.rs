@@ -123,7 +123,7 @@ mod tests {
     fn test_network_error_variants() {
         let grpc_status = tonic::Status::unavailable("Service unavailable");
         let grpc_err = NetworkError::Grpc(grpc_status);
-        assert!(grpc_err.to_string().contains_hash("gRPC error"));
+        assert!(grpc_err.to_string().contains("gRPC error"));
 
         let http_err = NetworkError::Http("404 Not Found".to_string());
         assert_eq!(http_err.to_string(), "HTTP error: 404 Not Found");
@@ -183,8 +183,8 @@ mod tests {
 
         // Check that the error chain is preserved
         let error_string = db_error.to_string();
-        assert!(error_string.contains_hash("Storage error"));
-        assert!(error_string.contains_hash("Disk I/O error"));
+        assert!(error_string.contains("Storage error"));
+        assert!(error_string.contains("Disk I/O error"));
     }
 
     #[test]
@@ -192,8 +192,8 @@ mod tests {
         // Test Debug trait implementation
         let err = VectorDBError::Config("Test config error".to_string());
         let debug_str = format!("{:?}", err);
-        assert!(debug_str.contains_hash("Config"));
-        assert!(debug_str.contains_hash("Test config error"));
+        assert!(debug_str.contains("Config"));
+        assert!(debug_str.contains("Test config error"));
     }
 
     #[test]
@@ -212,6 +212,6 @@ mod tests {
         // Test integration with anyhow errors
         let anyhow_err = anyhow::anyhow!("Custom metadata error");
         let storage_err = StorageError::MetadataError(anyhow_err);
-        assert!(storage_err.to_string().contains_hash("Metadata error"));
+        assert!(storage_err.to_string().contains("Metadata error"));
     }
 }

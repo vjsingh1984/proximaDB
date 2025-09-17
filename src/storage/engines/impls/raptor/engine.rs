@@ -1460,24 +1460,6 @@ impl RaptorEngine {
         registry.active_files.len() >= self.config.compaction_threshold_files
     }
 
-    #[cfg(test)]
-    pub fn determine_storage_tier(base_path: &str) -> FileStorageTier {
-        if base_path.starts_with("s3://") {
-            if base_path.contains("express") {
-                FileStorageTier::S3Express
-            } else if base_path.contains("glacier") {
-                FileStorageTier::S3GlacierInstant
-            } else {
-                FileStorageTier::S3Standard
-            }
-        } else if base_path.starts_with("gs://") {
-            FileStorageTier::GcsSSD
-        } else if base_path.starts_with("azure://") {
-            FileStorageTier::AzurePremium
-        } else {
-            FileStorageTier::NVMe
-        }
-    }
 
     fn reconstruct_vector_record(&self, batch: &RecordBatch, index: usize) -> Result<VectorRecord> {
         let id = self.get_id_from_batch(batch, index)?;
@@ -1529,7 +1511,7 @@ impl RaptorEngine {
     }
 
     /// Determine storage tier from base path
-    fn determine_storage_tier(base_path: &str) -> crate::storage::persistence::filesystem::FileStorageTier {
+    pub fn determine_storage_tier(base_path: &str) -> crate::storage::persistence::filesystem::FileStorageTier {
         use crate::storage::persistence::filesystem::FileStorageTier;
 
         if base_path.contains("s3://") || base_path.contains("azure://") || base_path.contains("gcs://") {

@@ -1169,13 +1169,13 @@ mod tests {
     fn test_data_block_creation() {
         let records = vec![
             VectorRecord {
-                id: Some("vec_1".to_string()),
+                id: "vec_1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 timestamp: 1000,
                 ..Default::default()
             },
             VectorRecord {
-                id: Some("vec_2".to_string()),
+                id: "vec_2".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
                 timestamp: 2000,
                 ..Default::default()
@@ -1210,7 +1210,7 @@ mod tests {
     #[test]
     fn test_block_id_lookup() {
         let records = vec![VectorRecord {
-            id: Some("test_id".to_string()),
+            id: "test_id".to_string(),
             vector: vec![1.0, 2.0],
             ..Default::default()
         }];

@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{UserContext, TenantManager};
+use super::context::ResourceLimits;
 
 /// Enhanced RBAC manager for multi-tenant operations
 pub struct EnhancedRBACManager {
@@ -563,7 +564,8 @@ impl EnhancedRBACManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::{TenantConfig, Industry, ComplianceFramework, SecurityPolicies, ResourceLimits};
+    use crate::storage::tenant::{TenantConfig, Industry, ComplianceFramework, SecurityPolicies};
+    use crate::storage::tenant::context::ResourceLimits;
 
     async fn create_test_rbac_setup() -> (EnhancedRBACManager, UserContext) {
         let tenant_manager = Arc::new(TenantManager::new());

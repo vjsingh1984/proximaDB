@@ -20,9 +20,9 @@ use tracing::{info, debug};
 use proximadb::core::VectorRecord;
 use proximadb::services::vector_service::{VectorOperationsService, OptimizedFormat};
 use proximadb::storage::persistence::write_ahead_log::config::{WriteBufferConfig, PerformanceConfig, SyncMode};
-use proximadb::storage::engines::viper::ViperEngine;
+use proximadb::storage::engines::impls::viper::ViperEngine;
 // ViperConfig moved to core::config
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::core::SstConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 

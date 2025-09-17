@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine,
@@ -232,13 +232,13 @@ async fn test_compaction() {
     // Trigger manual compaction
     let compact_params = CompactionParameters {
         collection_id: Some("test_collection".to_string()),
-        level: Some(0),
         collection_config: None,
+        ..Default::default()
     };
 
     let result = engine.do_compact(&compact_params).await.unwrap();
 
-    assert!(result.files_compacted > 0);
+    assert!(result.input_files.unwrap_or(0) > 0);
     assert!(result.bytes_written.unwrap_or(0) > 0);
 }
 
@@ -299,7 +299,12 @@ async fn test_fastlanes_integration() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let filesystem = FilesystemFactory::create_local().unwrap();
+
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some("file:///tmp".to_string());
+    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem = factory.get_filesystem("file:///tmp").unwrap();
 
     let records = create_test_records(100, 128);
     let path = temp_dir.path().join("test.helix");
@@ -355,9 +360,8 @@ async fn test_metrics_collection() {
     let records = create_test_records(50, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        records,
-        collection_config: None,
-        level: None,
+        vector_records: records,
+        ..Default::default()
     };
 
     engine.do_flush(&params).await.unwrap();

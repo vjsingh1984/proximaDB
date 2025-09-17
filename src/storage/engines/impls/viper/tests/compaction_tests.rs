@@ -71,7 +71,7 @@ fn create_test_collection(
             index_configs: vec![],
             quantization: Some(crate::proto::proximadb_v1::QuantizationConfig {
                 enabled: true,                         // Quantization enabled by default for VIPER
-                enable_progressive_search: Some(true), // Progressive search enabled by default
+                enable_progressive_search: true, // Progressive search enabled by default
                 ..Default::default()
             }),
             storage_config: None,
@@ -1278,6 +1278,7 @@ async fn test_compaction_with_metadata_filtering() {
 
         let category_count = search_results
             .iter()
+            .flat_map(|sr| sr.results.iter())
             .filter(|r| r.metadata.get("category").and_then(|v| v.as_deref()) == Some(category))
             .count();
 

@@ -15,7 +15,12 @@ use tempfile::tempdir;
 async fn test_sst_storage_new() {
     let dir = tempdir().unwrap();
     let path = dir.path().to_str().unwrap().to_string();
-    let filesystem = Arc::new(FilesystemFactory::new_local(&path));
+
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem = factory.get_filesystem(&format!("file://{}", path)).unwrap();
     let distance_compute =
         Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
     let config = SstConfig::default();
@@ -29,7 +34,12 @@ async fn test_sst_storage_new() {
 async fn test_sst_storage_flush_and_search() {
     let dir = tempdir().unwrap();
     let path = dir.path().to_str().unwrap().to_string();
-    let filesystem = Arc::new(FilesystemFactory::new_local(&path));
+
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem = factory.get_filesystem(&format!("file://{}", path)).unwrap();
     let distance_compute =
         Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
     let config = SstConfig::default();

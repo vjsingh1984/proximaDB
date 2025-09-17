@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
 #[tokio::test]
 async fn test_quantization_config_fields() -> Result<()> {
     // Test that quantization field exists and can be used
-    use proximadb::proto::proximadb::*;
+    use proximadb::proto::proximadb_v1::*;
 
     // Check if we can find the QuantizationConfig message
     // This test validates that our proto updates were applied correctly
@@ -21,18 +21,11 @@ async fn test_quantization_config_fields() -> Result<()> {
         dimension: 128,
         distance_metric: 1,            // COSINE
         storage_engine: 1,             // VIPER
-        primary_indexing_algorithm: 1, // HNSW
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None, // This field should exist
-        primary_index: "default".to_string(),
-        auto_index_selection: false,
         description: Some("Test collection".to_string()),
         tags: vec![],
-        owner: Some("test".to_string()),
-        compression: None,
-        optimization_hints: None,
-        storage_location: None,
     };
 
     assert_eq!(basic_config.name, "basic_collection");
@@ -45,25 +38,18 @@ async fn test_quantization_config_fields() -> Result<()> {
 #[tokio::test]
 async fn test_index_config_field() -> Result<()> {
     // Test that index_config field exists and can be used
-    use proximadb::proto::proximadb::*;
+    use proximadb::proto::proximadb_v1::*;
 
     let config_with_index = CollectionConfig {
         name: "indexed_collection".to_string(),
         dimension: 256,
         distance_metric: 1,            // COSINE
         storage_engine: 1,             // VIPER
-        primary_indexing_algorithm: 1, // HNSW
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
-        primary_index: "default".to_string(),
-        auto_index_selection: false,
         description: Some("Test collection".to_string()),
         tags: vec![],
-        owner: Some("test".to_string()),
-        compression: None,
-        optimization_hints: None,
-        storage_location: None,
     };
 
     assert_eq!(config_with_index.name, "indexed_collection");
@@ -76,7 +62,7 @@ async fn test_index_config_field() -> Result<()> {
 #[tokio::test]
 async fn test_search_optimization_hints_field() -> Result<()> {
     // Test that optimization_hints field exists in VectorSearchRequest
-    use proximadb::proto::proximadb::*;
+    use proximadb::proto::proximadb_v1::*;
 
     // Create a search query
     let search_query = SearchQuery {
@@ -108,7 +94,7 @@ async fn test_search_optimization_hints_field() -> Result<()> {
 #[tokio::test]
 async fn test_quantization_message_types_exist() -> Result<()> {
     // Test that the quantization message types are generated and accessible
-    use proximadb::proto::proximadb::*;
+    use proximadb::proto::proximadb_v1::*;
 
     // This test verifies that our proto quantization messages were generated correctly
     // Even if we can't test complex nested structures, we should be able to reference the types
@@ -146,14 +132,14 @@ async fn test_handler_hint_processing() -> Result<()> {
 
     // Simulate gRPC handler processing
     let enable_two_stage = hints_json
-        .get(key)
+        .get("enable_two_stage_search")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let candidate_multiplier = hints_json.get(key).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+    let candidate_multiplier = hints_json.get("candidate_multiplier").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
 
     let quantization_hint = hints_json
-        .get(key)
+        .get("quantization_hint")
         .and_then(|v| v.as_str())
         .unwrap_or("FP32")
         .to_string();
@@ -163,9 +149,9 @@ async fn test_handler_hint_processing() -> Result<()> {
         "enable_two_stage_search": enable_two_stage,
         "candidate_multiplier": candidate_multiplier,
         "quantization_hint": quantization_hint,
-        "min_candidates": hints_json.get(key),
-        "max_candidates": hints_json.get(key),
-        "accuracy_threshold": hints_json.get(key)
+        "min_candidates": hints_json.get("min_candidates"),
+        "max_candidates": hints_json.get("max_candidates"),
+        "accuracy_threshold": hints_json.get("accuracy_threshold")
     });
 
     assert_eq!(processed_hints["enable_two_stage_search"], true);

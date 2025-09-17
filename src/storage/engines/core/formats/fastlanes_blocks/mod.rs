@@ -84,8 +84,8 @@ pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
 
 // Re-exports for common use
 pub use block_structures::{
-    BlockCompressionConfig, BlockLayout, BlockLocation, FastLanesBlockMetadata, FastLanesDataBlock,
-    SuperBlock,
+    BlockCompressionConfig, BlockLayout, BlockLocation, BlockMetadataStats, FastLanesBlockMetadata, FastLanesDataBlock,
+    QuantizationStatistics, SuperBlock,
 };
 pub use compression_config::{
     CompressionParameters, CompressionStats, RowBasedCompressionConfig, VectorCompressionStrategy,

@@ -401,7 +401,7 @@ mod tests {
             enable_range_reads: false,
             prefetch_size_mb: 1,
             cache_size_mb: 10,
-            cache_eviction_policy: crate::storage::engines::impls::raptor::config::EvictionPolicy::LRU,
+            cache_eviction_policy: crate::storage::engines::impls::raptor::config::EvictionPolicy::Lru,
             enable_clustering: true,
             num_clusters: None,
             target_rowgroup_size: Some(50),
@@ -448,13 +448,13 @@ mod tests {
                         metadata: std::collections::HashMap::new(),
                         timestamp: 0,
                         quantized_vector: vec![],
-                        source: String::new(),
+                        source: Some(String::new()),
                         version: Some(1),
                         updated_at: None,
                         expires_at: None,
                     };
 
-                    writer.write_vector(&record).await?;
+                    writer.write_vectors(&[record]).await?;
                 }
                 writer.flush().await?;
             }
@@ -482,7 +482,7 @@ mod tests {
 
             let columnar = ColumnarCentroids {
                 count: num_centroids as u32,
-                dimension: dimension,
+                dimension: dimension as u32,
                 rowgroup_ids,
                 transposed_data,
                 encoding_metadata: vec![],

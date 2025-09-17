@@ -865,7 +865,7 @@ mod tests {
         assert_eq!(index.stats().vector_count, 3);
 
         // Search should work
-        let results = index.search(&[1.0, 0.0, 0.0], 2).await.unwrap();
+        let results = index.search(&[1.0, 0.0, 0.0], 2, None).await.unwrap();
         assert!(results.len() <= 2); // HNSW is approximate
 
         // Remove a vector
@@ -901,7 +901,7 @@ mod tests {
 
         // Search for nearest neighbors to v1
         let query = vec![1.0, 0.0, 0.0, 0.0];
-        let results = index.search(&query, 3).await.unwrap();
+        let results = index.search(&query, 3, None).await.unwrap();
 
         // v1, v2, v6, v7 should be closest (all have high first component)
         assert!(results.len() >= 2);
@@ -933,7 +933,7 @@ mod tests {
 
         // Search should work efficiently across layers
         let query = vec![0.5, 0.5, 0.5];
-        let results = index.search(&query, 10).await.unwrap();
+        let results = index.search(&query, 10, None).await.unwrap();
         assert!(results.len() > 0);
     }
 
@@ -955,7 +955,7 @@ mod tests {
 
         // Search for middle point
         let query = vec![10.0, 0.0];
-        let results = index.search(&query, 5).await.unwrap();
+        let results = index.search(&query, 5, None).await.unwrap();
 
         // Should find neighbors despite pruning
         assert!(results.len() >= 3);
@@ -991,7 +991,7 @@ mod tests {
         let index = AxisHnswIndex::new(config, 3).unwrap();
 
         // Search on empty index should return empty results
-        let results = index.search(&[1.0, 0.0, 0.0], 5).await.unwrap();
+        let results = index.search(&[1.0, 0.0, 0.0], 5, None).await.unwrap();
         assert_eq!(results.len(), 0);
     }
 

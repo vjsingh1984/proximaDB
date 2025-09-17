@@ -11,8 +11,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::test;
 
-use proximadb::storage::engines::viper::{ViperEngine, ViperConfig};
-use proximadb::storage::engines::viper::types::{CollectionMetadata, PartitionStrategy, CompressionStats};
+use proximadb::storage::engines::impls::viper::{ViperEngine, ViperConfig};
+use proximadb::storage::engines::impls::viper::types::{CollectionMetadata, PartitionStrategy, CompressionStats};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 
 /// Test helper to create a temporary directory

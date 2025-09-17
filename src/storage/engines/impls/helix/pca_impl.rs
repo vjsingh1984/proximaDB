@@ -451,9 +451,13 @@ mod tests {
             records.push(VectorRecord {
                 id: format!("vec_{}", i),
                 vector,
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
+                updated_at: None,
                 expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             });
         }
 
@@ -488,9 +492,13 @@ mod tests {
             .map(|i| VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32, i as f32 * 2.0, i as f32 * 0.5],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
+                updated_at: None,
                 expires_at: None,
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             })
             .collect();
 

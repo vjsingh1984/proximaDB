@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc, Duration};
 use anyhow::{Result, anyhow};
+use uuid::Uuid;
 use tracing::{debug, info, warn};
 
 /// Enterprise usage metering engine for real-time billing

@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use proximadb::core::VectorRecord;
-use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::sst::mod::SstRecord;
+use proximadb::storage::engines::impls::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::impls::sst::mod::SstRecord;
 use proximadb::core::SstConfig;
 
 #[tokio::test]

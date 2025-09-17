@@ -10,7 +10,7 @@
 //! This module provides standard test data generators used across all tests
 //! to ensure consistency and avoid duplication.
 
-use proximadb::proto::proximadb::{MetadataItem, VectorRecord};
+use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
@@ -52,11 +52,15 @@ impl TestVectorGenerator {
             id,
             vector,
             metadata: self.generate_metadata(),
-            version: 1,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as i64,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -88,8 +92,12 @@ impl TestVectorGenerator {
                     id: format!("seq-{}", i),
                     vector,
                     metadata: self.generate_metadata(),
-                    version: 1,
                     timestamp: i as i64,
+                    updated_at: None,
+                    expires_at: None,
+                    version: Some(1),
+                    quantized_vector: vec![],
+                    source: None,
                 }
             })
             .collect()
@@ -117,8 +125,12 @@ impl TestVectorGenerator {
                     id: format!("cluster-{}-{}", cluster_id, i),
                     vector,
                     metadata: self.generate_metadata_with_cluster(cluster_id),
-                    version: 1,
                     timestamp: (cluster_id * vectors_per_cluster + i) as i64,
+                    updated_at: None,
+                    expires_at: None,
+                    version: Some(1),
+                    quantized_vector: vec![],
+                    source: None,
                 });
             }
         }
@@ -144,52 +156,44 @@ impl TestVectorGenerator {
                     id: format!("sparse-{}", i),
                     vector,
                     metadata: self.generate_metadata(),
-                    version: 1,
                     timestamp: i as i64,
+                    updated_at: None,
+                    expires_at: None,
+                    version: Some(1),
+                    quantized_vector: vec![],
+                    source: None,
                 }
             })
             .collect()
     }
 
     /// Generate random metadata
-    fn generate_metadata(&mut self) -> Vec<MetadataItem> {
-        vec![
-            MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(format!(
-                        "cat-{}",
-                        self.rng.gen_range(0..5)
-                    )),
-                ),
-            },
-            MetadataItem {
-                key: "score".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                        self.rng.gen_range(0.0..100.0),
-                    ),
-                ),
-            },
-            MetadataItem {
-                key: "active".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::BoolValue(
-                        self.rng.gen_bool(0.7),
-                    ),
-                ),
-            },
-        ]
+    fn generate_metadata(&mut self) -> HashMap<String, SqlValue> {
+        HashMap::from([
+            ("category".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue(format!(
+                    "cat-{}",
+                    self.rng.gen_range(0..5)
+                ))),
+            }),
+            ("score".to_string(), SqlValue {
+                value: Some(sql_value::Value::FloatValue(
+                    self.rng.gen_range(0.0..100.0),
+                )),
+            }),
+            ("active".to_string(), SqlValue {
+                value: Some(sql_value::Value::BoolValue(
+                    self.rng.gen_bool(0.7),
+                )),
+            }),
+        ])
     }
 
     /// Generate metadata with cluster information
-    fn generate_metadata_with_cluster(&mut self, cluster_id: usize) -> Vec<MetadataItem> {
+    fn generate_metadata_with_cluster(&mut self, cluster_id: usize) -> HashMap<String, SqlValue> {
         let mut metadata = self.generate_metadata();
-        metadata.push(MetadataItem {
-            key: "cluster_id".to_string(),
-            value: Some(
-                proximadb::proto::proximadb::metadata_item::Value::NumberValue(cluster_id as f64),
-            ),
+        metadata.insert("cluster_id".to_string(), SqlValue {
+            value: Some(sql_value::Value::IntValue(cluster_id as i64)),
         });
         metadata
     }

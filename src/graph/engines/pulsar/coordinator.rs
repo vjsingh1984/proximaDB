@@ -560,11 +560,11 @@ mod tests {
         let (shards, hash_ring) = create_test_setup();
         let coordinator = QueryCoordinator::new(shards, hash_ring, 10);
 
-        let shard_id = coordinator.get_shard_for_node("test_node").await.unwrap();
+        let shard_id = coordinator.get_shard_for_node(&"test_node".to_string()).await.unwrap();
         assert!(shard_id < 4);
 
         // Same node should always map to same shard
-        let shard_id2 = coordinator.get_shard_for_node("test_node").await.unwrap();
+        let shard_id2 = coordinator.get_shard_for_node(&"test_node".to_string()).await.unwrap();
         assert_eq!(shard_id, shard_id2);
     }
 
@@ -574,7 +574,7 @@ mod tests {
         let coordinator = QueryCoordinator::new(shards, hash_ring, 10);
 
         // For this test, BFS on a non-existent node should return empty results
-        let results = coordinator.distributed_bfs("nonexistent", 2).await.unwrap();
+        let results = coordinator.distributed_bfs(&"nonexistent".to_string(), 2).await.unwrap();
         assert!(results.is_empty());
 
         let stats = coordinator.get_stats().await;

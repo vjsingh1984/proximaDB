@@ -129,8 +129,10 @@ impl GlobalIdIndex {
     pub async fn add_vector(&self, vector_id: String, location: StorageLocation) -> Result<()> {
         debug!("📍 Adding vector ID mapping: {} -> {}", vector_id, location.file_path);
 
-        let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
-        map.insert(vector_id.clone(), location);
+        {
+            let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+            map.insert(vector_id.clone(), location);
+        } // Drop lock before async call
 
         // Update statistics
         self.update_stats_after_insert().await?;
@@ -143,8 +145,10 @@ impl GlobalIdIndex {
     pub async fn get_location(&self, vector_id: &str) -> Result<Option<StorageLocation>> {
         let start_time = std::time::Instant::now();
 
-        let map = self.id_map.read().map_err(|e| anyhow!("Lock error: {}", e))?;
-        let result = map.get(vector_id).cloned();
+        let result = {
+            let map = self.id_map.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+            map.get(vector_id).cloned()
+        }; // Drop lock before async call
 
         // Update statistics
         self.update_stats_after_lookup(start_time.elapsed(), result.is_some()).await?;
@@ -157,8 +161,10 @@ impl GlobalIdIndex {
     pub async fn remove_vector(&self, vector_id: &str) -> Result<bool> {
         debug!("🗑️ Removing vector ID mapping: {}", vector_id);
 
-        let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
-        let removed = map.remove(vector_id).is_some();
+        let removed = {
+            let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+            map.remove(vector_id).is_some()
+        }; // Drop lock before async call
 
         if removed {
             // Update statistics
@@ -175,12 +181,13 @@ impl GlobalIdIndex {
     pub async fn add_vectors_bulk(&self, mappings: HashMap<String, StorageLocation>) -> Result<usize> {
         info!("📦 Bulk adding {} vector ID mappings", mappings.len());
 
-        let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
         let count = mappings.len();
-
-        for (vector_id, location) in mappings {
-            map.insert(vector_id, location);
-        }
+        {
+            let mut map = self.id_map.write().map_err(|e| anyhow!("Lock error: {}", e))?;
+            for (vector_id, location) in mappings {
+                map.insert(vector_id, location);
+            }
+        } // Drop lock before async call
 
         // Update statistics
         self.update_stats_after_bulk_insert(count).await?;

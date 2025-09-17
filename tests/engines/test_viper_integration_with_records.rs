@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 use chrono::Utc;
 use proximadb::core::VectorRecord;
-use proximadb::storage::engines::viper::ViperEngine;
+use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 use tracing::{debug, error, info};

@@ -91,48 +91,7 @@ mod integration_tests {
         println!("🧪 Hybrid query test prepared: {}", sql);
     }
 
-    /// Test performance comparison: sql_frontend vs sql_engine
-    #[tokio::test] 
-    async fn test_performance_vs_legacy() {
-        // Benchmark new sql_frontend vs legacy sql_engine
-        let sql = "SELECT * FROM products WHERE metadata.brand = 'apple' AND metadata.price > 500 LIMIT 100";
-        
-        // TODO: Uncomment when compilation is resolved
-        /*
-        let unified_handlers = create_test_unified_handlers().await;
-        
-        // Test new sql_frontend path (with HashMap optimization)
-        let start = std::time::Instant::now();
-        let frontend_result = unified_handlers
-            .execute_sql_frontend(sql.to_string(), None, None)
-            .await
-            .unwrap();
-        let frontend_duration = start.elapsed();
-        
-        // Test legacy sql_engine path
-        let start = std::time::Instant::now();
-        let legacy_result = unified_handlers
-            .execute_sql_query(sql.to_string(), None, None)
-            .await
-            .unwrap();
-        let legacy_duration = start.elapsed();
-        
-        // Validate performance improvement
-        println!("🚀 Frontend: {:?}, Legacy: {:?}", frontend_duration, legacy_duration);
-        
-        // Frontend should be faster due to HashMap metadata filtering
-        // Target: At least 2x improvement, goal: 10x improvement
-        let improvement_ratio = legacy_duration.as_nanos() / frontend_duration.as_nanos();
-        assert!(improvement_ratio >= 2, "Frontend should be at least 2x faster, got {}x", improvement_ratio);
-        
-        // Verify same results (compatibility)
-        assert_eq!(frontend_result.rows.len(), legacy_result.rows.len());
-        */
-
-        // Placeholder validation
-        assert!(sql.contains("metadata."));
-        println!("🧪 Performance comparison test prepared: {}", sql);
-    }
+    
 
     /// Test SIMILAR function integration with embedding validation
     #[tokio::test]

@@ -13,7 +13,7 @@ use tempfile::TempDir;
 use tokio::time::{sleep, Duration};
 
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm, MetadataItem
 };
 use proximadb::services::VectorOperationsService;
@@ -22,8 +22,8 @@ use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemC
 use proximadb::storage::persistence::write_ahead_log::{WriteBufferManager, WriteBufferConfig};
 use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferStrategyType;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::storage::engines::viper::ViperEngine;
-use proximadb::storage::engines::sst::SstStorage as LsmEngine;
+use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::impls::sst::SstStorage as LsmEngine;
 
 /// Test setup helper
 async fn create_test_setup() -> (
@@ -46,7 +46,7 @@ async fn create_test_setup() -> (
     ));
     
     // Create services using test utilities
-    let direct_vector_service = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
+    let direct_vector_service = tests::common::integration_test_helpers::create_test_vector_operations_service()
         .await
         .expect("Failed to create VectorOperationsService");
     

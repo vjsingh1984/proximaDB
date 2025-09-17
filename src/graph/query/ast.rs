@@ -94,7 +94,7 @@ pub struct PathPattern {
 }
 
 /// Property constraint in patterns
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PropertyConstraint {
     /// Exact value match
     Equals(serde_json::Value),

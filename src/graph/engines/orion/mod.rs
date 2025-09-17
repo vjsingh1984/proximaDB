@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(engine.node_count().unwrap(), 1);
 
         // Get node
-        let retrieved = engine.get_node("node1").unwrap().unwrap();
+        let retrieved = engine.get_node(&"node1".to_string()).unwrap().unwrap();
         assert!(Arc::ptr_eq(&inserted, &retrieved));
 
         // Get by label
@@ -626,12 +626,12 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Get outgoing edges
-        let outgoing = engine.get_outgoing_edges("node1", None).unwrap();
+        let outgoing = engine.get_outgoing_edges(&"node1".to_string(), None).unwrap();
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].edge_type, "KNOWS");
 
         // Get neighbors
-        let neighbors = engine.get_neighbors("node1", None).unwrap();
+        let neighbors = engine.get_neighbors(&"node1".to_string(), None).unwrap();
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].id, "node2");
     }

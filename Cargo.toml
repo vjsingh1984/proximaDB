@@ -204,7 +204,7 @@ reqwest = { version = "0.11", features = ["json"] }
 env_logger = "0.10"
 
 [features]
-default = ["sql_frontend"]  # Use sql_frontend path by default; fallback to legacy sql_engine when disabled
+default = ["sql_frontend"]
 distributed = []
 standalone = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
@@ -301,6 +301,6 @@ path = "benches/engine_comparison_bench.rs"
 # path = "benches/vector_operations.rs"
 
 # [[bench]]
-# name = "metadata_lifecycle"  
+# name = "metadata_lifecycle"
 # harness = false
 # path = "benches/metadata_lifecycle.rs"

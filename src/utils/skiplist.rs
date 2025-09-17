@@ -892,7 +892,7 @@ mod tests {
         }
 
         // Range query [3, 7)
-        let results: Vec<(i32, String)> = list.range(&3, &7).collect();
+        let results: Vec<(i32, String)> = list.range(3..7).collect();
 
         assert_eq!(results.len(), 4);
         assert_eq!(results[0].0, 3);
@@ -904,7 +904,7 @@ mod tests {
     #[test]
     fn test_concurrent_access() {
         let list = Arc::new(SkipList::new());
-        let mut handles = vec![];
+        let mut handles: Vec<std::thread::JoinHandle<()>> = vec![];
 
         // Spawn multiple threads for insertion
         for thread_id in 0..4 {
@@ -937,7 +937,7 @@ mod tests {
     #[test]
     fn test_concurrent_operations() {
         let list = Arc::new(SkipList::new());
-        let mut handles = vec![];
+        let mut handles: Vec<std::thread::JoinHandle<()>> = vec![];
 
         // Fill with initial data
         for i in 0..200 {
@@ -1029,7 +1029,7 @@ mod tests {
         }
 
         // Test range query
-        let range_results: Vec<_> = list.range(&5000, &5010).collect();
+        let range_results: Vec<_> = list.range(5000..5010).collect();
         assert_eq!(range_results.len(), 10);
 
         // Test statistics

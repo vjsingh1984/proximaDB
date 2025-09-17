@@ -164,8 +164,6 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 pub struct ProximaDB {
     storage: Arc<RwLock<storage::StorageEngine>>,
     // consensus: consensus::ConsensusEngine,  // Disabled - requires raft dependency
-    // 🔴 UNUSED FIELD - Query engine never used (placeholder only)
-    // _query_engine: query::QueryEngine,
     multi_server: Option<network::MultiServer>,
     _config: core::Config,
 }
@@ -222,15 +220,6 @@ impl ProximaDB {
 
         // let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?; // Disabled
 
-        // 🔴 UNUSED MODULE - Query engine is only a placeholder
-        // The entire SQL engine infrastructure appears unused
-        // Vector search functionality is handled by VectorOperationsService
-        // Note: query_engine needs to be updated to work with Arc<RwLock<StorageEngine>>
-        // For now, we'll create a placeholder
-        // tracing::debug!("🔧 ProximaDB::new - Creating query engine...");
-        // let query_engine = query::QueryEngine::new_placeholder().await?;
-        // tracing::debug!("✅ ProximaDB::new - Query engine created successfully");
-
         // Create multi-server configuration from actual config values
         use std::net::SocketAddr;
         tracing::debug!("🔧 ProximaDB::new - Creating server addresses...");
@@ -282,7 +271,6 @@ impl ProximaDB {
         Ok(Self {
             storage,
             // consensus,  // Disabled
-            // _query_engine: query_engine,  // Commented out - unused
             multi_server: Some(multi_server),
             _config: config,
         })

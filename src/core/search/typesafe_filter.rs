@@ -380,7 +380,6 @@ mod tests {
             indexed: true,
             supports_range: false,
             estimated_cardinality: Some(100),
-            encoding_hint: None,
         }];
 
         let evaluator = TypeSafeFilterEvaluator::new(&columns);
@@ -407,7 +406,6 @@ mod tests {
             indexed: true,
             supports_range: true,
             estimated_cardinality: None,
-            encoding_hint: None,
         }];
 
         let evaluator = TypeSafeFilterEvaluator::new(&columns);

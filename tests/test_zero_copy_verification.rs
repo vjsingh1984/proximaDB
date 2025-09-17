@@ -1,7 +1,7 @@
 //! Test to verify protobuf serialization operations
 
 use prost::Message;
-use proximadb::proto::proximadb::{MetadataItem, VectorRecord, metadata_item};
+use proximadb::proto::proximadb_v1::{MetadataItem, VectorRecord, metadata_item};
 use tracing::{debug, info};
 
 #[test]

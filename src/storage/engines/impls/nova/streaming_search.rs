@@ -822,6 +822,6 @@ mod tests {
         let plan = ExecutionPlan::new();
         assert_eq!(plan.parallelism_level, 4);
         assert_eq!(plan.memory_budget_per_stage, 64 * 1024 * 1024);
-        assert!(plan.selected_superblocks.is_none());
+        assert!(plan.selected_superblocks.is_empty());
     }
 }

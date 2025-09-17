@@ -661,21 +661,21 @@ mod tests {
         let record = VectorRecord {
             id: "test1".to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(Value::StringValue("electronics".to_string())),
-                },
-                MetadataItem {
-                    key: "price".to_string(),
-                    value: Some(Value::NumberValue(99.99)),
-                },
-            ],
+            metadata: {
+                let mut map = std::collections::HashMap::new();
+                map.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())),
+                });
+                map.insert("price".to_string(), crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(99.99)),
+                });
+                map
+            },
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         };
 

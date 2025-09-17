@@ -38,23 +38,15 @@ mod tests {
 
     fn create_test_vector() -> VectorRecord {
         VectorRecord {
-            id: Some("test_vector_1".to_string()),
+            id: "test_vector_1".to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "test".to_string(),
-                    ),
-                ),
-            }],
+            metadata: std::collections::HashMap::new(),
             timestamp: 1234567890,
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: Some("test".to_string()),
         }
     }
 
@@ -67,7 +59,7 @@ mod tests {
         let serialized = serializer
             .serialize_batch(&vectors)
             .expect("Failed to serialize batch");
-        assert!(!serialized.is_none());
+        assert!(!serialized.is_empty());
 
         // Deserialize
         let deserialized = serializer

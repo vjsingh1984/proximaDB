@@ -22,6 +22,7 @@ use super::{
     SystemMetadata,
     write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog},
 };
+use crate::storage::traits::{InternalCollectionProvider, MetadataProvider};
 // use crate::storage::strategy::CollectionStrategyConfig; // Unused
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -800,3 +801,39 @@ impl MetadataStoreInterface for MetadataStore {
         Ok(())
     }
 }
+
+// Implement MetadataProvider for MetadataStore
+#[async_trait]
+impl MetadataProvider for MetadataStore {
+    async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>> {
+        // Delegate to get_collection and extract UUID if found
+        match self.get_collection(collection_id).await? {
+            Some(collection) => Ok(Some(collection.id)),
+            None => Ok(None),
+        }
+    }
+
+    async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
+        self.get_collection(collection_id).await
+    }
+
+    async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
+        MetadataStoreInterface::get_collection(self, collection_id).await
+    }
+
+    async fn list_collections(&self) -> Result<Vec<Collection>> {
+        MetadataStoreInterface::list_collections(self, None).await
+    }
+
+    async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()> {
+        MetadataStoreInterface::create_collection(self, collection.clone()).await
+    }
+
+    async fn delete_collection(&self, collection_id: &str) -> Result<()> {
+        MetadataStoreInterface::delete_collection(self, collection_id).await?;
+        Ok(())
+    }
+}
+
+// Implement InternalCollectionProvider (marker trait)
+impl InternalCollectionProvider for MetadataStore {}

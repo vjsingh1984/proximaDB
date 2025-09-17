@@ -16,42 +16,41 @@ mod tests {
     use proximadb::core::{
         ComparisonOperator, FieldQuery, MetadataQuery, MetadataQueryBuilder, MetadataQueryEngine,
     };
-    use proximadb::proto::proximadb::VectorRecord;
+    use proximadb::proto::proximadb_v1::VectorRecord;
 
     /// Create a test vector record with metadata
     fn create_test_vector(id: &str, metadata: HashMap<String, serde_json::Value>) -> VectorRecord {
-        // Convert HashMap<String, serde_json::Value> to Vec<MetadataItem>
-        let metadata_items: Vec<proximadb::proto::proximadb::MetadataItem> = metadata
+        // Convert HashMap<String, serde_json::Value> to HashMap<String, SqlValue>
+        let metadata_items: HashMap<String, proximadb::proto::proximadb_v1::SqlValue> = metadata
             .iter()
             .map(|(key, value)| {
                 let metadata_value = match value {
                     serde_json::Value::String(s) => Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(s.clone()),
+                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()),
                     ),
                     serde_json::Value::Number(n) => {
                         if let Some(f) = n.as_f64() {
-                            Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(f))
+                            Some(proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(f))
                         } else {
                             Some(
-                                proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                                proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                                     n.to_string(),
                                 ),
                             )
                         }
                     }
                     serde_json::Value::Bool(b) => {
-                        Some(proximadb::proto::proximadb::metadata_item::Value::BoolValue(*b))
+                        Some(proximadb::proto::proximadb_v1::metadata_item::Value::BoolValue(*b))
                     }
                     _ => Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                             value.to_string(),
                         ),
                     ),
                 };
-                proximadb::proto::proximadb::MetadataItem {
-                    key: key.clone(),
+                (key.clone(), proximadb::proto::proximadb_v1::SqlValue {
                     value: metadata_value,
-                }
+                })
             })
             .collect();
 
@@ -59,11 +58,11 @@ mod tests {
             id: id.to_string(),
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata: metadata_items,
-            timestamp: Utc::now().timestamp() as u32,
-            updated_at: Some(Utc::now().timestamp() as u32),
+            timestamp: Utc::now().timestamp(),
+            updated_at: Some(Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         }
     }

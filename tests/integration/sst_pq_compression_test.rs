@@ -4,8 +4,8 @@
 //! achieves better compression through block-based quantization.
 
 use anyhow::Result;
-use proximadb::proto::proximadb::{VectorRecord, Collection, CollectionConfig, CompressionConfig};
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, CompressionConfig};
+use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::core::SstConfig;
@@ -90,7 +90,7 @@ async fn test_sst_quantization_compression() -> Result<()> {
             name: "test_collection".to_string(),
             dimension: dimension as u32,
             distance_metric: "cosine".to_string(),
-            storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
                 base_location: format!("file://{}", base_path),
                 assignment_id: "test".to_string(),
                 tier: "hot".to_string(),
@@ -291,7 +291,7 @@ async fn test_compression_with_different_block_sizes() -> Result<()> {
             name: "test_collection".to_string(),
             dimension: dimension as u32,
             distance_metric: "cosine".to_string(),
-            storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
                 base_location: format!("file://{}", base_path),
                 assignment_id: "test".to_string(),
                 tier: "hot".to_string(),

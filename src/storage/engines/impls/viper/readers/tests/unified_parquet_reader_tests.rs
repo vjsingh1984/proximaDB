@@ -527,7 +527,6 @@ mod tests {
             enable_progressive_search: None,
             filters: None,
             optimization_hint: None,
-            use_hybrid_search: None,
             timeout_ms: None,
         };
 
@@ -553,8 +552,8 @@ mod tests {
         // Debug output
         for (i, result) in results.iter().enumerate() {
             debug!(
-                "Result {}: id={}, similarity={:?}, score={:?}, semantic_distance={:?}",
-                i, result.id, result.similarity, result.score, result.semantic_distance
+                "Result {}: id={}, similarity={:?}, score={:?}, semantic_similarity={:?}",
+                i, result.id, result.similarity, result.score, result.semantic_similarity
             );
         }
 
@@ -688,14 +687,14 @@ mod tests {
         if !results.is_empty() {
             debug!(
                 "First result: id={:?}, distance={:?}",
-                results[0].id, results[0].semantic_distance
+                results[0].id, results[0].semantic_similarity
             );
         }
 
         // Verify
         assert_eq!(results.len(), 1, "Should find 1 result");
         assert_eq!(results[0].id, "debug_vec", "Should find debug_vec");
-        if let Some(distance) = &results[0].semantic_distance {
+        if let Some(distance) = &results[0].semantic_similarity {
             assert!(
                 distance.raw_value < 0.01,
                 "Should have near-zero distance for exact match, got {}",

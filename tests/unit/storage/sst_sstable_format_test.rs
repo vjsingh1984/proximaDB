@@ -4,7 +4,7 @@
 use proximadb::storage::persistence::filesystem::FilesystemConfig;
 use tracing::{debug, error, info, warn};
 
-use proximadb::storage::engines::sst::{
+use proximadb::storage::engines::impls::sst::{
     SstRecord, readers::unified_sstable_reader::UnifiedSstableReader, sstable_writer::SstableWriter,
 };
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -94,10 +94,10 @@ async fn test_sstable_format_inspection() {
     // Create records with metadata for bloom filter
     let mut records = BTreeMap::new();
     for i in 0..5 {
-        let metadata = vec![proximadb::proto::proximadb::MetadataItem {
+        let metadata = vec![proximadb::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
             value: Some(
-                proximadb::proto::proximadb::metadata_item::Value::StringValue(format!(
+                proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
                     "cat_{}",
                     i % 2
                 )),

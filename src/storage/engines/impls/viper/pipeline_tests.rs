@@ -1,7 +1,8 @@
 #[cfg(test)]
 pub mod viper_pipeline_tests {
     use super::*;
-    use crate::compute::QuantizationLevel;
+    use crate::compute::quantization::types::QuantizationLevel;
+use crate::compute::quantization::types::*;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::proto::proximadb_v1::SqlValue;
     use crate::storage::engines::impls::viper::pipeline::*;
@@ -22,7 +23,9 @@ pub mod viper_pipeline_tests {
             vector,
             metadata: metadata
                 .into_iter()
-                .map(|(k, v)| (k, SqlValue::String(v)))
+                .map(|(k, v)| (k, SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
+                }))
                 .collect(),
             timestamp: now,
             updated_at: Some(now),
@@ -110,7 +113,12 @@ pub mod viper_pipeline_tests {
             batch_size: 50,
             compression: false,
             sorting_strategy: SortingStrategy::ById,
-            quantization_level: Some(QuantizationLevel::PQ8),
+            quantization_level: Some(QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 8,
+                num_subvectors: 8,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            })),
         };
 
         assert!(!config.enable_preprocessing);
@@ -215,11 +223,29 @@ pub mod viper_pipeline_tests {
     #[test]
     fn test_quantization_level_variants() {
         let levels = vec![
-            QuantizationLevel::PQ4,
-            QuantizationLevel::PQ8,
-            QuantizationLevel::INT8,
-            QuantizationLevel::Binary,
-            QuantizationLevel::NONE,
+            QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 4,
+                num_subvectors: 4,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            }),
+            QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 8,
+                num_subvectors: 8,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            }),
+            QuantizationLevel::Scalar(ScalarQuantization {
+                bits: 8,
+                scale: 1.0,
+                offset: 0.0,
+                clamp_values: true,
+            }),
+            QuantizationLevel::Binary(BinaryQuantization {
+                threshold: Some(0.0),
+                sign_based: false,
+            }),
+            QuantizationLevel::None(NoQuantization {}),
         ];
 
         for level in levels {

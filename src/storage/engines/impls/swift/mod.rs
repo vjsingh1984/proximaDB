@@ -55,6 +55,7 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::debug;
 
+use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::VectorRecord;
 

@@ -1,7 +1,6 @@
 //! Unified Query Execution - Vector + Graph + Hybrid
 //!
-//! This module provides the new execution engine that replaces sql_engine
-//! and operates on internal AST from sql_frontend lowering.
+//! This module provides the new execution engine that operates on internal AST from sql_frontend lowering.
 //!
 //! Key architectural improvement: Uses HashMap metadata filtering for O(1) lookups
 //! instead of Vec<MetadataItem> linear scans, achieving 10x performance gain.
@@ -16,7 +15,7 @@ use crate::services::operations::vectors::VectorOperationsService;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 
-/// Unified query engine that replaces sql_engine with AST-based execution
+/// Unified query engine with AST-based execution
 ///
 /// This engine consumes lowered AST from sql_frontend and routes execution
 /// to appropriate services (VOS for vector, GraphService for graph, hybrid for SKS).
@@ -103,8 +102,7 @@ impl QueryEngine {
 
     /// Execute query from internal AST (post-lowering from sql_frontend)
     ///
-    /// This is the main entry point that replaces sql_engine execution,
-    /// providing superior performance through HashMap metadata filtering.
+    /// This is the main entry point, providing superior performance through HashMap metadata filtering.
     pub async fn execute_frontend(&self, query: Query) -> Result<QueryResult> {
         // 1. Generate optimized execution plan from AST
         let plan = self.planner.create_plan(&query)?;

@@ -708,19 +708,8 @@ mod tests {
         ];
 
         for (i, vector) in vectors.iter().enumerate() {
-            let record = VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vector.clone(),
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0i64,
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                quantized_vector: vec![],
-                source: None,
-            };
             index
-                .add(format!("vec_{}", i), record)
+                .add(format!("vec_{}", i), vector.clone())
                 .await
                 .unwrap();
         }
@@ -757,19 +746,8 @@ mod tests {
         ];
 
         for (i, vector) in vectors.iter().enumerate() {
-            let record = VectorRecord {
-                id: format!("binary_{}", i),
-                vector: vector.clone(),
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0i64,
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                quantized_vector: vec![],
-                source: None,
-            };
             index
-                .add(format!("binary_{}", i), record)
+                .add(format!("binary_{}", i), vector.clone())
                 .await
                 .unwrap();
         }

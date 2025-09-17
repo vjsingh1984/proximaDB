@@ -348,6 +348,11 @@ impl EventLogManager {
             total_files_tracked: total_files_tracked,
         }
     }
+
+    /// Get statistics (alias for get_stats)
+    pub async fn stats(&self) -> QueueServiceStats {
+        self.get_stats().await
+    }
 }
 
 /// Service statistics

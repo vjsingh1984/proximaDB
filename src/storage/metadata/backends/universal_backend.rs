@@ -1902,18 +1902,16 @@ mod integration_tests {
                 dimension: 128,
                 distance_metric: 0, // Cosine
                 storage_engine: 0,  // VIPER
-                primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
+                storage_config: None,
                 primary_index: String::new(),
                 auto_index_selection: false,
                 description: Some("Test relative collection".to_string()),
                 tags: vec!["test".to_string()],
                 owner: Some("test_user".to_string()),
-                compression: None,
-                storage_location: None,
-                optimization_hints: None,
+                embedding_models: vec![],
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,

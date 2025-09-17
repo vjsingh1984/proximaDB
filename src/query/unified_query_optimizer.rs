@@ -199,7 +199,7 @@ pub enum FilterLogic {
     Not,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FilterOptimizationHints {
     pub expected_selectivity: Option<f64>,
     pub preferred_index: Option<String>,
@@ -1467,8 +1467,8 @@ mod tests {
     #[test]
     fn test_unified_optimizer_creation() {
         let optimizer = UnifiedQueryOptimizer::new(UnifiedOptimizerConfig::default());
-        assert!(optimizer.file_metadata_cache.is_none());
-        assert!(optimizer.column_metadata_cache.is_none());
+        assert!(optimizer.file_metadata_cache.is_empty());
+        assert!(optimizer.column_metadata_cache.is_empty());
     }
 
     #[test]
@@ -1500,13 +1500,10 @@ mod tests {
             ..Default::default()
         });
 
-        let filter = UnifiedMetadataFilter {
-            conditions: vec![FilterCondition::Equals {
-                column: "category".to_string(),
-                value: serde_json::json!("electronics"),
-            }],
-            logic: FilterLogic::And,
-            optimization_hints: FilterOptimizationHints::default(),
+        let filter = FilterExpression::Comparison {
+            field: "category".to_string(),
+            operator: crate::core::search::ComparisonOperator::Equals,
+            value: serde_json::json!("electronics"),
         };
 
         let context = UnifiedQueryContext {
@@ -1523,7 +1520,7 @@ mod tests {
         let plan = optimizer.optimize_query(context).await.unwrap();
 
         // Should produce a combined execution plan
-        assert!(!plan.execution_steps.is_none());
+        assert!(!plan.execution_steps.is_empty());
         assert!(matches!(
             plan.execution_steps.first(),
             Some(ExecutionStep::CombinedFilterSearch { .. })

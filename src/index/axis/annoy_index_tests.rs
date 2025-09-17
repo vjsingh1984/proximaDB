@@ -322,7 +322,7 @@ mod tests {
         // Search on empty index
         let query = vec![1.0, 0.0, 0.0, 0.0];
         let results = index.search(&query, 5, None).await.unwrap();
-        assert!(results.is_none());
+        assert!(results.is_empty());
     }
 
     #[tokio::test]

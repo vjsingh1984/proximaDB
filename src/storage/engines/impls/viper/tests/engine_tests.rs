@@ -574,13 +574,15 @@ async fn test_multi_collection_isolation() {
             .await
             .unwrap();
 
-        for result in results {
-            let id = &result.id;
-            assert!(
-                id.starts_with(collection),
-                "Vector {} in wrong collection",
-                id
-            );
+        for search_result in results {
+            for result in search_result.results {
+                let id = &result.id;
+                assert!(
+                    id.starts_with(collection),
+                    "Vector {} in wrong collection",
+                    id
+                );
+            }
         }
     }
 }
@@ -805,7 +807,7 @@ async fn test_search_vectors_unified() {
                     for (i, result) in reader_results.iter().take(3).enumerate() {
                         debug!(
                             "  Result {}: id={}, distance={:?}",
-                            i, result.id, result.semantic_distance
+                            i, result.id, result.semantic_similarity
                         );
                     }
                 }

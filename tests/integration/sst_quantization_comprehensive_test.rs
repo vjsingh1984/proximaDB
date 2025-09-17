@@ -25,14 +25,14 @@ use proximadb::compute::quantization::unified::{
 use proximadb::compute::distance_computation::engine::{
     UnifiedDistanceCompute, DistanceMetric,
 };
-use proximadb::storage::engines::sst::{
+use proximadb::storage::engines::impls::sst::{
     SstRecord, SstableWriter, DataBlock,
 };
 use proximadb::storage::persistence::filesystem::{
     FilesystemFactory, FilesystemConfig,
 };
 use proximadb::core::memory::pool::VectorMemoryPool;
-use proximadb::proto::proximadb::CompressionConfig;
+use proximadb::proto::proximadb_v1::CompressionConfig;
 
 /// Test configuration
 struct TestConfig {

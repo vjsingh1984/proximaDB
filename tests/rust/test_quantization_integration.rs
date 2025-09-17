@@ -57,14 +57,14 @@ async fn test_search_optimization_hints_parsing() -> Result<()> {
 
     // Extract values as the handlers would
     let enable_two_stage = hints_json
-        .get(key)
+        .get("enable_two_stage_search")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let candidate_multiplier = hints_json.get(key).and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let candidate_multiplier = hints_json.get("candidate_multiplier").and_then(|v| v.as_f64()).unwrap_or(1.0);
 
     let quantization_hint = hints_json
-        .get(key)
+        .get("quantization_hint")
         .and_then(|v| v.as_str())
         .unwrap_or("FP32");
 
@@ -120,14 +120,14 @@ async fn test_grpc_optimization_hints_structure() -> Result<()> {
 
     // Simulate gRPC handler processing
     let search_hints = json!({
-        "enable_two_stage_search": hints_map.get(key),
-        "candidate_multiplier": hints_map.get(key),
-        "quantization_hint": hints_map.get(key)
+        "enable_two_stage_search": hints_map.get("enable_two_stage_search"),
+        "candidate_multiplier": hints_map.get("candidate_multiplier"),
+        "quantization_hint": hints_map.get("quantization_hint")
     });
 
-    assert!(search_hints.get(key).is_some());
-    assert!(search_hints.get(key).is_some());
-    assert!(search_hints.get(key).is_some());
+    assert!(search_hints.get("enable_two_stage_search").is_some());
+    assert!(search_hints.get("candidate_multiplier").is_some());
+    assert!(search_hints.get("quantization_hint").is_some());
 
     debug!("✅ gRPC optimization hints structure test passed");
     Ok(())

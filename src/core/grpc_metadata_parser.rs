@@ -381,7 +381,7 @@ mod tests {
 
         match query {
             MetadataQuery::And(queries) => {
-                assert!(!queries.is_none());
+                assert!(!queries.is_empty());
             }
             _ => panic!("Expected AND query"),
         }

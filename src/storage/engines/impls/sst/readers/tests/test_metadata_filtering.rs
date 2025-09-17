@@ -29,8 +29,8 @@ use tracing::{debug, error, info};
 fn sql_value_matches_json(sql_value: &SqlValue, json_value: &serde_json::Value) -> bool {
     match (&sql_value.value, json_value) {
         (Some(sql_value::Value::StringValue(s)), serde_json::Value::String(json_s)) => s == json_s,
-        (Some(sql_value::Value::IntValue(i)), serde_json::Value::Number(n)) => *i == n.as_i64().unwrap_or(0),
-        (Some(sql_value::Value::FloatValue(f)), serde_json::Value::Number(n)) => (*f - n.as_f64().unwrap_or(0.0)).abs() < f64::EPSILON,
+        (Some(sql_value::Value::Int64Value(i)), serde_json::Value::Number(n)) => *i == n.as_i64().unwrap_or(0),
+        (Some(sql_value::Value::NumberValue(f)), serde_json::Value::Number(n)) => (*f - n.as_f64().unwrap_or(0.0)).abs() < f64::EPSILON,
         (Some(sql_value::Value::BoolValue(b)), serde_json::Value::Bool(json_b)) => b == json_b,
         _ => false,
     }
@@ -126,8 +126,18 @@ async fn test_metadata_filtering_basic() {
     info!("Wrote SSTable with 10 records (5 category A, 5 category B)");
 
     // Create reader and load metadata
-    let io_system = Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new());
-    let reader = UnifiedSstableReader::new(filesystem.clone(), io_system, "test_collection".to_string());
+    let zero_copy_config = crate::storage::engines::core::io::zero_copy::ZeroCopyIOConfig::default();
+    let serializers: Vec<Box<dyn crate::storage::engines::core::io::zero_copy::traits::MetadataSerializer>> = vec![];
+    let io_system = Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+        zero_copy_config,
+        filesystem.clone(),
+        serializers,
+    ));
+    let reader = UnifiedSstableReader::new(
+        filesystem.clone(),
+        io_system,
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.unwrap();
 
@@ -343,8 +353,18 @@ async fn test_metadata_bloom_filter_optimization() {
     info!("Wrote SSTable with metadata bloom filters");
 
     // Create reader
-    let io_system = Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new());
-    let reader = UnifiedSstableReader::new(filesystem.clone(), io_system, "test_collection".to_string());
+    let zero_copy_config = crate::storage::engines::core::io::zero_copy::ZeroCopyIOConfig::default();
+    let serializers: Vec<Box<dyn crate::storage::engines::core::io::zero_copy::traits::MetadataSerializer>> = vec![];
+    let io_system = Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
+        zero_copy_config,
+        filesystem.clone(),
+        serializers,
+    ));
+    let reader = UnifiedSstableReader::new(
+        filesystem.clone(),
+        io_system,
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.unwrap();
 

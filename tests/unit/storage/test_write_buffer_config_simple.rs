@@ -461,11 +461,11 @@ mod wal_config_tests {
         // Verify overrides are preserved
         assert_eq!(config.collection_overrides.len(), 2);
         
-        let large_config = config.collection_overrides.get(key).unwrap();
+        let large_config = config.collection_overrides.get("enable_two_stage_search").unwrap();
         assert_eq!(large_config.memory_flush_size_bytes, Some(100 * 1024 * 1024));
         assert_eq!(large_config.default_ttl_days, Some(90));
         
-        let small_config = config.collection_overrides.get(key).unwrap();
+        let small_config = config.collection_overrides.get("enable_two_stage_search").unwrap();
         assert_eq!(small_config.memory_flush_size_bytes, Some(1024 * 1024));
         assert_eq!(small_config.default_ttl_days, Some(7));
         

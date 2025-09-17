@@ -623,8 +623,8 @@ mod tests {
         let engine = PulsarGraphEngine::new(config).unwrap();
 
         // Test nodes go to different shards
-        let node1_shard = engine.get_shard_for_node("node1").await.unwrap();
-        let node2_shard = engine.get_shard_for_node("node2").await.unwrap();
+        let node1_shard = engine.get_shard_for_node(&"node1".to_string()).await.unwrap();
+        let node2_shard = engine.get_shard_for_node(&"node2".to_string()).await.unwrap();
 
         // Shards should be within expected range
         assert!(node1_shard < 4);
@@ -641,8 +641,8 @@ mod tests {
             labels: vec!["TestLabel".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Insert node
@@ -653,7 +653,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Get node
-        let retrieved = engine.get_node("test_node").unwrap().unwrap();
+        let retrieved = engine.get_node(&"test_node".to_string()).unwrap().unwrap();
         assert_eq!(retrieved.id, "test_node");
 
         // Verify stats updated

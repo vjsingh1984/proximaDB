@@ -9,8 +9,9 @@
 use anyhow::Result;
 use proximadb::compute::{
     DistanceMetric, UnifiedDistanceCompute, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
+    InMemoryCodebookStore,
 };
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     BinaryQuantization, NoQuantization, ProductQuantization, ScalarQuantization,
     UniformQuantization, quantization_level::LevelType,
     quantization_level::LevelType as QuantizationLevelType,
@@ -160,7 +161,7 @@ mod distance_computation_coverage {
 #[cfg(test)]
 mod unified_quantization_coverage {
     use super::*;
-    use proximadb::compute::InMemoryCodebookStore;
+    // InMemoryCodebookStore already imported at top level
 
     fn create_test_engine() -> UnifiedQuantizationEngine {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
@@ -557,7 +558,7 @@ mod unified_quantization_coverage {
 #[tokio::test]
 async fn test_unified_modules_integration() -> Result<()> {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    use proximadb::compute::InMemoryCodebookStore;
+    // InMemoryCodebookStore already imported at top level
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let codebook_store = Arc::new(InMemoryCodebookStore::new());

@@ -1104,86 +1104,7 @@ impl UnifiedHandlers {
         }))
     }
 
-    /// Execute SQL query with vector similarity support
-    ///
-    /// Supports queries like:
-    /// ```sql
-    /// SELECT id, metadata, distance
-    /// FROM my_collection
-    /// WHERE metadata.category = 'electronics'
-    /// ORDER BY VECTOR_SIMILARITY(vector, [0.1, 0.2, ...], 'cosine')
-    /// LIMIT 10
-    /// ```
-    pub async fn execute_sql_query(
-        &self,
-        query: String,
-        parameters: Option<Vec<serde_json::Value>>,
-        collection: Option<String>,
-    ) -> Result<SqlQueryResult> {
-        use crate::query::sql_engine::SqlEngine;
-
-        info!("Executing SQL query: {}", query);
-
-        // Support parameterized queries by replacing placeholders
-        let processed_query = if let Some(params) = parameters {
-            self.apply_query_parameters(query, params)?
-        } else {
-            query
-        };
-
-        // Handle collection hint by prepending USE statement
-        let final_query = if let Some(coll) = collection {
-            debug!("Applying collection hint: {}", coll);
-            // Prepend USE statement to set default collection context
-            format!("USE {}; {}", coll, processed_query)
-        } else {
-            processed_query
-        };
-
-        // Create SQL engine instance with collection service for name resolution
-        let sql_engine = SqlEngine::with_collection_service(
-            self.vector_operations_service.clone(),
-            self.collection_service.clone(),
-        );
-
-        // Execute the query
-        let result = sql_engine
-            .execute(&final_query)
-            .await
-            .map_err(|e| anyhow!("SQL execution failed: {}", e))?;
-
-        // Convert SqlExecutionResult to our format
-        let rows: Vec<serde_json::Value> = result
-            .rows
-            .into_iter()
-            .map(|row| {
-                serde_json::Value::Object(row.data.into_iter().map(|(k, v)| (k, v)).collect())
-            })
-            .collect();
-
-        // Extract column information with type inference
-        let columns = if let Some(first_row) = rows.first() {
-            if let serde_json::Value::Object(map) = first_row {
-                map.iter()
-                    .map(|(key, value)| {
-                        let type_name = self.infer_json_type(value);
-                        (key.clone(), type_name)
-                    })
-                    .collect()
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        };
-
-        Ok(SqlQueryResult {
-            rows,
-            columns,
-            row_count: result.stats.rows_returned,
-            execution_time_ms: result.stats.execution_time_ms,
-        })
-    }
+    
 
     /// Execute SQL and return v1 ExecuteSqlResponse directly (typed rows and params)
     pub async fn execute_sql_v1(
@@ -1192,81 +1113,40 @@ impl UnifiedHandlers {
         parameters: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         collection: Option<String>,
     ) -> Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
-        #[cfg(feature = "sql_frontend")]
-        {
-            // Use the new sql_frontend path by default
-            // Do not perform string substitution; pass params along for the frontend to bind
-            let result = self
-                .execute_sql_frontend(query.clone(), parameters.clone(), collection.clone())
-                .await?;
+        // Use the new sql_frontend path by default
+        // Do not perform string substitution; pass params along for the frontend to bind
+        let result = self
+            .execute_sql_frontend(query.clone(), parameters.clone(), collection.clone())
+            .await?;
 
-            // Convert SqlQueryResult (JSON rows) to v1 ExecuteSqlResponse (typed rows)
-            use crate::proto::proximadb_v1::{SqlRow, SqlRowField};
-            let mut rows: Vec<SqlRow> = Vec::new();
-            for row in result.rows {
-                let mut fields_vec: Vec<SqlRowField> = Vec::new();
-                if let serde_json::Value::Object(map) = row {
-                    for (k, v) in map {
-                        let sv = Self::json_to_sql_value(&v);
-                        fields_vec.push(SqlRowField {
-                            key: k,
-                            value: Some(sv),
-                        });
-                    }
+        // Convert SqlQueryResult (JSON rows) to v1 ExecuteSqlResponse (typed rows)
+        use crate::proto::proximadb_v1::{SqlRow, SqlRowField};
+        let mut rows: Vec<SqlRow> = Vec::new();
+        for row in result.rows {
+            let mut fields_vec: Vec<SqlRowField> = Vec::new();
+            if let serde_json::Value::Object(map) = row {
+                for (k, v) in map {
+                    let sv = Self::json_to_sql_value(&v);
+                    fields_vec.push(SqlRowField {
+                        key: k,
+                        value: Some(sv),
+                    });
                 }
-                rows.push(SqlRow {
-                    fields: fields_vec,
-                    similarity: None,
-                });
             }
-
-            Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
-                rows,
-                rows_scanned: 0,
-                rows_returned: result.row_count as u64,
-                execution_time_ms: result.execution_time_ms as u64,
-                columns: result.columns.iter().map(|c| c.0.clone()).collect(),
-                column_types: result.columns.iter().map(|c| c.1.clone()).collect(),
-            })
+            rows.push(SqlRow {
+                fields: fields_vec,
+                similarity: None,
+            });
         }
 
-        #[cfg(not(feature = "sql_frontend"))]
-        {
-            // Fallback to legacy sql_engine path
-            use crate::query::sql_engine::SqlEngine;
-            let sql_engine = SqlEngine::with_collection_service(
-                self.vector_operations_service.clone(),
-                self.collection_service.clone(),
-            );
-
-            // Apply parameters if provided
-            let processed_query = if let Some(params) = parameters.as_ref() {
-                Self::apply_query_parameters_sqlvalue(query, params)?
-            } else {
-                query
-            };
-
-            // Apply collection hint
-            let final_query = if let Some(coll) = collection.clone() {
-                format!("USE {}; {}", coll, processed_query)
-            } else {
-                processed_query
-            };
-
-            let engine_result = sql_engine.execute(&final_query).await?;
-
-            // Directly use typed rows from engine
-            let rows_proto = engine_result.rows_v1;
-
-            Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
-                rows: rows_proto,
-                rows_scanned: engine_result.stats.rows_scanned as u64,
-                rows_returned: engine_result.stats.rows_returned as u64,
-                execution_time_ms: engine_result.stats.execution_time_ms,
-                columns: Vec::new(),
-                column_types: Vec::new(),
-            })
-        }
+        Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+            rows,
+            rows_scanned: 0,
+            rows_returned: result.row_count as u64,
+            execution_time_ms: result.execution_time_ms as u64,
+            columns: result.columns.iter().map(|c| c.0.clone()).collect(),
+            column_types: result.columns.iter().map(|c| c.1.clone()).collect(),
+        })
     }
 
     /// Apply parameters to a parameterized query
@@ -1414,51 +1294,7 @@ impl UnifiedHandlers {
         }
     }
 
-    fn apply_query_parameters_sqlvalue(
-        query: String,
-        parameters: &Vec<crate::proto::proximadb_v1::SqlValue>,
-    ) -> Result<String> {
-        use crate::proto::proximadb_v1::sql_value::Value as V;
-        let mut result = query;
-        for (i, p) in parameters.iter().enumerate() {
-            let placeholder = format!("${}", i + 1);
-            let lit = match p.value.as_ref() {
-                Some(V::StringValue(s)) => format!("'{}'", s.replace("'", "''")),
-                Some(V::NumberValue(n)) => n.to_string(),
-                Some(V::BoolValue(b)) => {
-                    if *b {
-                        "true".to_string()
-                    } else {
-                        "false".to_string()
-                    }
-                }
-                Some(V::Int64Value(x)) => x.to_string(),
-                Some(V::NullValue(_)) => "NULL".to_string(),
-                Some(V::BytesValue(b)) => {
-                    // hex encode as X'..'
-                    let hex = b.iter().map(|x| format!("{:02x}", x)).collect::<String>();
-                    format!("X'{}'", hex)
-                }
-                Some(V::ArrayValue(arr)) => {
-                    let json = serde_json::Value::Array(
-                        arr.values.iter().map(Self::sql_value_to_json).collect(),
-                    );
-                    format!("'{}'", json.to_string().replace("'", "''"))
-                }
-                Some(V::ObjectValue(obj)) => {
-                    let mut map = serde_json::Map::new();
-                    for (k, sv) in &obj.fields {
-                        map.insert(k.clone(), Self::sql_value_to_json(sv));
-                    }
-                    let json = serde_json::Value::Object(map);
-                    format!("'{}'", json.to_string().replace("'", "''"))
-                }
-                None => "NULL".to_string(),
-            };
-            result = result.replace(&placeholder, &lit);
-        }
-        Ok(result)
-    }
+    
 
     /// Execute SQL using sql_frontend (new authoritative path with HashMap optimization)
     ///
@@ -1494,7 +1330,11 @@ impl UnifiedHandlers {
             .await
             .map_err(|e| anyhow::anyhow!("SQL lowering failed: {}", e))?;
 
-        // 3. Create unified query engine with vector and graph services
+        // 3. Analyze the query semantically
+        let analyzer = crate::query::semantic_analysis::analyzer::Analyzer::new(self.collection_service.clone());
+        analyzer.analyze(&query_ast).await.map_err(|e| anyhow!("Semantic analysis failed: {}", e))?;
+
+        // 4. Create unified query engine with vector and graph services
         let graph_service = Arc::new(crate::graph::service::GraphService::new());
         // Resolve runtime hybrid config overrides (seeding + weights)
         let runtime = self.hybrid_runtime.read().ok().and_then(|g| g.clone());
@@ -1508,13 +1348,13 @@ impl UnifiedHandlers {
             fusion_weights,
         );
 
-        // 4. Execute query with new engine (uses HashMap metadata optimization)
+        // 5. Execute query with new engine (uses HashMap metadata optimization)
         let query_result = query_engine
             .execute_frontend(query_ast)
             .await
             .map_err(|e| anyhow::anyhow!("Query execution failed: {}", e))?;
 
-        // 5. Convert QueryResult to SqlQueryResult format (preserve API compatibility)
+        // 6. Convert QueryResult to SqlQueryResult format (preserve API compatibility)
         let execution_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
         let rows: Vec<serde_json::Value> = query_result

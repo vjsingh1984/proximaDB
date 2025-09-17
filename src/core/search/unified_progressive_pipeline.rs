@@ -889,13 +889,36 @@ mod tests {
 
         let quantization_config = QuantizationConfig {
             enabled: true,
-            levels: vec![
-                UnifiedQuantizationLevel::Binary,
-                UnifiedQuantizationLevel::Int8,
-                UnifiedQuantizationLevel::Fp32,
+            strategy: crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults as i32,
+            custom_levels: vec![
+                crate::proto::proximadb_v1::QuantizationLevel {
+                    level_id: "binary".to_string(),
+                    r#type: crate::proto::proximadb_v1::quantization_level::QuantizationType::Binary as i32,
+                    bits: 1,
+                    threshold: 0.0,
+                    sign_based: true,
+                    ..Default::default()
+                },
             ],
-            strategy: None,
-            quality_threshold: None,
+            enable_progressive_search: true,
+            binary_filter_selectivity: 0.1,
+            int8_ranking_selectivity: 0.1,
+            pq_ranking_selectivity: 0.05,
+            training_sample_size: 10000,
+            quality_threshold: 0.8,
+            enable_adaptive_training: true,
+            optimize_for_storage: false,
+            optimize_for_memory: false,
+            enable_simd_acceleration: true,
+            enable_binary: true,
+            enable_int8: true,
+            enable_pq: true,
+            pq_segments: 8,
+            pq_bits: 8,
+            pq_codebooks: 0,
+            binary_threshold: 0.5,
+            int8_threshold: 0.3,
+            pq_threshold: 0.1,
         };
 
         let stages = pipeline.determine_stages(&quantization_config);

@@ -57,7 +57,7 @@ async fn test_global_partitioned_batch_operations() {
     assert_eq!(sequences[1], 2);
 
     // Test collection statistics
-    let (vector_count, size) = memtable.collection_stats(collection_id).await;
+    let (vector_count, size) = memtable.get_collection_stats(collection_id).await;
     assert_eq!(vector_count, 2);
     assert!(size > 0);
 
@@ -126,8 +126,8 @@ async fn test_global_partitioned_multi_collection() {
     let _seq_b = memtable.add_wal_batch(collection_b, batch_b).await.unwrap();
 
     // Verify isolation between collections
-    let (count_a, _) = memtable.collection_stats(collection_a).await;
-    let (count_b, _) = memtable.collection_stats(collection_b).await;
+    let (count_a, _) = memtable.get_collection_stats(collection_a).await;
+    let (count_b, _) = memtable.get_collection_stats(collection_b).await;
     assert_eq!(count_a, 1);
     assert_eq!(count_b, 1);
 
@@ -367,7 +367,7 @@ async fn test_global_partitioned_clear_operations() {
     assert_eq!(cleared, 3); // Should clear all 3 vectors from the flushed batch
 
     // Verify collection is now empty
-    let (count, _) = memtable.collection_stats("test_collection").await;
+    let (count, _) = memtable.get_collection_stats("test_collection").await;
     assert_eq!(count, 0);
 }
 

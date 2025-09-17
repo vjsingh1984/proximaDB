@@ -662,8 +662,8 @@ mod tests {
                     vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
                     metadata: {
                         let mut metadata = std::collections::HashMap::new();
-                        metadata.insert("test_key".to_string(), proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string()))
+                        metadata.insert("test_key".to_string(), crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string()))
                         });
                         metadata
                     },

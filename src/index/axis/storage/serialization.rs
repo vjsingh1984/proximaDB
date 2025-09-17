@@ -169,7 +169,7 @@ impl IndexSerializer {
 
         // Create metadata
         let metadata = IndexMetadata {
-            index_type: Index::Hnsw,
+            index_type: crate::index::axis::storage::serialization::Index::Hnsw,
             collection_id: collection_id.to_string(),
             num_vectors: index.len(),
             dimension: index.dimension(),
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn test_metadata_serialization() {
         let metadata = IndexMetadata {
-            index_type: Index::Hnsw,
+            index_type: crate::index::axis::storage::serialization::Index::Hnsw,
             collection_id: "test_collection".to_string(),
             num_vectors: 1000,
             dimension: 128,
@@ -688,7 +688,7 @@ mod tests {
             timestamp: 1234567890,
             index_data: vec![1, 2, 3, 4, 5],
             metadata: IndexMetadata {
-                index_type: Index::Hnsw,
+                index_type: crate::index::axis::storage::serialization::Index::Hnsw,
                 collection_id: "test".to_string(),
                 num_vectors: 100,
                 dimension: 128,

@@ -9,11 +9,11 @@ use tempfile::TempDir;
 use tracing::{debug, error, info, warn};
 
 use proximadb::compute::distance_computation::DistanceMetric;
-use proximadb::core::search::SearchResult;
-use proximadb::proto::proximadb::{MetadataItem, VectorRecord};
+use proximadb::proto::proximadb_v1::SearchResult;
+use proximadb::proto::proximadb_v1::{MetadataItem, VectorRecord};
 use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
-use proximadb::storage::engines::viper::ViperEngine;
+use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 

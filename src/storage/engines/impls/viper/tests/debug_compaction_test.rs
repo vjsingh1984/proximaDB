@@ -224,7 +224,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     let flush_result = engine.do_flush(&flush_params).await?;
     info!(
         "✅ Flush complete: {} files created, {} entries flushed",
-        flush_result.files_created, flush_result.entries_flushed
+        flush_result.files_created.unwrap_or(0), flush_result.entries_flushed.unwrap_or(0)
     );
 
     // Step 2: List and inspect flushed files
@@ -270,14 +270,14 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
-
         collection_config: Some(create_test_collection(collection_id, base_path)),
+        estimated_input_size: 10240, // Estimated size for the data being compacted
     };
 
     let compact_result = engine.do_compact(&compact_params).await?;
     info!(
         "✅ Compaction complete: {} input files, {} output files, {} entries processed",
-        compact_result.input_files, compact_result.output_files, compact_result.entries_processed
+        compact_result.input_files.unwrap_or(0), compact_result.output_files.unwrap_or(0), compact_result.entries_processed.unwrap_or(0)
     );
 
     // Step 5: List files after compaction
@@ -310,8 +310,10 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         .await?;
 
     debug!("🔍 Search returned {} results", search_results.len());
-    for (i, result) in search_results.iter().enumerate() {
-        debug!("  [{}] ID: {}, Score: {:?}", i, result.id, result.score);
+    for (i, search_result) in search_results.iter().enumerate() {
+        for result in &search_result.results {
+            debug!("  [{}] ID: {}, Score: {:?}", i, result.id, result.score);
+        }
     }
 
     Ok(())

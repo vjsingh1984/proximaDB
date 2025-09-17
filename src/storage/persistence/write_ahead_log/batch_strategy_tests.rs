@@ -819,7 +819,7 @@ mod write_ahead_log_batch_strategy_tests {
         match result {
             Ok(results) => {
                 // Mock returns empty results
-                assert!(results.is_none());
+                assert!(results.is_empty());
             }
             Err(e) => {
                 // Expected since mock doesn't provide full write buffer behavior

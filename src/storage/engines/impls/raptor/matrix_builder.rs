@@ -485,8 +485,8 @@ mod tests {
     fn test_p2_matrix_building() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = crate::core::hardware_capabilities::HardwareCapabilities::detect();
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
         let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Cosine);
 
@@ -498,7 +498,7 @@ mod tests {
 
         let matrix = builder.build_p2_matrix(&vectors, 3).unwrap();
         assert_eq!(matrix.num_vectors, 3);
-        assert!(!matrix.distances.is_none());
+        assert!(!matrix.distances.is_empty());
         assert!(matrix.compressed_size > 0);
     }
 
@@ -506,8 +506,8 @@ mod tests {
     fn test_k2_matrix_building() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = crate::core::hardware_capabilities::HardwareCapabilities::detect();
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
         let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Euclidean);
 
@@ -515,7 +515,7 @@ mod tests {
 
         let matrix = builder.build_k2_matrix(&centroids, 2).unwrap();
         assert_eq!(matrix.num_centroids, 3);
-        assert!(!matrix.compressed_data.is_none());
+        assert!(!matrix.compressed_data.is_empty());
         assert_eq!(matrix.lookup_table.len(), 3);
     }
 

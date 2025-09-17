@@ -73,28 +73,29 @@ impl super::VectorBatchSerializer for ProtocolBuffersSerializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::MetadataItem;
     use crate::storage::persistence::write_ahead_log::serialization::VectorBatchSerializer;
 
     fn create_test_vector() -> VectorRecord {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert(
+            "category".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "test".to_string(),
+                )),
+            },
+        );
+
         VectorRecord {
-            id: Some("test_vector_1".to_string()),
+            id: "test_vector_1".to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "test".to_string(),
-                    ),
-                ),
-            }],
+            metadata,
             timestamp: 1234567890,
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -107,7 +108,7 @@ mod tests {
         let serialized = serializer
             .serialize_batch(&vectors)
             .expect("Failed to serialize batch");
-        assert!(!serialized.is_none());
+        assert!(!serialized.is_empty());
 
         // Deserialize
         let deserialized = serializer
@@ -130,7 +131,7 @@ mod tests {
             .deserialize_batch(&serialized)
             .expect("Failed to deserialize empty batch");
 
-        assert!(deserialized.is_none());
+        assert!(deserialized.is_empty());
     }
 
     #[test]

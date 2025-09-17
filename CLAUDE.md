@@ -194,8 +194,9 @@ make release
 make clean
 cargo clean
 
-# Check for compilation errors specifically
+# Check for compilation errors
 cargo build 2>&1 | tee current_error.log
+cargo check --all-targets  # Faster compilation check without generating binaries
 ```
 
 ### Available Binaries
@@ -219,9 +220,6 @@ cargo test --test integration --verbose
 make test-python
 cd clients/python && pytest tests/ -v
 
-# Python integration tests (from tests/python directory)
-cd tests/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=/workspace/clients/python/src python3 -m pytest -v
-
 # Performance tests with server
 make perf-test
 
@@ -230,13 +228,20 @@ make integration-full
 
 # Run specific test category
 cargo test --test integration storage::
+cargo test --lib compute::quantization  # Test specific module
 
 # Single test with debug output
 RUST_LOG=debug cargo test test_name -- --nocapture
+cargo test test_name -- --exact --nocapture  # Exact test name matching
 
-# Check current compilation status
-cargo build 2>&1 | tee current_error.log
-cat current_error.log | head -20  # Review recent errors
+# Test with specific features
+cargo test --features "aws azure gcp"
+
+# Run ignored/slow tests
+cargo test -- --ignored
+
+# Test coverage (requires cargo-tarpaulin)
+cargo tarpaulin --out Html --fail-under 50
 ```
 
 ### Running the Server
@@ -266,10 +271,12 @@ docker run -d -p 5678:5678 -p 5679:5679 -v proximadb_data:/data proximadb/proxim
 # Format code
 make fmt
 cargo fmt
+cargo fmt -- --check  # Check formatting without modifying files
 
 # Lint with clippy
 make clippy
 cargo clippy -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings  # Complete linting
 
 # Full quality check (format + lint + test)
 make check
@@ -281,8 +288,10 @@ cargo bench
 # Specific benchmarks
 make benchmark-vector
 make benchmark-metadata
-cargo bench --bench vector_operations
-cargo bench --bench metadata_lifecycle
+cargo bench --bench simd_distance_bench
+cargo bench --bench flush_optimization_bench
+cargo bench --bench engine_comparison_bench
+cargo bench -- --warm-up-time 1 --measurement-time 5  # Custom timing
 
 # Run benchmark binary
 cargo run --bin proximadb-bench
@@ -290,6 +299,7 @@ cargo run --bin proximadb-bench
 # Generate documentation
 make docs
 cargo doc --open
+cargo doc --no-deps --document-private-items  # Include private items
 
 # Development build and test cycle
 make dev
@@ -389,7 +399,7 @@ Key configuration sections:
 
 ### Feature Flags
 Important Cargo feature flags (use with `--features`):
-- `sql_frontend` (default): Modern SQL frontend vs legacy sql_engine
+- `sql_frontend` (default): Modern SQL frontend.
 - `cloud-full`: Enable all cloud storage backends (AWS + Azure + GCP)
 - `aws`, `azure`, `gcp`: Individual cloud storage backends
 - `rocksdb`: RocksDB metadata backend support
@@ -444,10 +454,18 @@ All engines implement the `UnifiedStorageEngine` trait with:
    - `struct import 'AxisConfig' is private`: Use public interfaces from index::axis modules
    - `this function takes 1 argument but 0 arguments were supplied`: Check UnifiedDistanceCompute requires DistanceMetric parameter
    - Lifetime errors: Review async/await usage and reference management
+   - `cannot find type X in this scope`: Check module imports and feature flags
+   - `trait bound not satisfied`: Verify trait implementations and generic constraints
 3. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, SST, SWIFT, RAPTOR, PRISM, HELIX)
 4. **Quantization Issues**: All engines should use `compute::quantization::unified`
 5. **Filesystem Issues**: All engines should use `IntelligentFilesystem`
 6. **Proto Types**: Use internal types, proto conversion only at service boundaries
+7. **Quick Error Resolution**:
+   ```bash
+   cargo check --all-targets 2>&1 | head -20  # Quick check first errors
+   cargo build --message-format=short  # Concise error output
+   cargo fix --allow-dirty  # Auto-fix some common issues
+   ```
 
 ### Documentation Requirements
 1. **AsciiDoc Only**: All documentation must be written in AsciiDoc format (`.adoc` files)
@@ -491,13 +509,31 @@ All engines implement the `UnifiedStorageEngine` trait with:
 - `src/compute/quantization/unified.rs`: Unified quantization engine
 - `src/storage/persistence/filesystem/intelligent_filesystem.rs`: Unified filesystem
 
-### Health Checks
+### Health Checks and API Testing
 ```bash
 # REST API health check
 curl http://localhost:5678/health
 
 # gRPC health check (requires grpc-health-probe)
 grpc-health-probe -addr=localhost:5679
+
+# Create collection via REST
+curl -X POST http://localhost:5678/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{"name": "test_collection", "dimension": 1536}'
+
+# Insert vectors via REST
+curl -X POST http://localhost:5678/v1/collections/test_collection/vectors \
+  -H "Content-Type: application/json" \
+  -d '{"vectors": [{"id": "1", "values": [0.1, 0.2, ...], "metadata": {"key": "value"}}]}'
+
+# Search vectors
+curl -X POST http://localhost:5678/v1/collections/test_collection/search \
+  -H "Content-Type: application/json" \
+  -d '{"query_vector": [0.1, 0.2, ...], "top_k": 10}'
+
+# View dashboard
+open http://localhost:5678/dashboard
 ```
 
 ### Performance Optimization
@@ -553,21 +589,59 @@ Supports automatic protocol selection (REST/gRPC) with:
 ## Troubleshooting
 
 ### Common Issues
-1. **Port conflicts**: Check `lsof -i :5678` and kill conflicting processes
-2. **Permission issues**: `sudo chown -R $USER:$USER ./data`
-3. **ARM64 build issues**: Use `cargo build --no-default-features`
+1. **Port conflicts**:
+   ```bash
+   lsof -i :5678  # Check what's using the port
+   kill -9 $(lsof -t -i :5678)  # Kill process using port
+   ```
+2. **Permission issues**:
+   ```bash
+   sudo chown -R $USER:$USER ./data
+   chmod -R 755 ./data  # Fix permissions
+   ```
+3. **ARM64 build issues**:
+   ```bash
+   cargo build --no-default-features
+   cargo build --target aarch64-apple-darwin  # Explicit ARM64 target on macOS
+   ```
 4. **Quantization errors**: Ensure all engines use unified quantization module
 5. **Filesystem errors**: Ensure all engines use IntelligentFilesystem
 6. **Compilation tracking**: Use `current_error.log` to track ongoing compilation issues
+7. **Dependency issues**:
+   ```bash
+   cargo update  # Update dependencies
+   cargo clean && cargo build  # Clean rebuild
+   rm -rf ~/.cargo/registry/cache  # Clear cargo cache if corrupted
+   ```
+8. **Test failures**:
+   ```bash
+   cargo test -- --test-threads=1  # Run tests sequentially to avoid race conditions
+   rm -rf /tmp/proximadb  # Clean test data
+   ```
 
 ### Debugging Commands
 ```bash
 # Debug logging for specific module
 RUST_LOG=proximadb::storage=trace cargo run --bin proximadb-server
+RUST_LOG=proximadb::compute::quantization=debug cargo run --bin proximadb-server
+RUST_LOG=debug,hyper=info,tower_http=info cargo run --bin proximadb-server  # Debug with less HTTP noise
+
+# Backtrace on panic
+RUST_BACKTRACE=1 cargo run --bin proximadb-server
+RUST_BACKTRACE=full cargo run --bin proximadb-server  # Full backtrace
 
 # Memory profiling
 valgrind --tool=massif cargo run --bin proximadb-server
+valgrind --leak-check=full cargo run --bin proximadb-server  # Memory leak detection
 
 # Performance profiling (Linux)
 perf record --call-graph=dwarf cargo run --release --bin proximadb-server
+perf report  # View profiling results
+
+# macOS profiling with Instruments
+cargo build --release
+instruments -t "Time Profiler" target/release/proximadb-server
+
+# Thread debugging
+RUST_LOG=tokio=trace cargo run --bin proximadb-server  # Async runtime debugging
 ```

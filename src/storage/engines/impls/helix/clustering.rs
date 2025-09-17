@@ -314,16 +314,24 @@ mod tests {
             VectorRecord {
                 id: "1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
+                updated_at: None,
                 expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
                 id: "2".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
+                updated_at: None,
                 expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
         ];
 

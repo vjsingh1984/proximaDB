@@ -443,7 +443,7 @@ mod tests {
     fn test_merge_record_ordering() {
         let record1 = MergeRecord {
             record: VectorRecord {
-                id: Some("key1".to_string()),
+                id: "key1".to_string(),
                 version: Some(1),
                 ..Default::default()
             },
@@ -453,7 +453,7 @@ mod tests {
 
         let record2 = MergeRecord {
             record: VectorRecord {
-                id: Some("key1".to_string()),
+                id: "key1".to_string(),
                 version: Some(2),
                 ..Default::default()
             },

@@ -3,8 +3,8 @@
 
 use anyhow::Result;
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
-use proximadb::proto::proximadb::MetadataItem;
-use proximadb::storage::engines::sst::{DataBlock, DataBlockCompressionConfig, SstRecord};
+use proximadb::proto::proximadb_v1::MetadataItem;
+use proximadb::storage::engines::impls::sst::{DataBlock, DataBlockCompressionConfig, SstRecord};
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
@@ -35,14 +35,14 @@ fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstRecord {
             MetadataItem {
                 key: "category".to_string(),
                 value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                    proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                         "test".to_string(),
                     ),
                 ),
             },
             MetadataItem {
                 key: "score".to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::NumberValue(0.85)),
+                value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(0.85)),
             },
         ],
         timestamp: 1234567890,

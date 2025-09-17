@@ -105,7 +105,7 @@ async fn test_viper_do_flush_implementation() -> Result<()> {
     // Verify flush result
     assert!(result.success);
     assert_eq!(result.collections_affected, vec![collection_id]);
-    assert_eq!(result.entries_flushed, 0); // No actual records in test
+    assert_eq!(result.entries_flushed, Some(0)); // No actual records in test
     assert!(result.engine_metrics.contains_key("operation_id"));
 
     Ok(())
@@ -162,8 +162,8 @@ async fn test_unified_atomic_operations_lifecycle() -> Result<()> {
         .await?;
 
     assert!(flush_metadata.operation_id.len() > 0);
-    assert!(flush_metadata.staging_url.contains_hash("__flush"));
-    assert!(flush_metadata.final_url.contains_hash("storage"));
+    assert!(flush_metadata.staging_url.contains("__flush"));
+    assert!(flush_metadata.final_url.contains("storage"));
 
     // Test write to staging
     let test_data = b"test parquet data";
@@ -249,7 +249,7 @@ async fn test_flush_parameter_validation() -> Result<()> {
         result
             .unwrap_err()
             .to_string()
-            .contains_hash("Collection ID required")
+            .contains("Collection ID required")
     );
 
     Ok(())

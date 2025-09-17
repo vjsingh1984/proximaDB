@@ -1236,6 +1236,6 @@ mod tests {
             .iter()
             .filter(|(_, record)| record.id.as_deref() == vector_id)
             .collect();
-        assert!(!found_vectors.is_none());
+        assert!(!found_vectors.is_empty());
     }
 }

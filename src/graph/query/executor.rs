@@ -137,8 +137,8 @@ mod tests {
             labels: vec!["TestLabel".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
         graph_service.create_node(node).unwrap();
 
@@ -159,7 +159,7 @@ mod tests {
             created_at: SystemTime::now(),
         };
 
-        let context = QueryContext {}; // Dummy context
+        let context = QueryContext::new(); // Dummy context
         let results = executor.execute(&plan, &context).await.unwrap();
 
         assert_eq!(results.len(), 1);
@@ -190,7 +190,7 @@ mod tests {
             created_at: SystemTime::now(),
         };
 
-        let context = QueryContext {}; // Dummy context
+        let context = QueryContext::new(); // Dummy context
         let result = executor.execute(&plan, &context).await;
         assert!(result.is_err());
         assert!(

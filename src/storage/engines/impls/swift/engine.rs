@@ -1029,7 +1029,7 @@ mod tests {
         // Need to create distance engine and axis manager for new()
         let distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::core::hardware_capabilities::get_hardware_capabilities(),
+                crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
         );
         let engine = SwiftEngine::new(distance_engine, None).await.unwrap();
@@ -1043,7 +1043,7 @@ mod tests {
         // Need to create distance engine and axis manager for new()
         let distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::core::hardware_capabilities::get_hardware_capabilities(),
+                crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
         );
         let engine = SwiftEngine::new(distance_engine, None).await.unwrap();

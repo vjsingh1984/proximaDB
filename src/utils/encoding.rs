@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_base64_padding_variants() {
-        let test_cases = [
+        let test_cases: Vec<(&[u8], &str, &str)> = vec![
             (b"f", "Zg==", "Zg"),
             (b"fo", "Zm8=", "Zm8"),
             (b"foo", "Zm9v", "Zm9v"), // No padding needed

@@ -59,7 +59,7 @@ mod tests {
         }
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-            let collection_id = params.collection_id.as_ref().clone();
+            let collection_id = params.collection_id.as_ref().unwrap().clone();
 
             // Track that flush was called
             self.flush_calls.lock().await.push(collection_id.clone());
@@ -79,7 +79,7 @@ mod tests {
         }
 
         async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-            let collection_id = params.collection_id.as_ref().clone();
+            let collection_id = params.collection_id.as_ref().unwrap().clone();
 
             // Track that compaction was called
             self.compaction_calls
@@ -166,7 +166,7 @@ mod tests {
                 vector: vec![0.1; 384],
                 metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at_ms: 0,
+                updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
                 ..Default::default()

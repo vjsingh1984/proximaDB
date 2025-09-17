@@ -115,7 +115,7 @@ mod tests {
         );
 
         // Create required services for VectorOperationsService
-        let axis_manager = Arc::new(crate::index::AxisManager::new(crate::index::axis::types::AxisConfig::default()));
+        let axis_manager = Arc::new(crate::index::axis::management::manager::AxisManager::new(crate::index::axis::types::AxisConfig::default()).await.unwrap());
         let metadata_backend = Arc::new(
             crate::storage::metadata::MetadataStore::new(crate::storage::metadata::MetadataStoreConfig::default()).await.unwrap()
         ) as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
@@ -197,9 +197,9 @@ mod tests {
         assert_eq!(record.metadata.len(), 3);
 
         // Check metadata structure
-        for meta in &record.metadata {
-            assert!(!meta.key.is_empty());
-            assert!(meta.value.is_some());
+        for (key, value) in &record.metadata {
+            assert!(!key.is_empty());
+            assert!(value.value.is_some());
         }
     }
 

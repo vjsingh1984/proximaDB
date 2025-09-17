@@ -217,8 +217,9 @@ mod tests {
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
-                version: None,
-                // rank removed -  None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             })
             .collect()
     }

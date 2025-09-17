@@ -16,13 +16,14 @@ use tracing::{error, info};
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::health;
+use crate::network::rest::proto_json::ProtoApiResponse;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{
     VectorBatchRequest,
     VectorSearchRequest,
 };
-use crate::query::QueryEngine;
+use crate::query::execution::QueryEngine;
 use crate::query::explain::ExplainPlan;
 use crate::utils::uuid::Uuid;
 use serde::{Deserialize, Serialize};
@@ -482,14 +483,32 @@ pub async fn explain_sql(
         ));
     }
 
-    // Build a lightweight QueryEngine with vector service and generate a real plan with hints
-    let qe = QueryEngine::new_with_vector_service(
+    // Build a lightweight QueryEngine with vector and graph services
+    let qe = QueryEngine::new(
         state.unified_handlers.vector_operations_service.clone(),
+        state.unified_handlers.graph_service.clone(),
     );
-    let plan = qe
-        .explain_sql(&request.query)
+    // Parse SQL and explain using frontend
+    use crate::query::sql_frontend::parser::SqlFrontendParser;
+    let parser = SqlFrontendParser::new();
+    let parsed = parser.parse(&request.query)
+        .map_err(|e| ApiError::Internal(format!("Failed to parse SQL: {}", e)))?;
+
+    let explain_result = qe
+        .explain_frontend(parsed)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to explain SQL: {}", e)))?;
+
+    // Convert ExplainResult to ExplainPlan
+    let plan = ExplainPlan {
+        orchestration_steps: explain_result.operations,
+        vector_hints: None, // TODO: Extract from explain_result if needed
+        graph_hints: None,  // TODO: Extract from explain_result if needed
+        join_costs: None,
+        query_stats: None,
+        execution_strategy: Some(format!("{:?}", explain_result.query_type)),
+        estimated_total_cost: Some(explain_result.estimated_cost),
+    };
 
     let response = ExplainQueryResponse {
         plan,

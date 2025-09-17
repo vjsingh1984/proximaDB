@@ -8,6 +8,7 @@ use crate::auth::{EnterpriseAuthManager, SSOToken, EnterpriseUserContext};
 use crate::storage::tenant::{
     TenantManager, DomainManager, TenantAwareEntityStore, DomainKnowledgeGraph,
     TenantConfig, BusinessContext, knowledge_graph::CollectionBridgeConfig,
+    context::ResourceLimits,
 };
 
 /// Enterprise API handler for multi-tenant operations
@@ -312,7 +313,7 @@ use chrono::{DateTime, Utc};
 mod tests {
     use super::*;
     use crate::auth::sso::{SSOIntegrationManager};
-    use crate::storage::tenant::{Industry, ComplianceFramework, SecurityPolicies, ResourceLimits};
+    use crate::storage::tenant::{Industry, ComplianceFramework, SecurityPolicies};
 
     async fn create_test_enterprise_handler() -> EnterpriseAPIHandler {
         let tenant_manager = Arc::new(TenantManager::new());

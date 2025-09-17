@@ -30,6 +30,9 @@ mod tests {
             tags: vec!["test".to_string()],
             storage_config: None,
             embedding_models: vec![],
+            primary_index: "hnsw".to_string(),
+            auto_index_selection: true,
+            owner: Some("test_user".to_string()),
         }
     }
 
@@ -158,7 +161,7 @@ mod tests {
             score: true,
             rank: true,
             source: false,
-            source_options: None,
+            source_options: HashMap::new(),
         };
 
         assert!(fields.vector);
@@ -226,7 +229,7 @@ mod tests {
                 score: true,
                 rank: true,
                 source: false,
-                source_options: None,
+                source_options: HashMap::new(),
             }),
             search_optimization: None,
         };
@@ -278,6 +281,9 @@ mod tests {
             tags: vec![],
             storage_config: None,
             embedding_models: vec![],
+            primary_index: "hnsw".to_string(),
+            auto_index_selection: true,
+            owner: Some("test_user".to_string()),
         };
 
         assert_eq!(config.dimension, 256);
@@ -363,6 +369,9 @@ mod tests {
             tags: vec!["production".to_string(), "v1".to_string()],
             storage_config: None,
             embedding_models: vec![],
+            primary_index: "hnsw".to_string(),
+            auto_index_selection: true,
+            owner: Some("test_user".to_string()),
         };
 
         assert_eq!(config.tags.len(), 2);

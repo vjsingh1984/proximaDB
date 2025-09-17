@@ -357,11 +357,35 @@ mod tests {
         }
 
         fn build(self) -> Result<IndexStrategy, String> {
+            use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
             Ok(IndexStrategy {
                 indexes: vec![
-                    "identifier".to_string(),
-                    "vector".to_string(),
-                    "metadata".to_string(),
+                    IndexSpecification {
+                        data_type: Data::Identifier,
+                        algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+                        name: Some("identifier".to_string()),
+                        is_primary: true,
+                        selectivity_threshold: None,
+                    },
+                    IndexSpecification {
+                        data_type: Data::DenseVector { dimension: 768 },
+                        algorithm: IndexAlgorithm::HNSW {
+                            m: 16,
+                            ef_construction: 200,
+                            ef_search: 50,
+                            distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
+                        },
+                        name: Some("vector".to_string()),
+                        is_primary: false,
+                        selectivity_threshold: None,
+                    },
+                    IndexSpecification {
+                        data_type: Data::Metadata { schema: std::collections::HashMap::new() },
+                        algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+                        name: Some("metadata".to_string()),
+                        is_primary: false,
+                        selectivity_threshold: None,
+                    },
                 ],
             })
         }
@@ -370,7 +394,7 @@ mod tests {
     /// Test struct for index strategy
     #[derive(Debug)]
     struct IndexStrategy {
-        indexes: Vec<String>,
+        indexes: Vec<crate::index::axis::types::IndexSpecification>,
     }
 
     #[test]

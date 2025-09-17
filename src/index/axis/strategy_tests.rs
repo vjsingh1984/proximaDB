@@ -79,8 +79,8 @@ fn test_index_strategy_builder_build() {
 
     let strategy = IndexStrategyBuilder::new(stats, patterns).build().unwrap();
 
-    assert!(!strategy.indexes.is_none());
-    assert!(!strategy.routing_rules.is_none());
+    assert!(!strategy.indexes.is_empty());
+    assert!(!strategy.routing_rules.is_empty());
 
     let has_vector_index = strategy
         .indexes

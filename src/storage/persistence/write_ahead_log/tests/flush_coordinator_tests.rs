@@ -53,6 +53,7 @@ impl UnifiedStorageEngine for MockStorageEngine {
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,
+            flushed_batch_ids: vec![],
         })
     }
 
@@ -154,7 +155,7 @@ async fn test_register_storage_engine() {
         .await;
 
     assert!(result.is_ok());
-    assert_eq!(result.unwrap().base.entries_flushed, 1);
+    assert_eq!(result.unwrap().base.entries_flushed, Some(1));
 }
 
 #[tokio::test]
@@ -283,7 +284,7 @@ async fn test_execute_coordinated_flush_empty() {
 
     // Should succeed with 0 entries
     assert!(result.base.success);
-    assert_eq!(result.base.entries_flushed, 0);
+    assert_eq!(result.base.entries_flushed, Some(0));
 }
 
 #[tokio::test]
@@ -314,8 +315,8 @@ async fn test_execute_coordinated_flush_with_data() {
 
     // Should succeed with 3 entries
     assert!(result.base.success);
-    assert_eq!(result.base.entries_flushed, 3);
-    assert_eq!(result.base.bytes_written, 300); // 3 * 100 from mock
+    assert_eq!(result.base.entries_flushed, Some(3));
+    assert_eq!(result.base.bytes_written, Some(300)); // 3 * 100 from mock
 
     // Verify flush was called
     let count = mock_engine.flush_count.lock().await;
@@ -338,7 +339,7 @@ async fn test_execute_coordinated_flush_engine_not_found() {
         result
             .unwrap_err()
             .to_string()
-            .contains_hash("not registered")
+            .contains("not registered")
     );
 }
 

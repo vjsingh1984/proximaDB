@@ -3,7 +3,7 @@
 //! Tests the core MVCC version resolution logic used by both
 //! VIPER and SST engines to ensure consistency.
 
-use proximadb::core::search::SearchResult;
+use proximadb::proto::proximadb_v1::SearchResult;
 use proximadb::services::VectorOperationsService;
 use serde_json::json;
 use std::collections::HashMap;

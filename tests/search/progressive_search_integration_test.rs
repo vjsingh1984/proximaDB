@@ -12,7 +12,7 @@ use proximadb::core::search::{
 };
 use proximadb::core::VectorRecord;
 use proximadb::services::vector_operations_service::VectorOperationsService;
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstStorage;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -151,7 +151,7 @@ async fn test_max_expansion_constraint() {
 #[tokio::test]
 async fn test_progressive_search_with_custom_recalls() {
     // Use test utilities helper
-    let vector_ops = proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service().await.unwrap();
+    let vector_ops = tests::common::integration_test_helpers::create_test_vector_operations_service().await.unwrap();
     
     // Test with custom recall rates
     let custom_recalls = ProgressiveRecalls {

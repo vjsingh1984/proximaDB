@@ -12,7 +12,7 @@ mod common {
 }
 use common::integration_test_helpers::{UnifiedTestEnvironment as IsolatedTestEnvironment, setup_hardware_capabilities};
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::MetadataItem;
+use proximadb::proto::proximadb_v1::MetadataItem;
 use proximadb::storage::persistence::write_ahead_log::WriteBufferConfig;
 use proximadb::storage::persistence::write_ahead_log::optimized_write_ahead_log_writer::OptimizedWriteBufferWriter;
 
@@ -172,7 +172,7 @@ async fn test_isolated_write_ahead_log_batch_operations() -> Result<()> {
                 metadata: vec![
                     MetadataItem {
                         key: "batch_num".to_string(),
-                        value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(batch.to_string())),
+                        value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(batch.to_string())),
                     },
                 ],
                 timestamp: chrono::Utc::now().timestamp() as u32,
@@ -257,7 +257,7 @@ async fn test_isolated_write_ahead_log_concurrent_writes() -> Result<()> {
                     metadata: vec![
                         MetadataItem {
                             key: "writer_id".to_string(),
-                            value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(writer_id.to_string())),
+                            value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(writer_id.to_string())),
                         },
                     ],
                     timestamp: chrono::Utc::now().timestamp() as u32,

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::{FastLanesDataBlock, RowBasedConfig};
-use crate::storage::compaction::orchestrator::FilenameCodec;
+use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 

@@ -13,7 +13,7 @@ mod tests {
             vector: vec![1.0, 2.0, 3.0],
             metadata: std::collections::HashMap::new(),
             timestamp: 12345,
-            updated_at_ms: 12345,
+            updated_at: Some(12345),
             expires_at: None,
             version: Some(1),
             ..Default::default()

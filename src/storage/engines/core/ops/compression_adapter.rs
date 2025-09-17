@@ -609,6 +609,47 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
+                switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Automatic {
+                    detection_threshold: 0.8,
+                    min_switch_interval_ms: 5000,
+                },
+                learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                    enabled: false,
+                    algorithms: vec![],
+                    training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                        min_training_samples: 1000,
+                        diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                            data_types: vec!["vector".to_string(), "metadata_info".to_string()],
+                            size_ranges: vec![(1024, 1024 * 1024)],
+                            pattern_types: vec!["structured".to_string(), "unstructured".to_string()],
+                            context_types: vec!["vector".to_string(), "metadata_info".to_string()],
+                        },
+                        training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::Periodic {
+                            interval_ms: 3600000,
+                        },
+                        validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                            validation_split: 0.2,
+                            cross_validation_folds: 5,
+                            performance_metrics: vec!["accuracy".to_string(), "compression_ratio".to_string()],
+                            min_performance_threshold: 0.85,
+                        },
+                    },
+                    model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                        enabled: true,
+                        storage_path: Some("/tmp/compression_models".to_string()),
+                        versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                            enabled: true,
+                            max_versions: 10,
+                            naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                        },
+                        model_compression: true,
+                        checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                            enabled: true,
+                            checkpoint_interval_ms: 300000,
+                            max_checkpoints: 5,
+                        },
+                    },
+                },
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),
@@ -709,6 +750,47 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
+                switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Automatic {
+                    detection_threshold: 0.8,
+                    min_switch_interval_ms: 5000,
+                },
+                learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                    enabled: false,
+                    algorithms: vec![],
+                    training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                        min_training_samples: 1000,
+                        diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                            data_types: vec!["vector".to_string(), "metadata_info".to_string()],
+                            size_ranges: vec![(1024, 1024 * 1024)],
+                            pattern_types: vec!["structured".to_string(), "unstructured".to_string()],
+                            context_types: vec!["vector".to_string(), "metadata_info".to_string()],
+                        },
+                        training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::Periodic {
+                            interval_ms: 3600000,
+                        },
+                        validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                            validation_split: 0.2,
+                            cross_validation_folds: 5,
+                            performance_metrics: vec!["accuracy".to_string(), "compression_ratio".to_string()],
+                            min_performance_threshold: 0.85,
+                        },
+                    },
+                    model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                        enabled: true,
+                        storage_path: Some("/tmp/compression_models".to_string()),
+                        versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                            enabled: true,
+                            max_versions: 10,
+                            naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                        },
+                        model_compression: true,
+                        checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                            enabled: true,
+                            checkpoint_interval_ms: 300000,
+                            max_checkpoints: 5,
+                        },
+                    },
+                },
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),
@@ -739,6 +821,42 @@ mod tests {
             enabled: true,
             data_type: crate::metrics::compression::CompressionData::Index,
             context_types: vec![],
+            switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Manual,
+            learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                enabled: false,
+                algorithms: vec![],
+                training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                    min_training_samples: 1000,
+                    diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                        data_types: vec!["index".to_string()],
+                        size_ranges: vec![(1024, 1024 * 1024)],
+                        pattern_types: vec!["structured".to_string()],
+                        context_types: vec!["index".to_string()],
+                    },
+                    training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::OnDemand,
+                    validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                        validation_split: 0.2,
+                        cross_validation_folds: 5,
+                        performance_metrics: vec!["compression_ratio".to_string()],
+                        min_accuracy_threshold: 0.85,
+                    },
+                },
+                model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                    enabled: false,
+                    storage_path: Some("/tmp/compression_models".to_string()),
+                    versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                        enabled: false,
+                        max_versions: 1,
+                        naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                    },
+                    model_compression: false,
+                    checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                        enabled: false,
+                        checkpoint_interval_ms: 300000,
+                        max_checkpoints: 1,
+                    },
+                },
+            },
         };
         let context = adapter.map_context_aware_config(&sst_context).unwrap();
         assert_eq!(context, CompressionContext::Block);
@@ -748,6 +866,42 @@ mod tests {
             enabled: true,
             data_type: crate::metrics::compression::CompressionData::Vector,
             context_types: vec![],
+            switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Manual,
+            learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                enabled: false,
+                algorithms: vec![],
+                training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                    min_training_samples: 1000,
+                    diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                        data_types: vec!["vector".to_string()],
+                        size_ranges: vec![(1024, 1024 * 1024)],
+                        pattern_types: vec!["structured".to_string()],
+                        context_types: vec!["vector".to_string()],
+                    },
+                    training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::OnDemand,
+                    validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                        validation_split: 0.2,
+                        cross_validation_folds: 5,
+                        performance_metrics: vec!["compression_ratio".to_string()],
+                        min_accuracy_threshold: 0.85,
+                    },
+                },
+                model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                    enabled: false,
+                    storage_path: Some("/tmp/compression_models".to_string()),
+                    versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                        enabled: false,
+                        max_versions: 1,
+                        naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                    },
+                    model_compression: false,
+                    checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                        enabled: false,
+                        checkpoint_interval_ms: 300000,
+                        max_checkpoints: 1,
+                    },
+                },
+            },
         };
         let context = adapter.map_context_aware_config(&vector_context).unwrap();
         assert_eq!(context, CompressionContext::VectorSerialization);
@@ -757,6 +911,42 @@ mod tests {
             enabled: true,
             data_type: crate::metrics::compression::CompressionData::Mixed,
             context_types: vec![],
+            switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Manual,
+            learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                enabled: false,
+                algorithms: vec![],
+                training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                    min_training_samples: 1000,
+                    diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                        data_types: vec!["mixed".to_string()],
+                        size_ranges: vec![(1024, 1024 * 1024)],
+                        pattern_types: vec!["structured".to_string()],
+                        context_types: vec!["mixed".to_string()],
+                    },
+                    training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::OnDemand,
+                    validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                        validation_split: 0.2,
+                        cross_validation_folds: 5,
+                        performance_metrics: vec!["compression_ratio".to_string()],
+                        min_accuracy_threshold: 0.85,
+                    },
+                },
+                model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                    enabled: false,
+                    storage_path: Some("/tmp/compression_models".to_string()),
+                    versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                        enabled: false,
+                        max_versions: 1,
+                        naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                    },
+                    model_compression: false,
+                    checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                        enabled: false,
+                        checkpoint_interval_ms: 300000,
+                        max_checkpoints: 1,
+                    },
+                },
+            },
         };
         let context = adapter.map_context_aware_config(&parquet_context).unwrap();
         assert_eq!(context, CompressionContext::Block);
@@ -836,6 +1026,47 @@ mod tests {
                 enabled: true,
                 data_type: crate::metrics::compression::CompressionData::Mixed,
                 context_types: vec![],
+                switching_strategy: crate::storage::engines::core::ops::compression_common::ContextSwitchingStrategy::Automatic {
+                    detection_threshold: 0.8,
+                    min_switch_interval_ms: 5000,
+                },
+                learning_config: crate::storage::engines::core::ops::compression_common::ContextLearningConfig {
+                    enabled: false,
+                    algorithms: vec![],
+                    training_requirements: crate::storage::engines::core::ops::compression_common::TrainingRequirements {
+                        min_training_samples: 1000,
+                        diversity_requirements: crate::storage::engines::core::ops::compression_common::DiversityRequirements {
+                            data_types: vec!["vector".to_string(), "metadata_info".to_string()],
+                            size_ranges: vec![(1024, 1024 * 1024)],
+                            pattern_types: vec!["structured".to_string(), "unstructured".to_string()],
+                            context_types: vec!["vector".to_string(), "metadata_info".to_string()],
+                        },
+                        training_frequency: crate::storage::engines::core::ops::compression_common::TrainingFrequency::Periodic {
+                            interval_ms: 3600000,
+                        },
+                        validation_requirements: crate::storage::engines::core::ops::compression_common::ValidationRequirements {
+                            validation_split: 0.2,
+                            cross_validation_folds: 5,
+                            performance_metrics: vec!["accuracy".to_string(), "compression_ratio".to_string()],
+                            min_performance_threshold: 0.85,
+                        },
+                    },
+                    model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
+                        enabled: true,
+                        storage_path: Some("/tmp/compression_models".to_string()),
+                        versioning: crate::storage::engines::core::ops::compression_common::ModelVersioningConfig {
+                            enabled: true,
+                            max_versions: 10,
+                            naming_strategy: crate::storage::engines::core::ops::compression_common::VersionNamingStrategy::Timestamp,
+                        },
+                        model_compression: true,
+                        checkpoint_config: crate::storage::engines::core::ops::compression_common::CheckpointConfig {
+                            enabled: true,
+                            checkpoint_interval_ms: 300000,
+                            max_checkpoints: 5,
+                        },
+                    },
+                },
             },
             hardware_optimizations: Default::default(),
             performance_config: Default::default(),

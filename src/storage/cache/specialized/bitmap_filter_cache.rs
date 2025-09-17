@@ -388,7 +388,7 @@ mod tests {
         ];
 
         let result = optimizer.combine_bitmaps(bitmaps);
-        assert_eq!(result.len(), 2); // Should contain 2 and 3
+        assert_eq!(result.cardinality(), 2); // Should contain 2 and 3
         assert!(result.contains(2));
         assert!(result.contains(3));
         assert!(!result.contains(1));
@@ -401,10 +401,10 @@ mod tests {
         let filter = "status=active";
 
         let result = cache.evaluate_complex_filter(filter).await.unwrap();
-        assert!(result.len() > 0);
+        assert!(result.cardinality() > 0);
 
         // Second call should use cache
         let result2 = cache.evaluate_complex_filter(filter).await.unwrap();
-        assert_eq!(result.len(), result2.len());
+        assert_eq!(result.cardinality(), result2.cardinality());
     }
 }

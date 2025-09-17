@@ -143,32 +143,32 @@ fn create_randomized_vector_set(
             id: format!("query_s{}_{}", sparsity_percent, q),
             vector,
             metadata: vec![
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "type".to_string(),
                     value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                             "query".to_string(),
                         ),
                     ),
                 },
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "sparsity".to_string(),
                     value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::NumberValue(
+                        proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(
                             sparsity_percent as f64,
                         ),
                     ),
                 },
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "index".to_string(),
                     value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::NumberValue(q as f64),
+                        proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(q as f64),
                     ),
                 },
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "category".to_string(),
                     value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(format!(
+                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
                             "cat_{}",
                             q % 5
                         )),
@@ -239,42 +239,42 @@ fn create_randomized_vector_set(
                 id: format!("vec_s{}_{:06}", sparsity_percent, i),
                 vector,
                 metadata: vec![
-                    proximadb::proto::proximadb::MetadataItem {
+                    proximadb::proto::proximadb_v1::MetadataItem {
                         key: "type".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                            proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                                 "regular".to_string(),
                             ),
                         ),
                     },
-                    proximadb::proto::proximadb::MetadataItem {
+                    proximadb::proto::proximadb_v1::MetadataItem {
                         key: "batch_id".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
+                            proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(
                                 (i / 100) as f64,
                             ),
                         ),
                     },
-                    proximadb::proto::proximadb::MetadataItem {
+                    proximadb::proto::proximadb_v1::MetadataItem {
                         key: "index".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
+                            proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(
                                 i as f64,
                             ),
                         ),
                     },
-                    proximadb::proto::proximadb::MetadataItem {
+                    proximadb::proto::proximadb_v1::MetadataItem {
                         key: "category".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                            proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                                 format!("cat_{}", i % 10),
                             ),
                         ),
                     },
-                    proximadb::proto::proximadb::MetadataItem {
+                    proximadb::proto::proximadb_v1::MetadataItem {
                         key: "status".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                            proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                                 if i % 3 == 0 {
                                     "active"
                                 } else if i % 3 == 1 {
@@ -949,7 +949,7 @@ async fn run_benchmark(
             viper_config.compression = config.algorithm.clone();
             viper_config.compression_level = config.level;
 
-            let engine = proximadb::storage::engines::viper::ViperEngine::from_core_config(
+            let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
                 viper_config,
                 env.filesystem.clone(),
             )
@@ -1331,8 +1331,8 @@ fn build_result(
     let p50_idx = sorted_latencies.len() / 2;
     let p99_idx = (sorted_latencies.len() * 99) / 100;
 
-    let query_latency_p50 = sorted_latencies.get(key).copied().unwrap_or(0.0);
-    let query_latency_p99 = sorted_latencies.get(key).copied().unwrap_or(0.0);
+    let query_latency_p50 = sorted_latencies.get(&(index / 2)).copied().unwrap_or(0.0);
+    let query_latency_p99 = sorted_latencies.get(&(index / 2)).copied().unwrap_or(0.0);
 
     // Calculate latency percentage change vs baseline
     let (latency_change_p50, latency_change_p99) = if let Some(baseline) = baseline {
@@ -1365,8 +1365,8 @@ fn build_result(
     let filter_p50_idx = sorted_filter_latencies.len() / 2;
     let filter_p99_idx = (sorted_filter_latencies.len() * 99) / 100;
 
-    let filter_latency_p50 = sorted_filter_latencies.get(key).copied().unwrap_or(0.0);
-    let filter_latency_p99 = sorted_filter_latencies.get(key).copied().unwrap_or(0.0);
+    let filter_latency_p50 = sorted_filter_latencies.get("enable_two_stage_search").copied().unwrap_or(0.0);
+    let filter_latency_p99 = sorted_filter_latencies.get("enable_two_stage_search").copied().unwrap_or(0.0);
 
     let avg_filter_latency = if !sorted_filter_latencies.is_empty() {
         sorted_filter_latencies.iter().sum::<f64>() / sorted_filter_latencies.len() as f64
@@ -1752,7 +1752,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         println!("\n  Sparsity {}%:", sparsity);
 
         // Get the pre-generated vectors for this sparsity level
-        let vector_set = vector_sets.get(key).unwrap();
+        let vector_set = vector_sets.get(&i).unwrap();
 
         // SST baseline
         match run_baseline("SST", *sparsity, vector_set, batch_count, vectors_per_batch).await {
@@ -1827,7 +1827,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         println!("\n━━━━━ SPARSITY LEVEL: {}% ━━━━━", sparsity);
 
         // Get the pre-generated vectors for this sparsity level
-        let vector_set = vector_sets.get(key).unwrap();
+        let vector_set = vector_sets.get(&i).unwrap();
 
         // Get baselines for this sparsity level
         let sst_baseline = baselines.get(&("SST".to_string(), sparsity));

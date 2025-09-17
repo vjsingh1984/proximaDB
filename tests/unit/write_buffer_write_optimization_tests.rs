@@ -39,9 +39,9 @@ fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
         }", i)),
             vector: vec![i as f32; dimension],
             metadata: vec![
-                proximadb::proto::proximadb::MetadataItem {
+                proximadb::proto::proximadb_v1::MetadataItem {
                     key: "index".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(i.to_string())),
+                    value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(i.to_string())),
                 },
             ],
             created_at: chrono::Utc::now().timestamp_micros(),
@@ -469,8 +469,8 @@ mod performance_benchmarks {
 mod integration_tests {
     use super::*;
     use proximadb::services::VectorOperationsService;
-    use proximadb::storage::engines::viper::ViperEngine;
-    use proximadb::storage::engines::sst::LsmTree;
+    use proximadb::storage::engines::impls::viper::ViperEngine;
+    use proximadb::storage::engines::impls::sst::LsmTree;
 
     #[tokio::test]
     #[ignore] // Requires full system setup

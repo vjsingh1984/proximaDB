@@ -362,16 +362,24 @@ mod tests {
             VectorRecord {
                 id: "v1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
+                updated_at: Some(0),
                 expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
                 id: "v2".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
+                updated_at: Some(0),
                 expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
         ];
 
@@ -412,9 +420,13 @@ mod tests {
                 .add_vector(VectorRecord {
                     id: format!("v{}", i),
                     vector: vec![i as f32, i as f32 * 2.0],
-                    metadata: None,
+                    metadata: std::collections::HashMap::new(),
                     timestamp: 0,
+                    updated_at: Some(0),
                     expires_at: None,
+                    version: Some(1),
+                    quantized_vector: vec![],
+                    source: None,
                 })
                 .unwrap();
         }

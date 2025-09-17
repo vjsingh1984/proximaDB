@@ -1127,6 +1127,16 @@ impl BufferPool {
         }
         // Otherwise, let it be dropped
     }
+
+    /// Async wrapper for buffer acquisition (for test compatibility)
+    pub async fn acquire_buffer(&self) -> anyhow::Result<BytesMut> {
+        Ok(self.buffer())
+    }
+
+    /// Async wrapper for buffer release (for test compatibility)
+    pub async fn release_buffer(&self, buffer: BytesMut) {
+        self.return_buffer(buffer);
+    }
 }
 
 impl Default for OptimizationConfig {

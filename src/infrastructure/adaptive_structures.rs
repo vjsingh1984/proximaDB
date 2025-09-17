@@ -256,8 +256,10 @@ pub struct TierRebalanceResult {
     pub memory_allocated_bytes: usize,
 }
 
+// BackendType already defined above - removed duplicate definition
+
 /// Configuration for adaptive store creation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AdaptiveStoreConfig {
     /// Collection ID this store belongs to
     pub collection_id: String,
@@ -269,7 +271,7 @@ pub struct AdaptiveStoreConfig {
     pub metrics_config: MetricsConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TierConfig {
     /// Enable tier management
     pub enable_tiering: bool,
@@ -281,7 +283,7 @@ pub struct TierConfig {
     pub max_concurrent_operations: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetricsConfig {
     /// Enable detailed workload metrics
     pub enable_workload_metrics: bool,
@@ -811,7 +813,7 @@ where
     K: Hash + Eq + Clone + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
-    async fn new_dashmap(
+    pub async fn new_dashmap(
         collection_id: String,
         initial_capacity: usize,
         _memory_limit_mb: Option<usize>,
@@ -1583,9 +1585,9 @@ mod tests {
 
         // Check operation metrics
         let metrics = backend.metrics().await;
-        assert_eq!(metrics.hit_count, 1);
-        assert_eq!(metrics.miss_count, 1);
-        assert_eq!(metrics.operation_count, 5); // 2 inserts + 2 gets + 1 remove
+        assert_eq!(metrics.hits, 1);
+        assert_eq!(metrics.misses, 1);
+        assert_eq!(metrics.operations, 5); // 2 inserts + 2 gets + 1 remove
 
         // Check workload metrics
         let workload = backend.workload_metrics().await;

@@ -362,6 +362,11 @@ impl CollectionStorageConfig {
         )
     }
 
+    /// Alias for index_path to match test expectations
+    pub fn get_index_path(&self, index_name: &str) -> String {
+        self.index_path(index_name)
+    }
+
     /// Check if a tier is allowed for acceleration based on baseline
     pub fn is_tier_allowed(&self, tier: &InfrastructureTier) -> bool {
         // The baseline is always allowed

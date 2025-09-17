@@ -673,6 +673,9 @@ pub struct ModelPersistenceConfig {
 
     /// Model compression
     pub model_compression: bool,
+
+    /// Checkpoint configuration
+    pub checkpoint_config: CheckpointConfig,
 }
 
 /// Model versioning configuration
@@ -695,6 +698,22 @@ pub enum VersionNamingStrategy {
     Sequential,
     Semantic,
     Hash,
+}
+
+/// Model versioning (alias for ModelVersioningConfig for backward compatibility)
+pub type ModelVersioning = ModelVersioningConfig;
+
+/// Checkpoint configuration
+#[derive(Debug, Clone)]
+pub struct CheckpointConfig {
+    /// Enable checkpoints
+    pub enabled: bool,
+
+    /// Checkpoint interval (ms)
+    pub checkpoint_interval_ms: u64,
+
+    /// Maximum checkpoints to keep
+    pub max_checkpoints: u32,
 }
 
 /// Compression hardware configuration
@@ -1717,6 +1736,11 @@ impl Default for ContextAwareCompressionConfig {
                         naming_strategy: VersionNamingStrategy::Timestamp,
                     },
                     model_compression: true,
+                    checkpoint_config: CheckpointConfig {
+                        enabled: false,
+                        checkpoint_interval_ms: 300000,
+                        max_checkpoints: 5,
+                    },
                 },
             },
         }

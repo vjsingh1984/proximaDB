@@ -212,6 +212,8 @@ fn bench_traversal(c: &mut Criterion) {
                 filters: vec![],
                 algorithm: TraversalAlgorithm::Bfs.into(),
                 limit: Some(100),
+                timeout_ms: None,
+                max_frontier: None,
             };
 
             black_box(futures::executor::block_on(service.traverse(request)).unwrap());
@@ -229,6 +231,8 @@ fn bench_traversal(c: &mut Criterion) {
                 filters: vec![],
                 algorithm: TraversalAlgorithm::Dfs.into(),
                 limit: Some(100),
+                timeout_ms: None,
+                max_frontier: None,
             };
 
             black_box(futures::executor::block_on(service.traverse(request)).unwrap());
@@ -346,6 +350,7 @@ fn bench_node_queries(c: &mut Criterion) {
                 filters: vec![],
                 limit: Some(1000),
                 offset: Some(0),
+                continuation_token: None,
             };
 
             black_box(service.query_nodes(query).unwrap());
@@ -359,6 +364,7 @@ fn bench_node_queries(c: &mut Criterion) {
                 filters: vec![],
                 limit: Some(1000),
                 offset: Some(0),
+                continuation_token: None,
             };
 
             black_box(service.query_nodes(query).unwrap());

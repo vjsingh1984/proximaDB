@@ -9,7 +9,11 @@ use crate::compute::quantization::storage_engine::{
 use crate::compute::quantization::unified::{
     QuantizationMetadata, QuantizedVector, UnifiedQuantizationLevel,
 };
-use crate::core::VectorRecord;
+use crate::compute::quantization::types::{
+    QuantizationLevel, BinaryQuantization, ScalarQuantization, ProductQuantization
+};
+use crate::proto::proximadb_v1::SqlValue;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::{
     FastLanesDecoder, FastLanesEncoder, FastLanesScheme, markers,
 };
@@ -121,7 +125,9 @@ impl PrismFastLanesSerializer {
                 // Use unified binary quantization
                 let quantized = self
                     .quantization_engine
-                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::binary())
+                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel {
+                        level_type: Some(QuantizationLevel::Binary(BinaryQuantization { threshold: None, sign_based: true }))
+                    })
                     .await?;
                 let data = self.encode_quantized_batch(&quantized)?;
                 (data, FastLanesScheme::BitPacked { bits: 1 })
@@ -130,7 +136,11 @@ impl PrismFastLanesSerializer {
                 // Use unified INT8 quantization
                 let quantized = self
                     .quantization_engine
-                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::int8())
+                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel {
+                        level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
+                            bits: 8, scale: 1.0, offset: 0.0, clamp_values: true
+                        }))
+                    })
                     .await?;
                 let data = self.encode_quantized_batch(&quantized)?;
                 (data, FastLanesScheme::Delta { base: 0 })
@@ -139,7 +149,11 @@ impl PrismFastLanesSerializer {
                 // Use unified PQ4 quantization
                 let quantized = self
                     .quantization_engine
-                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::pq4(16))
+                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel {
+                        level_type: Some(QuantizationLevel::Pq(ProductQuantization {
+                            bits_per_code: 4, num_subvectors: 16, codebook_id: None, adaptive_subvectors: false
+                        }))
+                    })
                     .await?;
                 let data = self.encode_quantized_batch(&quantized)?;
                 (data, FastLanesScheme::Dictionary)
@@ -148,7 +162,11 @@ impl PrismFastLanesSerializer {
                 // Use unified PQ8 quantization
                 let quantized = self
                     .quantization_engine
-                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel::pq8(16))
+                    .quantize_batch_with_level(&vectors, UnifiedQuantizationLevel {
+                        level_type: Some(QuantizationLevel::Pq(ProductQuantization {
+                            bits_per_code: 8, num_subvectors: 16, codebook_id: None, adaptive_subvectors: false
+                        }))
+                    })
                     .await?;
                 let data = self.encode_quantized_batch(&quantized)?;
                 (data, FastLanesScheme::Dictionary)
@@ -382,10 +400,24 @@ impl PrismFastLanesSerializer {
                 let quantized = QuantizedVector {
                     data: data[offset..offset + data_len].to_vec(),
                     quantization_level: match level {
-                        ResolutionLevel::Binary => UnifiedQuantizationLevel::Binary,
-                        ResolutionLevel::INT8 => UnifiedQuantizationLevel::Int8,
-                        ResolutionLevel::PQ4 => UnifiedQuantizationLevel::Pq4,
-                        ResolutionLevel::PQ8 => UnifiedQuantizationLevel::pq8(16),
+                        ResolutionLevel::Binary => UnifiedQuantizationLevel {
+                            level_type: Some(QuantizationLevel::Binary(BinaryQuantization { threshold: None, sign_based: true }))
+                        },
+                        ResolutionLevel::INT8 => UnifiedQuantizationLevel {
+                            level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
+                                bits: 8, scale: 1.0, offset: 0.0, clamp_values: true
+                            }))
+                        },
+                        ResolutionLevel::PQ4 => UnifiedQuantizationLevel {
+                            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
+                                bits_per_code: 4, num_subvectors: 16, codebook_id: None, adaptive_subvectors: false
+                            }))
+                        },
+                        ResolutionLevel::PQ8 => UnifiedQuantizationLevel {
+                            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
+                                bits_per_code: 8, num_subvectors: 16, codebook_id: None, adaptive_subvectors: false
+                            }))
+                        },
                         _ => UnifiedQuantizationLevel { level_type: None },
                     },
                     metadata: QuantizationMetadata::default(), // Add the missing metadata field
@@ -596,14 +628,15 @@ mod tests {
         let serializer = PrismFastLanesSerializer::new_default();
 
         let records = vec![VectorRecord {
-            id: Some("test".to_string()),
+            id: "test".to_string(),
             vector: vec![1.0; 128],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: None,
+            quantized_vector: Vec::new(),
+            source: None,
         }];
 
         let levels = vec![
@@ -612,7 +645,7 @@ mod tests {
             ResolutionLevel::FP32,
         ];
 
-        let serialized = serializer.serialize_progressive(&records, &levels)?;
+        let serialized = serializer.serialize_progressive(&records, &levels).await?;
         assert!(serialized.len() > 0);
         assert_eq!(serialized[0], markers::PRISM_PROGRESSIVE);
         assert_eq!(serialized[1], levels.len() as u8);

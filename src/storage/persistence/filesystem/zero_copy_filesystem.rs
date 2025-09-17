@@ -726,7 +726,7 @@ mod tests {
     async fn test_zero_copy_filesystem_creation() {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::local::LocalConfig {
-            base_path: temp_dir.path().to_path_buf(),
+            root_dir: Some(temp_dir.path().to_path_buf()),
             ..Default::default()
         };
         let local_fs = Arc::new(LocalFileSystem::new(config).await.unwrap());
@@ -736,7 +736,7 @@ mod tests {
         let zero_copy_fs = ZeroCopyFilesystemBuilder::new()
             .with_collection_id("test_collection".to_string())
             .with_engine_type("SST".to_string())
-            .with_io_system(io_system)
+            .with_io_system(Arc::new(io_system))
             .build(local_fs)
             .unwrap();
 
@@ -748,7 +748,7 @@ mod tests {
     async fn test_fallback_behavior() {
         let temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::local::LocalConfig {
-            base_path: temp_dir.path().to_path_buf(),
+            root_dir: Some(temp_dir.path().to_path_buf()),
             ..Default::default()
         };
         let local_fs = Arc::new(LocalFileSystem::new(config).await.unwrap());
@@ -758,7 +758,7 @@ mod tests {
         let zero_copy_fs = ZeroCopyFilesystemBuilder::new()
             .with_collection_id("test_collection".to_string())
             .with_engine_type("SST".to_string())
-            .with_io_system(io_system)
+            .with_io_system(Arc::new(io_system))
             .build(local_fs)
             .unwrap();
 

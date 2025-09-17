@@ -3,7 +3,7 @@
 //! These tests verify that the protobuf-first approach works correctly
 //! and that both APIs provide identical functionality.
 
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
     IncludeFields, MetadataItem, SearchQuery, StorageEngine, VectorBatchRequest,
     VectorOperationResponse, VectorRecord, VectorSearchRequest,
@@ -45,7 +45,7 @@ mod comprehensive_api_tests {
                     MetadataItem {
                         key: "index".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
+                            proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(
                                 i as f64,
                             ),
                         ),
@@ -53,7 +53,7 @@ mod comprehensive_api_tests {
                     MetadataItem {
                         key: "category".to_string(),
                         value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                            proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                                 if i % 2 == 0 { "even" } else { "odd" }.to_string(),
                             ),
                         ),

@@ -188,6 +188,58 @@ pub enum ScalingAction {
     Alert,
 }
 
+/// Monitoring configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitoringConfig {
+    pub enabled: bool,
+    pub metrics_retention_days: u32,
+    pub alerting_enabled: bool,
+    pub dashboard_enabled: bool,
+    pub log_level: String,
+    pub enable_metrics: bool,
+    pub enable_logging: bool,
+    pub enable_alerting: bool,
+}
+
+impl MonitoringConfig {
+    pub fn enterprise_default() -> Self {
+        Self {
+            enabled: true,
+            metrics_retention_days: 30,
+            alerting_enabled: true,
+            dashboard_enabled: true,
+            log_level: "info".to_string(),
+            enable_metrics: true,
+            enable_logging: true,
+            enable_alerting: true,
+        }
+    }
+}
+
+/// Backup strategy configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupStrategy {
+    pub enabled: bool,
+    pub backup_frequency_hours: u32,
+    pub retention_days: u32,
+    pub backup_type: String,
+    pub storage_location: String,
+    pub enable_automated_backup: bool,
+}
+
+impl BackupStrategy {
+    pub fn enterprise_default() -> Self {
+        Self {
+            enabled: true,
+            backup_frequency_hours: 24,
+            retention_days: 30,
+            backup_type: "incremental".to_string(),
+            storage_location: "s3".to_string(),
+            enable_automated_backup: true,
+        }
+    }
+}
+
 impl EnvironmentDetector {
     /// Create new environment detector
     pub async fn new() -> Result<Self> {
@@ -857,39 +909,7 @@ impl Default for DetectionConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitoringConfig {
-    pub enable_metrics: bool,
-    pub enable_logging: bool,
-    pub enable_alerting: bool,
-}
-
-impl MonitoringConfig {
-    pub fn enterprise_default() -> Self {
-        Self {
-            enable_metrics: true,
-            enable_logging: true,
-            enable_alerting: true,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BackupStrategy {
-    pub enable_automated_backup: bool,
-    pub backup_frequency_hours: u32,
-    pub retention_days: u32,
-}
-
-impl BackupStrategy {
-    pub fn enterprise_default() -> Self {
-        Self {
-            enable_automated_backup: true,
-            backup_frequency_hours: 6,
-            retention_days: 30,
-        }
-    }
-}
+// Removed duplicate structs - using original definitions above
 
 // Removed duplicate NetworkConfiguration struct - use NetworkConfig instead
 

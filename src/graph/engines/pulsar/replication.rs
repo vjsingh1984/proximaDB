@@ -26,6 +26,7 @@ use crate::graph::{Edge, EdgeId, Node, NodeId};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
@@ -493,8 +494,8 @@ mod tests {
             labels: vec!["Test".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
 
         // Test replication
@@ -547,8 +548,8 @@ mod tests {
             labels: vec!["Test".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
 
         let op1 = ReplicationOperation::InsertNode(node);

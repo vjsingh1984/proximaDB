@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use proximadb::core::SstConfig;
-use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority, CompactionStats};
-use proximadb::storage::engines::sst::SstRecord;
+use proximadb::storage::engines::impls::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority, CompactionStats};
+use proximadb::storage::engines::impls::sst::SstRecord;
 
 /// Unit test for LSM compaction expired record deletion logic
 #[tokio::test]

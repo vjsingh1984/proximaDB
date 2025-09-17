@@ -670,8 +670,8 @@ mod tests {
             labels: vec!["TestLabel".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
 
         // Insert node
@@ -682,7 +682,7 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Get node
-        let retrieved = engine.get_node("test_node").unwrap().unwrap();
+        let retrieved = engine.get_node(&"test_node".to_string()).unwrap().unwrap();
         assert_eq!(retrieved.id, "test_node");
 
         // Verify stats

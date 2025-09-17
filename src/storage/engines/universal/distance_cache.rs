@@ -249,6 +249,10 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
+            compression: false,
+            enable_cache_warming: false,
+            max_memory_mb: 512,
         };
         let cache_orchestrator = Arc::new(
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
@@ -263,6 +267,10 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
+            compression: false,
+            enable_cache_warming: false,
+            max_memory_mb: 512,
         };
         let cache_orchestrator = Arc::new(
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
@@ -288,6 +296,10 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
+            compression: false,
+            enable_cache_warming: false,
+            max_memory_mb: 512,
         };
         let cache_orchestrator = Arc::new(
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
@@ -317,6 +329,10 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
+            compression: false,
+            enable_cache_warming: false,
+            max_memory_mb: 512,
         };
         let cache_orchestrator = Arc::new(
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)
@@ -353,6 +369,10 @@ mod tests {
         let config = CacheConfig {
             max_entries: 100,
             ttl_seconds: 3600,
+            eviction_policy: crate::storage::engines::universal::config::CacheEvictionPolicy::LRU,
+            compression: false,
+            enable_cache_warming: false,
+            max_memory_mb: 512,
         };
         let cache_orchestrator = Arc::new(
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1024 * 1024)

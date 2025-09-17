@@ -7,6 +7,7 @@ use tracing::info;
 use chrono::{DateTime, Utc};
 
 use super::BusinessContext;
+use super::context::DataSensitivityLevel;
 use crate::storage::tenant::entity_store::UserContext;
 
 /// Domain manager for business context separation

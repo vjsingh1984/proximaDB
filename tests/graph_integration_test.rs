@@ -244,6 +244,8 @@ async fn test_graph_traversal() {
         filters: vec![],
         algorithm: TraversalAlgorithm::Bfs.into(),
         limit: Some(10),
+        timeout_ms: None,
+        max_frontier: None,
     };
 
     let result = service.traverse(traversal_request).await.unwrap();
@@ -300,6 +302,7 @@ async fn test_node_edge_queries() {
         filters: vec![],
         limit: Some(10),
         offset: Some(0),
+        continuation_token: None,
     };
 
     let results = service.query_nodes(query).unwrap();
@@ -311,6 +314,7 @@ async fn test_node_edge_queries() {
         filters: vec![],
         limit: Some(10),
         offset: Some(0),
+        continuation_token: None,
     };
 
     let person_results = service.query_nodes(person_query).unwrap();

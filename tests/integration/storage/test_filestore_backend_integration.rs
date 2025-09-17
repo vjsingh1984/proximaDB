@@ -19,7 +19,7 @@ use proximadb::storage::metadata::backends::filestore_backend::{
     FilestoreMetadataBackend, FilestoreMetadataConfig, CollectionRecord
 };
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::proto::proximadb::CollectionConfig;
+use proximadb::proto::proximadb_v1::CollectionConfig;
 
 /// Helper to create a test collection config
 fn create_test_collection_config(name: &str) -> CollectionConfig {

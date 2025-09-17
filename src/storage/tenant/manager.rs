@@ -1,7 +1,8 @@
 //! Tenant manager implementation - clean and simple
 
 use super::{TenantContext, TenantConfig, TenantStatus, TenantResourceTracker};
-use super::resources::{ResourceLimits, TenantResourceUsageSnapshot};
+use super::resources::{TenantResourceUsageSnapshot};
+use super::context::ResourceLimits;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -56,7 +57,7 @@ impl TenantManager {
         };
         
         // Initialize resource tracker - convert ResourceLimits from context to resources
-        let resource_limits = ResourceLimits {
+        let resource_limits = crate::storage::tenant::resources::ResourceLimits {
             max_memory_mb: config.resource_limits.max_memory_mb,
             max_storage_mb: config.resource_limits.max_storage_mb,
             max_operations_per_minute: config.resource_limits.max_operations_per_minute,

@@ -153,7 +153,7 @@ async fn test_cache_metrics_integration() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Get current metrics
-    let metrics = cache_aggregator.get_metrics().await;
+    let metrics = cache_aggregator.get_current_metrics().await;
     assert!(metrics.overall_hit_rate > 0.0);
 
     // Get optimization hints
@@ -191,8 +191,9 @@ async fn test_cache_under_memory_pressure() {
             expires_at: None,
             version: Some(1),
         };
+        let value = serde_json::to_value(&record).unwrap();
         vector_cache
-            .put_with_hooks(format!("pressure_vec_{}", i), record)
+            .put_with_hooks(format!("pressure_vec_{}", i), value)
             .await;
     }
 
@@ -215,8 +216,9 @@ async fn test_cache_under_memory_pressure() {
         expires_at: None,
         version: Some(1),
     };
+    let value = serde_json::to_value(&test_record).unwrap();
     vector_cache
-        .put_with_hooks("test".to_string(), test_record.clone())
+        .put_with_hooks("test".to_string(), value)
         .await;
     let retrieved = vector_cache.get_with_hooks(&"test".to_string()).await;
     assert!(retrieved.is_some());
@@ -301,7 +303,8 @@ async fn simulate_vector_workload(orchestrator: &CrossCacheOrchestrator, cache: 
             version: Some(1),
         };
 
-        cache.put_with_hooks(format!("vec{}", i), record).await;
+        let value = serde_json::to_value(&record).unwrap();
+        cache.put_with_hooks(format!("vec{}", i), value).await;
         orchestrator
             .on_vector_access(&format!("vec{}", i))
             .await

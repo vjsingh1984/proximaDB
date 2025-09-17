@@ -89,7 +89,7 @@ pub mod adapter;
 pub mod config;
 pub mod conversion;
 pub mod distance_cache;
-pub mod hardware_manager;
+// pub mod hardware_manager; // Module not found
 pub mod progressive_refinement;
 pub mod quantized_calculator; // Wrapper for compute module
 pub mod storage_integration;
@@ -111,9 +111,7 @@ pub use conversion::{
     StorageFormat,
 };
 
-pub use hardware_manager::{
-    AccelerationCapabilities, HardwareAccelerationManager, OptimizationStrategy, SIMDCapabilities,
-};
+// Hardware manager functionality is handled by core::hardware_capabilities
 
 pub use progressive_refinement::{
     ProgressiveRefinementPipeline, QualityMetrics, RefinementStage, RefinementStrategy,

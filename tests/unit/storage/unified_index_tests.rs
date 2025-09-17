@@ -16,7 +16,7 @@
 
 //! Unit tests for unified collection index functionality
 
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric, IndexingAlgorithm, StorageEngine,
 };
 use proximadb::storage::metadata::unified_index::UnifiedCollectionIndex;

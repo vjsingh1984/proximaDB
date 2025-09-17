@@ -9,7 +9,7 @@ use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::VectorRecord;
 use proximadb::core::search::{ComparisonOperator, FilterExpression};
-use proximadb::proto::proximadb::MetadataItem;
+use proximadb::proto::proximadb_v1::MetadataItem;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 use tracing::{debug, info};

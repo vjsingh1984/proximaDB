@@ -23,7 +23,7 @@ use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm
 };
 use std::sync::Arc;
@@ -45,7 +45,7 @@ async fn create_test_app() -> (Router, TempDir) {
     
     // Create services using test utilities
     let direct_vector_service = Arc::new(
-        proximadb::tests::common::integration_test_helpers::create_test_vector_operations_service()
+        tests::common::integration_test_helpers::create_test_vector_operations_service()
             .await
             .expect("Failed to create VectorOperationsService")
     );

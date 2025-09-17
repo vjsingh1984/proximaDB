@@ -831,7 +831,7 @@ mod tests {
         collector.record_cache_hit();
         collector.record_cache_miss();
 
-        let metrics = collector.metrics();
+        let metrics = collector.get_metrics();
         assert_eq!(metrics.metadata_cache.total_hits, 2);
         assert_eq!(metrics.metadata_cache.total_misses, 1);
         assert!((metrics.metadata_cache.hit_rate - 0.6666666666666666).abs() < 0.001);
@@ -845,7 +845,7 @@ mod tests {
         collector.record_download_strategy(false); // full
         collector.record_download_strategy(true); // selective
 
-        let metrics = collector.metrics();
+        let metrics = collector.get_metrics();
         assert_eq!(metrics.download_optimizer.selective_downloads, 2);
         assert_eq!(metrics.download_optimizer.full_downloads, 1);
         assert!(
@@ -861,7 +861,7 @@ mod tests {
         collector.record_operation(2000);
         collector.record_error();
 
-        let metrics = collector.metrics();
+        let metrics = collector.get_metrics();
         assert_eq!(metrics.system.total_operations, 2);
         assert!((metrics.system.error_rate - 0.5).abs() < 0.001);
     }
@@ -876,7 +876,7 @@ mod tests {
         collector.record_cache_hit();
 
         let recommendations = collector.generate_recommendations();
-        assert!(!recommendations.is_none());
+        assert!(!recommendations.is_empty());
 
         // Should have cache optimization recommendation due to low hit rate
         let cache_rec = recommendations

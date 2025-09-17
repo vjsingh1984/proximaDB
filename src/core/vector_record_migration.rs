@@ -168,9 +168,9 @@ mod tests {
         assert!(metadata_items.iter().any(|(key, sql_value)| key == "category" &&
             matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) if s == "test")));
         assert!(metadata_items.iter().any(|(key, sql_value)| key == "score" &&
-            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) if n == 42.0)));
+            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) if *n == 42.0)));
         assert!(metadata_items.iter().any(|(key, sql_value)| key == "active" &&
-            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) if b)));
+            matches!(&sql_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) if *b)));
     }
 
     #[test]
@@ -199,11 +199,11 @@ mod tests {
             vector: vec![1.0, 2.0, 3.0, 4.0],
             metadata: std::collections::HashMap::new(), // Use HashMap for new format
             timestamp: 1640995200, // Converted from microseconds to seconds
-            updated_at: 1640995200,
+            updated_at: Some(1640995200),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
-            source: "test".to_string(),
+            quantized_vector: Vec::new(),
+            source: Some("test".to_string()),
         };
 
         let service_record = proto_to_service(&proto_record, "test-collection");
