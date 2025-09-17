@@ -177,7 +177,7 @@ impl TestVectorGenerator {
                 ))),
             }),
             ("score".to_string(), SqlValue {
-                value: Some(sql_value::Value::FloatValue(
+                value: Some(sql_value::Value::NumberValue(
                     self.rng.gen_range(0.0..100.0),
                 )),
             }),
@@ -193,7 +193,7 @@ impl TestVectorGenerator {
     fn generate_metadata_with_cluster(&mut self, cluster_id: usize) -> HashMap<String, SqlValue> {
         let mut metadata = self.generate_metadata();
         metadata.insert("cluster_id".to_string(), SqlValue {
-            value: Some(sql_value::Value::IntValue(cluster_id as i64)),
+            value: Some(sql_value::Value::Int64Value(cluster_id as i64)),
         });
         metadata
     }

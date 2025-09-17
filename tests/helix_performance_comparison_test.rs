@@ -273,7 +273,6 @@ mod performance_comparison_tests {
 //                    auto_create_shards: None, // Field not in proto
 //                    auto_balance: None, // Field not in proto
 //                    replication_factor: None, // Field not in proto
-                    consistency_level: None,
                 }),
                 stats: None,
                 created_at: 0,
@@ -662,7 +661,6 @@ mod performance_comparison_tests {
 //                    auto_create_shards: None, // Field not in proto
 //                    auto_balance: None, // Field not in proto
 //                    replication_factor: None, // Field not in proto
-                    consistency_level: None,
                 }),
                 stats: None,
                 created_at: 0,
@@ -687,8 +685,8 @@ mod performance_comparison_tests {
                     // Convert to tuple access for HashMap-style metadata
                     r.metadata.iter().any(|(key, value)| {
                         key == "cluster_id"
-                            && match value {
-                                serde_json::Value::String(s) => s == &expected_cluster,
+                            && match &value.value {
+                                Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s == &expected_cluster,
                                 _ => false,
                             }
                     })
@@ -892,8 +890,7 @@ mod performance_comparison_tests {
             //                    auto_create_shards: None, // Field not in proto
             //                    auto_balance: None, // Field not in proto
             //                    replication_factor: None, // Field not in proto
-                                consistency_level: None,
-                            }),
+                                        }),
                             stats: None,
                             created_at: 0,
                             updated_at: 0,

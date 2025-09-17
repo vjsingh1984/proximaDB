@@ -206,7 +206,7 @@ impl UnifiedTestEnvironment {
         &self,
         engine: StorageEngine,
         dimension: i32,
-        compression: Option<proximadb::proto::proximadb_v1::CompressionConfig>,
+        _compression: Option<proximadb::proto::proximadb_v1::CompressionConfig>,
     ) -> Collection {
         // CRITICAL: base_location must point to parent directory since engines append collection_id
         let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
@@ -709,7 +709,7 @@ pub mod operations {
         environment: &UnifiedTestEnvironment,
         vectors: Vec<VectorRecord>,
         compression_algo: &str,
-        compression_level: i32,
+        _compression_level: i32,
     ) -> Result<FlushParameters> {
         environment.ensure_all_directories().await?;
 
