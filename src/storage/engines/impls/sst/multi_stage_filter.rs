@@ -671,7 +671,6 @@ mod tests {
                 quantization_stats: crate::storage::engines::core::formats::fastlanes_blocks::QuantizationStatistics::default(),
                 data_checksum: 0,
                 metadata_checksum: 0,
-                encoding_version: 1,
             },
             compression_config: Default::default(),
             compression_algorithm: crate::core::compression::CompressionAlgorithm::None,

@@ -206,7 +206,7 @@ mod tests {
             assert!(strategy.get_wal_behavior().is_none());
 
             // Verify basic operations work
-            let stats = strategy.stats().await.expect("Failed to get stats");
+            let stats = strategy.get_stats().await.expect("Failed to get stats");
             assert_eq!(stats.memory_entries, 0); // Should start empty
         }
     }

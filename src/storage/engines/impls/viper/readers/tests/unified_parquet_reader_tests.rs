@@ -522,6 +522,10 @@ mod tests {
             include_expired: None,
             quantization_hint: None,
             enable_two_stage: None,
+            progressive_recalls: None,
+            progressive_scenario: None,
+            runtime_hints: None,
+            optimization_hint: None,
             enable_clustering_hint: None,
             enable_metadata_filtering_hint: None,
             enable_progressive_search: None,
@@ -694,11 +698,11 @@ mod tests {
         // Verify
         assert_eq!(results.len(), 1, "Should find 1 result");
         assert_eq!(results[0].id, "debug_vec", "Should find debug_vec");
-        if let Some(distance) = &results[0].semantic_similarity {
+        if let Some(distance) = results[0].semantic_similarity {
             assert!(
-                distance.raw_value < 0.01,
+                distance < 0.01,
                 "Should have near-zero distance for exact match, got {}",
-                distance.raw_value
+                distance
             );
         }
 

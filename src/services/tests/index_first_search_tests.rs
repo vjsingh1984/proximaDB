@@ -240,7 +240,7 @@ mod tests {
         let search_params = SearchParams {
             filter_expression: Some(FilterExpression::Comparison {
                 field: "category".to_string(),
-                operator: ComparisonOperator::Equal,
+                operator: ComparisonOperator::Equals,
                 value: serde_json::json!("electronics"),
             }),
             ..Default::default()

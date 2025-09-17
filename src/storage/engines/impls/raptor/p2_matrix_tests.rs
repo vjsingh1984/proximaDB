@@ -248,7 +248,14 @@ mod tests {
             vec![0.5, 0.5, 0.0],
         ];
 
-        let matrix = IntraRowgroupMatrix::new(p2_matrix, vectors.clone());
+        let matrix = IntraRowgroupMatrix::new(crate::storage::engines::impls::raptor::common::P2Matrix {
+            num_vectors: p2_matrix.num_vectors as u32,
+            distances: p2_matrix.distances.into_iter().map(|d| d as u8).collect(),
+            min_distance: p2_matrix.min_distance,
+            max_distance: p2_matrix.max_distance,
+            compression: p2_matrix.compression,
+            compressed_size: p2_matrix.compressed_size as u32,
+        }, vectors.clone());
 
         // Verify we can access distances
         assert_eq!(matrix.p2_matrix.num_vectors, 4);

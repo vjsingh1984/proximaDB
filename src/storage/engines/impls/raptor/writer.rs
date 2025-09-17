@@ -2285,7 +2285,7 @@ mod minimal_hnsw_tests {
         assert!(rowgroups.len() >= 2, "Should create at least 2 row groups");
 
         // Check that each node is assigned to exactly one row group
-        let mut all_nodes = Vec::new();
+        let mut all_nodes: Vec<u32> = Vec::new();
         for group in &rowgroups {
             all_nodes.extend(group);
         }

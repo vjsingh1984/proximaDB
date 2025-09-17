@@ -206,7 +206,7 @@ async fn test_metrics_collection() {
 
     // Check hit rate
     assert_eq!(metrics.total_gets(), 5);
-    assert_eq!(metrics.hit_rate_percent(), 0.6); // 3 hits, 2 misses
+    assert_eq!(metrics.hit_rate(), 0.6); // 3 hits, 2 misses
 
     // Check tier-specific metrics
     assert_eq!(metrics.tier_hits(CacheTier::L1), 2);

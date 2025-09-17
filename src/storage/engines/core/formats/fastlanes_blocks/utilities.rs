@@ -5,9 +5,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::{FastLanesDataBlock, RowBasedConfig};
+use super::block_structures::{FastLanesBlockMetadata, BlockCompressionConfig, BlockStatistics};
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::serialization::CompressionAlgorithm;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -605,7 +607,26 @@ mod tests {
 
         // TODO: Update to use proper data structure
         // Temporarily using FastLanesDataBlock
-        let blocks = vec![FastLanesDataBlock { records: vec![], quantized_vectors: None, block_id: 0 }];
+        let blocks = vec![FastLanesDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 0,
+            records: vec![],
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: FastLanesBlockMetadata::default(),
+            compression_config: BlockCompressionConfig::default(),
+            compression_algorithm: CompressionAlgorithm::None,
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: (String::new(), String::new()),
+            timestamp_range: (0, 0),
+            statistics: BlockStatistics::default(),
+            metadata_stats: None,
+            has_deletes: false,
+        }];
 
         let report = RowBasedUtilities::calculate_memory_usage(&blocks);
 
@@ -656,7 +677,7 @@ mod tests {
         assert!(swift_filename.ends_with(".swift"));
 
         let level = FilenameCodec::new().parse_level(&sst_filename);
-        assert_eq!(level, Some(3));
+        assert_eq!(level, 3);
     }
 
     #[test]

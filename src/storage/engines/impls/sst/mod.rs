@@ -292,7 +292,7 @@ mod sst_filename_tests {
         ];
 
         for (filename, expected) in test_cases {
-            let result = FilenameCodec::new().is_tiered_filename(filename);
+            let result = FilenameCodec::new().is_tiered_filename(filename, "sst");
             debug!(
                 "Testing '{}': expected={}, got={}",
                 filename, expected, result
@@ -324,7 +324,7 @@ mod sst_filename_tests {
         let filename = FilenameCodec::new().generate(level as u32, "sst");
 
         assert!(FilenameCodec::new().is_tiered_filename(&filename, "sst"));
-        assert_eq!(FilenameCodec::new().parse_level(&filename), Some(level));
+        assert_eq!(FilenameCodec::new().parse_level(&filename), level);
         // Collection ID validation removed - it's determined from base URL at search time
     }
 }

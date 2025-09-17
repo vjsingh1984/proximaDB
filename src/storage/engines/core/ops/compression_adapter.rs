@@ -838,7 +838,7 @@ mod tests {
                         validation_split: 0.2,
                         cross_validation_folds: 5,
                         performance_metrics: vec!["compression_ratio".to_string()],
-                        min_accuracy_threshold: 0.85,
+                        min_performance_threshold: 0.85,
                     },
                 },
                 model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
@@ -883,7 +883,7 @@ mod tests {
                         validation_split: 0.2,
                         cross_validation_folds: 5,
                         performance_metrics: vec!["compression_ratio".to_string()],
-                        min_accuracy_threshold: 0.85,
+                        min_performance_threshold: 0.85,
                     },
                 },
                 model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {
@@ -928,7 +928,7 @@ mod tests {
                         validation_split: 0.2,
                         cross_validation_folds: 5,
                         performance_metrics: vec!["compression_ratio".to_string()],
-                        min_accuracy_threshold: 0.85,
+                        min_performance_threshold: 0.85,
                     },
                 },
                 model_persistence: crate::storage::engines::core::ops::compression_common::ModelPersistenceConfig {

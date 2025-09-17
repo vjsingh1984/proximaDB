@@ -732,7 +732,7 @@ mod tests {
         // Test with various data types
         let string_stats = FilterableColumnStats {
             column_name: "text_field".to_string(),
-            // data_type removed -  "string".to_string(),
+            data_type: "string".to_string(),
             cardinality: 1000,
             null_count: 50,
             selectivity: 0.1,
@@ -744,7 +744,7 @@ mod tests {
 
         let numeric_stats = FilterableColumnStats {
             column_name: "numeric_field".to_string(),
-            // data_type removed -  "integer".to_string(),
+            data_type: "integer".to_string(),
             cardinality: 500,
             null_count: 0,
             selectivity: 0.05,
@@ -765,7 +765,7 @@ mod tests {
 
         let boolean_stats = FilterableColumnStats {
             column_name: "flag_field".to_string(),
-            // data_type removed -  "boolean".to_string(),
+            data_type: "boolean".to_string(),
             cardinality: 2,
             null_count: 5,
             selectivity: 0.0002, // Very high selectivity

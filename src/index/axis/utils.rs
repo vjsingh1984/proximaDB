@@ -449,12 +449,12 @@ mod tests {
         let vector = Arc::new(VectorRecord {
             id: "test1".to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: Vec::new(),
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         });
 
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(mapping.len(), 2);
 
         // Test lookups
-        assert_eq!(mapping.get_internal("external1"), Some(0));
+        assert_eq!(mapping.internal("external1"), Some(0));
         assert_eq!(mapping.external(1).as_deref(), Some("external2"));
 
         // Test remove

@@ -394,8 +394,9 @@ mod tests {
         let cache = BlockCache::new(1024 * 1024); // 1MB cache
 
         let block = Arc::new(FastLanesDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
             block_id: 0,
-            uncompressed_size: 0,
             records: vec![VectorRecord {
                 id: "test".to_string(),
                 vector: vec![1.0; 768],
@@ -407,12 +408,20 @@ mod tests {
                 quantized_vector: vec![],
                 source: None,
             }],
-            quantized_vectors: None, // Quantization handled by universal adapter
+            quantized_vectors: None,
             quantization_level: None,
+            quantized_section: None,
+            metadata: Default::default(),
+            compression_config: Default::default(),
+            compression_algorithm: Default::default(),
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
             id_range: ("test".to_string(), "test".to_string()),
-            // min_timestamp removed -  0,
-            // max_timestamp removed -  0,
+            timestamp_range: (0, 0),
+            statistics: Default::default(),
             metadata_stats: None,
+            has_deletes: false,
         });
 
         // Test put and get

@@ -471,7 +471,7 @@ mod tests {
             let mut transposed_data = vec![0.0f32; num_centroids * dimension];
 
             for i in 0..num_centroids {
-                rowgroup_ids.push(i as u32);
+                rowgroup_ids.push(i as u16);
 
                 // Create test pattern for centroids
                 for dim in 0..dimension {
@@ -482,7 +482,7 @@ mod tests {
 
             let columnar = ColumnarCentroids {
                 count: num_centroids as u32,
-                dimension: dimension as u32,
+                dimension: dimension,
                 rowgroup_ids,
                 transposed_data,
                 encoding_metadata: vec![],

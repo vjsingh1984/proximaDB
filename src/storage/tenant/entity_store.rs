@@ -446,8 +446,8 @@ mod tests {
         
         let entity = Entity {
             id: "test_entity_1".to_string(),
-            typed_metadata: vec![],
-            metadata: std::collections::HashMap::new(),
+            typed_metadata: None,
+            flexible_metadata: std::collections::HashMap::new(),
             embeddings: vec![],
             relations: vec![],
             ..Default::default()

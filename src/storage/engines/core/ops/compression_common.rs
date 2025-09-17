@@ -1944,7 +1944,7 @@ mod tests {
         let config = UniversalCompressionConfig::default();
 
         assert!(config.enabled);
-        assert_eq!(config.primary_algorithm, CompressionAlgorithm::ZSTD);
+        assert_eq!(config.primary_algorithm, CompressionAlgorithm::Zstd);
         assert_eq!(config.compression_level, 3);
         assert!(config.adaptive_settings.enabled);
     }

@@ -1054,11 +1054,22 @@ mod tests {
                     crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
+                candidate_multiplier: 4,
+                training_sample_size: 10000,
+                memory_budget_mb: 512,
+                enable_hardware_acceleration: true,
             };
+
+        let distance_compute = Arc::new(
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+            ),
+        );
 
         let quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
                 unified_engine,
+                distance_compute,
                 storage_config,
             ),
         );

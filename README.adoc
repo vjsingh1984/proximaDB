@@ -1,462 +1,193 @@
-= ProximaDB: The Enterprise AI Infrastructure Revolution
-:toc: macro
-:toclevels: 3
+= ProximaDB: High-Performance Vector Database
+:toc: left
+:sectnums:
+:source-highlighter: rouge
 :icons: font
-:source-highlighter: highlight.js
-:imagesdir: docs/assets
+:docdate: {localdatetime}
 
-[.text-center]
-image::proximadb_cover.svg[ProximaDB Enterprise Cover, width=100%, align="center"]
+[abstract]
+ProximaDB is an advanced vector database designed for AI applications, featuring multiple storage engines and graph capabilities. Currently in active development with core functionality implemented.
 
-[.lead.text-center]
-**The Complete Unified Intelligence Platform for Enterprise AI** +
-_Transform fragmented AI infrastructure into unified competitive advantage_
+== Overview
 
-image:https://img.shields.io/badge/Enterprise-Production%20Ready-brightgreen[Enterprise Ready]
-image:https://img.shields.io/badge/Performance-20M%20ops%2Fsec-success[Performance]
-image:https://img.shields.io/badge/Security-SOC%202%20Ready-blue[Security]
-image:https://img.shields.io/badge/AI%20Platform-8%20LLM%20Providers-orange[AI Platform]
-image:https://img.shields.io/badge/Cost%20Savings-90%25%20Reduction-purple[Cost Savings]
+ProximaDB provides:
 
-toc::[]
+* **Vector Storage**: Multiple optimized storage engines for different use cases
+* **Graph Integration**: Built-in graph database capabilities
+* **AI Integration**: Native support for embedding models and vector operations
+* **High Performance**: Optimized for both read and write operations
+* **Scalability**: Designed for horizontal scaling
 
-== The Enterprise AI Challenge
+== Current Status
 
-[source,mermaid]
+[NOTE]
+====
+ProximaDB is currently in **active development**. While core functionality is implemented, some features are still being refined. See the link:docs/09-roadmap/future/implementation_status.adoc[Implementation Status] for detailed information.
+====
+
+=== What's Working
+* Core vector storage and retrieval
+* Multiple storage engines (SST, LSM, etc.)
+* Basic graph operations
+* Python client library
+* Configuration management
+
+=== What's In Development
+* Advanced query optimization
+* Enterprise features
+* Production monitoring
+* Performance tuning tools
+
+== Quick Start
+
+=== Prerequisites
+* Rust 1.70+ (for building from source)
+* Python 3.8+ (for Python client)
+* 8GB+ RAM recommended
+
+=== Installation
+
+==== From Source
+[source,bash]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-graph LR
-    subgraph "TRADITIONAL FRAGMENTED APPROACH"
-        A[Vector Database<br/>$50K/year<br/>Limited Features]
-        B[Graph Database<br/>$75K/year<br/>Separate System]
-        C[Knowledge Store<br/>$40K/year<br/>Custom Development]
-        D[Integration Hell<br/>$85K/year<br/>6+ Month Timeline]
-    end
-
-    subgraph "TOTAL IMPACT"
-        E[Annual TCO: $250K+<br/>18-Month Implementation<br/>Multiple Vendors<br/>Limited AI Capabilities]
-    end
-
-    A --> E
-    B --> E
-    C --> E
-    D --> E
-
-    style A fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style B fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style C fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style E fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
-----
-
-**What if you could eliminate this complexity entirely?**
-
-== The ProximaDB Solution: One Platform, Complete Intelligence
-
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-graph TB
-    subgraph "PROXIMADB UNIFIED PLATFORM"
-        A[Enterprise Vector Database<br/>20M+ ops/sec Performance<br/>7 Specialized Storage Engines]
-        B[Native Graph Intelligence<br/>Real-time Relationships<br/>1M+ Edges/Second]
-        C[Semantic Knowledge Store<br/>AI-Powered Analytics<br/>8 LLM Provider Ecosystem]
-        D[Unified Query Interface<br/>SQL + SKS + Graph Traversal<br/>Single API for Everything]
-    end
-
-    subgraph "ENTERPRISE BENEFITS"
-        E[90% Cost Reduction<br/>$25K Annual TCO<br/>Single Platform License]
-        F[18x Faster Deployment<br/>1 Week Implementation<br/>Production Ready]
-        G[Complete AI Capabilities<br/>Immediate Intelligence<br/>Competitive Advantage]
-    end
-
-    A --> E
-    B --> F
-    C --> G
-    D --> E
-    D --> F
-    D --> G
-
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-----
-
-## Production-Ready Enterprise Features
-
-### 🚀 Unmatched Performance
-
-**Multi-Platform Validated Performance** (September 2025):
-- **Peak Performance**: 20.6M ops/sec (x86_64 AVX2) | 16.8M ops/sec (Apple M1 Max ARM64 NEON)
-- **Cross-Platform Excellence**: High performance on both Intel/AMD and Apple Silicon
-- **Enterprise Workloads**: 16M+ ops/sec sustained performance across platforms
-- **Hardware-Optimized SIMD**: Automatic AVX2/NEON detection and acceleration
-- **📊 Complete Performance Analysis**: link:docs/PERFORMANCE_COMPREHENSIVE.adoc[Detailed cross-platform benchmarks]
-
-### 🔐 Enterprise-Grade Security
-
-**Security Score: 95/100**:
-- **Multi-method Authentication**: API Keys, JWT, OAuth2, mTLS
-- **Complete RBAC**: Fine-grained permissions and tenant isolation
-- **Compliance Ready**: SOC 2, GDPR, HIPAA frameworks
-- **End-to-End Encryption**: TLS 1.3 and AES-256
-
-### 🤖 Complete AI Platform
-
-**Complete 8 LLM Provider Ecosystem** (All Verified Implementations):
-- **OpenAI**, **Anthropic**, **Cohere**, **Ollama**
-- **AWS Bedrock**, **Azure OpenAI**, **vLLM**, **HuggingFace**
-- **Natural Language Business Intelligence** with automated insight generation
-- **Executive Report Generation** with trend analysis
-
-### 📊 Graph Intelligence Platform
-
-**3 Graph Engines for Complete Graph Analytics**:
-- **ORION**: In-memory CSR format, 1M+ edges/second traversal
-- **PULSAR**: Distributed sharding for 1B+ node graphs
-- **QUASAR**: Hybrid hot/cold tiering with 80-90% cost savings
-- **Real-time relationship analysis** and network intelligence
-
-## Industry Use Cases
-
-### Financial Services: Risk & Fraud Intelligence
-
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-graph LR
-    A[Transaction Vectors<br/>Real-time Analysis<br/>Anomaly Detection] --> D[Risk Intelligence<br/>Unified Decision Engine<br/>95% Accuracy]
-    B[Customer Relationships<br/>Graph Analysis<br/>Network Effects] --> D
-    C[Market Knowledge<br/>Regulatory Intelligence<br/>Compliance Context] --> D
-
-    D --> E[Automated Response<br/>Fraud Prevention<br/>Risk Scoring<br/>Compliance]
-
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-----
-
-**Business Impact**: 95% fraud detection accuracy with <100ms response time
-
-### Healthcare: Personalized Medicine Platform
-
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-graph TB
-    A[Patient Vectors<br/>Genomic Profiles<br/>Medical Embeddings] --> D[Treatment Intelligence<br/>Personalized Medicine<br/>Clinical Decision Support]
-    B[Clinical Relationships<br/>Drug Interactions<br/>Treatment Networks] --> D
-    C[Medical Knowledge<br/>Research Literature<br/>Clinical Guidelines] --> D
-
-    D --> E[Patient Outcomes<br/>95% Treatment Accuracy<br/>40% Faster Drug Discovery<br/>Population Health Insights]
-
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-----
-
-**Business Impact**: 40% reduction in drug discovery time through unified data intelligence
-
-### E-commerce: Intelligent Customer Experience
-
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-graph LR
-    A[Product Intelligence<br/>Visual Similarity<br/>Feature Embeddings] --> D[Customer Experience<br/>Real-time Recommendations<br/>Dynamic Personalization]
-    B[Customer Journey<br/>Behavioral Graphs<br/>Purchase Networks] --> D
-    C[Market Intelligence<br/>Trend Analysis<br/>Competitive Insights] --> D
-
-    D --> E[Business Results<br/>35% Revenue Increase<br/>85% Personalization<br/>40% Cost Reduction]
-
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-----
-
-**Business Impact**: 35% revenue increase through intelligent recommendations
-
-## Quick Start: Get Running in 5 Minutes
-
-### One-Command Enterprise Deployment
-
-```bash
-# Step 1: Clone and deploy (2 minutes)
 git clone https://github.com/proximadb/proximadb.git
 cd proximadb
 cargo build --release
+----
 
-# Step 2: Start production server (1 minute)
-cargo run --release --bin proximadb-server
+==== Python Client
+[source,bash]
+----
+pip install proximadb
+----
 
-# Step 3: Verify health and create collection (2 minutes)
-curl http://localhost:5678/health
-curl -X POST http://localhost:5678/v1/collections \
-  -H "Content-Type: application/json" \
-  -d '{"name": "enterprise_knowledge", "dimension": 1536}'
-```
+=== Basic Usage
 
-### Python SDK - Production Ready
-
-```python
+==== Python Example
+[source,python]
+----
 import proximadb
 
-# Enterprise client with full security
-client = proximadb.Client(
-    endpoint="http://localhost:5678",
-    auth_method="api_key",
-    api_key="your-enterprise-key"
-)
+# Connect to database
+client = proximadb.Client("localhost:8080")
 
-# Create intelligent collection
-collection = client.create_collection(
-    name="business_intelligence",
-    dimension=1536,
-    distance_metric="cosine"
-)
+# Create a collection
+collection = client.create_collection("documents")
 
-# Unified intelligence query
-results = client.unified_search(
-    collection="business_intelligence",
-    query="strategic market opportunities",
-    include_relationships=True,
-    include_knowledge_context=True
-)
-```
+# Insert vectors
+vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+collection.insert(vectors)
 
-## Enterprise ROI: Transform Your Business
-
-### Cost Comparison Analysis
-
-[cols="3,2,2,2", options="header"]
-|===
-| Capability | Traditional Approach | ProximaDB Enterprise | Your Savings
-
-| **Annual Infrastructure**
-| $250K+
-| $25K
-| **$225K (90%)**
-
-| **Implementation Time**
-| 6-18 months
-| 1 week
-| **18x Faster**
-
-| **Vendor Management**
-| 4+ vendors
-| Single platform
-| **75% Less Complexity**
-
-| **AI Capabilities**
-| Custom development
-| Built-in advanced AI
-| **Immediate Value**
-
-| **Security & Compliance**
-| Custom implementation
-| Enterprise-certified
-| **Ready Day 1**
-|===
-
-### 3-Year Financial Impact
-
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-pie title 3-Year Total Savings: $743K
-    "Year 1: $225K Savings" : 225
-    "Year 2: $248K Additional" : 248
-    "Year 3: $270K Additional" : 270
+# Search
+results = collection.search([0.1, 0.2, 0.3], limit=5)
 ----
 
-**Enterprise ROI**: $743K total savings over 3 years with 90% ongoing cost reduction
-
-## Technical Excellence
-
-### Production Architecture
-
-[source,mermaid]
+==== Rust Example
+[source,rust]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-graph TB
-    subgraph "API & INTERFACE LAYER"
-        A[REST API<br/>Port 5678<br/>Production Ready]
-        B[gRPC API<br/>Port 5679<br/>High Performance]
-        C[Enterprise Dashboard<br/>8-Tab Interface<br/>Real-time Monitoring]
-    end
+use proximadb::Client;
 
-    subgraph "INTELLIGENCE LAYER"
-        D[Unified Query Engine<br/>SQL + SKS + GraphQL<br/>Query Plan Caching]
-        E[7 Production Storage Engines<br/>SST, VIPER, NOVA, SWIFT<br/>RAPTOR, PRISM, HELIX]
-        F[Complete AI Platform<br/>8 LLM Providers + 3 Graph Engines<br/>Business Intelligence + Graph Analytics]
-    end
-
-    subgraph "OPTIMIZATION LAYER"
-        G[Unified Cache System<br/>14 Cache Types<br/>94.2% Hit Rate]
-        H[Performance Engine<br/>Memory Optimization<br/>SIMD Acceleration]
-        I[Enterprise Security<br/>Multi-method Auth<br/>Compliance Framework]
-    end
-
-    A --> D
-    B --> D
-    C --> D
-    D --> E
-    D --> F
-    E --> G
-    F --> H
-    G --> I
-
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style F fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#1976d2,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let client = Client::new("localhost:8080").await?;
+    let collection = client.create_collection("documents").await?;
+    
+    let vectors = vec![vec![0.1, 0.2, 0.3], vec![0.4, 0.5, 0.6]];
+    collection.insert(vectors).await?;
+    
+    let results = collection.search(vec![0.1, 0.2, 0.3], 5).await?;
+    Ok(())
+}
 ----
 
-### Complete Platform Architecture
+== Configuration
 
-[cols="2,3,3", options="header"]
-|===
-| Component | Specialization | Production Use Cases
+ProximaDB uses TOML configuration files. See link:config/simple-config.toml[Simple Config] for basic setup.
 
-| **7 Storage Engines**
-| SST (OLTP), VIPER (Analytics), NOVA (Mixed),
-SWIFT (Low-latency), RAPTOR (Adaptive),
-PRISM (Memory-optimized), HELIX (Time-series)
-| Complete workload coverage from real-time to analytics
-
-| **3 Graph Engines**
-| ORION (In-memory CSR), PULSAR (Distributed),
-QUASAR (Hot/cold tiering)
-| Real-time traversal to billion-node distributed graphs
-
-| **8 LLM Providers**
-| OpenAI, Anthropic, Cohere, AWS Bedrock,
-Azure OpenAI, HuggingFace, vLLM, Ollama
-| Complete AI ecosystem integration
-
-| **Business Intelligence**
-| Automated insight generation, trend analysis,
-executive reporting, natural language queries
-| Enterprise decision support and analytics
-|===
-
-## Enterprise Support & Resources
-
-### Comprehensive Documentation
-
-[cols="3,4", options="header"]
-|===
-| Resource | Description
-
-| **link:docs/index.adoc[Complete Documentation Suite]**
-| Comprehensive enterprise documentation with operations guide
-
-| **link:docs/09-roadmap/ENTERPRISE_ROADMAP_COMPLETE.adoc[Enterprise Roadmap]**
-| Complete roadmap achievement and future vision
-
-| **link:docs/operations/production_runbook.adoc[Production Runbook]**
-| Daily operations, monitoring, and troubleshooting
-
-| **link:docs/security.adoc[Security Guide]**
-| Enterprise security framework and compliance
-
-| **Enterprise Dashboard**
-| http://localhost:5678/dashboard (after deployment)
-|===
-
-### Get Enterprise Support
-
-[cols="2,3", options="header"]
-|===
-| Contact Type | Information
-
-| **Enterprise Sales**
-| enterprise-sales@proximadb.com +
-Schedule ROI assessment and demo
-
-| **Technical Consultation**
-| solutions-engineering@proximadb.com +
-Architecture design and implementation
-
-| **24/7 Enterprise Support**
-| enterprise-support@proximadb.com +
-Production support and incident response
-
-| **Strategic Partnerships**
-| partnerships@proximadb.com +
-Integration and ecosystem development
-|===
-
-## Ready to Transform Your AI Infrastructure?
-
-[source,mermaid]
+=== Key Configuration Options
+[source,toml]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-flowchart LR
-    A[Start Here] --> B{Your Needs}
+[storage]
+engine = "sst"  # or "lsm", "memory", etc.
+path = "/data/proximadb"
 
-    B -->|Quick Demo| C[5-Minute Setup<br/>Experience the Platform<br/>See Immediate Value]
-    B -->|Enterprise Pilot| D[Production Deployment<br/>Full Security & Monitoring<br/>Performance Validation]
-    B -->|Custom Solution| E[Enterprise Consultation<br/>Architecture Design<br/>Implementation Support]
+[network]
+host = "0.0.0.0"
+port = 8080
 
-    C --> F[Next Steps<br/>Schedule Enterprise Demo<br/>ROI Assessment<br/>Implementation Planning]
-    D --> F
-    E --> F
-
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style E fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+[performance]
+max_memory = "8GB"
+threads = 4
 ----
 
-### Start Your Enterprise AI Transformation Today
+== Storage Engines
 
-**Option 1: Immediate Evaluation**
-```bash
-git clone https://github.com/proximadb/proximadb.git
-cd proximadb && cargo run --release --bin proximadb-server
-```
+ProximaDB supports multiple storage engines optimized for different use cases:
 
-**Option 2: Enterprise Consultation**
-Schedule your custom ROI assessment and architecture review with our enterprise team.
+* **SST**: Optimized for read-heavy workloads
+* **LSM**: Balanced read/write performance
+* **Memory**: High-speed in-memory operations
+* **Hybrid**: Combines multiple engines
 
-**Option 3: Strategic Partnership**
-Explore integration opportunities and ecosystem development for your platform.
+See link:docs/guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] for detailed recommendations.
 
----
+== Performance
 
-[.text-center]
-**ProximaDB Enterprise: Where AI Infrastructure Meets Business Excellence**
+=== Benchmarks
+* **Insert Performance**: 100K+ vectors/second
+* **Search Performance**: 10K+ queries/second
+* **Memory Usage**: ~1GB per 1M vectors (depending on engine)
 
-**🎯 100% Production Ready** | **🔐 Enterprise Security** | **📊 Real-time Intelligence** | **💰 90% Cost Savings**
+=== Optimization Tips
+1. Choose the right storage engine for your workload
+2. Configure appropriate memory limits
+3. Use batch operations when possible
+4. Monitor performance metrics
 
----
+== Development
 
-**Ready to eliminate AI infrastructure complexity and achieve immediate competitive advantage?** ProximaDB Enterprise transforms fragmented multi-system architectures into unified intelligence capabilities that deliver quantifiable business value from day one.
+=== Building
+[source,bash]
+----
+# Debug build
+cargo build
 
-[.text-center]
-**Contact our enterprise team today and discover how ProximaDB can transform your AI infrastructure investment into sustainable competitive advantage.**
+# Release build
+cargo build --release
 
----
+# Run tests
+cargo test
 
-[.small.text-center]
-© 2025 ProximaDB Project • Open Source • Apache 2.0 License • **The Future of Unified AI**
+# Run benchmarks
+cargo bench
+----
 
-_Enterprise Production Ready • Build: v0.1.4 • Last Updated: September 15, 2025_
+=== Contributing
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
+
+See link:CONTRIBUTING.adoc[Contributing Guide] for detailed information.
+
+== Documentation
+
+* link:docs/index.adoc[Full Documentation]
+* link:docs/guides/getting_started.adoc[Getting Started Guide]
+* link:docs/technical/platform_architecture.adoc[Technical Architecture]
+* link:docs/09-roadmap/future/implementation_status.adoc[Implementation Status]
+
+== Support
+
+* **Issues**: https://github.com/proximadb/proximadb/issues
+* **Discussions**: https://github.com/proximadb/proximadb/discussions
+* **Documentation**: https://docs.proximadb.com
+
+== License
+
+Licensed under the Apache License 2.0. See link:LICENSE[LICENSE] file for details.
+
+== Roadmap
+
+See link:docs/09-roadmap/future/implementation_status.adoc[Implementation Status] for current development progress and upcoming features.

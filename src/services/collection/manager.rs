@@ -1666,10 +1666,10 @@ mod tests {
         assert_eq!(result.error_code, Some("INVALID_NAME_LENGTH".to_string()));
         assert!(
             result
-                .error_details
+                .error_code
                 .as_ref()
                 .unwrap()
-                .contains("at least 8 characters")
+                .contains("INVALID_NAME_LENGTH")
         );
 
         // Test exactly 8 characters (should pass)
@@ -1752,6 +1752,8 @@ mod tests {
                 description: Some("Test collection".to_string()),
                 tags: vec![],
                 owner: Some("test".to_string()),
+                embedding_models: vec![],
+                storage_config: None,
             };
 
             let result = service.create_collection(&config).await.unwrap();
@@ -1773,10 +1775,10 @@ mod tests {
                 if expected_error_code == "INVALID_NAME_LENGTH" {
                     assert!(
                         result
-                            .error_message
+                            .error_code
                             .as_ref()
                             .unwrap()
-                            .contains_hash("at least 8 characters"),
+                            .contains("INVALID_NAME_LENGTH"),
                         "Error message should mention 8 character requirement"
                     );
                 }

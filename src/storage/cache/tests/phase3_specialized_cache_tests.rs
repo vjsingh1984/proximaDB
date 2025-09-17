@@ -159,8 +159,7 @@ async fn test_query_result_cache_subqueries() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::proto::proximadb_v1::VectorRecord;
-    use crate::proto::proximadb_v1::SqlValue;
+    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, SearchResult, SearchVectorRecord};
     use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryKey};
     use std::time::SystemTime;
 
@@ -169,38 +168,56 @@ async fn test_query_result_cache_subqueries() {
     // Create main query result
     let main_query = CachedQueryResult {
         results: vec![
-            VectorRecord {
-                id: "vec1".to_string(),
-                vector: vec![],
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                quantized_vector: vec![],
-                source: Some("test".to_string()),
-            },
-            VectorRecord {
-                id: "vec2".to_string(),
-                vector: vec![],
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                quantized_vector: vec![],
-                source: Some("test".to_string()),
-            },
-            VectorRecord {
-                id: "vec3".to_string(),
-                vector: vec![],
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                quantized_vector: vec![],
-                source: Some("test".to_string()),
+            SearchResult {
+                results: vec![
+                    SearchVectorRecord {
+                        id: "vec1".to_string(),
+                        score: 0.95,
+                        vector: vec![],
+                        metadata: std::collections::HashMap::new(),
+                        version: Some(1),
+                        similarity: None,
+                        timestamp: Some(0),
+                        source: Some("test".to_string()),
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: std::collections::HashMap::new(),
+                        index_path: None,
+                    },
+                    SearchVectorRecord {
+                        id: "vec2".to_string(),
+                        score: 0.85,
+                        vector: vec![],
+                        metadata: std::collections::HashMap::new(),
+                        version: Some(1),
+                        similarity: None,
+                        timestamp: Some(0),
+                        source: Some("test".to_string()),
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: std::collections::HashMap::new(),
+                        index_path: None,
+                    },
+                    SearchVectorRecord {
+                        id: "vec3".to_string(),
+                        score: 0.75,
+                        vector: vec![],
+                        metadata: std::collections::HashMap::new(),
+                        version: Some(1),
+                        similarity: None,
+                        timestamp: Some(0),
+                        source: Some("test".to_string()),
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: std::collections::HashMap::new(),
+                        index_path: None,
+                    },
+                ],
+                total_found: 3,
+                collection_id: Some("test_collection".to_string()),
             },
         ],
         cached_at: SystemTime::now(),
@@ -210,27 +227,41 @@ async fn test_query_result_cache_subqueries() {
     // Create subqueries
     let subquery1 = CachedQueryResult {
         results: vec![
-            VectorRecord {
-                id: "vec1".to_string(),
-                vector: vec![],
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                quantized_vector: vec![],
-                source: Some("test".to_string()),
-            },
-            VectorRecord {
-                id: "vec2".to_string(),
-                vector: vec![],
-                metadata: std::collections::HashMap::new(),
-                timestamp: 0,
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                quantized_vector: vec![],
-                source: Some("test".to_string()),
+            SearchResult {
+                results: vec![
+                    SearchVectorRecord {
+                        id: "vec1".to_string(),
+                        score: 0.90,
+                        vector: vec![],
+                        metadata: std::collections::HashMap::new(),
+                        version: Some(1),
+                        similarity: None,
+                        timestamp: Some(0),
+                        source: Some("test".to_string()),
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: std::collections::HashMap::new(),
+                        index_path: None,
+                    },
+                    SearchVectorRecord {
+                        id: "vec2".to_string(),
+                        score: 0.80,
+                        vector: vec![],
+                        metadata: std::collections::HashMap::new(),
+                        version: Some(1),
+                        similarity: None,
+                        timestamp: Some(0),
+                        source: Some("test".to_string()),
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: std::collections::HashMap::new(),
+                        index_path: None,
+                    },
+                ],
+                total_found: 2,
+                collection_id: Some("test_collection".to_string()),
             },
         ],
         cached_at: SystemTime::now(),
@@ -238,17 +269,29 @@ async fn test_query_result_cache_subqueries() {
     };
 
     let subquery2 = CachedQueryResult {
-        results: vec![VectorRecord {
-            id: "vec3".to_string(),
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            quantized_vector: vec![],
-            source: None,
-            vector: vec![],
-            metadata: std::collections::HashMap::new(),
-        }],
+        results: vec![
+            SearchResult {
+                results: vec![
+                    SearchVectorRecord {
+                        id: "vec3".to_string(),
+                        score: 0.70,
+                        vector: vec![],
+                        metadata: std::collections::HashMap::new(),
+                        version: Some(1),
+                        similarity: None,
+                        timestamp: Some(0),
+                        source: None,
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: std::collections::HashMap::new(),
+                        index_path: None,
+                    },
+                ],
+                total_found: 1,
+                collection_id: Some("test_collection".to_string()),
+            },
+        ],
         cached_at: SystemTime::now(),
         file_dependencies: vec![],
     };

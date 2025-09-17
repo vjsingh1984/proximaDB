@@ -414,7 +414,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (_, _, hits, misses) = coordinator.metrics();
+        let (_, _, hits, misses) = coordinator.get_metrics();
         assert_eq!(hits, 1);
         assert_eq!(misses, 1);
     }

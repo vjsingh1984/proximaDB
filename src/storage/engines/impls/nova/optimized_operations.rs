@@ -445,9 +445,9 @@ mod tests {
     #[test]
     fn test_projection_mask() {
         let config = ColumnarSearchConfig {
-            binary_expansion: 10,
-            int8_expansion: 5,
-            pq_expansion: 2,
+            enable_progressive_search: true,
+            max_candidates: 10000,
+            search_mode: crate::storage::engines::impls::nova::columnar_search::SearchMode::Progressive,
             ..Default::default()
         };
 

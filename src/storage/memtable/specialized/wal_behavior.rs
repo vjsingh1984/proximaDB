@@ -1194,7 +1194,9 @@ mod tests {
         for i in 0..3 {
             let now = chrono::Utc::now().timestamp_millis();
             let mut metadata = std::collections::HashMap::new();
-            metadata.insert("version".to_string(), crate::proto::proximadb_v1::SqlValue::String(i.to_string()));
+            metadata.insert("version".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
+            });
 
             let vector_record = crate::proto::proximadb_v1::VectorRecord {
                 id: vector_id.to_string(),
@@ -1234,7 +1236,7 @@ mod tests {
         // Verify vector data integrity
         let found_vectors: Vec<_> = all_vectors
             .iter()
-            .filter(|(_, record)| record.id.as_deref() == vector_id)
+            .filter(|(_, record)| record.id == vector_id)
             .collect();
         assert!(!found_vectors.is_empty());
     }
