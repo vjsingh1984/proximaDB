@@ -18,7 +18,6 @@ mod sks_integration_tests {
     use proximadb::storage::provenance::InMemoryProvenanceRegistry;
     use proximadb::storage::traits::{StorageEngineStrategy, PerformanceTier};
     use proximadb::core::{VectorRecord};
-    use proximadb::core::search::queries::SearchQuery;
     use proximadb::storage::traits::{FlushParameters, FlushResult, CompactionParameters, CompactionResult};
     use std::collections::HashMap;
     use anyhow::Result;
@@ -99,8 +98,8 @@ mod sks_integration_tests {
 
             async fn search_vectors_unified(
                 &self,
-                _query: &SearchQuery,
-            ) -> Result<Vec<VectorRecord>> {
+                _ctx: &proximadb::storage::traits::StorageQueryContext,
+            ) -> Result<Vec<proximadb::core::search::results::OptimizedSearchRecord>> {
                 Ok(vec![])
             }
 
