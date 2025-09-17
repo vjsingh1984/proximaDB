@@ -7,11 +7,11 @@
 //! 4. Provide equivalent functionality
 
 use proximadb::proto::proximadb_v1::{
-    CollectionConfig, CollectionRequest, CollectionResponse, DistanceMetric, SearchQuery,
+    CollectionConfig, CollectionRequest, CollectionResponse, DistanceMetric,
     StorageEngine, VectorBatchRequest, VectorOperationResponse, VectorRecord, VectorSearchRequest,
-    MetadataFilter, FilterCondition, FilterOperation, SqlValue, sql_value, FilterOperator,
+    MetadataFilter, FilterClause, ComparisonOp, SqlValue, sql_value, LogicalOp,
+    SearchQuery, SearchParams, SearchOptimization, IncludeFields, filter_clause,
 };
-use serde_json::json;
 use std::time::Duration;
 use tokio;
 
@@ -42,7 +42,7 @@ mod api_consistency_tests {
             // Try to connect to gRPC (may not be available in all test environments)
             let grpc_channel = tonic::transport::Channel::from_shared(grpc_url)
                 .ok()
-                .and_then(|endpoint| endpoint.connect_lazy().ok());
+                .and_then(|endpoint| endpoint.connect_lazy());
 
             ApiTestFixture {
                 rest_client,
@@ -102,14 +102,34 @@ mod api_consistency_tests {
             collection_id: collection_id.to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3, 0.4],
-                id: None,
-                metadata_filter: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
-            distance_metric_override: Some(DistanceMetric::Cosine as i32),
-            search_params: std::collections::HashMap::new(),
-            include_fields: vec![],
-            search_optimization: std::collections::HashMap::new(),
+            distance_metric_override: Some(DistanceMetric::Cosine as u32),
+            search_params: Some(SearchParams {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                include_expired: None,
+                timeout_ms: None,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            include_fields: Some(IncludeFields {
+                vector: true,
+                metadata: true,
+                score: true,
+                rank: false,
+                source: false,
+                source_options: std::collections::HashMap::new(),
+            }),
+            search_optimization: Some(SearchOptimization {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                filters: std::collections::HashMap::new(),
+            }),
         };
 
         // Send via REST
@@ -149,23 +169,23 @@ mod api_consistency_tests {
 
         // Test CREATE operation
         let create_request = CollectionRequest {
-            operation: proximadb::proto::proximadb_v1::CollectionOperation::Create as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::CollectionCreate as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: Some(CollectionConfig {
                 name: collection_id.clone(),
                 dimension: 128,
-                distance_metric: Some(DistanceMetric::Euclidean as i32),
-                storage_engine: Some(StorageEngine::Viper as i32),
-                compression: None,
-                engine_config: std::collections::HashMap::new(),
-                cache_config: None,
-                quantization_config: None,
-                index_config: None,
-                metadata_config: None,
-                auto_create_shards: None,
-                auto_balance: None,
-                replication_factor: None,
-                consistency_level: None,
+                distance_metric: DistanceMetric::Euclidean,
+                storage_engine: StorageEngine::Viper,
+                tags: vec![],
+                description: None,
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
+                storage_config: None,
+                primary_index: "default".to_string(),
+                auto_index_selection: true,
+                owner: None,
+                embedding_models: vec![],
             }),
             query_params: Default::default(),
             options: Default::default(),
@@ -178,7 +198,7 @@ mod api_consistency_tests {
 
         // Test GET operation
         let get_request = CollectionRequest {
-            operation: proximadb::proto::proximadb_v1::CollectionOperation::Get as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: None,
             query_params: Default::default(),
@@ -195,7 +215,7 @@ mod api_consistency_tests {
 
         // Test DELETE operation
         let delete_request = CollectionRequest {
-            operation: proximadb::proto::proximadb_v1::CollectionOperation::Delete as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::CollectionDelete as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: None,
             query_params: Default::default(),
@@ -220,14 +240,34 @@ mod api_consistency_tests {
             collection_id: "".to_string(), // Invalid: empty collection ID
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3],
-                id: None,
-                metadata_filter: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,
-            search_params: std::collections::HashMap::new(),
-            include_fields: vec![],
-            search_optimization: std::collections::HashMap::new(),
+            search_params: Some(SearchParams {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                include_expired: None,
+                timeout_ms: None,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            include_fields: Some(IncludeFields {
+                vector: true,
+                metadata: true,
+                score: true,
+                rank: false,
+                source: false,
+                source_options: std::collections::HashMap::new(),
+            }),
+            search_optimization: Some(SearchOptimization {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                filters: std::collections::HashMap::new(),
+            }),
         };
 
         let rest_response: Result<VectorOperationResponse, _> = fixture
@@ -242,14 +282,34 @@ mod api_consistency_tests {
             collection_id: "nonexistent_collection_12345".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3],
-                id: None,
-                metadata_filter: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,
-            search_params: std::collections::HashMap::new(),
-            include_fields: vec![],
-            search_optimization: std::collections::HashMap::new(),
+            search_params: Some(SearchParams {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                include_expired: None,
+                timeout_ms: None,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            include_fields: Some(IncludeFields {
+                vector: true,
+                metadata: true,
+                score: true,
+                rank: false,
+                source: false,
+                source_options: std::collections::HashMap::new(),
+            }),
+            search_optimization: Some(SearchOptimization {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                filters: std::collections::HashMap::new(),
+            }),
         };
 
         let rest_response: Result<VectorOperationResponse, _> = fixture
@@ -273,7 +333,7 @@ mod api_consistency_tests {
         // Create batch request with multiple records
         let batch_request = VectorBatchRequest {
             collection_id: collection_id.clone(),
-            records: vec![
+            vectors: vec![
                 VectorRecord {
                     id: "record1".to_string(),
                     vector: vec![0.1, 0.2, 0.3, 0.4],
@@ -297,7 +357,6 @@ mod api_consistency_tests {
                     source: None,
                 },
             ],
-            auto_create_collection: Some(true),
         };
 
         let rest_response: Result<VectorOperationResponse, _> = fixture
@@ -321,27 +380,53 @@ mod api_consistency_tests {
             collection_id: "test_collection".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3, 0.4],
-                id: None,
-                metadata_filter: Some(MetadataFilter {
-                    conditions: vec![FilterCondition {
-                        field_name: "category".to_string(),
-                        operation: FilterOperation::Equals as i32,
-                        value: Some(SqlValue {
-                            value: Some(
-                                sql_value::Value::StringValue(
-                                    "electronics".to_string(),
-                                ),
+                filters: {
+                    let mut filters = std::collections::HashMap::new();
+                    filters.insert("category".to_string(), SqlValue {
+                        value: Some(
+                            sql_value::Value::StringValue(
+                                "electronics".to_string(),
                             ),
-                        }),
+                        ),
+                    });
+                    filters
+                },
+                advanced_filter: Some(MetadataFilter {
+                    clauses: vec![FilterClause {
+                        field: "category".to_string(),
+                        op: ComparisonOp::Eq as i32,
+                        value: Some(filter_clause::Value::StringValue(
+                            "electronics".to_string(),
+                        )),
                     }],
-                    operator: FilterOperator::And as i32,
+                    op: LogicalOp::And as i32,
                 }),
             }],
             top_k: 5,
             distance_metric_override: None,
-            search_params: std::collections::HashMap::new(),
-            include_fields: vec![],
-            search_optimization: std::collections::HashMap::new(),
+            search_params: Some(SearchParams {
+                top_k: Some(5),
+                accuracy_threshold: None,
+                include_expired: None,
+                timeout_ms: None,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            include_fields: Some(IncludeFields {
+                vector: true,
+                metadata: true,
+                score: true,
+                rank: false,
+                source: false,
+                source_options: std::collections::HashMap::new(),
+            }),
+            search_optimization: Some(SearchOptimization {
+                top_k: Some(5),
+                accuracy_threshold: None,
+                filters: std::collections::HashMap::new(),
+            }),
         };
 
         let _rest_response: Result<VectorOperationResponse, _> = fixture

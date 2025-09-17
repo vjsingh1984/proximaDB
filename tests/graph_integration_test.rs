@@ -227,7 +227,7 @@ async fn test_graph_traversal() {
     }
 
     // Test neighbor queries
-    let neighbors = service.get_neighbors("A").unwrap();
+    let neighbors = service.get_neighbors(&"A".to_string()).unwrap();
     assert_eq!(neighbors.len(), 2); // B and D
     let neighbor_ids: Vec<String> = neighbors.iter().map(|n| n.id.clone()).collect();
     assert!(neighbor_ids.contains(&"B".to_string()));
@@ -364,7 +364,7 @@ async fn test_batch_operations() {
     assert_eq!(created_edges.len(), 4);
 
     // Verify connections
-    let neighbors = service.get_neighbors("batch_node_0").unwrap();
+    let neighbors = service.get_neighbors(&"batch_node_0".to_string()).unwrap();
     assert_eq!(neighbors.len(), 1);
     assert_eq!(neighbors[0].id, "batch_node_1");
 }
