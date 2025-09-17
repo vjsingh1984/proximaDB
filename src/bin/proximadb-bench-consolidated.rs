@@ -9,7 +9,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
-use std::sync::Arc;
+// use std::sync::Arc; // Unused - removing to fix warning
 use std::time::Instant;
 use tracing::{info, warn};
 
@@ -359,7 +359,7 @@ async fn main() -> Result<()> {
             benchmark_vector_operations(&cli.dimensions, 1000)?;
             benchmark_index_operations(&cli.dimensions, 1000, None).await?;
         }
-        Some(Commands::Distance { metrics }) => {
+        Some(Commands::Distance { metrics: _ }) => {
             // TODO: Filter metrics if specified
             benchmark_distance_metrics(&cli.dimensions, cli.iterations)?;
         }

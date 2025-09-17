@@ -26,24 +26,24 @@ mod tests {
             .map(|(key, value)| {
                 let metadata_value = match value {
                     serde_json::Value::String(s) => Some(
-                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()),
+                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(s.clone()),
                     ),
                     serde_json::Value::Number(n) => {
                         if let Some(f) = n.as_f64() {
-                            Some(proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(f))
+                            Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(f))
                         } else {
                             Some(
-                                proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
                                     n.to_string(),
                                 ),
                             )
                         }
                     }
                     serde_json::Value::Bool(b) => {
-                        Some(proximadb::proto::proximadb_v1::metadata_item::Value::BoolValue(*b))
+                        Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(*b))
                     }
                     _ => Some(
-                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
+                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
                             value.to_string(),
                         ),
                     ),

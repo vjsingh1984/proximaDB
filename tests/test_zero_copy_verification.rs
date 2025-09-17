@@ -1,7 +1,8 @@
 //! Test to verify protobuf serialization operations
 
 use prost::Message;
-use proximadb::proto::proximadb_v1::{MetadataItem, VectorRecord, metadata_item};
+use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
+use std::collections::HashMap;
 use tracing::{debug, info};
 
 #[test]
@@ -9,27 +10,30 @@ fn test_protobuf_serialization() {
     // Initialize hardware capabilities for test
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    // Create metadata items using the protobuf structure
-    let metadata = vec![
-        MetadataItem {
-            key: "category".to_string(),
-            value: Some(metadata_item::Value::StringValue("test".to_string())),
+    // Create metadata using HashMap<String, SqlValue> as expected by proto
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "category".to_string(),
+        SqlValue {
+            value: Some(sql_value::Value::StringValue("test".to_string())),
         },
-        MetadataItem {
-            key: "score".to_string(),
-            value: Some(metadata_item::Value::NumberValue(0.95)),
+    );
+    metadata.insert(
+        "score".to_string(),
+        SqlValue {
+            value: Some(sql_value::Value::NumberValue(0.95)),
         },
-    ];
+    );
 
     let record = VectorRecord {
         id: "test_id".to_string(),
         vector: vec![0.1, 0.2, 0.3, 0.4, 0.5],
         metadata,
-        timestamp: chrono::Utc::now().timestamp() as u32,
+        timestamp: chrono::Utc::now().timestamp(),
         updated_at: None,
         expires_at: None,
         version: None,
-        quantized_vector: None,
+        quantized_vector: vec![],
         source: None,
     };
 
@@ -67,20 +71,23 @@ fn test_batch_serialization_performance() {
 
     // Create 1000 test records
     for i in 0..1000 {
-        let metadata = vec![MetadataItem {
-            key: "index".to_string(),
-            value: Some(metadata_item::Value::StringValue(i.to_string())),
-        }];
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "index".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(i.to_string())),
+            },
+        );
 
         let record = VectorRecord {
             id: format!("test_id_{}", i),
             vector: vec![0.1; 768], // 768-dimensional vector (BERT-base size)
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
+            timestamp: chrono::Utc::now().timestamp(),
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         };
         records.push(record);

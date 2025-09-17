@@ -6,7 +6,7 @@ use proximadb::{
     compute::distance_computation::DistanceMetric,
     core::config::{SstConfig, ViperConfig},
     core::{hardware_capabilities, search::SearchParams},
-    proto::proximadb::{
+    proto::proximadb_v1::{
         Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, MetadataItem,
         StorageEngine, VectorRecord, metadata_item,
     },
@@ -234,7 +234,7 @@ mod tests {
         // Create mock collection and search params for the test
         use proximadb::{
             core::search::SearchParams,
-            proto::proximadb::{
+            proto::proximadb_v1::{
                 Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine,
             },
             storage::traits::StorageQueryMetadata,
