@@ -31,12 +31,17 @@ async fn create_test_setup() -> (Arc<SwiftEngine>, Arc<CollectionService>, TempD
             .unwrap(),
     );
 
+    // Create unified distance compute engine
+    let distance_engine = Arc::new(
+        proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+            proximadb::compute::distance_computation::DistanceMetric::Cosine
+        )
+    );
+
     let swift_engine = Arc::new(
         SwiftEngine::new(
-            "swift_test_collection".to_string(),
-            Default::default(),
-            filesystem.clone(),
-            Arc::new(Default::default()),
+            distance_engine,
+            None, // axis_manager
         )
         .await
         .unwrap(),

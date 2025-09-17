@@ -21,11 +21,16 @@ async fn test_quantization_config_fields() -> Result<()> {
         dimension: 128,
         distance_metric: 1,            // COSINE
         storage_engine: 1,             // VIPER
+        tags: vec![],
+        description: Some("Test collection".to_string()),
         filterable_columns: vec![],
         index_configs: vec![],
-        quantization: None, // This field should exist
-        description: Some("Test collection".to_string()),
-        tags: vec![],
+        quantization: None,
+        storage_config: None,
+        primary_index: "default".to_string(),
+        auto_index_selection: false,
+        owner: None,
+        embedding_models: vec![],
     };
 
     assert_eq!(basic_config.name, "basic_collection");
@@ -45,11 +50,16 @@ async fn test_index_config_field() -> Result<()> {
         dimension: 256,
         distance_metric: 1,            // COSINE
         storage_engine: 1,             // VIPER
+        tags: vec![],
+        description: Some("Test collection".to_string()),
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
-        description: Some("Test collection".to_string()),
-        tags: vec![],
+        storage_config: None,
+        primary_index: "default".to_string(),
+        auto_index_selection: false,
+        owner: None,
+        embedding_models: vec![],
     };
 
     assert_eq!(config_with_index.name, "indexed_collection");
@@ -67,8 +77,8 @@ async fn test_search_optimization_hints_field() -> Result<()> {
     // Create a search query
     let search_query = SearchQuery {
         vector: vec![1.0, 2.0, 3.0, 4.0],
-        id: None,
-        metadata_filter: None,
+        filters: std::collections::HashMap::new(),
+        advanced_filter: None,
     };
 
     let search_request = VectorSearchRequest {

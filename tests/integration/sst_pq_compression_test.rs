@@ -122,9 +122,9 @@ async fn test_sst_quantization_compression() -> Result<()> {
         let flush_result = sst_storage.do_flush(&flush_params).await?;
         
         info!("\n  📊 Results for {}:", algorithm);
-        info!("    • Entries flushed: {}", flush_result.entries_flushed);
+        info!("    • Entries flushed: {:?}", flush_result.entries_flushed);
         info!("    • Bytes written: {:.2} MB", flush_result.bytes_written as f64 / (1024.0 * 1024.0));
-        info!("    • Files created: {}", flush_result.files_created);
+        info!("    • Files created: {:?}", flush_result.files_created);
         
         // Calculate compression ratio
         let uncompressed_size = num_vectors * dimension * 4; // FP32
@@ -333,7 +333,7 @@ async fn test_compression_with_different_block_sizes() -> Result<()> {
             1.0
         };
         info!("  • Compression ratio: {:.2}x", compression_ratio);
-        info!("  • Files created: {}", flush_result.files_created);
+        info!("  • Files created: {:?}", flush_result.files_created);
         
         // Smaller blocks should generally achieve better compression due to locality
         if block_size_kb == 256 {

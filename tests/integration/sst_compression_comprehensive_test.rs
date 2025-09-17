@@ -120,9 +120,9 @@ async fn test_compression_for_data(
 
     // Log block information for uncompressed
     info!("📦 Uncompressed flush with 256KB blocks:");
-    info!("  • Files created: {}", uncompressed_result.files_created);
+    info!("  • Files created: {:?}", uncompressed_result.files_created);
     info!(
-        "  • Entries flushed: {}",
+        "  • Entries flushed: {:?}",
         uncompressed_result.entries_flushed
     );
     info!(
@@ -192,8 +192,8 @@ async fn test_compression_for_data(
         "📦 Compressed flush with 256KB blocks ({} level {}):",
         algorithm, level
     );
-    info!("  • Files created: {}", compressed_result.files_created);
-    info!("  • Entries flushed: {}", compressed_result.entries_flushed);
+    info!("  • Files created: {:?}", compressed_result.files_created);
+    info!("  • Entries flushed: {:?}", compressed_result.entries_flushed);
     info!(
         "  • Expected blocks: ~{}",
         vectors.len() * vectors[0].vector.len() * 4 / (256 * 1024)

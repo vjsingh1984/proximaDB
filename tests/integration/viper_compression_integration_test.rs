@@ -301,7 +301,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     assert!(flush_result.success);
     assert_eq!(flush_result.entries_flushed, 1000);
 
-    info!("Flushed {} records", flush_result.entries_flushed);
+    info!("Flushed {:?} records", flush_result.entries_flushed);
 
     // Verify compression by reading Parquet file from actual storage location
     // Create collection data directory as VIPER writes to {base_path}/{collection_id}/data
@@ -487,11 +487,11 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
     info!("✅ VIPER COMPACTION COMPLETED:");
     info!("   - Success: {}", compaction_result.success);
     info!(
-        "   - Entries processed: {}",
+        "   - Entries processed: {:?}",
         compaction_result.entries_processed
     );
-    info!("   - Input files: {}", compaction_result.input_files);
-    info!("   - Output files: {}", compaction_result.output_files);
+    info!("   - Input files: {:?}", compaction_result.input_files);
+    info!("   - Output files: {:?}", compaction_result.output_files);
 
     assert!(compaction_result.success, "VIPER compaction should succeed");
     assert!(

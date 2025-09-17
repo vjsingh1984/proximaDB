@@ -86,9 +86,9 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
         let flush_result = sst_storage.do_flush(&flush_params).await?;
 
         info!("\n  ✅ Flush Results:");
-        info!("    • Entries flushed: {}", flush_result.entries_flushed);
-        info!("    • Files created: {}", flush_result.files_created);
-        info!("    • Bytes written: {}", flush_result.bytes_written);
+        info!("    • Entries flushed: {:?}", flush_result.entries_flushed);
+        info!("    • Files created: {:?}", flush_result.files_created);
+        info!("    • Bytes written: {:?}", flush_result.bytes_written);
 
         // Calculate compression ratio
         let uncompressed_size = num_vectors * vector_bytes;
@@ -240,7 +240,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
         "  • Actual compression: {:.1}x",
         original_size as f64 / flush_result.bytes_written as f64
     );
-    info!("  • Files created: {}", flush_result.files_created);
+    info!("  • Files created: {:?}", flush_result.files_created);
 
     Ok(())
 }

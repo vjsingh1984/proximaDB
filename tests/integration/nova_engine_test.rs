@@ -33,12 +33,7 @@ async fn create_test_setup() -> (Arc<NovaEngine>, Arc<CollectionService>, TempDi
     );
 
     let nova_engine = Arc::new(
-        NovaEngine::new(
-            "nova_test_collection".to_string(),
-            Default::default(),
-            filesystem.clone(),
-            Arc::new(Default::default()),
-        )
+        NovaEngine::new()
         .await
         .unwrap(),
     );

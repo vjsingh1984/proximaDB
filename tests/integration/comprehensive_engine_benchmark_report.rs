@@ -771,6 +771,9 @@ async fn run_benchmark(
                         timestamp: record.timestamp.unwrap_or(0),
                         source: None,
                         quantized_vector: vec![],
+                        expires_at: None,
+                        updated_at: None,
+                        version: None,
                     }
                 })
                 .collect();
@@ -1042,7 +1045,7 @@ async fn run_benchmark(
 
             // Validate VIPER compaction
             println!(
-                "      VIPER Compaction: {} input files → {} output files, {} entries",
+                "      VIPER Compaction: {} input files → {} output files, {:?} entries",
                 file_counts_before_compaction,
                 file_counts_after_compaction,
                 compact_result.entries_processed
@@ -1104,17 +1107,56 @@ async fn run_benchmark(
                 value: serde_json::Value::String("cat_3".to_string()),
             });
 
+            // Create search context for the unified API
+            let search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+                vector: Some(query_vector.clone()),
+                query_vectors: None,
+                top_k: Some(10),
+                distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+                filter_expression: filter,
+                include_metadata: Some(false),
+                include_vectors: Some(false),
+                timeout_ms: None,
+                accuracy_threshold: None,
+                enable_early_termination: None,
+                max_results_per_stage: None,
+                progressive_search: None,
+            });
+
+            let collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
+                name: env.collection_id().to_string(),
+                dimension: query_vector.len() as u32,
+                distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+                tags: vec![],
+                auto_index_selection: None,
+                embedding_models: None,
+                owner: None,
+                shared_with: vec![],
+                storage_assignment: None,
+            };
+
+            let collection = std::sync::Arc::new(proximadb::proto::proximadb_v1::Collection {
+                id: env.collection_id().to_string(),
+                config: Some(collection_config),
+                stats: None,
+                created_at: 0,
+                updated_at: 0,
+            });
+
+            let query_context = proximadb::storage::traits::StorageQueryContext {
+                search_params,
+                collection,
+                metadata: proximadb::storage::traits::StorageQueryMetadata {
+                    collection_id: env.collection_id().to_string(),
+                    use_axis_indexes: false,
+                    storage_url: Some(format!("file://{}/data", env.persistent_dir.to_str().unwrap())),
+                    ..Default::default()
+                },
+            };
+
             let filtered_results = engine
-                .search_vectors_unified(
-                    env.collection_id(),
-                    &format!("file://{}/data", env.persistent_dir.to_str().unwrap()),
-                    &query_vector,
-                    10,
-                    &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-                    filter.as_ref(),
-                    false, // include_metadata
-                    false, // include_vectors
-                )
+                .search_vectors_unified(&query_context)
                 .await?;
 
             let filter_latency = start_filter.elapsed().as_micros() as f64 / 1000.0;
@@ -1143,16 +1185,7 @@ async fn run_benchmark(
             for _ in 1..3 {
                 let start_filter = Instant::now();
                 let _ = engine
-                    .search_vectors_unified(
-                        env.collection_id(),
-                        &format!("file://{}/data", env.persistent_dir.to_str().unwrap()),
-                        &query_vector,
-                        10,
-                        &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-                        filter.as_ref(),
-                        false,
-                        false,
-                    )
+                    .search_vectors_unified(&query_context)
                     .await;
                 metadata_filter_latencies.push(start_filter.elapsed().as_micros() as f64 / 1000.0);
             }
@@ -1241,17 +1274,35 @@ async fn run_benchmark(
                 }
             }
 
+            // Create search context for final results search with metadata and vectors
+            let final_search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+                vector: Some(query_vector.clone()),
+                query_vectors: None,
+                top_k: Some(10),
+                distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+                filter_expression: None,
+                include_metadata: Some(true),
+                include_vectors: Some(true),
+                timeout_ms: None,
+                accuracy_threshold: None,
+                enable_early_termination: None,
+                max_results_per_stage: None,
+                progressive_search: None,
+            });
+
+            let final_query_context = proximadb::storage::traits::StorageQueryContext {
+                search_params: final_search_params,
+                collection: collection.clone(),
+                metadata: proximadb::storage::traits::StorageQueryMetadata {
+                    collection_id: env.collection_id().to_string(),
+                    use_axis_indexes: false,
+                    storage_url: Some(storage_url.clone()),
+                    ..Default::default()
+                },
+            };
+
             let final_results = engine
-                .search_vectors_unified(
-                    env.collection_id(),
-                    &storage_url,
-                    &query_vector,
-                    10,
-                    &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-                    None,
-                    true,
-                    true,
-                )
+                .search_vectors_unified(&final_query_context)
                 .await?;
             println!("        Search returned {} results", final_results.len());
             let actual_ids: Vec<String> = final_results.iter().map(|r| r.id.clone()).collect();

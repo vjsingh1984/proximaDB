@@ -33,10 +33,7 @@ async fn create_test_setup() -> (Arc<PrismEngine>, Arc<CollectionService>, TempD
 
     let prism_engine = Arc::new(
         PrismEngine::new(
-            "prism_test_collection".to_string(),
-            Default::default(),
-            filesystem.clone(),
-            Arc::new(Default::default()),
+            proximadb::storage::engines::impls::prism::engine::Config::default(),
         )
         .await
         .unwrap(),

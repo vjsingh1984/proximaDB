@@ -7,8 +7,8 @@ use proximadb::{
     core::config::{SstConfig, ViperConfig},
     core::{hardware_capabilities, search::SearchParams},
     proto::proximadb_v1::{
-        Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, MetadataItem,
-        StorageEngine, VectorRecord, metadata_item,
+        Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric,
+        StorageEngine, VectorRecord, SqlValue, sql_value,
     },
     storage::{
         engines::impls::sst::SstStorage,
@@ -40,25 +40,25 @@ impl StorageTestFixture {
             test_vectors.push(VectorRecord {
                 id: format!("vec_{:06}", i),
                 vector: vec![i as f32 / num_vectors as f32; dimension],
-                metadata: vec![
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(metadata_item::Value::StringValue(if i % 2 == 0 {
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("category".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(if i % 2 == 0 {
                             "even".to_string()
                         } else {
                             "odd".to_string()
                         })),
-                    },
-                    MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(metadata_item::Value::NumberValue(i as f64)),
-                    },
-                ],
-                timestamp: i as u32,
+                    });
+                    metadata.insert("index".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(i as f64)),
+                    });
+                    metadata
+                },
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Some(vec![]),
+                quantized_vector: vec![],
                 source: None,
             });
         }

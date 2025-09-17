@@ -205,9 +205,16 @@ async fn run_quantization_test(
     // Flush vectors to SST
     let flush_start = Instant::now();
     let flush_params = FlushParameters {
-        force: false,
         collection_id: Some("test_collection".to_string()),
+        force: false,
+        synchronous: true,
+        hints: std::collections::HashMap::new(),
+        timeout_ms: None,
+        vector_records: vectors.to_vec(),
+        trigger_compaction: false,
+        batch_ids: vec![],
         collection_config: None,
+        estimated_size: 0,
     };
 
     sst_storage.insert_batch(vectors.to_vec()).await?;
@@ -257,7 +264,7 @@ async fn run_quantization_test(
         search_time.as_micros() as f64 / 1000.0
     );
     println!("    • Search results: {} found", search_results.len());
-    println!("    • Entries flushed: {}", flush_result.entries_flushed);
+    println!("    • Entries flushed: {:?}", flush_result.entries_flushed);
 
     Ok(TestResult {
         config_name: config_name.to_string(),

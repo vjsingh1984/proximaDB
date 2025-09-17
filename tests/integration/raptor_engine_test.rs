@@ -31,12 +31,21 @@ async fn create_test_setup() -> (Arc<RaptorEngine>, Arc<CollectionService>, Temp
             .unwrap(),
     );
 
+    // Create cache orchestrator for RAPTOR engine
+    let cache_orchestrator = Arc::new(
+        proximadb::storage::cache::orchestrator::CrossCacheOrchestrator::new(
+            proximadb::storage::cache::config::CacheConfig::default()
+        )
+        .await
+        .unwrap()
+    );
+
     let raptor_engine = Arc::new(
         RaptorEngine::new(
             "raptor_test_collection".to_string(),
-            Default::default(),
-            filesystem.clone(),
-            Arc::new(Default::default()),
+            temp_dir.path().to_string_lossy().to_string(), // base_path
+            proximadb::storage::engines::impls::raptor::config::RaptorConfig::default(),
+            cache_orchestrator,
         )
         .await
         .unwrap(),
