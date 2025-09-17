@@ -1198,12 +1198,10 @@ pub async fn create_test_vector_operations_service_with_storage(
     let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await?);
     let axis_manager = Arc::new(proximadb::index::axis::AxisManager::new(proximadb::index::axis::AxisConfig::default()).await?);
 
-    Ok(VectorOperationsService::new(
-        storage,
-        wal_manager,
-        axis_manager,
-        // TODO: Create proper CollectionService for tests - requires metadata_backend and storage_config
-        todo!("CollectionService creation requires complex setup - implement test-specific version"),
+    // TODO: VectorOperationsService creation requires CollectionService which needs complex setup
+    // For now, return an error to indicate this test helper needs implementation
+    Err(anyhow::anyhow!(
+        "VectorOperationsService creation disabled - requires CollectionService setup"
     ))
 }
 

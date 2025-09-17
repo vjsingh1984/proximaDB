@@ -223,6 +223,25 @@ impl InMemoryRelationsStore {
     }
 }
 
+// Implement the simple RelationsStore trait from entity_store for compatibility
+#[async_trait]
+impl crate::storage::entity_store::RelationsStore for InMemoryRelationsStore {
+    async fn add_relation(&self, collection_id: &str, relation: Relation) -> anyhow::Result<()> {
+        // Delegate to the full trait implementation
+        <Self as RelationsStore>::add_relation(self, collection_id, relation).await
+    }
+
+    async fn get_relations(&self, collection_id: &str, entity_id: &str) -> anyhow::Result<Vec<Relation>> {
+        // Delegate to the full trait implementation
+        <Self as RelationsStore>::get_relations(self, collection_id, entity_id).await
+    }
+
+    async fn delete_all_relations(&self, collection_id: &str, entity_id: &str) -> anyhow::Result<()> {
+        // Delegate to the full trait implementation
+        <Self as RelationsStore>::delete_all_relations(self, collection_id, entity_id).await
+    }
+}
+
 #[async_trait]
 impl RelationsStore for InMemoryRelationsStore {
     async fn add_relation(&self, collection_id: &str, relation: Relation) -> Result<()> {

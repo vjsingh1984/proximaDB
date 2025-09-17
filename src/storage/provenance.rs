@@ -219,6 +219,20 @@ impl InMemoryProvenanceRegistry {
     }
 }
 
+// Implement the simple ProvenanceRegistry trait from entity_store for compatibility
+#[async_trait]
+impl crate::storage::entity_store::ProvenanceRegistry for InMemoryProvenanceRegistry {
+    async fn register_provenance(&self, entity_id: &str, provenance: Provenance) -> anyhow::Result<()> {
+        // Delegate to the full trait implementation
+        <Self as ProvenanceRegistry>::register_provenance(self, entity_id, provenance).await
+    }
+
+    async fn remove_provenance(&self, entity_id: &str) -> anyhow::Result<()> {
+        // Delegate to the full trait implementation
+        <Self as ProvenanceRegistry>::remove_provenance(self, entity_id).await
+    }
+}
+
 #[async_trait]
 impl ProvenanceRegistry for InMemoryProvenanceRegistry {
     async fn register_provenance(&self, entity_id: &str, provenance: Provenance) -> Result<()> {

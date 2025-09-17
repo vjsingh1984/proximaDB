@@ -13,9 +13,9 @@ mod sks_integration_tests {
         EmbeddingVersion, Entity, Modality, Provenance, Relation, StringArray, TypedField,
         TypedMetadata, SqlValue
     };
-    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
-    use proximadb::storage::relations::{RelationsStore, InMemoryRelationsStore};
-    use proximadb::storage::provenance::{ProvenanceRegistry, InMemoryProvenanceRegistry};
+    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore, RelationsStore, ProvenanceRegistry};
+    use proximadb::storage::relations::InMemoryRelationsStore;
+    use proximadb::storage::provenance::InMemoryProvenanceRegistry;
     use proximadb::storage::traits::{StorageEngineStrategy, PerformanceTier};
     use proximadb::core::{VectorRecord};
     use proximadb::core::search::queries::SearchQuery;
@@ -109,7 +109,21 @@ mod sks_integration_tests {
                 use proximadb::storage::persistence::filesystem::FilesystemFactory;
                 use std::sync::OnceLock;
                 static FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
-                FACTORY.get_or_init(|| FilesystemFactory::new(proximadb::storage::persistence::filesystem::FilesystemConfig::default()).unwrap())
+                FACTORY.get_or_init(|| {
+                    // For testing, create a basic filesystem factory synchronously
+                    // In real usage, this would be created with proper async initialization
+                    match tokio::runtime::Handle::try_current() {
+                        Ok(handle) => {
+                            handle.block_on(async {
+                                FilesystemFactory::new(proximadb::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap()
+                            })
+                        }
+                        Err(_) => {
+                            // If no async runtime, create minimal factory for testing
+                            panic!("FilesystemFactory requires async runtime for initialization")
+                        }
+                    }
+                })
             }
         }
 

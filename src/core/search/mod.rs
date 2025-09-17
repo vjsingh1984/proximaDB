@@ -7,6 +7,7 @@ pub mod metadata_filter_pushdown;
 pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;
 pub mod progressive_quantization;
+pub mod queries;
 pub mod query_preprocessing;
 pub mod results;
 pub mod smart_execution_strategy;
