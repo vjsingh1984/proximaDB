@@ -15,7 +15,7 @@ use proximadb::compute::quantization::storage_engine::{StorageQuantizationEngine
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::quantization::{SstQuantizationAdapter, sst_adapter::SstQuantizationConfig};
 use proximadb::storage::engines::impls::sst::{
-    SstRecord, SstableWriter,
+    SstEntry, SstableWriter,
     readers::unified_sstable_reader::{UnifiedSstableReader, ModularBlockReader},
 };
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
@@ -89,7 +89,7 @@ impl SimilarityTestDataGenerator {
         Self { config, cluster_centers }
     }
     
-    fn generate_database_vectors(&self) -> Vec<SstRecord> {
+    fn generate_database_vectors(&self) -> Vec<SstEntry> {
         let mut records = Vec::new();
         
         for i in 0..self.config.record_count {
@@ -111,7 +111,7 @@ impl SimilarityTestDataGenerator {
                 }
             }
             
-            let record = SstRecord {
+            let record = SstEntry {
                 id: format!("db_vector_{:06d}", i),
                 vector,
                 metadata: vec![],
@@ -340,7 +340,7 @@ async fn test_progressive_search_performance() {
     let sstable_path = test_dir.join("progressive_search_test.sstable");
     let writer = SstableWriter::new(&sstable_path, config.block_size, filesystem_factory.clone());
     
-    let records_for_writer: Vec<(String, SstRecord)> = database_records
+    let records_for_writer: Vec<(String, SstEntry)> = database_records
         .iter()
         .map(|record| (record.id.clone(), record.clone()))
         .collect();

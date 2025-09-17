@@ -2,7 +2,7 @@ use anyhow::Result;
 use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb::compute::quantization::{
     BinaryQuantization, InMemoryCodebookStore, ProductQuantization as PqConfig,
-    QuantizationLevelType, SearchStage, StorageQuantizationConfig, StorageQuantizationEngine,
+    QuantizationLevel, StorageQuantizationConfig, StorageQuantizationEngine,
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use proximadb::core::SstConfig;
@@ -46,7 +46,7 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
         (
             "Binary Quantization",
             Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                     threshold: None,
                     sign_based: false,
                 })),
@@ -61,7 +61,7 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
         (
             "PQ8 Quantization",
             Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Pq(PqConfig {
+                level_type: Some(QuantizationLevel::Pq(PqConfig {
                     num_subvectors: 8,
                     bits_per_code: 8,
                     codebook_id: None,
@@ -73,7 +73,7 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
         (
             "PQ4 Quantization",
             Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Pq(PqConfig {
+                level_type: Some(QuantizationLevel::Pq(PqConfig {
                     num_subvectors: 16,
                     bits_per_code: 4,
                     codebook_id: None,

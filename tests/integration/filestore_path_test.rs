@@ -18,11 +18,11 @@
 
 use anyhow::Result;
 use proximadb::proto::proximadb_v1::{Collection, IndexingAlgorithm};
-use proximadb::storage::metadata::backends::filestore_backend::{
-    FilestoreMetadataBackend, FilestoreMetadataConfig,
+use proximadb::storage::metadata::backends::universal_backend::{
+    UniversalMetadataBackend, UniversalMetadataConfig,
 };
 use proximadb::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use proximadb::storage::traits::CollectionMetadataProvider;
+use proximadb::storage::traits::InternalCollectionProvider;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
 use tracing::{debug, error, info, warn};
@@ -118,14 +118,14 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
     // Create filestore backend
-    let config = FilestoreMetadataConfig {
+    let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
         enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
 
-    let backend = FilestoreMetadataBackend::new(config, fs_factory.clone()).await?;
+    let backend = UniversalMetadataBackend::new(config, fs_factory.clone()).await?;
 
     // Store a collection
     let collection = create_test_collection("test_id", "test_collection");
@@ -193,14 +193,14 @@ async fn test_absolute_url_no_path_duplication() -> Result<()> {
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
     // Create filestore backend
-    let config = FilestoreMetadataConfig {
+    let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
         enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
 
-    let backend = FilestoreMetadataBackend::new(config, fs_factory.clone()).await?;
+    let backend = UniversalMetadataBackend::new(config, fs_factory.clone()).await?;
 
     // Store a collection
     let collection = create_test_collection("test_abs_id", "test_abs_collection");
@@ -239,14 +239,14 @@ async fn test_atomic_operations_path_handling() -> Result<()> {
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
     // Create filestore backend
-    let config = FilestoreMetadataConfig {
+    let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
         enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
 
-    let backend = FilestoreMetadataBackend::new(config, fs_factory.clone()).await?;
+    let backend = UniversalMetadataBackend::new(config, fs_factory.clone()).await?;
 
     // Store multiple collections to trigger atomic operations
     for i in 1..=5 {
@@ -290,14 +290,14 @@ async fn test_concurrent_operations_no_conflicts() -> Result<()> {
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
     // Create filestore backend
-    let config = FilestoreMetadataConfig {
+    let config = UniversalMetadataConfig {
         storage_url: metadata_url,
         enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
 
-    let backend = Arc::new(FilestoreMetadataBackend::new(config, fs_factory).await?);
+    let backend = Arc::new(UniversalMetadataBackend::new(config, fs_factory).await?);
 
     // Spawn multiple concurrent operations
     let mut handles = vec![];
@@ -357,7 +357,7 @@ async fn test_metadata_url_formats() -> Result<()> {
         let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
         // Create filestore backend
-        let config = FilestoreMetadataConfig {
+        let config = UniversalMetadataConfig {
             storage_url: url.to_string(),
             enable_compression: false,
             enable_snapshots: false,
@@ -365,7 +365,7 @@ async fn test_metadata_url_formats() -> Result<()> {
         };
 
         // This should not panic or cause path duplication
-        match FilestoreMetadataBackend::new(config, fs_factory).await {
+        match UniversalMetadataBackend::new(config, fs_factory).await {
             Ok(backend) => {
                 // Try to store a collection
                 let collection = create_test_collection("url_test", "url_test_collection");

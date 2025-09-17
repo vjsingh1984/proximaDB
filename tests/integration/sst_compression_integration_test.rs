@@ -1,7 +1,7 @@
 //! Integration tests for SST engine with compression
 //!
 //! Tests cover:
-//! - SST DataBlock compression with ZSTD
+//! - SST FastLanesDataBlock compression with ZSTD
 //! - Flush operations with compressed blocks
 //! - Compaction with compressed data
 //! - Search on compressed SST files
@@ -86,7 +86,7 @@ fn create_compressible_test_vectors(
         .collect()
 }
 
-/// Test SST DataBlock ZSTD compression and decompression roundtrip
+/// Test SST FastLanesDataBlock ZSTD compression and decompression roundtrip
 ///
 /// Validates that SST DataBlocks can be compressed with ZSTD, achieve reasonable
 /// compression ratios, and can be decompressed back to identical data.
@@ -101,23 +101,23 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
         .compression = "zstd".to_string();
     config.compression_level = 3;
 
-    // Create DataBlock with test records
+    // Create FastLanesDataBlock with test records
     let vectors = create_compressible_test_vectors(&env, 100, 512, "test");
     let sst_records: Vec<_> = vectors
         .into_iter()
-        .map(|v| proximadb::storage::engines::impls::sst::SstRecord::from_vector_record(v))
+        .map(|v| proximadb::storage::engines::impls::sst::SstEntry::from_vector_record(v))
         .collect();
 
-    let data_block = DataBlock::new(1, sst_records.clone());
+    let data_block = FastLanesDataBlock::new(1, sst_records.clone());
 
     // Test compression with config
-    let compression_config = DataBlockCompressionConfig::from_sst_config(&config);
+    let compression_config = BlockCompressionConfig::from_sst_config(&config);
     let compressed_data = data_block
         .serialize_with_config(&compression_config)
         .unwrap();
 
     // Deserialize and verify
-    let recovered_block = DataBlock::deserialize(&compressed_data).unwrap();
+    let recovered_block = FastLanesDataBlock::deserialize(&compressed_data).unwrap();
     assert_eq!(data_block.block_id, recovered_block.block_id);
     assert_eq!(data_block.records.len(), recovered_block.records.len());
 
@@ -140,7 +140,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
         compression_ratio
     );
 
-    info!("DataBlock compression ratio: {:.2}", compression_ratio);
+    info!("FastLanesDataBlock compression ratio: {:.2}", compression_ratio);
     Ok(())
 }
 

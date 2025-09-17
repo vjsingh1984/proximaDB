@@ -7,7 +7,7 @@ use tokio::time::sleep;
 
 use proximadb::core::{SstConfig, VectorRecord};
 use proximadb::storage::engines::impls::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::impls::sst::SstRecord;
+use proximadb::storage::engines::impls::sst::SstEntry;
 use proximadb::storage::engines::impls::viper::engine::ViperEngine;
 use proximadb::storage::memtable::core::MemtableConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -33,7 +33,7 @@ async fn test_sst_expired_record_full_pipeline() -> Result<()> {
     // Create test records with different expiry states
     let records = vec![
         // Record 1: Active (no expiry)
-        SstRecord {
+        SstEntry {
             id: "active_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![1.0, 2.0, 3.0],
@@ -48,7 +48,7 @@ async fn test_sst_expired_record_full_pipeline() -> Result<()> {
             level: 0,
         },
         // Record 2: Expired (should be deleted)
-        SstRecord {
+        SstEntry {
             id: "expired_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![4.0, 5.0, 6.0],
@@ -63,7 +63,7 @@ async fn test_sst_expired_record_full_pipeline() -> Result<()> {
             level: 0,
         },
         // Record 3: Active with future expiry
-        SstRecord {
+        SstEntry {
             id: "future_expiry_record".to_string(),
             collection_id: collection_id.to_string(),
             vector: vec![7.0, 8.0, 9.0],
@@ -151,7 +151,7 @@ async fn test_sst_expired_record_full_pipeline() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = SstRecord::deserialize(entry_data) {
+        if let Ok(record) = SstEntry::deserialize(entry_data) {
             remaining_records.push(record);
         }
         

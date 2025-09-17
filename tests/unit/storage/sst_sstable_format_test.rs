@@ -5,7 +5,7 @@ use proximadb::storage::persistence::filesystem::FilesystemConfig;
 use tracing::{debug, error, info, warn};
 
 use proximadb::storage::engines::impls::sst::{
-    SstRecord, readers::unified_sstable_reader::UnifiedSstableReader, sstable_writer::SstableWriter,
+    SstEntry, UnifiedSstableReader, SstableWriter,
 };
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use std::collections::BTreeMap;
@@ -25,7 +25,7 @@ async fn test_sstable_write_read_format() {
 
     // Create a simple record
     let mut records = BTreeMap::new();
-    let record = SstRecord {
+    let record = SstEntry {
         id: "test_vec".to_string(),
         vector: vec![1.0, 2.0, 3.0],
         metadata: vec![],
@@ -104,7 +104,7 @@ async fn test_sstable_format_inspection() {
             ),
         }];
 
-        let record = SstRecord {
+        let record = SstEntry {
             id: format!("vec_{}", i),
             vector: vec![i as f32; 3],
             metadata,

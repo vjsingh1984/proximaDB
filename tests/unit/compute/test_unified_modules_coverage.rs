@@ -10,7 +10,7 @@ use anyhow::Result;
 use proximadb::compute::{
     DistanceMetric, UnifiedDistanceCompute, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
     InMemoryCodebookStore, BinaryQuantization, ScalarQuantization, UniformQuantization,
-    QuantizationLevelType, ProductQuantization, NoQuantization,
+    QuantizationLevel, ProductQuantization, NoQuantization,
 };
 use std::sync::Arc;
 
@@ -157,7 +157,7 @@ mod unified_quantization_coverage {
 
         let test_vector = vec![0.1, 0.2, 0.3, 0.4];
         let level = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationQuantizationLevelType::None(NoQuantization {})),
+            level_type: Some(QuantizationLevel::None(NoQuantization {})),
         };
 
         let quantized = engine.quantize(&test_vector, &level).await?;
@@ -561,7 +561,7 @@ async fn test_unified_modules_integration() -> Result<()> {
 
     // Create quantization level with the trained codebook
     let level = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationQuantizationLevelType::Pq(ProductQuantization {
+        level_type: Some(QuantizationLevel::Pq(ProductQuantization {
             bits_per_code: 8,
             num_subvectors: 16,
             codebook_id: Some(codebook_id.to_string()),

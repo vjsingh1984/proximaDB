@@ -891,6 +891,11 @@ mod performance_comparison_tests {
                                 filterable_columns: vec![],
                                 index_configs: vec![],
                                 quantization: None,
+                                storage_config: None,
+                                primary_index: "default".to_string(),
+                                auto_index_selection: true,
+                                owner: Some("test".to_string()),
+                                embedding_models: vec![],
             //                    auto_create_shards: None, // Field not in proto
             //                    auto_balance: None, // Field not in proto
             //                    replication_factor: None, // Field not in proto

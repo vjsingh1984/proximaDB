@@ -503,7 +503,7 @@ mod streaming_compression_tests {
                 compressor.optimize_performance().await.unwrap();
             }
 
-            let metrics = compressor.get_metrics();
+            let metrics = compressor.metrics();
             assert!(metrics.vectors_processed > 0);
             assert!(metrics.batches_processed > 0);
 

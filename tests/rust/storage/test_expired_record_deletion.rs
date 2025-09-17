@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use proximadb::core::VectorRecord;
 use proximadb::storage::engines::impls::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::impls::sst::mod::SstRecord;
+use proximadb::storage::engines::impls::sst::mod::SstEntry;
 use proximadb::core::SstConfig;
 
 #[tokio::test]
@@ -29,7 +29,7 @@ async fn test_sst_expired_record_deletion() -> Result<()> {
     
     let test_records = vec![
         // Active record
-        SstRecord {
+        SstEntry {
             id: "active_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
@@ -44,7 +44,7 @@ async fn test_sst_expired_record_deletion() -> Result<()> {
             level: 0,
         },
         // Expired record (should be deleted)
-        SstRecord {
+        SstEntry {
             id: "expired_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![4.0, 5.0, 6.0],
@@ -59,7 +59,7 @@ async fn test_sst_expired_record_deletion() -> Result<()> {
             level: 0,
         },
         // Record without expiry (should be kept)
-        SstRecord {
+        SstEntry {
             id: "permanent_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![7.0, 8.0, 9.0],
@@ -133,7 +133,7 @@ async fn test_sst_expired_record_deletion() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = SstRecord::deserialize(entry_data) {
+        if let Ok(record) = SstEntry::deserialize(entry_data) {
             remaining_records.push(record);
         }
         

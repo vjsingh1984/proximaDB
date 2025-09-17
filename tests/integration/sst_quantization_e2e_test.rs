@@ -17,7 +17,7 @@ use proximadb::compute::quantization::storage_engine::{StorageQuantizationEngine
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::quantization::{SstQuantizationAdapter, sst_adapter::SstQuantizationConfig};
 use proximadb::storage::engines::impls::sst::{
-    SstRecord, SstableWriter, 
+    SstEntry, SstableWriter, 
     sst_compactor::{SstCompactor, CompactionSortStrategy},
     readers::unified_sstable_reader::UnifiedSstableReader
 };
@@ -44,7 +44,7 @@ impl TestDataGenerator {
         Self { dimension, base_vectors }
     }
     
-    fn generate_test_records(&self, count: usize) -> Vec<SstRecord> {
+    fn generate_test_records(&self, count: usize) -> Vec<SstEntry> {
         let mut records = Vec::new();
         
         for i in 0..count {
@@ -57,7 +57,7 @@ impl TestDataGenerator {
                 *val += (rand::random::<f32>() - 0.5) * 0.1; // Small noise
             }
             
-            let record = SstRecord {
+            let record = SstEntry {
                 id: format!("vector_{:04d}", i),
                 vector,
                 metadata: vec![], // Keep simple for testing
@@ -140,8 +140,8 @@ async fn test_sst_quantization_e2e_pipeline() {
     let sst_file_path = test_dir.join("test_quantized.sstable");
     let writer = SstableWriter::new(&sst_file_path, BLOCK_SIZE, filesystem_factory.clone());
     
-    // Convert SstRecord to (String, SstRecord) format for writer
-    let records_for_writer: Vec<(String, SstRecord)> = test_records
+    // Convert SstEntry to (String, SstEntry) format for writer
+    let records_for_writer: Vec<(String, SstEntry)> = test_records
         .iter()
         .map(|record| (record.id.clone(), record.clone()))
         .collect();

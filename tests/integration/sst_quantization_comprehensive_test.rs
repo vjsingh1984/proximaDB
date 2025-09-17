@@ -19,14 +19,14 @@ use proximadb::compute::quantization::{
 };
 use proximadb::compute::quantization::unified::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
-    QuantizationLevelType, BinaryQuantization, ScalarQuantization,
+    QuantizationLevel, BinaryQuantization, ScalarQuantization,
     ProductQuantization, InMemoryCodebookStore,
 };
 use proximadb::compute::distance_computation::engine::{
     UnifiedDistanceCompute, DistanceMetric,
 };
 use proximadb::storage::engines::impls::sst::{
-    SstRecord, SstableWriter, DataBlock,
+    SstEntry, SstableWriter, FastLanesDataBlock,
 };
 use proximadb::storage::persistence::filesystem::{
     FilesystemFactory, FilesystemConfig,
@@ -166,7 +166,7 @@ async fn test_pq_distance_table_precomputation() -> Result<()> {
     // Create engine with PQ configuration
     let mut config = StorageQuantizationConfig::default();
     config.primary_level = Some(UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+        level_type: Some(QuantizationLevel::Pq(ProductQuantization {
             num_subvectors: 16,
             bits_per_code: 8,
             codebook_id: None,
@@ -466,7 +466,7 @@ async fn test_sst_integration_with_quantization() -> Result<()> {
     
     // Write records with quantization data in DataBlocks
     for (i, (vec, quant)) in vectors.iter().zip(quantized.iter()).enumerate() {
-        let record = SstRecord {
+        let record = SstEntry {
             id: format!("vec_{:06}", i),
             vector: vec.clone(),
             metadata: vec![],
@@ -479,7 +479,7 @@ async fn test_sst_integration_with_quantization() -> Result<()> {
             sequence_number: i as u64,
         };
         
-        // In practice, the DataBlock would store quantization data
+        // In practice, the FastLanesDataBlock would store quantization data
         writer.add_record(record).await?;
     }
     

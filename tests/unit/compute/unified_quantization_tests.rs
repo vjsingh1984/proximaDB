@@ -5,7 +5,7 @@
 
 use proximadb::compute::CodebookStore;
 use proximadb::compute::{
-    BinaryQuantization, DistanceMetric, InMemoryCodebookStore, QuantizationLevelType,
+    BinaryQuantization, DistanceMetric, InMemoryCodebookStore, QuantizationLevel,
     ScalarQuantization, UnifiedDistanceCompute, UnifiedQuantizationEngine,
     UnifiedQuantizationLevel, UniformQuantization, Codebook, TrainingConfig, CodebookData,
 };
@@ -20,7 +20,7 @@ fn test_quantization_level_bytes() {
     assert_eq!(pq8.bytes_per_vector(dimension), 16); // 16 subvectors * 1 byte
 
     let uniform4 = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Uniform(UniformQuantization {
+        level_type: Some(QuantizationLevel::Uniform(UniformQuantization {
             bits: 4,
             scale: None,
             offset: None,
@@ -29,7 +29,7 @@ fn test_quantization_level_bytes() {
     assert_eq!(uniform4.bytes_per_vector(dimension), 384); // 768 * 4 bits / 8
 
     let binary = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+        level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
             threshold: None,
             sign_based: false,
         })),
@@ -84,7 +84,7 @@ fn test_quantization_level_variants() {
     // Test PQ4 creation
     let pq4 = UnifiedQuantizationLevel::pq4(8);
     match &pq4.level_type {
-        Some(QuantizationLevelType::Pq(pq)) => {
+        Some(QuantizationLevel::Pq(pq)) => {
             assert_eq!(pq.bits_per_code, 4);
             assert_eq!(pq.num_subvectors, 8);
         }
@@ -94,7 +94,7 @@ fn test_quantization_level_variants() {
     // Test INT8 creation
     let int8 = UnifiedQuantizationLevel::int8();
     match &int8.level_type {
-        Some(QuantizationLevelType::Scalar(s)) => {
+        Some(QuantizationLevel::Scalar(s)) => {
             assert_eq!(s.bits, 8);
             assert_eq!(s.scale, 1.0);
             assert_eq!(s.offset, 0.0);
@@ -118,7 +118,7 @@ fn test_bytes_per_vector_calculation() {
 
     // Test Binary
     let binary = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+        level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
             threshold: None,
             sign_based: false,
         })),
@@ -127,7 +127,7 @@ fn test_bytes_per_vector_calculation() {
 
     // Test Scalar
     let scalar = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Scalar(ScalarQuantization {
+        level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
             bits: 16,
             scale: 1.0,
             offset: 0.0,
@@ -153,7 +153,7 @@ fn test_compression_ratio_calculations() {
 
     // Binary quantization
     let binary = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+        level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
             threshold: None,
             sign_based: false,
         })),

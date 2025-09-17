@@ -12,5 +12,5 @@ fn golden_select_vector_order_by() {
     // let golden = fs::read_to_string("tests/golden/sql/select_vector_order_by.ast.json").unwrap();
     // assert_eq!(json, golden);
     let _ = sql;
-    let _: fn<P: AsRef<std::path::Path>>(P) -> Result<String, std::io::Error> = fs::read_to_string; // silence warnings
+    let _ = fs::read_to_string; // silence warnings
 }

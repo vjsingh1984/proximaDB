@@ -1,10 +1,13 @@
 //! Comprehensive tests for SST engine optimizations
-//! Tests bytemuck vector serialization and ZSTD DataBlock compression
+//! Tests bytemuck vector serialization and ZSTD FastLanesDataBlock compression
 
 use anyhow::Result;
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
 use proximadb::proto::proximadb_v1::MetadataItem;
-use proximadb::storage::engines::impls::sst::{DataBlock, DataBlockCompressionConfig, SstRecord};
+use proximadb::storage::engines::impls::sst::{SstEntry, SstStorage};
+use proximadb::storage::engines::core::formats::fastlanes_blocks::block_structures::{
+    FastLanesDataBlock, BlockCompressionConfig,
+};
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
@@ -26,9 +29,9 @@ fn create_test_vector(dimension: usize, sparsity: f32) -> Vec<f32> {
     vector
 }
 
-/// Create test SstRecord with specific vector characteristics
-fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstRecord {
-    SstRecord {
+/// Create test SstEntry with specific vector characteristics
+fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstEntry {
+    SstEntry {
         id,
         vector,
         metadata: vec![
@@ -160,7 +163,7 @@ fn test_sst_record_optimized_serialization() {
         // Test optimized serialization
         let config = VectorSerializationConfig::for_dimension(record.vector.len());
         let serialized = record.serialize_with_config(&config).unwrap();
-        let deserialized = SstRecord::deserialize(&serialized).unwrap();
+        let deserialized = SstEntry::deserialize(&serialized).unwrap();
 
         // Verify all fields match
         assert_eq!(record.id, deserialized.id);
@@ -188,7 +191,7 @@ fn test_sst_record_optimized_serialization() {
         }
 
         debug!(
-            "✅ SstRecord optimized serialization passed: {} ({} bytes)",
+            "✅ SstEntry optimized serialization passed: {} ({} bytes)",
             test_name,
             serialized.len()
         );
@@ -197,7 +200,7 @@ fn test_sst_record_optimized_serialization() {
 
 #[test]
 fn test_data_block_zstd_compression() {
-    // Create DataBlock with multiple records containing different vector types
+    // Create FastLanesFastLanesDataBlock with multiple records containing different vector types
     let records = vec![
         create_test_sst_record("dense_128".to_string(), create_test_vector(128, 0.1)),
         create_test_sst_record("sparse_512".to_string(), create_test_vector(512, 0.8)),
@@ -206,10 +209,10 @@ fn test_data_block_zstd_compression() {
         create_test_sst_record("medium_768".to_string(), create_test_vector(768, 0.5)),
     ];
 
-    let data_block = DataBlock::new(1, records);
+    let data_block = FastLanesDataBlock::new(1, records);
 
     // Test with compression enabled
-    let mut compression_config = DataBlockCompressionConfig::default();
+    let mut compression_config = BlockCompressionConfig::default();
     compression_config.enable_compression = true;
     compression_config.compression_threshold = 1024; // 1KB threshold
     compression_config.compression_level = 6; // Higher compression
@@ -217,7 +220,7 @@ fn test_data_block_zstd_compression() {
     let serialized = data_block
         .serialize_with_config(&compression_config)
         .unwrap();
-    let deserialized = DataBlock::deserialize(&serialized).unwrap();
+    let deserialized = FastLanesDataBlock::deserialize(&serialized).unwrap();
 
     // Verify block metadata
     assert_eq!(data_block.block_id, deserialized.block_id);
@@ -267,7 +270,7 @@ fn test_data_block_zstd_compression() {
             1.0
         };
         debug!(
-            "📦 DataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes",
+            "📦 FastLanesFastLanesDataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes",
             compression_ratio,
             uncompressed_size,
             serialized.len()
@@ -275,7 +278,7 @@ fn test_data_block_zstd_compression() {
         assert!(compression_ratio < 0.95, "Compression should be beneficial");
     } else {
         debug!(
-            "📦 DataBlock stored uncompressed - {} bytes",
+            "📦 FastLanesFastLanesDataBlock stored uncompressed - {} bytes",
             serialized.len()
         );
     }
@@ -292,12 +295,12 @@ fn test_compression_performance_benchmark() {
         })
         .collect();
 
-    let data_block = DataBlock::new(1, vectors);
+    let data_block = FastLanesFastLanesDataBlock::new(1, vectors);
 
     // Benchmark uncompressed serialization
     let start = Instant::now();
     let uncompressed = {
-        let mut config = DataBlockCompressionConfig::default();
+        let mut config = BlockCompressionConfig::default();
         config.enable_compression = false;
         data_block.serialize_with_config(&config).unwrap()
     };
@@ -306,7 +309,7 @@ fn test_compression_performance_benchmark() {
     // Benchmark compressed serialization
     let start = Instant::now();
     let compressed = {
-        let mut config = DataBlockCompressionConfig::default();
+        let mut config = BlockCompressionConfig::default();
         config.enable_compression = true;
         config.compression_level = 3;
         data_block.serialize_with_config(&config).unwrap()
@@ -410,7 +413,7 @@ fn test_backward_compatibility() {
     let legacy_serialized = bincode::serialize(&record).unwrap();
 
     // Should be able to deserialize with new format-aware deserializer
-    let deserialized = SstRecord::deserialize(&legacy_serialized).unwrap();
+    let deserialized = SstEntry::deserialize(&legacy_serialized).unwrap();
 
     // Verify fields match
     assert_eq!(record.id, deserialized.id);
@@ -457,14 +460,14 @@ fn test_error_handling() {
 
     // Test empty data
     let empty_data = vec![];
-    let result = SstRecord::deserialize(&empty_data);
+    let result = SstEntry::deserialize(&empty_data);
     assert!(result.is_err(), "Should fail on empty data");
 
     // Test truncated data
     let record = create_test_sst_record("test".to_string(), create_test_vector(128, 0.1));
     let serialized = record.serialize().unwrap();
     let truncated = &serialized[..serialized.len() / 2];
-    let result = SstRecord::deserialize(truncated);
+    let result = SstEntry::deserialize(truncated);
     assert!(result.is_err(), "Should fail on truncated data");
 
     debug!("✅ Error handling tests passed");

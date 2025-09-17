@@ -9,8 +9,8 @@ use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, StorageEngine,
 };
 use proximadb::services::collection_service::CollectionService;
-use proximadb::storage::metadata::backends::{
-    FilestoreMetadataBackend, FilestoreMetadataConfig,
+use proximadb::storage::metadata::backends::universal_backend::{
+    UniversalMetadataBackend, UniversalMetadataConfig,
 };
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
@@ -23,9 +23,9 @@ async fn create_test_service() -> Result<(Arc<CollectionService>, TempDir)> {
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
 
     // Create metadata backend
-    let metadata_config = FilestoreMetadataConfig {
+    let metadata_config = UniversalMetadataConfig {
         storage_url: format!("file://{}/metadata", temp_dir.path().display()),
-        enable_compression: true,
+        compression: true,
         enable_snapshots: true,
         snapshot_threshold: 100,
         keep_snapshots: 3,
@@ -34,7 +34,7 @@ async fn create_test_service() -> Result<(Arc<CollectionService>, TempDir)> {
     };
 
     let metadata_backend =
-        Arc::new(FilestoreMetadataBackend::new(metadata_config, filesystem).await?);
+        Arc::new(UniversalMetadataBackend::new(metadata_config, filesystem).await?);
 
     // Create collection service with storage config
     let storage_config = StorageConfig::default();
@@ -99,7 +99,7 @@ async fn test_get_collection() -> Result<()> {
     assert!(create_response.success);
 
     // Get by name
-    let collection = service.get_collection("test_get").await?;
+    let collection = service.get_collection_with_tenant_context("test_get", None).await?;
     assert!(collection.is_some());
 
     let collection = collection.unwrap();
@@ -172,7 +172,7 @@ async fn test_delete_collection() -> Result<()> {
     assert!(delete_response.success);
 
     // Verify it's gone
-    let collection = service.get_collection("test_delete").await?;
+    let collection = service.get_collection_with_tenant_context("test_delete", None).await?;
     assert!(collection.is_none());
 
     Ok(())

@@ -15,7 +15,7 @@ use proximadb::compute::quantization::storage_engine::{StorageQuantizationEngine
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::quantization::{SstQuantizationAdapter, sst_adapter::SstQuantizationConfig};
 use proximadb::storage::engines::impls::sst::{
-    SstRecord, SstableWriter,
+    SstEntry, SstableWriter,
     sst_compactor::{SstCompactor, CompactionSortStrategy}
 };
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
@@ -95,7 +95,7 @@ impl ClusteredDataGenerator {
         Self { config, cluster_centers }
     }
     
-    fn generate_records(&self, strategy: &str) -> Vec<SstRecord> {
+    fn generate_records(&self, strategy: &str) -> Vec<SstEntry> {
         let mut records = Vec::new();
         
         for i in 0..self.config.record_count {
@@ -109,7 +109,7 @@ impl ClusteredDataGenerator {
                 *val = (*val + noise).max(0.0).min(1.0); // Clamp to [0, 1]
             }
             
-            let record = SstRecord {
+            let record = SstEntry {
                 id: match strategy {
                     "random" => format!("random_{:04d}", rand::random::<u32>() % 9999),
                     "clustered" => format!("cluster_{}_{:04d}", cluster_id, i),
@@ -137,7 +137,7 @@ impl ClusteredDataGenerator {
 async fn benchmark_compaction_strategy(
     strategy: CompactionSortStrategy,
     strategy_name: &str,
-    test_records: Vec<SstRecord>,
+    test_records: Vec<SstEntry>,
     config: &BenchmarkConfig,
     filesystem_factory: Arc<FilesystemFactory>,
     test_dir: &std::path::Path,
@@ -151,7 +151,7 @@ async fn benchmark_compaction_strategy(
     
     let writer = SstableWriter::new(&input_file, config.block_size, filesystem_factory.clone());
     
-    let records_for_writer: Vec<(String, SstRecord)> = test_records
+    let records_for_writer: Vec<(String, SstEntry)> = test_records
         .iter()
         .map(|record| (record.id.clone(), record.clone()))
         .collect();

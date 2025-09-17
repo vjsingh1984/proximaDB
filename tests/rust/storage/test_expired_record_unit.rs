@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use proximadb::core::SstConfig;
 use proximadb::storage::engines::impls::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority, CompactionStats};
-use proximadb::storage::engines::impls::sst::SstRecord;
+use proximadb::storage::engines::impls::sst::SstEntry;
 
 /// Unit test for LSM compaction expired record deletion logic
 #[tokio::test]
@@ -18,7 +18,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> Result<()> {
     
     let test_records = vec![
         // Active record (no expiry)
-        SstRecord {
+        SstEntry {
             id: "active_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![1.0, 2.0, 3.0],
@@ -32,7 +32,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> Result<()> {
             level: 0,
         },
         // Expired record (should be deleted)
-        SstRecord {
+        SstEntry {
             id: "expired_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![4.0, 5.0, 6.0],
@@ -46,7 +46,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> Result<()> {
             level: 0,
         },
         // Active record with future expiry
-        SstRecord {
+        SstEntry {
             id: "future_1".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![7.0, 8.0, 9.0],
@@ -60,7 +60,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> Result<()> {
             level: 0,
         },
         // Old tombstone (should be removed)
-        SstRecord {
+        SstEntry {
             id: "old_tombstone".to_string(),
             collection_id: "test_collection".to_string(),
             vector: vec![],
@@ -136,7 +136,7 @@ async fn test_sst_compaction_expired_deletion_unit() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = SstRecord::deserialize(entry_data) {
+        if let Ok(record) = SstEntry::deserialize(entry_data) {
             remaining_records.push(record);
         }
         

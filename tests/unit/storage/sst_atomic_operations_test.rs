@@ -75,7 +75,7 @@ async fn test_sst_atomic_flush_creates_staging_directory() {
     let result = lsm_tree.do_flush(&flush_params).await.unwrap();
 
     assert!(result.success);
-    assert_eq!(result.entries_flushed, 1);
+    assert_eq!(result.entries_flushed, Some(1));
 
     // Get the data directory using unified utilities
     let data_dir_path = env.get_sst_data_directory();

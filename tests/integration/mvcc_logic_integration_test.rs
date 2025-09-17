@@ -2,7 +2,7 @@
 //!
 //! This test verifies that MVCC logic is correctly applied in search results
 
-use proximadb::core::search::results::InternalSearchResult;
+use proximadb::core::search::results::OptimizedSearchRecord;
 use serde_json::json;
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
