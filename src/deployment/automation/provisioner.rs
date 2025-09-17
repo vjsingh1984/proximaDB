@@ -4,9 +4,10 @@
 //! with automatic configuration generation and validation.
 
 use crate::deployment::discovery::{
-    DetectedEnvironment, PlatformType, ResourceAvailability, PerformanceProfile,
-    NetworkConfig, SecurityConstraints, DeploymentRecommendation, MonitoringConfig, BackupStrategy,
-    ComplianceFramework, EncryptionRequirements, OptimalConfig, DeploymentStrategy, ScalingConfig, CapacityEstimate
+    DetectedEnvironment, PlatformType, ResourceAvailability, CapacityEstimate,
+    NetworkConfig, SecurityConstraints, ComplianceFramework, EncryptionRequirements,
+    PerformanceProfile, OptimalConfig, DeploymentRecommendation, DeploymentStrategy,
+    ScalingConfig, MonitoringConfig, BackupStrategy
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

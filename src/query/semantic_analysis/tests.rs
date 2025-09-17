@@ -1,13 +1,10 @@
 //! Tests for the semantic analyzer.
 
-use crate::query::ast::{Query, Select, Expr, Literal, BinaryOp, UnaryOp, ProjectionItem, TableRef, Join, JoinType};
-use crate::query::sql_frontend::SqlFrontendParser;
 use crate::query::semantic_analysis::analyzer::Analyzer;
-use crate::query::semantic_analysis::scope::{Scope, Symbol, Column, DataType};
+use crate::query::semantic_analysis::scope::{Symbol, DataType};
+use crate::query::sql_frontend::parser::SqlFrontendParser;
 use crate::services::collection::manager::CollectionService;
 use crate::core::config::StorageConfig;
-use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
 use anyhow::Result;
 

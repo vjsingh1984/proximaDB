@@ -8,7 +8,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc, Duration};
 use anyhow::{Result, anyhow};
-use uuid::Uuid;
 use tracing::{debug, info, warn};
 
 /// Enterprise usage metering engine for real-time billing
@@ -689,7 +688,7 @@ mod tests {
         let engine = UsageMeteringEngine::new(pricing_config, metering_config).await.unwrap();
 
         let search_event = UsageEvent {
-            event_id: Uuid::new_v4().to_string(),
+            event_id: uuid::Uuid::new_v4().to_string(),
             tenant_id: "test_tenant".to_string(),
             user_id: "test_user".to_string(),
             event_type: UsageEventType::VectorSearch { k: 10, dimensions: 512 },

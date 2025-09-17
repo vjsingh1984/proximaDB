@@ -1,7 +1,7 @@
 // Common test utilities
 use std::sync::Once;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 pub mod test_assignments;
 

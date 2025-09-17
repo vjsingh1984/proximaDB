@@ -11,7 +11,6 @@
 //! memory allocations, improve throughput, and reduce latency.
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
@@ -368,7 +367,7 @@ mod tests {
             .map(|i| VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32; 128],
-                metadata: HashMap::new(),
+                metadata: std::collections::HashMap::new(),
                 timestamp: chrono::Utc::now().timestamp() as i64,
                 quantized_vector: vec![],
                 source: None,
@@ -390,7 +389,7 @@ mod tests {
             .map(|i| VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32; 128],
-                metadata: HashMap::new(),
+                metadata: std::collections::HashMap::new(),
                 timestamp: chrono::Utc::now().timestamp() as i64,
                 quantized_vector: vec![],
                 source: None,

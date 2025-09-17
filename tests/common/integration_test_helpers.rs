@@ -23,7 +23,7 @@ use proximadb::core::config::StorageLocation;
 use proximadb::core::config::{BloomFilterConfig, SstConfig};
 use proximadb::core::config::{ViperConfig, WriteBufferUserConfig};
 use proximadb::proto::proximadb_v1::{
-    Collection, CollectionConfig, CollectionStats, CompressionAlgorithm, CompressionConfig, DistanceMetric, SqlValue,
+    Collection, CollectionConfig, CollectionStats, CompressionAlgorithm, DistanceMetric, SqlValue,
     StorageEngine, StorageAssignment, VectorRecord, sql_value,
 };
 // SearchResult moved to different location - using Vec<VectorRecord> for results
@@ -660,7 +660,7 @@ impl MultiUnifiedEnvironmentTest {
 /// Tests should call production code directly with these parameters
 pub mod operations {
     use super::*;
-    use proximadb::compute::distance_computation::DistanceMetric;
+    
 
     /// Build correct FlushParameters - the critical configuration that was causing failures
     pub async fn build_flush_params(

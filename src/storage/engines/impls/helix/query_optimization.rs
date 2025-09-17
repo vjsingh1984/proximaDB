@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -421,8 +421,8 @@ mod tests {
             query_hash: 123,
             hilbert_key: Some(1000),
             accessed_files: vec!["file1.helix".to_string(), "file2.helix".to_string()],
-            timestamp_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
+            timestamp_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as u64,
             latency_ms: 25,

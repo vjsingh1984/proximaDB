@@ -11,13 +11,13 @@ use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 // use std::sync::Arc; // Unused - removing to fix warning
 use std::time::Instant;
-use tracing::{info, warn};
+use tracing::warn;
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::index::axis::indexes::{
-    hnsw_index::{AxisHnswConfig, AxisHnswIndex, create_hnsw_index},
+    hnsw_index::{AxisHnswConfig, create_hnsw_index},
     lsh_index::{AxisLshConfig, AxisLshIndex},
 };
 

@@ -166,7 +166,7 @@ impl Analyzer {
                     } else {
                         // Try to find in any table if only one table is in scope or column is unambiguous
                         let mut found_column: Option<Column> = None;
-                        let mut ambiguous = false;
+                        let ambiguous = false;
 
                         // Need to iterate through all tables in scope to find the column
                         // This is a simplified approach - the scope should provide a proper API

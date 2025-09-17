@@ -12,7 +12,6 @@ use crate::compute::quantization::unified::{
 use crate::compute::quantization::types::{
     QuantizationLevel, BinaryQuantization, ScalarQuantization, ProductQuantization
 };
-use crate::proto::proximadb_v1::SqlValue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::{
     FastLanesDecoder, FastLanesEncoder, FastLanesScheme, markers,

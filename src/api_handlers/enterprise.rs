@@ -8,7 +8,7 @@ use crate::auth::{EnterpriseAuthManager, SSOToken, EnterpriseUserContext};
 use crate::storage::tenant::{
     TenantManager, DomainManager, TenantAwareEntityStore, DomainKnowledgeGraph,
     TenantConfig, BusinessContext, knowledge_graph::CollectionBridgeConfig,
-    context::ResourceLimits,
+    ResourceLimits, SecurityPolicies, Industry, ComplianceFramework,
 };
 
 /// Enterprise API handler for multi-tenant operations

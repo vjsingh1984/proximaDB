@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use arrow_array::builder::{FixedSizeBinaryBuilder, Float32Builder, Int8Builder};
-use arrow_array::{Array, ArrayRef, BinaryArray, FixedSizeBinaryArray, Float32Array, Int8Array};
+use arrow_array::{Array, ArrayRef, FixedSizeBinaryArray, Float32Array, Int8Array};
 use arrow_schema::{DataType, Schema};
 use bytemuck::{cast_slice, try_cast_slice};
 use std::collections::HashMap;
@@ -1084,7 +1084,7 @@ mod tests {
         );
         arrays.insert(
             "vector_binary".to_string(),
-            Arc::new(BinaryArray::from_opt_vec(vec![Some(b"test")])) as ArrayRef,
+            Arc::new(arrow::array::BinaryArray::from_opt_vec(vec![Some(b"test")])) as ArrayRef,
         );
 
         // Test highest quality preference

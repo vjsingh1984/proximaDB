@@ -4,7 +4,7 @@
 use anyhow::Result;
 use proximadb::{
     compute::distance_computation::DistanceMetric,
-    core::config::{SstConfig, ViperConfig},
+    core::config::SstConfig,
     core::{hardware_capabilities, search::SearchParams},
     proto::proximadb_v1::{
         Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric,

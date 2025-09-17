@@ -9,7 +9,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::{UserContext, TenantManager};
-use super::context::ResourceLimits;
 
 /// Enhanced RBAC manager for multi-tenant operations
 pub struct EnhancedRBACManager {

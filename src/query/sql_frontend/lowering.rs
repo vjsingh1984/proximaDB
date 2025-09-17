@@ -15,7 +15,7 @@ use sqlparser::ast::{
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::query::ast::{BinaryOp, Expr, Join, JoinType, Literal, OrderByExpr, ProjectionItem, Query, Select, TableRef};
+use crate::query::ast::{BinaryOp, Expr, Join, Literal, OrderByExpr, Query, Select, TableRef};
 use crate::services::collection::manager::CollectionService;
 use std::sync::Arc;
 

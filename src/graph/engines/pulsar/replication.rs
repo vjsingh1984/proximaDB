@@ -26,7 +26,6 @@ use crate::graph::{Edge, EdgeId, Node, NodeId};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
 
@@ -503,7 +502,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Check stats
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let stats = manager.get_stats().await;
         assert_eq!(stats.successful_replications, 1);
     }

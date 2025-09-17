@@ -4,12 +4,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{FastLanesDataBlock, RowBasedConfig};
-use super::block_structures::{FastLanesBlockMetadata, BlockCompressionConfig, BlockStatistics};
-use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use super::{FastLanesDataBlock, RowBasedConfig, FastLanesBlockMetadata, BlockCompressionConfig};
+use super::block_structures::BlockStatistics;
 use crate::core::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::serialization::CompressionAlgorithm;
+use crate::core::compression::CompressionAlgorithm;
+use crate::storage::common::compaction_orchestrator::FilenameCodec;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
