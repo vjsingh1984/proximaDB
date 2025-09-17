@@ -12,8 +12,8 @@ pub mod knowledge_graph;
 pub mod performance;
 
 pub use manager::TenantManager;
-pub use context::{TenantContext, TenantConfig, TenantStatus, BusinessContext, DataSensitivityLevel, PerformanceRequirements};
-pub use resources::{TenantResourceTracker, ResourceLimits};
+pub use context::{TenantContext, TenantConfig, TenantStatus, BusinessContext, DataSensitivityLevel, PerformanceRequirements, ResourceLimits};
+pub use resources::{TenantResourceTracker};
 pub use entity_store::{TenantAwareEntityStore, UserContext};
 pub use domain::{DomainManager, DomainContext, CollectionDomainMapping};
 pub use rbac::{EnhancedRBACManager, Permission, TenantRole};

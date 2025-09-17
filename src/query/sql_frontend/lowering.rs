@@ -679,7 +679,7 @@ mod lowering_tests {
 
                 // Verify WHERE clause generates efficient FilterExpression
                 // This will use HashMap.get("category") instead of linear scan
-                if let Some(Expr::Binary { left, op, right }) = &select.selection {
+                if let Some(Expr::Binary { left: _, op, right }) = &select.selection {
                     assert!(matches!(op, BinaryOp::Eq));
                     // TODO: Validate field access pattern optimizes to HashMap.get()
                 }

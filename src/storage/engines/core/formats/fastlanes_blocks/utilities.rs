@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{FastLanesDataBlock, RowBasedConfig, FastLanesBlockMetadata, BlockCompressionConfig, BlockStatistics};
+use super::{FastLanesDataBlock, RowBasedConfig, FastLanesBlockMetadata, BlockCompressionConfig};
+use super::block_structures::BlockStatistics;
 use crate::core::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::hardware_capabilities::HardwareCapabilities;

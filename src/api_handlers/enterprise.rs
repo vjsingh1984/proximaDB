@@ -7,7 +7,8 @@ use tracing::info;
 use crate::auth::{EnterpriseAuthManager, SSOToken, EnterpriseUserContext};
 use crate::storage::tenant::{
     TenantManager, DomainManager, TenantAwareEntityStore, DomainKnowledgeGraph,
-    TenantConfig, BusinessContext, knowledge_graph::CollectionBridgeConfig, ResourceLimits,
+    TenantConfig, BusinessContext, knowledge_graph::CollectionBridgeConfig,
+    ResourceLimits,
 };
 
 /// Enterprise API handler for multi-tenant operations
