@@ -38,9 +38,12 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             vector: vec![1.0, 0.0, 0.0],
             metadata: {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("category".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("A".to_string())),
-                });
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("A".to_string())),
+                    }
+                );
                 metadata
             },
             timestamp: 1000,
@@ -55,9 +58,12 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             vector: vec![0.0, 1.0, 0.0],
             metadata: {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("category".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("B".to_string())),
-                });
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("B".to_string())),
+                    }
+                );
                 metadata
             },
             timestamp: 1001,
@@ -72,9 +78,12 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             vector: vec![0.0, 0.0, 1.0],
             metadata: {
                 let mut metadata = std::collections::HashMap::new();
-                metadata.insert("category".to_string(), SqlValue {
-                    value: Some(sql_value::Value::StringValue("A".to_string())),
-                });
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("A".to_string())),
+                    }
+                );
                 metadata
             },
             timestamp: 1002,

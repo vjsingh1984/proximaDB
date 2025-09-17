@@ -69,6 +69,7 @@ mod api_consistency_tests {
         }
 
         /// Compare two responses for equivalence
+        #[allow(dead_code)]
         fn assert_responses_equal<T: serde::Serialize>(
             rest_response: &T,
             grpc_response: &T,
@@ -438,6 +439,7 @@ mod api_consistency_tests {
     }
 
     /// Helper function to normalize responses for comparison
+    #[allow(dead_code)]
     fn normalize_response(response: &VectorOperationResponse) -> serde_json::Value {
         // Remove fields that might differ between REST and gRPC
         let mut json = serde_json::to_value(response).unwrap();
