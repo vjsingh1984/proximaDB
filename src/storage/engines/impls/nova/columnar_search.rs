@@ -1119,7 +1119,7 @@ mod tests {
                     serde_json::json!(100.0),
                 ),
             ],
-            logic: crate::query::unified_query_optimizer::FilterLogic::And,
+            logic: crate::storage::engines::core::formats::columnar::FilterLogic::And,
         });
 
         let projection = build_projection_mask(&config, &filter);

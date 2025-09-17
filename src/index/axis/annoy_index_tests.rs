@@ -21,6 +21,7 @@ mod tests {
     use crate::index::axis::index_factory::AxisVectorIndex;
     use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
     use crate::proto::proximadb_v1::MetadataItem;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 

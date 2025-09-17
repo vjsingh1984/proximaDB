@@ -113,7 +113,7 @@ use crate::compute::quantization::types::*;
             batch_size: 50,
             compression: false,
             sorting_strategy: SortingStrategy::ById,
-            quantization_level: Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::PQ8),
+            quantization_level: Some(crate::compute::quantization::types::UnifiedQuantizationLevel::Pq8),
         };
 
         assert!(!config.enable_preprocessing);

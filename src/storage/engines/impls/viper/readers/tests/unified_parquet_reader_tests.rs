@@ -513,6 +513,7 @@ mod tests {
         // Create search params
         let search_params = SearchParams {
             query_vectors: Some(vec![vec![1.0, 0.0, 0.0]]),
+            vector: Some(vec![1.0, 0.0, 0.0]), // Add missing vector field
             top_k: Some(3),
             distance_metric: Some(DistanceMetric::Cosine),
             requires_ordering: None,
