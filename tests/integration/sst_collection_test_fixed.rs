@@ -42,7 +42,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
                     "category".to_string(),
                     SqlValue {
                         value: Some(sql_value::Value::StringValue("A".to_string())),
-                    }
+                    },
                 );
                 metadata
             },
@@ -72,7 +72,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             version: Some(1),
             quantized_vector: vec![],
             source: None,
-        ),
+        },
         VectorRecord {
             id: format!("{}_vec3", collection_id),
             vector: vec![0.0, 0.0, 1.0],
@@ -82,7 +82,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
                     "category".to_string(),
                     SqlValue {
                         value: Some(sql_value::Value::StringValue("A".to_string())),
-                    }
+                    },
                 );
                 metadata
             },
