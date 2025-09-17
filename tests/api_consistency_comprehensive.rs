@@ -5,7 +5,8 @@
 
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
-    IncludeFields, MetadataItem, SearchQuery, StorageEngine, VectorBatchRequest,
+    FilterOperator, IncludeFields, MetadataFilter, MetadataItem, SearchQuery,
+    SourceRetrievalOptions, StorageEngine, VectorBatchRequest,
     VectorOperationResponse, VectorRecord, VectorSearchRequest,
 };
 use proximadb::utils::uuid::Uuid;
@@ -24,11 +25,11 @@ mod comprehensive_api_tests {
             storage_engine: StorageEngine::Sst as i32,
             storage_config: None,
             index_configs: vec![],
-            primary_index: None,
-            auto_index_selection: Some(true),
+            primary_index: "".to_string(),
+            auto_index_selection: true,
             filterable_columns: vec![],
             quantization: None,
-            embedding_models: None,
+            embedding_models: vec![],
             description: Some("Test collection for API consistency".to_string()),
             tags: vec!["test".to_string()],
             owner: Some("test_user".to_string()),
@@ -63,7 +64,7 @@ mod comprehensive_api_tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             })
             .collect()
@@ -117,8 +118,6 @@ mod comprehensive_api_tests {
         let batch_request = VectorBatchRequest {
             collection_id: collection_id.clone(),
             vectors: create_test_vectors(100, 128),
-            batch_timeout_ms: None,
-            request_id: None,
         };
 
         let batch_response: VectorOperationResponse = client
@@ -148,7 +147,10 @@ mod comprehensive_api_tests {
             collection_id: collection_id.clone(),
             queries: vec![SearchQuery {
                 vector: vec![0.5; 128],
-                metadata_filter: None,
+                metadata_filter: MetadataFilter {
+                    conditions: vec![],
+                    operator: FilterOperator::And as i32,
+                },
                 id: None,
             }],
             top_k: 10,
@@ -160,7 +162,16 @@ mod comprehensive_api_tests {
                 score: true,
                 rank: false,
                 source: false,
-                source_options: None,
+                source_options: SourceRetrievalOptions {
+                    expand_chunks: false,
+                    max_chunk_expansion: 0,
+                    source_fields: vec![],
+                    resolve_external: false,
+                    max_source_size: 0,
+                    tier_preference: "".to_string(),
+                    include_chunk_context: false,
+                    include_processing_info: false,
+                },
             }),
             search_optimization: None,
         };
@@ -250,7 +261,10 @@ mod comprehensive_api_tests {
             collection_id: "".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1; 128],
-                metadata_filter: None,
+                metadata_filter: MetadataFilter {
+                    conditions: vec![],
+                    operator: FilterOperator::And as i32,
+                },
                 id: None,
             }],
             top_k: 10,
@@ -302,7 +316,10 @@ mod comprehensive_api_tests {
             collection_id: "non_existent_collection_xyz".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1; 128],
-                metadata_filter: None,
+                metadata_filter: MetadataFilter {
+                    conditions: vec![],
+                    operator: FilterOperator::And as i32,
+                },
                 id: None,
             }],
             top_k: 10,

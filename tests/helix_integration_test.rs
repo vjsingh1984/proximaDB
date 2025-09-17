@@ -8,7 +8,6 @@ mod helix_integration_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::core::search::SearchParams;
     use proximadb::proto::proximadb_v1::{Collection, VectorRecord};
-    use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
     use proximadb::storage::engines::impls::helix::{HelixConfig, HelixEngine};
     use proximadb::storage::traits::{
         CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
