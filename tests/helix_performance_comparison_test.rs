@@ -270,9 +270,11 @@ mod performance_comparison_tests {
                     filterable_columns: vec![],
                     index_configs: vec![],
                     quantization: None,
-//                    auto_create_shards: None, // Field not in proto
-//                    auto_balance: None, // Field not in proto
-//                    replication_factor: None, // Field not in proto
+                    primary_index: "HNSW".to_string(),
+                    auto_index_selection: false,
+                    owner: None,
+                    embedding_models: vec![],
+                    storage_config: None,
                 }),
                 stats: None,
                 created_at: 0,
@@ -658,9 +660,11 @@ mod performance_comparison_tests {
                     filterable_columns: vec![],
                     index_configs: vec![],
                     quantization: None,
-//                    auto_create_shards: None, // Field not in proto
-//                    auto_balance: None, // Field not in proto
-//                    replication_factor: None, // Field not in proto
+                    primary_index: "HNSW".to_string(),
+                    auto_index_selection: false,
+                    owner: None,
+                    embedding_models: vec![],
+                    storage_config: None,
                 }),
                 stats: None,
                 created_at: 0,

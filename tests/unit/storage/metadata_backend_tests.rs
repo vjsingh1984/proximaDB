@@ -277,7 +277,6 @@ async fn test_metadata_backend_persistence() {
                             indexed: true,
                             supports_range: false,
                             estimated_cardinality: Some(100),
-                        encoding_hint: None,
                     },
                         proximadb::proto::proximadb_v1::FilterableColumnSpec {
                             name: "timestamp".to_string(),
@@ -285,7 +284,6 @@ async fn test_metadata_backend_persistence() {
                             indexed: true,
                             supports_range: true,
                             estimated_cardinality: None,
-                        encoding_hint: None,
                     },
                     ],
                     index_configs: vec![],
@@ -757,7 +755,6 @@ async fn test_metadata_backend_trait_implementation() {
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(50),
-                    encoding_hint: None,
                 },
                 proximadb::proto::proximadb_v1::FilterableColumnSpec {
                     name: "score".to_string(),
@@ -766,7 +763,6 @@ async fn test_metadata_backend_trait_implementation() {
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: Some(100),
-                    encoding_hint: None,
                 },
             ],
             index_configs: vec![],

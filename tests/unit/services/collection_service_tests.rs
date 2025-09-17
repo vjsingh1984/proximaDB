@@ -9,7 +9,7 @@ use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, StorageEngine,
 };
 use proximadb::services::collection_service::CollectionService;
-use proximadb::storage::metadata::backends::filestore_backend::{
+use proximadb::storage::metadata::backends::{
     FilestoreMetadataBackend, FilestoreMetadataConfig,
 };
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -53,18 +53,16 @@ async fn test_create_collection() -> Result<()> {
         dimension: 384,
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
-        primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
-        primary_index: "default".to_string(),
+        primary_index: "HNSW".to_string(),
         auto_index_selection: false,
         description: Some("Test collection".to_string()),
         tags: vec!["test".to_string()],
         owner: Some("test_user".to_string()),
-        compression: None,
-        optimization_hints: None,
-        storage_location: None,
+        embedding_models: vec![],
+        storage_config: None,
     };
 
     let response = service.create_collection(&config).await?;
@@ -85,25 +83,23 @@ async fn test_get_collection() -> Result<()> {
         dimension: 256,
         distance_metric: DistanceMetric::Euclidean as i32,
         storage_engine: StorageEngine::Sst as i32,
-        primary_indexing_algorithm: IndexingAlgorithm::Flat as i32,
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
-        primary_index: "default".to_string(),
+        primary_index: "FLAT".to_string(),
         auto_index_selection: false,
         description: None,
         tags: vec![],
         owner: None,
-        compression: None,
-        optimization_hints: None,
-        storage_location: None,
+        embedding_models: vec![],
+        storage_config: None,
     };
 
     let create_response = service.create_collection(&config).await?;
     assert!(create_response.success);
 
     // Get by name
-    let collection = service.get_proto_collection("test_get").await?;
+    let collection = service.get_collection("test_get").await?;
     assert!(collection.is_some());
 
     let collection = collection.unwrap();
@@ -120,21 +116,19 @@ async fn test_list_collections() -> Result<()> {
     for i in 0..3 {
         let config = CollectionConfig {
             name: format!("collection_{}", i),
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
             dimension: 128,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Viper as i32,
-            primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
-            primary_index: "default".to_string(),
+            primary_index: "HNSW".to_string(),
             auto_index_selection: false,
             description: None,
             tags: vec![],
             owner: None,
+            embedding_models: vec![],
+            storage_config: None,
         };
 
         let response = service.create_collection(&config).await?;
@@ -158,18 +152,16 @@ async fn test_delete_collection() -> Result<()> {
         dimension: 64,
         distance_metric: DistanceMetric::Manhattan as i32,
         storage_engine: StorageEngine::Sst as i32,
-        primary_indexing_algorithm: IndexingAlgorithm::Flat as i32,
         filterable_columns: vec![],
         index_configs: vec![],
         quantization: None,
-        primary_index: "default".to_string(),
+        primary_index: "FLAT".to_string(),
         auto_index_selection: false,
         description: None,
         tags: vec![],
         owner: None,
-        compression: None,
-        optimization_hints: None,
-        storage_location: None,
+        embedding_models: vec![],
+        storage_config: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -180,7 +172,7 @@ async fn test_delete_collection() -> Result<()> {
     assert!(delete_response.success);
 
     // Verify it's gone
-    let collection = service.get_proto_collection("test_delete").await?;
+    let collection = service.get_collection("test_delete").await?;
     assert!(collection.is_none());
 
     Ok(())

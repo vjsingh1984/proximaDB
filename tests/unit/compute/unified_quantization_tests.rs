@@ -7,7 +7,7 @@ use proximadb::compute::CodebookStore;
 use proximadb::compute::{
     BinaryQuantization, DistanceMetric, InMemoryCodebookStore, QuantizationLevelType,
     ScalarQuantization, UnifiedDistanceCompute, UnifiedQuantizationEngine,
-    UnifiedQuantizationLevel, UniformQuantization,
+    UnifiedQuantizationLevel, UniformQuantization, Codebook, TrainingConfig, CodebookData,
 };
 use std::sync::Arc;
 
@@ -176,7 +176,7 @@ fn test_in_memory_codebook_store() {
         let codebook = Codebook {
             id: "test_codebook".to_string(),
             quantization_level: UnifiedQuantizationLevel::pq8(8),
-            created_at: chrono::Utc::now(),
+            timestamp: chrono::Utc::now(),
             training_config: TrainingConfig {
                 num_training_vectors: 1000,
                 iterations: 100,
@@ -185,7 +185,7 @@ fn test_in_memory_codebook_store() {
             },
             data: CodebookData::ProductQuantization {
                 centroids: vec![vec![vec![1.0, 2.0, 3.0]]],
-                subvector_dim: 3,
+                _subvector_dim: 3,
             },
         };
 

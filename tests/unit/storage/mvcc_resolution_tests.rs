@@ -3,29 +3,27 @@
 //! Tests the core MVCC version resolution logic used by both
 //! VIPER and SST engines to ensure consistency.
 
-use proximadb::proto::proximadb_v1::SearchResult;
+use proximadb::proto::proximadb_v1::{SearchVectorRecord, SqlValue};
 use proximadb::services::VectorOperationsService;
 use serde_json::json;
 use std::collections::HashMap;
 
-/// Test helper to create a SearchResult with specific ID, version, and timestamp
-fn create_search_result(id: &str, version: u32, timestamp: u32, score: f32) -> SearchResult {
-    SearchResult {
+/// Test helper to create a SearchVectorRecord with specific ID, version, and timestamp
+fn create_search_result(id: &str, version: u32, timestamp: u32, score: f32) -> SearchVectorRecord {
+    SearchVectorRecord {
         id: id.to_string(),
-        vector_id: Some(format!("vec_{}", id)),
-        score,
-        distance: Some(1.0 - score),
-        rank: None,
-        vector: Some(vec![0.1; 128]),
+        score: score as f64,
+        vector: vec![0.1; 128],
         metadata: HashMap::new(),
-        debug_info: None,
-        semantic_distance: None,
+        version: Some(version as i64),
+        similarity: Some(score),
+        timestamp: Some(timestamp as i64),
+        source: None,
+        expanded_context: vec![],
+        semantic_similarity: None,
         quantization_info: None,
-        engine_stats: None,
+        engine_stats: HashMap::new(),
         index_path: None,
-        version: Some(version),
-        timestamp: Some(timestamp),
-        created_at: None,
     }
 }
 
@@ -102,11 +100,11 @@ fn test_apply_mvcc_deduplication() {
 }
 
 /// Test the actual MVCC logic (extracted from VectorOperationsService)
-fn apply_mvcc_logic(results: Vec<SearchResult>) -> Vec<SearchResult> {
+fn apply_mvcc_logic(results: Vec<SearchVectorRecord>) -> Vec<SearchVectorRecord> {
     use std::collections::HashMap;
 
     // Group results by ID
-    let mut id_groups: HashMap<String, Vec<SearchResult>> = HashMap::new();
+    let mut id_groups: HashMap<String, Vec<SearchVectorRecord>> = HashMap::new();
     let mut results_without_id = Vec::new();
 
     for result in results {
@@ -127,30 +125,30 @@ fn apply_mvcc_logic(results: Vec<SearchResult>) -> Vec<SearchResult> {
     for (_id, mut versions) in id_groups {
         // Sort by version, then timestamp (earliest first for same version)
         versions.sort_by(|a, b| {
-            let version_a = a.version.unwrap_or(1);
-            let version_b = b.version.unwrap_or(1);
+            let version_a = a.version.unwrap_or(1) as u32;
+            let version_b = b.version.unwrap_or(1) as u32;
 
             version_a.cmp(&version_b).then_with(|| {
                 // For same version, earliest timestamp wins
-                let ts_a = a.timestamp.unwrap_or(u32::MAX);
-                let ts_b = b.timestamp.unwrap_or(u32::MAX);
+                let ts_a = a.timestamp.unwrap_or(i64::MAX) as u32;
+                let ts_b = b.timestamp.unwrap_or(i64::MAX) as u32;
                 ts_a.cmp(&ts_b)
             })
         });
 
         // Validate version continuity
         let mut expected_version = 1;
-        let mut last_valid: Option<SearchResult> = None;
+        let mut last_valid: Option<SearchVectorRecord> = None;
 
         for result in versions {
-            let version = result.version.unwrap_or(1);
+            let version = result.version.unwrap_or(1) as u32;
 
             if version == expected_version {
                 // Check for duplicate version - keep earliest timestamp
                 if let Some(ref existing) = last_valid {
-                    if existing.version == result.version {
-                        let existing_ts = existing.timestamp.unwrap_or(u32::MAX);
-                        let current_ts = result.timestamp.unwrap_or(u32::MAX);
+                    if existing.version.unwrap_or(1) == result.version.unwrap_or(1) {
+                        let existing_ts = existing.timestamp.unwrap_or(i64::MAX) as u32;
+                        let current_ts = result.timestamp.unwrap_or(i64::MAX) as u32;
                         if current_ts < existing_ts {
                             last_valid = Some(result);
                         }

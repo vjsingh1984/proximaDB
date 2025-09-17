@@ -44,7 +44,7 @@ fn create_test_record(id: &str, vector: Vec<f32>, category: &str) -> VectorRecor
         vector,
         metadata: HashMap::from([
             ("category".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(category.to_string())) }),
-            ("confidence".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::DoubleValue(0.85)) }),
+            ("confidence".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(0.85)) }),
             ("active".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(true)) }),
         ]),
         timestamp: 1234567890i64,
@@ -303,8 +303,8 @@ fn test_metadata_serialization() {
     use std::collections::HashMap;
     record.metadata = HashMap::from([
         ("string_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string())) }),
-        ("int_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::DoubleValue(42.0)) }),
-        ("float_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::DoubleValue(3.14)) }),
+        ("int_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(42.0)) }),
+        ("float_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(3.14)) }),
         ("bool_field".to_string(), SqlValue { value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(true)) }),
     ]);
 

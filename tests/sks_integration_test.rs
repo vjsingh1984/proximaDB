@@ -13,17 +13,17 @@ mod sks_integration_tests {
         EmbeddingVersion, Entity, Modality, Provenance, Relation, StringArray, TypedField,
         TypedMetadata, SqlValue
     };
-    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore, RelationsStore, ProvenanceRegistry};
-    use proximadb::storage::provenance::InMemoryProvenanceRegistry;
-    use proximadb::storage::relations::InMemoryRelationsStore;
+    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
+    use proximadb::storage::relations::{RelationsStore, InMemoryRelationsStore};
+    use proximadb::storage::provenance::{ProvenanceRegistry, InMemoryProvenanceRegistry};
     use proximadb::storage::traits::{StorageEngineStrategy, PerformanceTier};
     use proximadb::core::{VectorRecord};
-    use proximadb::storage::engines::SearchQuery;
-    use proximadb::storage::persistence::flush::{FlushParameters, FlushResult};
-    use proximadb::storage::persistence::compaction::{CompactionParameters, CompactionResult};
+    use proximadb::core::search::queries::SearchQuery;
+    use proximadb::storage::traits::{FlushParameters, FlushResult, CompactionParameters, CompactionResult};
     use std::collections::HashMap;
     use anyhow::Result;
     use std::sync::Arc;
+    use chrono::{DateTime, Utc};
 
     /// Create a test entity store
     async fn create_test_store() -> Arc<ProximaEntityStore> {
@@ -56,21 +56,32 @@ mod sks_integration_tests {
 
             async fn do_flush(&self, _params: &FlushParameters) -> Result<FlushResult> {
                 Ok(FlushResult {
-                    files_created: vec![],
-                    bytes_written: 0,
-                    vectors_flushed: 0,
-                    duration_ms: 0,
+                    success: true,
+                    collections_affected: vec![],
+                    entries_flushed: Some(0),
+                    bytes_written: Some(0),
+                    files_created: Some(0),
+                    duration_ms: Some(0),
+                    completed_at: Utc::now(),
+                    engine_metrics: HashMap::new(),
+                    compaction_triggered: false,
+                    flushed_batch_ids: vec![],
                 })
             }
 
             async fn do_compact(&self, _params: &CompactionParameters) -> Result<CompactionResult> {
                 Ok(CompactionResult {
-                    files_compacted: vec![],
-                    files_created: vec![],
-                    bytes_written: 0,
-                    bytes_read: 0,
-                    vectors_compacted: 0,
-                    duration_ms: 0,
+                    success: true,
+                    collections_affected: vec![],
+                    entries_processed: Some(0),
+                    entries_removed: Some(0),
+                    bytes_read: Some(0),
+                    bytes_written: Some(0),
+                    input_files: Some(0),
+                    output_files: Some(0),
+                    duration_ms: Some(0),
+                    completed_at: Utc::now(),
+                    engine_metrics: HashMap::new(),
                 })
             }
 
@@ -98,7 +109,7 @@ mod sks_integration_tests {
                 use proximadb::storage::persistence::filesystem::FilesystemFactory;
                 use std::sync::OnceLock;
                 static FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
-                FACTORY.get_or_init(|| FilesystemFactory::new())
+                FACTORY.get_or_init(|| FilesystemFactory::new(proximadb::storage::persistence::filesystem::FilesystemConfig::default()).unwrap())
             }
         }
 
@@ -112,7 +123,7 @@ mod sks_integration_tests {
             model_version: "v1".to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4, 0.5],
             dimension: 5,
-            creation_timestamp: 1609459200000, // Unix epoch milliseconds
+            created_at_ms: 1609459200000, // Unix epoch milliseconds
             model_params: Default::default(),
             modality: Modality::Text as i32,
         };
@@ -122,7 +133,7 @@ mod sks_integration_tests {
             chunk_id: "chunk-1".to_string(),
             chunk_position: 0,
             extraction_method: "test-extraction".to_string(),
-            extraction_timestamp: 1609459200000, // Unix epoch milliseconds
+            extracted_at_ms: 1609459200000, // Unix epoch milliseconds
             metadata: Default::default(),
         };
 
@@ -182,7 +193,7 @@ mod sks_integration_tests {
             target_entity_id: "entity-2".to_string(),
             relation_type: "cites".to_string(),
             weight: 1.0,
-            creation_timestamp: 1609459200000, // Unix epoch milliseconds
+            created_at_ms: 1609459200000, // Unix epoch milliseconds
             properties: Default::default(),
         };
 
