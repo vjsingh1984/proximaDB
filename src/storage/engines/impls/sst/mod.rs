@@ -369,7 +369,7 @@ pub struct SstMetadata {
 }
 
 /// Combined storage format for SST files
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstEntry {
     pub record: VectorRecord,  // Direct storage of proto VectorRecord
     pub sst_meta: SstMetadata, // SST-specific metadata

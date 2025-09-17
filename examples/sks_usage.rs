@@ -74,7 +74,7 @@ fn create_sample_vector_record() -> anyhow::Result<VectorRecord> {
     metadata.insert(
         "year".to_string(),
         proximadb::proto::proximadb_v1::SqlValue {
-            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::IntValue(2017)),
+            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(2017)),
         },
     );
 
@@ -126,10 +126,10 @@ fn demonstrate_metadata_operations(record: &VectorRecord) {
             Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                 println!("   - {}: {} (string)", key, s);
             },
-            Some(proximadb::proto::proximadb_v1::sql_value::Value::IntValue(i)) => {
+            Some(proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                 println!("   - {}: {} (int)", key, i);
             },
-            Some(proximadb::proto::proximadb_v1::sql_value::Value::FloatValue(f)) => {
+            Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
                 println!("   - {}: {} (float)", key, f);
             },
             Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
@@ -178,7 +178,7 @@ impl SearchResult {
         };
 
         let year = match record.metadata.get("year")?.value.as_ref()? {
-            proximadb::proto::proximadb_v1::sql_value::Value::IntValue(y) => *y as i32,
+            proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(y) => *y as i32,
             _ => return None,
         };
 
