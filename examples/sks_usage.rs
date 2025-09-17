@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Example 2: Create and store related entities with relationships
     println!("\n🔗 Example 2: Creating entities with relationships");
-    let (author_entity, citation_relation) = create_author_and_citation()?;
+    let (author_entity, _citation_relation) = create_author_and_citation()?;
     let author_id = entity_store.upsert_entity("authors", author_entity).await?;
     println!("   ✅ Stored author with ID: {}", author_id);
 
@@ -306,6 +306,7 @@ async fn demonstrate_graph_traversal() -> anyhow::Result<()> {
 fn create_mock_storage_engine() -> Arc<dyn proximadb::storage::engines::UnifiedStorageEngine> {
     // This is a placeholder for the actual storage engine
     // In production, this would be SST, VIPER, or another engine
+    #[allow(dead_code)]
     struct MockEngine;
 
     // The actual implementation would be provided by the storage layer

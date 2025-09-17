@@ -42,7 +42,7 @@ mod api_consistency_tests {
             // Try to connect to gRPC (may not be available in all test environments)
             let grpc_channel = tonic::transport::Channel::from_shared(grpc_url)
                 .ok()
-                .and_then(|endpoint| endpoint.connect_lazy());
+                .map(|endpoint| endpoint.connect_lazy());
 
             ApiTestFixture {
                 rest_client,
@@ -174,8 +174,8 @@ mod api_consistency_tests {
             collection_config: Some(CollectionConfig {
                 name: collection_id.clone(),
                 dimension: 128,
-                distance_metric: DistanceMetric::Euclidean,
-                storage_engine: StorageEngine::Viper,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: StorageEngine::Viper as i32,
                 tags: vec![],
                 description: None,
                 filterable_columns: vec![],

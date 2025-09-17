@@ -68,7 +68,7 @@ fn grpc_roundtrip_sqlvalue_prost() {
                                     value: Some(v1::sql_value::Value::BoolValue(false)),
                                 },
                             );
-                            m
+                            m.into_iter().collect()
                         },
                     })),
                 }),
@@ -114,7 +114,7 @@ fn rest_roundtrip_sqlvalue_json() {
                                     value: Some(v1::sql_value::Value::Int64Value(1)),
                                 },
                             );
-                            m
+                            m.into_iter().collect()
                         },
                     })),
                 }),
