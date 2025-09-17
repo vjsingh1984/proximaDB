@@ -1012,7 +1012,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nova_metadata_serialization() {
-        let temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().unwrap();
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
         let serializer = NovaMetadataSerializer::new(filesystem.clone());

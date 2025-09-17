@@ -5,7 +5,7 @@ use anyhow::Result;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, SuperBlock};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Metadata index for efficient filtering
 #[derive(Debug)]

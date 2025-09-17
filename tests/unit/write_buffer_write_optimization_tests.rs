@@ -20,33 +20,30 @@ use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 
 use proximadb::core::VectorRecord;
-use proximadb::services::vector_service::OptimizedFormat;
-use proximadb::storage::assignment_service::{AssignmentService, HashBasedAssignmentService};
+use proximadb::proto::proximadb_v1::SqlValue;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
-use proximadb::storage::persistence::write_ahead_log::{WriteBufferConfig, OptimizedWriteBufferWriter, OptimizedWriteBufferWriterConfig};
+use proximadb::storage::persistence::write_ahead_log::config::WriteBufferConfig;
 
 /// Test helper to create sample vectors
 fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
     (0..count)
-        .map(|i| VectorRecord {
-            id: Some(format!("vec_{,
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
-        }", i)),
-            vector: vec![i as f32; dimension],
-            metadata: vec![
-                proximadb::proto::proximadb_v1::MetadataItem {
-                    key: "index".to_string(),
-                    value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(i.to_string())),
-                },
-            ],
-            created_at: chrono::Utc::now().timestamp_micros(),
-            updated_at: None,
-            expires_at: None,
+        .map(|i| {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("index".to_string(), SqlValue {
+                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string())),
+            });
+
+            VectorRecord {
+                id: format!("vec_{}", i),
+                vector: vec![i as f32; dimension],
+                metadata,
+                timestamp: chrono::Utc::now().timestamp_micros(),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: vec![],
+                source: None,
+            }
         })
         .collect()
 }
@@ -470,7 +467,7 @@ mod integration_tests {
     use super::*;
     use proximadb::services::VectorOperationsService;
     use proximadb::storage::engines::impls::viper::ViperEngine;
-    use proximadb::storage::engines::impls::sst::LsmTree;
+    use proximadb::storage::engines::impls::sst::SstStorage;
 
     #[tokio::test]
     #[ignore] // Requires full system setup

@@ -64,7 +64,7 @@ impl StorageTestFixture {
         }
 
         // Create temporary directories for engines
-        let sst_dir = tempdir()?;
+        let _sst_dir = tempdir()?;
         let viper_dir = tempdir()?;
 
         // Create SST engine

@@ -1,6 +1,7 @@
 //! Tenant manager implementation - clean and simple
 
-use super::{TenantContext, TenantConfig, TenantStatus, TenantResourceTracker, ResourceLimits};
+use super::{TenantContext, TenantConfig, TenantStatus, TenantResourceTracker};
+use super::context::ResourceLimits;
 use super::resources::{TenantResourceUsageSnapshot};
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};

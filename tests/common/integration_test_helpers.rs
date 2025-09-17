@@ -606,23 +606,6 @@ impl UnifiedTestEnvironment {
             compaction_config: Default::default(),
         }
     }
-
-    /// Create test WriteBuffer configuration
-    fn create_test_wal_config(base_path: &std::path::Path) -> WriteBufferUserConfig {
-        WriteBufferUserConfig {
-            write_buffer_size_mb: 2,
-            memory_flush_size_bytes: 512 * 1024, // 512KB
-            memtable_type: "BTree".to_string(),
-            sync_mode: "perbatch".to_string(),
-            write_buffer_directory: base_path
-                .join("write_ahead_log")
-                .to_str()
-                .unwrap()
-                .to_string(),
-            enable_wal: true,
-            vector_count_threshold: 50, // Small threshold for tests
-        }
-    }
 }
 
 /// Multiple isolated environments for concurrency testing

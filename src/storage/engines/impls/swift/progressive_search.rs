@@ -8,10 +8,10 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
-use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
 
 
 use super::{MetadataFilter, SwiftFile};
+use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };

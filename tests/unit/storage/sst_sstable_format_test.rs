@@ -51,7 +51,7 @@ async fn test_sstable_write_read_format() {
 
     // Write records using streaming approach for production consistency
     let record_count = records.len();
-    let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+    let sorted_records_iter = records.into_iter().map(|(_, entry)| entry.record); // Extract VectorRecord
     writer
         .write_sorted_records(sorted_records_iter, record_count)
         .await
@@ -69,7 +69,7 @@ async fn test_sstable_write_read_format() {
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.expect("Failed to load metadata");
     let retrieved = reader.get_vector(&file_url, "test_vec").await.expect("Failed to get vector");
-    */"
+    */
 
     // assert!(retrieved.is_some(), "Should find the vector");
     // let vec = retrieved.unwrap();
@@ -137,7 +137,7 @@ async fn test_sstable_format_inspection() {
 
     // Write records using streaming approach for production consistency
     let record_count = records.len();
-    let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+    let sorted_records_iter = records.into_iter().map(|(_, entry)| entry.record); // Extract VectorRecord
     writer
         .write_sorted_records(sorted_records_iter, record_count)
         .await

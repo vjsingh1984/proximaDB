@@ -62,7 +62,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
                     "category".to_string(),
                     SqlValue {
                         value: Some(sql_value::Value::StringValue("B".to_string())),
-                    }
+                    },
                 );
                 metadata
             },

@@ -17,6 +17,9 @@ use proximadb::proto::proximadb_v1::SqlValue;
 use proximadb::storage::engines::core::formats::columnar::parquet_writer::{
     ParquetWriterConfig, StreamingParquetWriter,
 };
+use proximadb::storage::engines::impls::viper::vector_writer::{
+    OptimizedVectorWriter, OptimizedVectorWriterConfig,
+};
 
 /// Create test vector with specified characteristics
 fn create_test_vector(dimension: usize, sparsity: f32) -> Vec<f32> {
@@ -58,9 +61,8 @@ fn create_test_record(id: &str, vector: Vec<f32>, category: &str) -> VectorRecor
 
 #[test]
 fn test_optimized_schema_creation() {
-    let config = ParquetWriterConfig::default();
-    // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+    let config = OptimizedVectorWriterConfig::default();
+    let writer = OptimizedVectorWriter::new(config);
 
     let schema = writer.create_optimized_schema().unwrap();
 
@@ -87,12 +89,11 @@ fn test_optimized_schema_creation() {
 
 #[test]
 fn test_binary_array_vector_serialization() {
-    let mut config = ParquetWriterConfig::default();
+    let mut config = OptimizedVectorWriterConfig::default();
     config.use_binary_array = true;
-    config.vector_config.compression_algorithm = CompressionAlgorithm::Zstd;
+    config.compression_algorithm = "zstd".to_string();
 
-    // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+    let writer = OptimizedVectorWriter::new(config);
 
     // Test with different vector types
     let records = vec![
@@ -158,11 +159,10 @@ fn test_binary_array_vector_serialization() {
 
 #[test]
 fn test_list_array_fallback_mode() {
-    let mut config = ParquetWriterConfig::default();
+    let mut config = OptimizedVectorWriterConfig::default();
     config.use_binary_array = false; // Use ListArray fallback
 
-    // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+    let writer = OptimizedVectorWriter::new(config);
 
     let records = vec![
         create_test_record("test1", vec![1.0, 2.0, 3.0, 4.0], "test"),
@@ -211,7 +211,7 @@ fn test_list_array_fallback_mode() {
 
 #[test]
 fn test_compression_effectiveness() {
-    let mut sparse_config = OptimizedOptimizedVectorWriterConfig::default();
+    let mut sparse_config = OptimizedVectorWriterConfig::default();
     sparse_config.use_binary_array = true;
     sparse_config.vector_config.compression_algorithm = CompressionAlgorithm::Zstd;
     sparse_config.vector_config.compression_level = 6;
@@ -236,7 +236,7 @@ fn test_compression_effectiveness() {
     let sparse_stats = sparse_writer.get_optimization_stats(&sparse_batch);
 
     // Test dense vectors for comparison
-    let mut dense_config = OptimizedOptimizedVectorWriterConfig::default();
+    let mut dense_config = OptimizedVectorWriterConfig::default();
     dense_config.use_binary_array = true;
     dense_config.vector_config.compression_algorithm = CompressionAlgorithm::Zstd;
 
@@ -282,14 +282,13 @@ fn test_compression_effectiveness() {
 
 #[test]
 fn test_parquet_writer_properties() {
-    let mut config = ParquetWriterConfig::default();
+    let mut config = OptimizedVectorWriterConfig::default();
     config.parquet_compression_level = 9; // Maximum compression
     config.row_group_size = 25_000;
     config.write_batch_size = 2048;
     config.enable_dictionary_encoding = false;
 
-    // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+    let writer = OptimizedVectorWriter::new(config);
     let properties = writer.create_writer_properties().unwrap();
 
     // Properties should be created without error
@@ -299,9 +298,8 @@ fn test_parquet_writer_properties() {
 
 #[test]
 fn test_metadata_serialization() {
-    let config = ParquetWriterConfig::default();
-    // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+    let config = OptimizedVectorWriterConfig::default();
+    let writer = OptimizedVectorWriter::new(config);
 
     // Create record with comprehensive metadata
     let mut record = create_test_record("metadata_test", vec![1.0, 2.0, 3.0], "test");
@@ -355,13 +353,12 @@ fn test_metadata_serialization() {
 
 #[test]
 fn test_performance_benchmark() {
-    let mut config = ParquetWriterConfig::default();
+    let mut config = OptimizedVectorWriterConfig::default();
     config.use_binary_array = true;
-    config.vector_config.compression_algorithm = CompressionAlgorithm::Zstd;
-    config.vector_config.compression_level = 3; // Balanced performance
+    config.compression_algorithm = "zstd".to_string();
+    config.parquet_compression_level = 3; // Balanced performance
 
-    // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+    let writer = OptimizedVectorWriter::new(config);
 
     // Create larger dataset for performance testing
     let record_count = 1000;
@@ -435,9 +432,8 @@ fn test_performance_benchmark() {
 
 #[test]
 fn test_empty_and_edge_cases() {
-    let config = ParquetWriterConfig::default();
-    // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+    let config = OptimizedVectorWriterConfig::default();
+    let writer = OptimizedVectorWriter::new(config);
 
     // Test empty vectors
     let record_with_empty_vector = VectorRecord {
@@ -481,11 +477,10 @@ fn test_empty_and_edge_cases() {
 
 #[test]
 fn test_dimension_consistency() {
-    let mut config = ParquetWriterConfig::default();
+    let mut config = OptimizedVectorWriterConfig::default();
     config.use_binary_array = false; // Use ListArray to test dimension checking
 
-    // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+    let writer = OptimizedVectorWriter::new(config);
 
     // Mixed dimension vectors should fail in ListArray mode
     let mixed_records = vec![
@@ -513,7 +508,7 @@ fn test_dimension_consistency() {
     debug!("✅ ListArray mode correctly rejected mixed dimensions");
 
     // BinaryArray mode should also reject mixed dimensions (same validation logic)
-    let mut binary_config = OptimizedOptimizedVectorWriterConfig::default();
+    let mut binary_config = OptimizedVectorWriterConfig::default();
     binary_config.use_binary_array = true;
     let binary_writer = OptimizedVectorWriter::new(binary_config);
 
@@ -548,12 +543,12 @@ fn test_adaptive_vector_compression() {
     ];
 
     for (name, dimension, sparsity) in test_cases {
-        let mut config = ParquetWriterConfig::default();
-        config.vector_config = VectorSerializationConfig::for_dimension(dimension);
-        config.vector_config.adaptive_compression = true;
+        let mut config = OptimizedVectorWriterConfig::default();
+        // Adaptive compression based on dimension
+        config.compression_enabled = dimension > 256; // Enable compression for larger vectors
+        config.parquet_compression_level = if dimension > 512 { 9 } else { 6 };
 
-        // Note: StreamingParquetWriter requires different initialization parameters
-    // let writer = StreamingParquetWriter::new(config, path, schema);
+        let writer = OptimizedVectorWriter::new(config);
 
         let record = create_test_record(
             name,

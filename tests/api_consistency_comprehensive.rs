@@ -7,6 +7,7 @@ use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
     FilterOperator, StorageEngine, VectorBatchRequest,
     VectorOperationResponse, VectorRecord, VectorSearchRequest, SqlValue, sql_value,
+    SearchQuery, MetadataFilter, IncludeFields, SourceRetrievalOptions,
 };
 use proximadb::utils::uuid::Uuid;
 use std::time::Duration;
@@ -27,6 +28,11 @@ mod comprehensive_api_tests {
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
+            storage_config: None,
+            primary_index: "".to_string(),
+            auto_index_selection: false,
+            owner: "test_owner".to_string(),
+            embedding_models: vec![],
         }
     }
 
@@ -137,7 +143,7 @@ mod comprehensive_api_tests {
                 vector: vec![0.5; 128],
                 metadata_filter: MetadataFilter {
                     conditions: vec![],
-                    operator: FilterOperator::And as i32,
+                    operator: FilterOperator::LogicalAnd as i32,
                 },
                 id: None,
             }],
@@ -251,7 +257,7 @@ mod comprehensive_api_tests {
                 vector: vec![0.1; 128],
                 metadata_filter: MetadataFilter {
                     conditions: vec![],
-                    operator: FilterOperator::And as i32,
+                    operator: FilterOperator::LogicalAnd as i32,
                 },
                 id: None,
             }],
@@ -306,7 +312,7 @@ mod comprehensive_api_tests {
                 vector: vec![0.1; 128],
                 metadata_filter: MetadataFilter {
                     conditions: vec![],
-                    operator: FilterOperator::And as i32,
+                    operator: FilterOperator::LogicalAnd as i32,
                 },
                 id: None,
             }],
