@@ -203,6 +203,15 @@ cargo check --all-targets  # Faster compilation check without generating binarie
 - `proximadb-server`: Main database server (src/bin/server.rs)
 - `proximadb-bench`: Benchmarking tool (src/bin/proximadb-bench-consolidated.rs)
 
+### Quick Development Workflow
+```bash
+# Fast iteration cycle for development
+cargo check --all-targets  # Quick compilation check without binaries
+cargo build 2>&1 | tee current_error.log  # Build with error logging
+cargo test --lib compute::quantization --no-capture  # Test specific modules
+cargo clippy -- -D warnings  # Lint check
+```
+
 ### Running Tests
 ```bash
 # Run all tests (Rust + Python)
@@ -242,6 +251,10 @@ cargo test -- --ignored
 
 # Test coverage (requires cargo-tarpaulin)
 cargo tarpaulin --out Html --fail-under 50
+
+# Run unit tests in specific directory
+env PYTHONPATH=src python -m pytest tests/unit/ -v --tb=short
+env PYTHONPATH=src python -m pytest tests/unit/ -v --tb=short -m "not (server_required or integration)"
 ```
 
 ### Running the Server
@@ -450,17 +463,18 @@ All engines implement the `UnifiedStorageEngine` trait with:
 
 ### When Fixing Compilation Errors
 1. **Check current_error.log**: Always review the latest compilation log with `cargo build 2>&1 | tee current_error.log`
-2. **Common Error Patterns**:
+2. **Recent Development Focus**: The codebase has undergone systematic compilation error fixes and engine completion as of September 2025
+3. **Common Error Patterns**:
    - `struct import 'AxisConfig' is private`: Use public interfaces from index::axis modules
    - `this function takes 1 argument but 0 arguments were supplied`: Check UnifiedDistanceCompute requires DistanceMetric parameter
    - Lifetime errors: Review async/await usage and reference management
    - `cannot find type X in this scope`: Check module imports and feature flags
    - `trait bound not satisfied`: Verify trait implementations and generic constraints
-3. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, SST, SWIFT, RAPTOR, PRISM, HELIX)
-4. **Quantization Issues**: All engines should use `compute::quantization::unified`
-5. **Filesystem Issues**: All engines should use `IntelligentFilesystem`
-6. **Proto Types**: Use internal types, proto conversion only at service boundaries
-7. **Quick Error Resolution**:
+4. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, SST, SWIFT, RAPTOR, PRISM, HELIX)
+5. **Quantization Issues**: All engines should use `compute::quantization::unified`
+6. **Filesystem Issues**: All engines should use `IntelligentFilesystem`
+7. **Proto Types**: Use internal types, proto conversion only at service boundaries
+8. **Quick Error Resolution**:
    ```bash
    cargo check --all-targets 2>&1 | head -20  # Quick check first errors
    cargo build --message-format=short  # Concise error output
@@ -508,6 +522,9 @@ All engines implement the `UnifiedStorageEngine` trait with:
 - `src/storage/engines/factory.rs`: Storage engine selection logic
 - `src/compute/quantization/unified.rs`: Unified quantization engine
 - `src/storage/persistence/filesystem/intelligent_filesystem.rs`: Unified filesystem
+- `build.rs`: Protocol buffer compilation and build configuration
+- `Cargo.toml`: Dependencies and feature flags configuration
+- `config/config.toml`: Main server configuration file
 
 ### Health Checks and API Testing
 ```bash

@@ -82,8 +82,8 @@ graph TB
 ```
 docs/
 ├── README.adoc - Navigation hub for all stakeholders
-├── ENTERPRISE_VALUE_PROPOSITION.adoc - Complete business case
-├── PERFORMANCE_METRICS.adoc - Validated benchmark results
+├── enterprise_value_proposition.adoc - Complete business case
+├── archive/performance_metrics.adoc - Validated benchmark results
 ├── security.adoc - Enterprise security framework
 ├── proximadb_enterprise_guide.adoc - Complete platform guide
 ├── quickstart/ - Developer quick start (5-minute setup)

@@ -1,0 +1,452 @@
+= ProximaDB Storage Engine Serialization Layouts
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+
+[.lead]
+**Comprehensive visualization of storage engine data layouts** using diagram-as-code tools optimized for GitHub integration and documentation clarity.
+
+== Overview: Serialization Architecture
+
+=== Unified Format Foundation
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "SHARED INFRASTRUCTURE"
+        A[Unified Quantization Engine<br/>Binary • INT8 • PQ4/8/16/32]
+        B[FastLanes SIMD Encoding<br/>AVX2 • AVX512 • NEON]
+        C[Protocol Buffer Foundation<br/>VectorRecord Native Format]
+    end
+
+    subgraph "ENGINE-SPECIFIC LAYOUTS"
+        D[SST: Linear Sequential]
+        E[VIPER: Parquet Columnar]
+        F[NOVA: Hierarchical Stats]
+        G[SWIFT: Deep Hierarchical]
+        H[RAPTOR: Matrix Trinity]
+        I[PRISM: Multi-Resolution]
+        J[HELIX: Spatial-Temporal]
+    end
+
+    A --> D
+    A --> E
+    A --> F
+    B --> G
+    B --> H
+    C --> I
+    C --> J
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style C fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+----
+
+== Engine-Specific Layout Diagrams
+
+=== SST Engine: Linear Sequential Layout
+
+**Format**: Custom binary with LSM-tree structure
+**Complexity**: Medium (Hierarchical blocks)
+**Tool**: Mermaid Block Diagram
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+block-beta
+    columns 5
+
+    block:Header:1
+        Magic["Magic Bytes<br/>SST1"]
+        Version["Format Version"]
+        Metadata["File Metadata"]
+    end
+
+    block:BloomFilter:1
+        BFHeader["Bloom Filter<br/>Header"]
+        BFData["Filter Bits<br/>95% Reduction"]
+        BFIndex["Block Index"]
+    end
+
+    block:QuantizedData:1
+        QHeader["Quantization<br/>Parameters"]
+        QBlocks["Quantized Blocks<br/>INT8/PQ Encoded"]
+        QIndex["Block Offsets"]
+    end
+
+    block:FullPrecision:1
+        FPHeader["Full Precision<br/>Header"]
+        FPBlocks["FP32 Vector<br/>Blocks"]
+        FPMeta["Block Metadata"]
+    end
+
+    block:Footer:1
+        Checksum["File Checksum"]
+        Offsets["Section Offsets"]
+        Stats["File Statistics"]
+    end
+
+    Header --> BloomFilter
+    BloomFilter --> QuantizedData
+    QuantizedData --> FullPrecision
+    FullPrecision --> Footer
+----
+
+**Three-Stage Filtering Pipeline:**
+```
+Query → Bloom Filter (95% reduction) → Quantized Search → Full Precision → Results
+```
+
+=== VIPER Engine: Parquet Columnar Layout
+
+**Format**: Apache Parquet with quantization extensions
+**Complexity**: Low-Medium (Standard columnar)
+**Tool**: Mermaid Flowchart
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2196f3", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1565c0", "lineColor": "#1976d2"}}}%%
+flowchart TD
+    A[Parquet File Header<br/>Magic: VIPR + Schema] --> B[Row Group 1<br/>128K Vectors]
+    A --> C[Row Group 2<br/>128K Vectors]
+    A --> D[Row Group N<br/>128K Vectors]
+
+    B --> E[Column Chunk 1<br/>Dimensions 0-255]
+    B --> F[Column Chunk 2<br/>Dimensions 256-511]
+    B --> G[Column Chunk 3<br/>Dimensions 512-767]
+    B --> H[Metadata Chunk<br/>IDs + Timestamps]
+
+    E --> I[Page 1: Binary<br/>Ultra Compression]
+    E --> J[Page 2: INT8<br/>Fast Processing]
+    E --> K[Page 3: PQ8<br/>Balanced Quality]
+
+    F --> L[Dictionary Encoded<br/>Repeated Values]
+    G --> M[Run-Length Encoded<br/>Sparse Dimensions]
+    H --> N[Zone Maps<br/>Min/Max Pruning]
+
+    style A fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+----
+
+**Column-Major SIMD Optimization:**
+- Dimensions stored contiguously for vector operations
+- Quantization applied per-column for optimal compression
+- Zone maps enable 70-90% I/O reduction through pruning
+
+=== NOVA Engine: Hierarchical Statistics Layout
+
+**Format**: Enhanced Parquet with SuperBlock hierarchy
+**Complexity**: High (Three-tier statistics)
+**Tool**: Mermaid Flowchart
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#673ab7", "primaryTextColor": "#ffffff", "primaryBorderColor": "#4527a0", "lineColor": "#1976d2"}}}%%
+flowchart TD
+    A[NOVA File Header<br/>Magic: NOVA] --> B[SuperBlock Hierarchy<br/>Level 1: File Statistics]
+
+    B --> C[SuperBlock 1<br/>1M+ Vectors]
+    B --> D[SuperBlock 2<br/>1M+ Vectors]
+    B --> E[SuperBlock N<br/>1M+ Vectors]
+
+    C --> F[Enhanced Row Group 1<br/>128K Vectors + Stats]
+    C --> G[Enhanced Row Group 2<br/>128K Vectors + Stats]
+
+    F --> H[Advanced Zone Maps<br/>Multi-dimensional Pruning]
+    F --> I[Hierarchical Statistics<br/>Min/Max/Variance/Skew]
+    F --> J[Cost-Based Metadata<br/>Selectivity Hints]
+
+    G --> K[Progressive Quantization<br/>Binary → INT8 → PQ → FP32]
+    G --> L[Compression Chains<br/>Multi-stage 80-90% Reduction]
+
+    H --> M[Query Planning Cache<br/>Learned Patterns]
+    I --> N[Streaming Processor<br/>TB-scale Memory Efficient]
+
+    style A fill:#673ab7,stroke:#4527a0,stroke-width:2px,color:#ffffff
+    style B fill:#7b1fa2,stroke:#4a148c,stroke-width:2px,color:#ffffff
+    style C fill:#8e24aa,stroke:#6a1b99,stroke-width:2px,color:#ffffff
+    style D fill:#8e24aa,stroke:#6a1b99,stroke-width:2px,color:#ffffff
+    style E fill:#8e24aa,stroke:#6a1b99,stroke-width:2px,color:#ffffff
+----
+
+**Progressive Search Pipeline:**
+```
+Query → SuperBlock Pruning → Enhanced Row Group Stats → Progressive Quantization → Results
+```
+
+=== SWIFT Engine: Deep Hierarchical Layout
+
+**Format**: Custom hierarchical with hardware adaptation
+**Complexity**: High (Hardware-adaptive encoding)
+**Tool**: Mermaid Block Diagram
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ff5722", "primaryTextColor": "#ffffff", "primaryBorderColor": "#d84315", "lineColor": "#1976d2"}}}%%
+block-beta
+    columns 3
+
+    block:Level1:1
+        SB1["SuperBlock 1<br/>10K+ Vectors<br/>Encoding: 0x80"]
+        SB2["SuperBlock 2<br/>10K+ Vectors<br/>Encoding: 0x81"]
+        SB3["SuperBlock N<br/>10K+ Vectors<br/>Encoding: 0x8F"]
+    end
+
+    block:Level2:1
+        DB1["DataBlock 1<br/>1K-2K Vectors<br/>Inherit: 0xFF"]
+        DB2["DataBlock 2<br/>1K-2K Vectors<br/>Inherit: 0xFF"]
+        DB3["DataBlock N<br/>1K-2K Vectors<br/>Inherit: 0xFF"]
+    end
+
+    block:Level3:1
+        V1["Vector Records<br/>Hardware Optimized<br/>AVX512/AVX2/SSE"]
+        V2["Vector Records<br/>Hardware Optimized<br/>AVX512/AVX2/SSE"]
+        V3["Vector Records<br/>Hardware Optimized<br/>AVX512/AVX2/SSE"]
+    end
+
+    Level1 --> Level2
+    Level2 --> Level3
+----
+
+**Hardware Adaptation Strategy:**
+```
+CPU Detection → Encoding Selection → SuperBlock Layout → DataBlock Optimization → Vector Storage
+```
+
+**Encoding Markers:**
+- `0x80-0x8F`: SuperBlock-level encoding schemes
+- `0xFF`: Child blocks inherit parent encoding
+- Hardware-specific optimization for AVX512/AVX2/SSE/Scalar
+
+=== RAPTOR Engine: Matrix Trinity Architecture
+
+**Format**: Custom adaptive with matrix storage
+**Complexity**: Very High (Complex matrix relationships)
+**Tool**: Enhanced Mermaid + ASCII Detail
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#e91e63", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2185b", "lineColor": "#1976d2"}}}%%
+graph TB
+    A[RAPTOR Row Group<br/>Adaptive Size: 32K-256K] --> B[Matrix Trinity Architecture]
+
+    B --> C[P² Matrix<br/>Intra-RowGroup<br/>Nearby Vectors]
+    B --> D[K² Matrix<br/>Centroid Storage<br/>Cluster Centers]
+    B --> E[P×K Matrix<br/>Spillover Detection<br/>Boundary Vectors]
+
+    F[Workload Pattern<br/>Analyzer] --> G[Adaptive Sizing<br/>Algorithm]
+    G --> A
+
+    C --> H[FastLanes Encoded<br/>Transposed Vectors<br/>SIMD Optimized]
+    D --> I[Bloom Filters<br/>Multi-granularity<br/>10% Coverage Floor]
+    E --> J[Boundary Detection<br/>Smart Vector Selection<br/>Importance Scoring]
+
+    style A fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
+    style B fill:#f06292,stroke:#e91e63,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style E fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+----
+
+**Matrix Layout Detail (ASCII):**
+```
+RAPTOR Matrix Trinity Layout:
+┌─────────────────────────────────────────────────────────────┐
+│ Row Group Header: Magic [RPTR] + Adaptive Parameters       │
+├─────────────────────────────────────────────────────────────┤
+│ P² Matrix (Intra-RowGroup Navigation)                      │
+│ ┌─────┬─────┬─────┬─────┐                                   │
+│ │ V₁  │ V₂  │ V₃  │ ... │  Nearby vector relationships     │
+│ │ V₅  │ V₆  │ V₇  │ ... │  for efficient local search      │
+│ └─────┴─────┴─────┴─────┘                                   │
+├─────────────────────────────────────────────────────────────┤
+│ K² Matrix (Centroid Storage)                               │
+│ ┌─────┬─────┬─────┐                                         │
+│ │ C₁  │ C₂  │ C₃  │  Cluster centers for quick routing     │
+│ └─────┴─────┴─────┘                                         │
+├─────────────────────────────────────────────────────────────┤
+│ P×K Matrix (Spillover Boundary Detection)                  │
+│ ┌─────┬─────┬─────┬─────┬─────┐                             │
+│ │ B₁  │ B₂  │ B₃  │ B₄  │ ... │  Boundary vectors with     │
+│ │ B₆  │ B₇  │ B₈  │ B₉  │ ... │  spillover detection info  │
+│ └─────┴─────┴─────┴─────┴─────┘                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+=== PRISM Engine: Multi-Resolution Progressive Layout
+
+**Format**: Progressive quantization with memory optimization
+**Complexity**: Very High (Multiple resolution levels)
+**Tool**: Mermaid + Progressive Detail
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#795548", "primaryTextColor": "#ffffff", "primaryBorderColor": "#5d4037", "lineColor": "#1976d2"}}}%%
+graph LR
+    A[Memory Pressure<br/>Monitor] --> B{Memory<br/>Threshold}
+
+    B -->|> 90%| C[Aggressive Mode<br/>Binary + PQ4]
+    B -->|60-90%| D[Balanced Mode<br/>INT8 + PQ8]
+    B -->|< 60%| E[Conservative Mode<br/>PQ16 + FP32]
+
+    C --> F[Progressive Storage<br/>Resolution Levels]
+    D --> F
+    E --> F
+
+    F --> G[Level 1: Binary<br/>Marker 0xB0]
+    F --> H[Level 2: INT8<br/>Marker 0xB2]
+    F --> I[Level 3: PQ4<br/>Marker 0xB4]
+    F --> J[Level 4: PQ8<br/>Marker 0xB6]
+    F --> K[Level 5: FP16<br/>Marker 0xB8]
+    F --> L[Level 6: FP32<br/>Marker 0xBA]
+
+    style A fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+    style F fill:#8d6e63,stroke:#6d4c41,stroke-width:2px,color:#ffffff
+----
+
+**Progressive Resolution Detail:**
+```
+PRISM Multi-Resolution Storage:
+Progressive Marker: [0xB0-0xBF] + Resolution Count
+
+Resolution 1 (Binary):    [0xB0] [1-bit per dimension]
+Resolution 2 (INT8):      [0xB2] [8-bit quantized]
+Resolution 3 (PQ4):       [0xB4] [4-bit product codes]
+Resolution 4 (PQ8):       [0xB6] [8-bit product codes]
+Resolution 5 (FP16):      [0xB8] [16-bit half precision]
+Resolution 6 (FP32):      [0xBA] [32-bit full precision]
+
+Memory Adaptation:
+High Pressure → Load only Resolution 1-2 (Binary + INT8)
+Medium Press. → Load Resolution 1-4 (up to PQ8)
+Low Pressure  → Load all resolutions (full quality)
+```
+
+=== HELIX Engine: Spatial-Temporal Clustering Layout
+
+**Format**: LSM-based with Hilbert curve clustering
+**Complexity**: High (Spatial-temporal optimization)
+**Tool**: Mermaid Timeline + Spatial Graph
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#607d8b", "primaryTextColor": "#ffffff", "primaryBorderColor": "#455a64", "lineColor": "#1976d2"}}}%%
+timeline
+    title HELIX Temporal Clustering Layout
+
+    section Ingestion Pipeline
+        Vector Input     : PCA Projection
+                        : Hilbert Encoding
+                        : Temporal Grouping
+
+    section LSM Level 0
+        Recent Data     : Hot Vectors
+                       : Active Clustering
+                       : Fast Access
+
+    section LSM Level 1
+        Warm Data      : Stabilized Clusters
+                      : Hilbert Sorted
+                      : Efficient Scans
+
+    section LSM Level 2+
+        Cold Data      : Compressed Clusters
+                      : Long-term Storage
+                      : Archival Access
+----
+
+**Spatial Clustering Detail:**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#607d8b", "primaryTextColor": "#ffffff", "primaryBorderColor": "#455a64", "lineColor": "#1976d2"}}}%%
+graph TB
+    A[Input Vector<br/>High Dimensional] --> B[PCA Projection<br/>Dimensionality Reduction]
+
+    B --> C[Hilbert Curve<br/>N-Dimensional Encoding]
+
+    C --> D[Hilbert Key<br/>Spatial Locality]
+
+    D --> E[LSM Level Assignment<br/>Based on Age + Access]
+
+    E --> F[SStable Storage<br/>Sorted by Hilbert Key]
+
+    F --> G[Pruning Metadata<br/>Key Range + Timestamps]
+
+    style A fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+    style C fill:#78909c,stroke:#546e7a,stroke-width:2px,color:#ffffff
+    style F fill:#90a4ae,stroke:#607d8b,stroke-width:2px,color:#ffffff
+----
+
+**Hilbert Curve Benefits:**
+- **Spatial Locality**: Similar vectors physically co-located
+- **Temporal Grouping**: Natural time-based clustering
+- **Query Pruning**: 90%+ range query optimization
+- **LSM Efficiency**: Reduced compaction overhead
+
+== Tool Selection Summary
+
+=== Recommended Approach by Engine
+
+[cols="2,2,3,3", options="header"]
+|===
+| Engine | Primary Tool | Complexity Reason | GitHub Integration
+
+| **SST**
+| Mermaid Block
+| Linear sequential layout with clear hierarchical structure
+| ✅ Native rendering
+
+| **VIPER**
+| Mermaid Flowchart
+| Standard Parquet columnar, well-suited for flowcharts
+| ✅ Native rendering
+
+| **NOVA**
+| Mermaid Flowchart
+| Hierarchical but manageable with good tree structure
+| ✅ Native rendering
+
+| **SWIFT**
+| Mermaid Block
+| Deep hierarchy fits block diagram approach
+| ✅ Native rendering
+
+| **RAPTOR**
+| Mermaid + ASCII
+| Matrix complexity requires mixed approach
+| ✅ Mermaid native, ASCII inline
+
+| **PRISM**
+| Mermaid + Progressive
+| Multi-resolution needs layered visualization
+| ✅ Native with detailed sections
+
+| **HELIX**
+| Mermaid Timeline + Graph
+| Temporal aspects benefit from timeline view
+| ✅ Native rendering
+|===
+
+=== Alternative Tool Options
+
+**For Complex Engines (RAPTOR, PRISM):**
+- **Kroki Service**: External Graphviz/DOT rendering for complex matrices
+- **PlantUML**: Component diagrams for adaptive structures
+- **ASCII Art**: Manual layout for precise control
+
+**Kroki Example (External Service):**
+```
+https://kroki.io/graphviz/svg/[base64-encoded-dot-diagram]
+```
+
+This allows complex Graphviz diagrams while maintaining documentation integration.
+
+---
+
+*Storage Engine Layout Documentation - ProximaDB v0.1.4*
+*Optimized for GitHub integration and visual clarity*

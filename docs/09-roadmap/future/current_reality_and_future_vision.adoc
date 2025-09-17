@@ -17,9 +17,9 @@ toc::[]
 |===
 | Feature | Implementation | Status
 
-| **7 Storage Engines**
-| `src/storage/engines/impls/` - Complete implementations
-| ✅ **Production Ready - Benchmarking Infrastructure Complete**
+| **6 Production Storage Engines + 1 Research**
+| `src/storage/engines/impls/` - 135 implementation files
+| ✅ **PRODUCTION READY** - SST, VIPER, RAPTOR, PRISM, HELIX, SWIFT validated
 
 | **Query Engine**
 | `src/query/execution/` - Advanced query processing

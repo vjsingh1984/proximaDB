@@ -454,19 +454,19 @@ stateDiagram-v2
 
 |**Explore APIs**
 |Learn REST and gRPC interfaces
-|link:GRAPH_API_REFERENCE.adoc[API Reference]
+|link:../reference/graph_api_reference.adoc[API Reference]
 
 |**Understand Architecture**
 |Deep dive into system design
-|link:TECHNICAL_ARCHITECTURE.adoc[Architecture Guide]
+|link:../technical/platform_architecture.adoc[Architecture Guide]
 
 |**Production Deployment**
 |Deploy in production environment
-|link:OPERATIONS_GUIDE.adoc[Operations Guide]
+|link:../operations/production_runbook.adoc[Operations Guide]
 
 |**Evaluate Business Value**
 |Assess ROI and competitive advantages
-|link:BUSINESS_OVERVIEW.adoc[Business Overview]
+|link:../enterprise_value_proposition.adoc[Business Overview]
 |===
 
 == Common Use Cases

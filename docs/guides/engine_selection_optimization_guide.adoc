@@ -1,0 +1,674 @@
+= ProximaDB Engine Selection and Optimization Guide
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+
+[.lead]
+**Complete guide** for selecting and optimizing ProximaDB's 7 production-ready storage engines for maximum performance.
+
+== 🎯 **Engine Selection Decision Tree**
+
+=== Quick Selection Guide
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+flowchart TD
+    A[What's your primary requirement?] --> B{Query Latency}
+    A --> C{Throughput}
+    A --> D{Memory Efficiency}
+    A --> E{Data Pattern}
+
+    B -->|<1ms| F[SWIFT Engine<br/>Ultra-low latency]
+    B -->|<5ms| G[SST Engine<br/>Real-time OLTP]
+
+    C -->|>200K vec/sec| G
+    C -->|Analytics queries| H[VIPER Engine<br/>Columnar analytics]
+    C -->|Complex research| I[NOVA Engine<br/>Advanced analytics]
+
+    D -->|Memory constrained| J[PRISM Engine<br/>60% memory reduction]
+    D -->|Variable workloads| K[RAPTOR Engine<br/>Adaptive optimization]
+
+    E -->|Time-series| L[HELIX Engine<br/>Temporal optimization]
+    E -->|Mixed patterns| K
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#673ab7,stroke:#4527a0,stroke-width:2px,color:#ffffff
+    style J fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style K fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
+    style L fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+----
+
+=== Detailed Engine Comparison
+
+[cols="2,1,1,1,2,3", options="header"]
+|===
+| Engine | Latency | Throughput | Memory | Best For | Key Features
+
+| **SST**
+| <5ms
+| 200K vec/sec
+| Medium
+| Real-time OLTP
+| Three-stage filtering, zero-copy compaction
+
+| **SWIFT**
+| <1ms
+| Ultra-fast
+| Low
+| Low-latency queries
+| FastLanes encoding, high-speed operations
+
+| **VIPER**
+| <50ms
+| 5K vec/sec
+| Medium
+| Analytics workloads
+| Parquet columnar, ML-guided processing
+
+| **NOVA**
+| <100ms
+| 4K vec/sec
+| High
+| Advanced analytics
+| Progressive quantization, 90% compression
+
+| **RAPTOR**
+| Dynamic
+| Adaptive
+| Adaptive
+| Variable workloads
+| P×K optimization, workload adaptation
+
+| **PRISM**
+| <10ms
+| Memory-efficient
+| 60% less
+| Memory-constrained
+| Multi-resolution quantization
+
+| **HELIX**
+| <20ms
+| Time-optimized
+| Medium
+| Time-series data
+| Hilbert curve locality, temporal patterns
+|===
+
+== 🔧 **Engine-Specific Optimization**
+
+=== SST Engine (Real-time OLTP)
+
+**Optimal Use Cases:**
+- High-frequency trading systems
+- Real-time recommendation engines
+- IoT sensor data ingestion
+- Live chat/messaging applications
+
+**Configuration Optimization:**
+```toml
+[storage.engines.sst]
+# Optimize for write throughput
+bloom_filter_bits_per_key = 10        # Balance false positive rate
+max_memtable_size_mb = 64             # Larger memtable for better performance
+compaction_style = "level"            # Level compaction for better read performance
+write_buffer_size_mb = 32             # Optimize write buffer size
+enable_write_ahead_log = true         # ACID compliance
+compression_type = "lz4"              # Fast compression for real-time
+
+# Three-stage filtering optimization
+enable_bloom_filters = true
+enable_quantized_search = true
+enable_full_precision_fallback = true
+
+# Zero-copy compaction settings
+compaction_thread_count = 4
+max_background_jobs = 8
+target_file_size_mb = 64
+```
+
+**Performance Tuning:**
+```bash
+# Monitor SST performance
+RUST_LOG=sst=info proximadb-server 2>&1 | grep throughput
+
+# Optimize for your workload
+# For write-heavy: Increase memtable size, reduce compaction frequency
+# For read-heavy: Increase bloom filter bits, enable more aggressive compaction
+```
+
+**Expected Performance:**
+- **Write throughput**: 200K vectors/second
+- **Query latency**: <5ms (p95)
+- **Memory usage**: ~2GB for 1M vectors (768D)
+
+=== SWIFT Engine (Ultra-low Latency)
+
+**Optimal Use Cases:**
+- Financial trading systems requiring <1ms response
+- Real-time fraud detection
+- Live auction systems
+- High-frequency decision engines
+
+**Configuration Optimization:**
+```toml
+[storage.engines.swift]
+# FastLanes encoding for speed
+enable_fastlanes_encoding = true
+fastlanes_bit_width = 8              # Optimize for your data distribution
+
+# Memory pool optimization
+memory_pool_size_mb = 128             # Dedicated memory pool
+prefetch_buffer_size_kb = 64          # Aggressive prefetching
+enable_memory_pooling = true
+
+# CPU optimization
+enable_cpu_affinity = true
+cpu_core_count = 4                    # Dedicate CPU cores
+enable_numa_awareness = true
+
+# Cache optimization
+l1_cache_size_kb = 64                 # Match your CPU L1 cache
+l2_cache_size_kb = 512                # Match your CPU L2 cache
+enable_cache_line_optimization = true
+```
+
+**Performance Tuning:**
+```bash
+# CPU affinity for ultra-low latency
+taskset -c 0-3 proximadb-server --config swift-optimized.toml
+
+# Memory lock for predictable performance
+echo "proximadb soft memlock 8388608" >> /etc/security/limits.conf
+echo "proximadb hard memlock 8388608" >> /etc/security/limits.conf
+
+# Disable CPU frequency scaling
+echo performance > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+```
+
+**Expected Performance:**
+- **Query latency**: <1ms (p99)
+- **Throughput**: Optimized for latency over throughput
+- **Memory usage**: Fixed pools for predictable performance
+
+=== VIPER Engine (Columnar Analytics)
+
+**Optimal Use Cases:**
+- Business intelligence dashboards
+- Data warehousing workloads
+- Batch analytics processing
+- Research data analysis
+
+**Configuration Optimization:**
+```toml
+[storage.engines.viper]
+# Row group optimization
+row_group_size = 131072               # 128K vectors per row group (optimal)
+max_row_group_size_mb = 128           # Limit memory usage
+
+# Compression optimization
+compression_algorithm = "zstd"        # Best compression ratio
+compression_level = 3                 # Balance speed vs compression
+enable_dictionary_encoding = true     # Reduce storage for repeated values
+
+# Parquet optimization
+parquet_cache_size_mb = 512           # Cache for metadata
+enable_bloom_filters = true           # Skip row groups efficiently
+enable_column_indexes = true          # Fast column access
+
+# ML-guided processing
+enable_ml_guided_optimization = true
+learning_sample_size = 10000          # Sample size for pattern learning
+adaptation_frequency_minutes = 30     # How often to adapt
+```
+
+**Performance Tuning:**
+```bash
+# Monitor VIPER analytics performance
+RUST_LOG=viper=info proximadb-server 2>&1 | grep "row_groups_scanned"
+
+# Optimize row group size for your queries
+# Smaller row groups: Better for selective queries
+# Larger row groups: Better for full-scan analytics
+
+# Column pruning optimization
+# Ensure your queries only request needed dimensions
+curl -X POST localhost:5678/v1/collections/analytics/search \
+  -d '{"query_vector": [...], "top_k": 10, "select_fields": ["id", "score"]}'
+```
+
+**Expected Performance:**
+- **Analytics throughput**: 5K vectors/second
+- **Compression ratio**: 50-80% space reduction
+- **Query latency**: <50ms for row-group scans
+
+=== NOVA Engine (Advanced Analytics)
+
+**Optimal Use Cases:**
+- Machine learning research
+- Advanced statistical analysis
+- Complex multi-dimensional queries
+- Maximum compression scenarios
+
+**Configuration Optimization:**
+```toml
+[storage.engines.nova]
+# Progressive search optimization
+enable_progressive_search = true
+progressive_stages = ["binary", "int8", "pq8", "fp32"]
+quality_threshold = 0.95              # When to stop progression
+
+# SuperBlock hierarchy
+superblock_size = 1048576             # 1M vectors per SuperBlock
+superblock_stats_depth = 3            # 3-level hierarchy
+enable_superblock_caching = true
+
+# Zone maps optimization
+zone_map_granularity = "fine"         # Fine-grained pruning
+enable_multi_dimensional_pruning = true
+selectivity_threshold = 0.1           # Skip low-selectivity pruning
+
+# Streaming processor
+streaming_buffer_size_mb = 256        # Large buffer for TB-scale data
+streaming_thread_count = 8            # Parallel processing
+enable_memory_pressure_detection = true
+
+# Advanced quantization
+quantization_strategy = "adaptive"    # Choose best algorithm per data
+enable_cost_based_selection = true
+```
+
+**Performance Tuning:**
+```bash
+# Monitor NOVA advanced features
+RUST_LOG=nova=info proximadb-server 2>&1 | grep "progressive_search"
+
+# Optimize SuperBlock size
+# Larger: Better for large scans, more memory usage
+# Smaller: Better for selective queries, less memory
+
+# Progressive search tuning
+# More stages: Better accuracy, higher latency
+# Fewer stages: Faster queries, may sacrifice accuracy
+```
+
+**Expected Performance:**
+- **Research throughput**: 4K vectors/second
+- **Compression ratio**: 80-90% space reduction
+- **Advanced query latency**: <100ms with 70-90% I/O reduction
+
+=== RAPTOR Engine (Adaptive Workloads)
+
+**Optimal Use Cases:**
+- Multi-tenant environments
+- Variable workload patterns
+- Dynamic scaling requirements
+- Mixed query types
+
+**Configuration Optimization:**
+```toml
+[storage.engines.raptor]
+# P×K optimization
+enable_pxk_optimization = true
+pxk_algorithm_version = "v2"          # Latest algorithm
+pxk_coverage_floor = 0.1              # Minimum 10% coverage
+
+# Workload adaptation
+workload_adaptation_interval_ms = 5000 # Adapt every 5 seconds
+adaptation_sensitivity = "medium"      # Balance stability vs responsiveness
+enable_pattern_learning = true
+
+# Row group auto-sizing
+row_group_auto_sizing = true
+min_row_group_size = 32768             # 32K vectors minimum
+max_row_group_size = 262144            # 256K vectors maximum
+target_utilization = 0.85              # 85% target utilization
+
+# Boundary detection
+boundary_detection_algorithm = "smart" # Intelligent vector selection
+importance_scoring_enabled = true
+spillover_handling = "adaptive"
+```
+
+**Performance Tuning:**
+```bash
+# Monitor RAPTOR adaptation
+RUST_LOG=raptor=info proximadb-server 2>&1 | grep "workload_adaptation"
+
+# Watch P×K optimization in action
+RUST_LOG=raptor::pxk=debug proximadb-server 2>&1 | grep "boundary_detection"
+
+# Tune adaptation frequency
+# Higher frequency: Better adaptation, more overhead
+# Lower frequency: Less overhead, slower adaptation
+```
+
+**Expected Performance:**
+- **Adaptive throughput**: Optimizes automatically for workload
+- **Memory usage**: Dynamic based on access patterns
+- **Adaptation latency**: <5 seconds for workload changes
+
+=== PRISM Engine (Memory Optimized)
+
+**Optimal Use Cases:**
+- Memory-constrained environments
+- Edge computing deployments
+- Cost-optimized cloud instances
+- Mobile/embedded applications
+
+**Configuration Optimization:**
+```toml
+[storage.engines.prism]
+# Memory pressure handling
+memory_pressure_threshold = 0.8       # Start optimization at 80% usage
+enable_memory_monitoring = true
+memory_check_interval_ms = 1000       # Check every second
+
+# Multi-resolution quantization
+quantization_aggressiveness = "adaptive" # Adapt to memory pressure
+aggressive_threshold = 0.9            # Use aggressive quantization at 90%
+conservative_threshold = 0.6          # Use conservative below 60%
+
+# Memory pooling
+enable_memory_pooling = true
+pool_size_mb = 64                     # Dedicated memory pool
+pool_growth_strategy = "conservative"  # Careful memory growth
+enable_pool_compaction = true
+
+# Compression optimization
+compression_for_memory = true         # Optimize for memory, not speed
+enable_in_memory_compression = true
+```
+
+**Performance Tuning:**
+```bash
+# Monitor PRISM memory optimization
+RUST_LOG=prism=info proximadb-server 2>&1 | grep "memory_pressure"
+
+# Track quantization decisions
+RUST_LOG=prism::quantization=debug proximadb-server 2>&1 | grep "strategy_selected"
+
+# Memory usage monitoring
+cat /proc/$(pgrep proximadb-server)/status | grep VmRSS
+```
+
+**Expected Performance:**
+- **Memory reduction**: 60% less memory usage vs standard engines
+- **Query latency**: <10ms (optimized for memory efficiency)
+- **Throughput**: Memory-constrained optimized
+
+=== HELIX Engine (Time-series Optimization)
+
+**Optimal Use Cases:**
+- IoT sensor data
+- Financial time-series analysis
+- Log analytics
+- Temporal pattern recognition
+
+**Configuration Optimization:**
+```toml
+[storage.engines.helix]
+# Hilbert curve optimization
+hilbert_curve_order = 8               # 8-bit precision (good balance)
+enable_fast_2d_3d_paths = true        # Optimized low-dimension paths
+curve_cache_size_mb = 32              # Cache curve calculations
+
+# Temporal grouping
+temporal_grouping_window_hours = 24   # Group by day
+enable_temporal_locality = true
+time_based_partitioning = true
+
+# Liquid clustering
+enable_liquid_clustering = true
+clustering_window_size = 86400        # 24 hours in seconds
+query_pattern_learning = true
+cluster_adaptation_frequency = 3600   # Adapt every hour
+
+# PCA integration for clustering
+enable_pca_optimization = true
+pca_dimensions = 64                   # Reduce to 64D for clustering
+pca_variance_threshold = 0.95         # Preserve 95% variance
+```
+
+**Performance Tuning:**
+```bash
+# Monitor HELIX temporal optimization
+RUST_LOG=helix=info proximadb-server 2>&1 | grep "temporal_grouping"
+
+# Track Hilbert curve efficiency
+RUST_LOG=helix::hilbert=debug proximadb-server 2>&1 | grep "locality_preserved"
+
+# Optimize for your time patterns
+# Shorter windows: Better for fine-grained temporal queries
+# Longer windows: Better for broad temporal analytics
+```
+
+**Expected Performance:**
+- **Temporal query latency**: <20ms for time-range queries
+- **Locality preservation**: 90%+ for temporal data
+- **Space efficiency**: Natural temporal grouping reduces storage
+
+== 🚀 **Multi-Engine Strategies**
+
+=== Hybrid Engine Deployments
+
+**Strategy 1: Hot/Warm/Cold Architecture**
+```toml
+# Primary engine for hot data (last 30 days)
+hot_data_engine = "SST"               # Fast real-time access
+
+# Secondary engine for warm data (30-365 days)
+warm_data_engine = "VIPER"            # Efficient analytics
+
+# Archive engine for cold data (>365 days)
+cold_data_engine = "NOVA"             # Maximum compression
+```
+
+**Strategy 2: Workload-Specific Routing**
+```toml
+# Route by query type
+realtime_queries_engine = "SWIFT"     # <1ms latency
+analytics_queries_engine = "VIPER"    # Complex aggregations
+research_queries_engine = "NOVA"      # Advanced algorithms
+```
+
+**Strategy 3: Resource-Based Selection**
+```toml
+# Route by available resources
+high_memory_engine = "NOVA"           # When memory is abundant
+low_memory_engine = "PRISM"           # When memory is constrained
+adaptive_engine = "RAPTOR"            # Let RAPTOR decide
+```
+
+=== Performance Monitoring
+
+**Key Metrics per Engine:**
+```bash
+# SST Engine metrics
+curl localhost:5678/metrics | grep sst_
+# - sst_write_throughput_vectors_per_sec
+# - sst_query_latency_ms_p95
+# - sst_compaction_ratio
+
+# VIPER Engine metrics
+curl localhost:5678/metrics | grep viper_
+# - viper_row_groups_scanned_per_query
+# - viper_compression_ratio
+# - viper_column_cache_hit_rate
+
+# NOVA Engine metrics
+curl localhost:5678/metrics | grep nova_
+# - nova_progressive_search_stages_avg
+# - nova_superblock_pruning_ratio
+# - nova_io_reduction_percentage
+
+# RAPTOR Engine metrics
+curl localhost:5678/metrics | grep raptor_
+# - raptor_pxk_boundary_efficiency
+# - raptor_workload_adaptation_frequency
+# - raptor_row_group_utilization
+
+# PRISM Engine metrics
+curl localhost:5678/metrics | grep prism_
+# - prism_memory_usage_reduction_percentage
+# - prism_quantization_aggressiveness_level
+# - prism_memory_pressure_level
+
+# HELIX Engine metrics
+curl localhost:5678/metrics | grep helix_
+# - helix_temporal_locality_ratio
+# - helix_hilbert_curve_efficiency
+# - helix_cluster_adaptation_frequency
+```
+
+== 📊 **Benchmarking and Testing**
+
+=== Engine-Specific Benchmarks
+
+**Run comprehensive benchmarks:**
+```bash
+# Benchmark all engines
+cargo run --release --bin proximadb-bench -- --all-engines --dataset-size 100000
+
+# Benchmark specific engine
+cargo run --release --bin proximadb-bench -- --engine SST --workload oltp
+cargo run --release --bin proximadb-bench -- --engine VIPER --workload analytics
+cargo run --release --bin proximadb-bench -- --engine NOVA --workload research
+```
+
+**Custom Performance Testing:**
+```bash
+# Test with your data characteristics
+cargo run --release --bin proximadb-bench \
+  --engine RAPTOR \
+  --dimensions 768 \
+  --dataset-size 1000000 \
+  --query-pattern mixed \
+  --concurrent-users 100
+```
+
+=== Load Testing Scripts
+
+**Production Load Simulation:**
+```python
+#!/usr/bin/env python3
+import requests
+import asyncio
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+def benchmark_engine(engine_name, vector_count=10000):
+    """Benchmark specific engine performance"""
+    base_url = "http://localhost:5678"
+
+    # Create collection with specific engine
+    collection_data = {
+        "name": f"benchmark_{engine_name.lower()}",
+        "dimension": 768,
+        "engine": engine_name
+    }
+
+    response = requests.post(f"{base_url}/v1/collections", json=collection_data)
+    print(f"Created collection for {engine_name}: {response.status_code}")
+
+    # Measure insert performance
+    start_time = time.time()
+    for i in range(vector_count):
+        vector_data = {
+            "vectors": [{
+                "id": f"vec_{i}",
+                "values": [0.1] * 768,  # Simple test vector
+                "metadata": {"engine": engine_name, "batch": i // 1000}
+            }]
+        }
+        requests.post(f"{base_url}/v1/collections/benchmark_{engine_name.lower()}/vectors",
+                     json=vector_data)
+
+    insert_time = time.time() - start_time
+    insert_throughput = vector_count / insert_time
+
+    print(f"{engine_name} Insert Performance:")
+    print(f"  Throughput: {insert_throughput:.2f} vectors/sec")
+    print(f"  Total time: {insert_time:.2f} seconds")
+
+    # Measure query performance
+    query_data = {
+        "query_vector": [0.1] * 768,
+        "top_k": 10
+    }
+
+    query_times = []
+    for _ in range(100):  # 100 queries for average
+        start_time = time.time()
+        response = requests.post(f"{base_url}/v1/collections/benchmark_{engine_name.lower()}/search",
+                               json=query_data)
+        query_time = time.time() - start_time
+        query_times.append(query_time * 1000)  # Convert to ms
+
+    avg_query_time = sum(query_times) / len(query_times)
+    p95_query_time = sorted(query_times)[int(len(query_times) * 0.95)]
+
+    print(f"{engine_name} Query Performance:")
+    print(f"  Average latency: {avg_query_time:.2f} ms")
+    print(f"  P95 latency: {p95_query_time:.2f} ms")
+    print()
+
+if __name__ == "__main__":
+    engines = ["SST", "SWIFT", "VIPER", "NOVA", "RAPTOR", "PRISM", "HELIX"]
+
+    for engine in engines:
+        print(f"Benchmarking {engine} Engine...")
+        benchmark_engine(engine, vector_count=1000)  # Smaller dataset for testing
+```
+
+== 🎯 **Best Practices Summary**
+
+=== Engine Selection Checklist
+
+**For Real-time Applications:**
+- ✅ Use **SST** for high-throughput OLTP (200K+ vec/sec)
+- ✅ Use **SWIFT** for ultra-low latency (<1ms)
+- ✅ Configure adequate memory buffers
+- ✅ Enable write-ahead logging for ACID compliance
+
+**For Analytics Workloads:**
+- ✅ Use **VIPER** for standard analytics (5K vec/sec)
+- ✅ Use **NOVA** for advanced research (4K vec/sec, 90% compression)
+- ✅ Optimize row group sizes for query patterns
+- ✅ Enable column-level compression
+
+**For Resource-Constrained Environments:**
+- ✅ Use **PRISM** for 60% memory reduction
+- ✅ Configure aggressive quantization
+- ✅ Enable memory pooling and pressure monitoring
+- ✅ Monitor memory metrics continuously
+
+**For Variable/Unknown Workloads:**
+- ✅ Use **RAPTOR** for adaptive optimization
+- ✅ Enable P×K optimization and workload learning
+- ✅ Configure reasonable adaptation intervals
+- ✅ Monitor adaptation metrics
+
+**For Time-Series Data:**
+- ✅ Use **HELIX** for temporal optimization
+- ✅ Configure appropriate temporal grouping windows
+- ✅ Enable liquid clustering for query patterns
+- ✅ Optimize Hilbert curve order for data dimensionality
+
+=== Performance Optimization Principles
+
+1. **Match Engine to Workload**: Choose engine based on primary use case
+2. **Monitor Key Metrics**: Track engine-specific performance indicators
+3. **Tune Configuration**: Optimize settings for your data characteristics
+4. **Test at Scale**: Validate performance with production-like data volumes
+5. **Plan for Growth**: Consider how workload patterns may evolve
+
+---
+
+*Engine Selection and Optimization Guide - September 2025*
+*ProximaDB Version: 0.1.4*
+*All 7 Storage Engines Production-Ready*

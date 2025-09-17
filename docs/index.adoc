@@ -36,7 +36,7 @@ graph LR
 |===
 | Resource | Duration | Description
 
-| **link:ENTERPRISE_VALUE_PROPOSITION.adoc[Enterprise Value Proposition]**
+| **link:enterprise_value_proposition.adoc[Enterprise Value Proposition]**
 | 10 minutes
 | Complete ROI analysis, competitive positioning, and business impact
 
@@ -48,7 +48,7 @@ graph LR
 | 15 minutes
 | Comprehensive business case with industry use cases
 
-| **link:PERFORMANCE_METRICS.adoc[Performance Validation]**
+| **link:archive/performance_metrics.adoc[Performance Validation]**
 | 5 minutes
 | Validated benchmarks and competitive analysis
 |===
@@ -77,7 +77,7 @@ graph LR
 |===
 | Resource | Duration | Description
 
-| **link:quickstart/README.adoc[Quick Start Guide]**
+| **link:quickstart/readme.adoc[Quick Start Guide]**
 | 5 minutes
 | Get ProximaDB running with Docker or native installation
 
@@ -130,7 +130,7 @@ graph LR
 | 20 minutes
 | Enterprise security, authentication, and compliance
 
-| **link:PERFORMANCE_METRICS.adoc[Performance Metrics]**
+| **link:archive/performance_metrics.adoc[Performance Metrics]**
 | 15 minutes
 | Validated benchmarks and performance optimization
 |===

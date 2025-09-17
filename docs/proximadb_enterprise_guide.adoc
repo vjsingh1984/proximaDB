@@ -335,15 +335,15 @@ graph TD
 | Level | Document | Purpose
 
 | **Executive**
-| link:business_overview.adoc[Business Overview]
+| link:enterprise_value_proposition.adoc[Business Overview]
 | Business value and competitive advantages
 
 | **Architect**  
-| link:technical_architecture.adoc[Technical Architecture]
+| link:technical/platform_architecture.adoc[Technical Architecture]
 | System design and component architecture
 
 | **DevOps**
-| link:operations_guide.adoc[Operations Guide]
+| link:enterprise/production_deployment_guide.adoc[Operations Guide]
 | Deployment and monitoring procedures
 
 | **SRE**
@@ -355,7 +355,7 @@ graph TD
 | Complete architecture visualization
 
 | **Reference**
-| link:comprehensive_production_status.adoc[Production Status]
+| link:documentation_release_ready.adoc[Production Status]
 | Detailed certification and metrics
 |===
 
