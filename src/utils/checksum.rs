@@ -639,7 +639,7 @@ mod tests {
             b"abc",
             b"123456789",
             b"The quick brown fox jumps over the lazy dog",
-            &(0..256u8).collect::<Vec<_>>(),
+            &(0..=255u8).collect::<Vec<_>>(),
             &vec![0u8; 10000],
             &vec![0xFFu8; 10000],
         ];
