@@ -429,18 +429,18 @@ curl -X POST http://localhost:5678/v1/ai/ask \
 
 === **Production-Ready Resources**
 
-- **📖 link:docs/index.adoc[Complete Documentation Hub]** - Role-based navigation
-- **⚡ link:docs/quickstart/readme.adoc[5-Minute Quick Start]** - Get running immediately
-- **🏗️ link:docs/enterprise/production_deployment_guide.adoc[Production Deployment]** - Enterprise setup
-- **⚙️ link:docs/guides/engine_selection_optimization_guide.adoc[Engine Selection Guide]** - Performance optimization
-- **🏛️ link:docs/technical/platform_architecture.adoc[Technical Architecture]** - System design
-- **📊 link:docs/operations/production_runbook.adoc[Operations Runbook]** - Daily operations
+- **link:docs/index.adoc[Complete Documentation Hub]** - Role-based navigation
+- **link:docs/quickstart/readme.adoc[5-Minute Quick Start]** - Get running immediately
+- **link:docs/enterprise/production_deployment_guide.adoc[Production Deployment]** - Enterprise setup
+- **link:docs/guides/engine_selection_optimization_guide.adoc[Engine Selection Guide]** - Performance optimization
+- **link:docs/technical/platform_architecture.adoc[Technical Architecture]** - System design
+- **link:docs/operations/production_runbook.adoc[Operations Runbook]** - Daily operations
 
 === **Business Resources**
 
-- **💼 link:docs/enterprise_value_proposition.adoc[Enterprise Value Proposition]** - ROI analysis
-- **📈 link:docs/performance_comprehensive.adoc[Performance Analysis]** - Validated benchmarks
-- **🔒 link:docs/security.adoc[Security Framework]** - Enterprise compliance
+- **link:docs/enterprise_value_proposition.adoc[Enterprise Value Proposition]** - ROI analysis
+- **link:docs/performance_comprehensive.adoc[Performance Analysis]** - Validated benchmarks
+- **link:docs/security.adoc[Security Framework]** - Enterprise compliance
 
 == 🌟 Getting Started Paths
 
@@ -452,9 +452,9 @@ flowchart TD
     A --> C{Business Assessment?}
     A --> D{Production Deployment?}
 
-    B --> E[📖 Quick Start Guide<br/>5-minute setup<br/>Basic operations]
-    C --> F[💼 Value Proposition<br/>ROI analysis<br/>Competitive advantages]
-    D --> G[🚀 Production Guide<br/>Enterprise setup<br/>Performance optimization]
+    B --> E[Quick Start Guide<br/>5-minute setup<br/>Basic operations]
+    C --> F[Value Proposition<br/>ROI analysis<br/>Competitive advantages]
+    D --> G[Production Guide<br/>Enterprise setup<br/>Performance optimization]
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
     style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
@@ -466,9 +466,9 @@ flowchart TD
 
 **Ready to move from fragmented tools to unified intelligence?**
 
-1. **⚡ link:docs/quickstart/readme.adoc[Start Technical Evaluation]** - Get running in 5 minutes
-2. **💼 link:docs/enterprise_value_proposition.adoc[Review Business Case]** - See the 90% cost reduction
-3. **🏗️ link:docs/enterprise/production_deployment_guide.adoc[Plan Production Deployment]** - Enterprise-grade setup
+1. **link:docs/quickstart/readme.adoc[Start Technical Evaluation]** - Get running in 5 minutes
+2. **link:docs/enterprise_value_proposition.adoc[Review Business Case]** - See the 90% cost reduction
+3. **link:docs/enterprise/production_deployment_guide.adoc[Plan Production Deployment]** - Enterprise-grade setup
 
 ---
 
