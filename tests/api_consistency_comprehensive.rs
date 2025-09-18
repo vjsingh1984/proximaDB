@@ -5,9 +5,8 @@
 
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
-    FilterOperator, StorageEngine, VectorBatchRequest,
-    VectorOperationResponse, VectorRecord, VectorSearchRequest, SqlValue, sql_value,
-    SearchQuery, MetadataFilter, IncludeFields, SourceRetrievalOptions,
+    StorageEngine, VectorBatchRequest, VectorOperationResponse, VectorRecord, VectorSearchRequest,
+    SqlValue, sql_value, SearchQuery, MetadataFilter, LogicalOp,
 };
 use proximadb::utils::uuid::Uuid;
 use std::time::Duration;
@@ -24,15 +23,15 @@ mod comprehensive_api_tests {
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Sst as i32,
             tags: vec!["test".to_string()],
-            description: Some("Test collection for API consistency".to_string()),
+            auto_index_selection: false,
+            embedding_models: vec![],
+            owner: Some("test_owner".to_string()),
+            description: None,
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
             storage_config: None,
-            primary_index: "".to_string(),
-            auto_index_selection: false,
-            owner: "test_owner".to_string(),
-            embedding_models: vec![],
+            primary_index: String::new(),
         }
     }
 
@@ -141,32 +140,13 @@ mod comprehensive_api_tests {
             collection_id: collection_id.clone(),
             queries: vec![SearchQuery {
                 vector: vec![0.5; 128],
-                metadata_filter: MetadataFilter {
-                    conditions: vec![],
-                    operator: FilterOperator::LogicalAnd as i32,
-                },
-                id: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,
             search_params: None,
-            include_fields: Some(IncludeFields {
-                vector: false,
-                metadata: true,
-                score: true,
-                rank: false,
-                source: false,
-                source_options: SourceRetrievalOptions {
-                    expand_chunks: false,
-                    max_chunk_expansion: 0,
-                    source_fields: vec![],
-                    resolve_external: false,
-                    max_source_size: 0,
-                    tier_preference: "".to_string(),
-                    include_chunk_context: false,
-                    include_processing_info: false,
-                },
-            }),
+            include_fields: None,
             search_optimization: None,
         };
 
@@ -255,11 +235,8 @@ mod comprehensive_api_tests {
             collection_id: "".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1; 128],
-                metadata_filter: MetadataFilter {
-                    conditions: vec![],
-                    operator: FilterOperator::LogicalAnd as i32,
-                },
-                id: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,
@@ -310,11 +287,8 @@ mod comprehensive_api_tests {
             collection_id: "non_existent_collection_xyz".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1; 128],
-                metadata_filter: MetadataFilter {
-                    conditions: vec![],
-                    operator: FilterOperator::LogicalAnd as i32,
-                },
-                id: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,

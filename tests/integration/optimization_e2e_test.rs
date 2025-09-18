@@ -13,7 +13,7 @@ use proximadb::core::memory::{PoolConfig, VectorMemoryPool};
 use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageAssignment, StorageEngine, DistanceMetric, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageEngine, DistanceMetric, SqlValue, sql_value};
 use proximadb::storage::engines::impls::sst::SstStorage;
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
@@ -234,18 +234,12 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Sst as i32,
             tags: vec![],
-            description: None,
-            filterable_columns: vec![],
-            index_configs: vec![],
-            quantization: None,
-        }),
-        storage_assignment: Some(StorageAssignment {
-            base_location: collection_storage_path.clone(),
-            assigned_at: chrono::Utc::now().timestamp(),
+            ..Default::default()
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: None,
     };
 
     // Create test vectors
@@ -355,13 +349,9 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         top_k: Some(sst_search_params.top_k.unwrap_or(20)),
         distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
         filter_expression: sst_search_params.filter_expression.clone(),
-        include_metadata: Some(false),
-        include_vectors: Some(true),
         timeout_ms: None,
         accuracy_threshold: None,
-        enable_early_termination: None,
-        max_results_per_stage: None,
-        progressive_search: None,
+        ..Default::default()
     });
 
     let sst_collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
@@ -370,11 +360,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
         storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
         tags: vec![],
-        auto_index_selection: None,
-        embedding_models: None,
-        owner: None,
-        shared_with: vec![],
-        storage_assignment: None,
+        ..Default::default()
     };
 
     let sst_collection = std::sync::Arc::new(proximadb::proto::proximadb_v1::Collection {
@@ -383,6 +369,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         stats: None,
         created_at: 0,
         updated_at: 0,
+        storage_assignment: None,
     });
 
     let sst_query_context = proximadb::storage::traits::StorageQueryContext {
@@ -391,7 +378,6 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         metadata: proximadb::storage::traits::StorageQueryMetadata {
             collection_id: "optimization_test".to_string(),
             use_axis_indexes: false,
-            storage_url: Some(format!("file://{}/optimization_test/data", collection_storage_path)),
             ..Default::default()
         },
     };
@@ -417,13 +403,9 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             top_k: Some(sst_search_params.top_k.unwrap_or(20)),
             distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
             filter_expression: None,
-            include_metadata: Some(false),
-            include_vectors: Some(true),
             timeout_ms: None,
             accuracy_threshold: None,
-            enable_early_termination: None,
-            max_results_per_stage: None,
-            progressive_search: None,
+            ..Default::default()
         });
 
         let no_filter_query_context = proximadb::storage::traits::StorageQueryContext {
@@ -432,8 +414,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
             metadata: proximadb::storage::traits::StorageQueryMetadata {
                 collection_id: "optimization_test".to_string(),
                 use_axis_indexes: false,
-                storage_url: Some(format!("file://{}/optimization_test/data", collection_storage_path)),
-                ..Default::default()
+                    ..Default::default()
             },
         };
 
@@ -470,13 +451,9 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         top_k: Some(viper_search_params.top_k.unwrap_or(20)),
         distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
         filter_expression: viper_search_params.filter_expression.clone(),
-        include_metadata: Some(false),
-        include_vectors: Some(true),
         timeout_ms: None,
         accuracy_threshold: None,
-        enable_early_termination: None,
-        max_results_per_stage: None,
-        progressive_search: None,
+        ..Default::default()
     });
 
     let viper_collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
@@ -485,11 +462,10 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
         storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
         tags: vec![],
-        auto_index_selection: None,
-        embedding_models: None,
+        auto_index_selection: false,
+        embedding_models: vec![],
         owner: None,
-        shared_with: vec![],
-        storage_assignment: None,
+        ..Default::default()
     };
 
     let viper_collection = std::sync::Arc::new(proximadb::proto::proximadb_v1::Collection {
@@ -498,6 +474,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         stats: None,
         created_at: 0,
         updated_at: 0,
+        storage_assignment: None,
     });
 
     let viper_query_context = proximadb::storage::traits::StorageQueryContext {
@@ -506,7 +483,6 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         metadata: proximadb::storage::traits::StorageQueryMetadata {
             collection_id: "optimization_test".to_string(),
             use_axis_indexes: false,
-            storage_url: Some(format!("file://{}/optimization_test/data", collection_storage_path)),
             ..Default::default()
         },
     };
@@ -563,18 +539,6 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         "Found {} search results, skipping metadata validation for now",
         sst_results.len()
     );
-
-    // for result in &sst_results {
-    //     if let Some(pattern_value) = result.metadata.get("active") {
-    //         if let Some(pattern) = pattern_value.as_str() {
-    //             assert_eq!(pattern, "sparse");
-    //         } else {
-    //             panic!("Pattern metadata is not a string: {:?}", pattern_value);
-    //         }
-    //     } else {
-    //         panic!("Pattern metadata not found in search result");
-    //     }
-    // }
 
     // Performance assertions
     assert!(

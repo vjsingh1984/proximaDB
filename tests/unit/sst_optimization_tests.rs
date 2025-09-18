@@ -45,7 +45,7 @@ fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstEntry {
     metadata.insert(
         "score".to_string(),
         SqlValue {
-            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::DoubleValue(0.85)),
+            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(0.85)),
         },
     );
 
@@ -214,7 +214,7 @@ fn test_sst_record_optimized_serialization() {
 #[test]
 fn test_data_block_zstd_compression() {
     // Create FastLanesFastLanesDataBlock with multiple records containing different vector types
-    let records = vec![
+    let sst_entries = vec![
         create_test_sst_record("dense_128".to_string(), create_test_vector(128, 0.1)),
         create_test_sst_record("sparse_512".to_string(), create_test_vector(512, 0.8)),
         create_test_sst_record("dense_1024".to_string(), create_test_vector(1024, 0.2)),
@@ -222,12 +222,15 @@ fn test_data_block_zstd_compression() {
         create_test_sst_record("medium_768".to_string(), create_test_vector(768, 0.5)),
     ];
 
-    let data_block = FastLanesDataBlock::new(records);
+    // Extract VectorRecords from SstEntries
+    let records: Vec<VectorRecord> = sst_entries.into_iter().map(|entry| entry.record).collect();
 
     // Test with compression enabled
-    let compression_config = BlockCompressionConfig::default();
+    let mut compression_config = BlockCompressionConfig::default();
     // Note: compression configuration may have changed
     compression_config.compression_level = 6; // Higher compression
+
+    let data_block = FastLanesDataBlock::new(records, compression_config.clone());
 
     let serialized = data_block
         .serialize_with_config(&compression_config)
@@ -300,32 +303,34 @@ fn test_data_block_zstd_compression() {
 
 #[test]
 fn test_compression_performance_benchmark() {
-    let vectors = (0..100)
+    let vectors: Vec<VectorRecord> = (0..100)
         .map(|i| {
             create_test_sst_record(
                 format!("record_{}", i),
                 create_test_vector(1024, if i % 2 == 0 { 0.9 } else { 0.1 }), // Mix sparse and dense
-            )
+            ).record  // Extract the VectorRecord from SstEntry
         })
         .collect();
 
-    let data_block = FastLanesDataBlock::new(vectors);
+    let config = BlockCompressionConfig::default();
+    let data_block = FastLanesDataBlock::new(vectors, config);
 
     // Benchmark uncompressed serialization
     let start = Instant::now();
     let uncompressed = {
-        let config = BlockCompressionConfig::default();
-        // Note: enable_compression field may not be available
-        bincode::serialize(&data_block).unwrap()
+        // Note: FastLanesDataBlock may not implement Serialize directly
+        // Use its own serialization method instead
+        data_block.serialize_with_config(&BlockCompressionConfig::default()).unwrap()
     };
     let uncompressed_time = start.elapsed();
 
     // Benchmark compressed serialization
     let start = Instant::now();
     let compressed = {
-        let config = BlockCompressionConfig::default();
+        let mut config = BlockCompressionConfig::default();
+        config.compression_level = 6;
         // Note: compression fields may not be available
-        bincode::serialize(&data_block).unwrap()
+        data_block.serialize_with_config(&config).unwrap()
     };
     let compressed_time = start.elapsed();
 

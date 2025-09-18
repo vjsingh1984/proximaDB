@@ -46,7 +46,7 @@ fn find_parquet_files_recursive(dir: &str) -> Vec<std::path::PathBuf> {
 
 use arrow_array::{Array, BinaryArray, RecordBatch};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageAssignment, StorageEngine, DistanceMetric, SqlValue, sql_value};
+use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageEngine, DistanceMetric, SqlValue, sql_value};
 use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataStore;
@@ -68,12 +68,7 @@ fn create_viper_config_with_algorithm(
 ) -> proximadb::core::config::ViperConfig {
     let mut config = env.viper_config.clone();
     // storage_config field removed, compression settings moved to root config
-    config.compression = match algorithm {
-        "zstd" => Some(proximadb::core::compression::CompressionAlgorithm::Zstd),
-        "lz4" => Some(proximadb::core::compression::CompressionAlgorithm::Lz4),
-        "snappy" => Some(proximadb::core::compression::CompressionAlgorithm::Snappy),
-        _ => Some(proximadb::core::compression::CompressionAlgorithm::None),
-    };
+    config.compression = algorithm.to_string();
     config.compression_level = level;
     config.row_group_size = 50_000;
     config
@@ -251,7 +246,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     // Create proper VIPER config with compression
     let viper_config = proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
-        compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd),
+        compression: "zstd".to_string(),
         compression_level: 3,
         ..Default::default()
     };
@@ -267,14 +262,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
             distance_metric: DistanceMetric::Euclidean as i32,
             storage_engine: StorageEngine::Viper as i32,
             tags: vec![],
-            description: None,
-            filterable_columns: vec![],
-            index_configs: vec![],
-            quantization: None,
-        }),
-        storage_assignment: Some(StorageAssignment {
-            base_location: temp_dir.path().to_str().unwrap().to_string(),
-            assigned_at: chrono::Utc::now().timestamp_micros(),
+            ..Default::default()
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
@@ -293,7 +281,7 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
         collection_config: Some(collection_config),
         ..Default::default()
     };
-    let flush_result = engine.do_flush(&flush_params).await?;
+    let flush_result = engine.flush(flush_params).await?;
 
     assert!(flush_result.success);
     assert_eq!(flush_result.entries_flushed.unwrap_or(0), 1000);
@@ -365,7 +353,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     // Create proper VIPER config with compression
     let viper_config = proximadb::core::config::ViperConfig {
         row_group_size: 50_000,
-        compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd),
+        compression: "zstd".to_string(),
         compression_level: 3,
         ..Default::default()
     };
@@ -381,15 +369,11 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
             distance_metric: DistanceMetric::Euclidean as i32,
             storage_engine: StorageEngine::Viper as i32,
             tags: vec![],
-            description: None,
-            filterable_columns: vec![],
-            index_configs: vec![],
-            quantization: None,
+            ..Default::default()
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: None,
     };
 
     // Create and flush diverse test data
@@ -404,7 +388,7 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
         collection_config: Some(collection_config),
         ..Default::default()
     };
-    engine.do_flush(&flush_params).await?;
+    engine.flush(flush_params).await?;
 
     // Search for sparse pattern vectors
     let mut sparse_query = vec![1.0; 512];
@@ -427,7 +411,7 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
 
     // Create VIPER engine with compression enabled
     let mut viper_config = env.viper_config.clone();
-    viper_config.compression = Some(proximadb::core::compression::CompressionAlgorithm::Zstd);
+    viper_config.compression = "zstd".to_string();
     viper_config.compression_level = 3;
     viper_config.row_group_size = 50_000;
 
@@ -452,7 +436,7 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
             operations::build_flush_params(&env, vectors, StorageEngine::Viper).await?;
 
         // Direct call to production code
-        let result = engine.do_flush(&flush_params).await?;
+        let result = engine.flush(flush_params).await?;
         assert!(result.success, "Batch {} flush should succeed", batch + 1);
 
         info!(
@@ -529,7 +513,7 @@ async fn test_viper_compaction_merges_compressed_parquet_efficiently() -> anyhow
         ..Default::default()
     };
 
-    let post_compact_result = engine.do_flush(&test_flush_params).await?;
+    let post_compact_result = engine.flush(test_flush_params).await?;
     assert!(
         post_compact_result.success,
         "Post-compaction flush should work"
@@ -577,7 +561,7 @@ async fn test_all_compressions_viper() -> anyhow::Result<()> {
         let start = std::time::Instant::now();
         let flush_params =
             operations::build_flush_params(&env, vectors, StorageEngine::Viper).await?;
-        let result = engine.do_flush(&flush_params).await?;
+        let result = engine.flush(flush_params).await?;
         let flush_time = start.elapsed();
 
         if !result.success {
@@ -690,14 +674,7 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let mut config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: Some(match algo {
-                "zstd" => proximadb::core::compression::CompressionAlgorithm::Zstd,
-                "snappy" => proximadb::core::compression::CompressionAlgorithm::Snappy,
-                "gzip" => proximadb::core::compression::CompressionAlgorithm::Gzip,
-                "lz4" => proximadb::core::compression::CompressionAlgorithm::Lz4,
-                "brotli" => proximadb::core::compression::CompressionAlgorithm::Brotli,
-                _ => proximadb::core::compression::CompressionAlgorithm::None,
-            }),
+            compression: algo.to_string(),
             compression_level: level,
             enable_statistics: true,
             data_directory: temp_dir
@@ -731,14 +708,7 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
         // Create proper VIPER config
         let viper_config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: Some(match algo {
-                "zstd" => proximadb::core::compression::CompressionAlgorithm::Zstd,
-                "snappy" => proximadb::core::compression::CompressionAlgorithm::Snappy,
-                "gzip" => proximadb::core::compression::CompressionAlgorithm::Gzip,
-                "lz4" => proximadb::core::compression::CompressionAlgorithm::Lz4,
-                "brotli" => proximadb::core::compression::CompressionAlgorithm::Brotli,
-                _ => proximadb::core::compression::CompressionAlgorithm::None,
-            }),
+            compression: algo.to_string(),
             compression_level: level,
             ..Default::default()
         };
@@ -759,10 +729,6 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
                 index_configs: vec![],
                 quantization: None,
             }),
-            storage_assignment: Some(StorageAssignment {
-                base_location: temp_dir.path().to_str().unwrap().to_string(),
-                assigned_at: chrono::Utc::now().timestamp_micros(),
-            }),
             stats: None,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
@@ -782,7 +748,7 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
             ..Default::default()
         };
         let start = std::time::Instant::now();
-        engine.do_flush(&flush_params).await?;
+        engine.flush(flush_params).await?;
         let duration = start.elapsed();
 
         // Get file size
@@ -830,7 +796,7 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let config = Arc::new(proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
-            compression: Some(proximadb::core::compression::CompressionAlgorithm::Zstd), // Default compression for this test
+            compression: "zstd".to_string(), // Default compression for this test
             compression_level: 3,
             enable_statistics: true,
             data_directory: temp_dir
@@ -865,9 +831,9 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         let viper_config = proximadb::core::config::ViperConfig {
             row_group_size: 50_000,
             compression: if compression {
-                Some(proximadb::core::compression::CompressionAlgorithm::Zstd)
+                "zstd".to_string()
             } else {
-                Some(proximadb::core::compression::CompressionAlgorithm::None)
+                "none".to_string()
             },
             compression_level: 3,
             ..Default::default()
@@ -888,10 +854,6 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
-            }),
-            storage_assignment: Some(StorageAssignment {
-                base_location: temp_dir.path().to_str().unwrap().to_string(),
-                assigned_at: chrono::Utc::now().timestamp_micros(),
             }),
             stats: None,
             created_at: chrono::Utc::now().timestamp(),
@@ -922,7 +884,7 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
             collection_config: Some(collection_config),
             ..Default::default()
         };
-        engine.do_flush(&flush_params).await?;
+        engine.flush(flush_params).await?;
 
         // Get total file size
         // Create collection data directory as VIPER writes to {base_path}/{collection_id}/data

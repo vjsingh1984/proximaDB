@@ -21,10 +21,10 @@ use tracing::{debug, info};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::core::config::StorageLocation;
 use proximadb::core::config::{BloomFilterConfig, SstConfig};
-use proximadb::core::config::{ViperConfig, WriteBufferUserConfig};
+use proximadb::core::config::ViperConfig;
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, CompressionAlgorithm, DistanceMetric, SqlValue,
-    StorageEngine, StorageAssignment, VectorRecord, sql_value,
+    StorageEngine, VectorRecord, sql_value,
 };
 // SearchResult moved to different location - using Vec<VectorRecord> for results
 // Note: Some imports like MetadataItem may have changed or been removed
@@ -208,17 +208,6 @@ impl UnifiedTestEnvironment {
         dimension: i32,
         _compression: Option<proximadb::proto::proximadb_v1::CompressionConfig>,
     ) -> Collection {
-        // CRITICAL: base_location must point to parent directory since engines append collection_id
-        let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
-        let storage_assignment = StorageAssignment {
-            primary_path: format!("file://{}", base_path),
-            base_location: format!("file://{}", base_path),
-            assigned_at: chrono::Utc::now().timestamp_millis(), // Must use millis, not micros!
-            backup_paths: vec![],
-            engine: engine as i32,
-            engine_config: std::collections::HashMap::new(),
-        };
-
         let config = CollectionConfig {
             name: self.collection_id.clone(),
             dimension: dimension as u32,
@@ -239,7 +228,7 @@ impl UnifiedTestEnvironment {
             stats: Some(stats),
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
-            storage_assignment: Some(storage_assignment),
+            storage_assignment: None,
         }
     }
 
@@ -472,18 +461,7 @@ impl UnifiedTestEnvironment {
         &self.collection_id
     }
 
-    /// Create test assignment (for backward compatibility)
-    pub fn setup_test_assignment(&self) -> StorageAssignment {
-        let base_path = self.persistent_dir.parent().unwrap().to_str().unwrap();
-        StorageAssignment {
-            primary_path: format!("file://{}", base_path),
-            base_location: format!("file://{}", base_path),
-            assigned_at: chrono::Utc::now().timestamp_millis(),
-            backup_paths: vec![],
-            engine: StorageEngine::Sst as i32,
-            engine_config: std::collections::HashMap::new(),
-        }
-    }
+    // Removed setup_test_assignment - StorageAssignment no longer exists in proto
 
     /// Create metadata store config (for backward compatibility)  
     pub fn create_metadata_store_config(
@@ -508,17 +486,8 @@ impl UnifiedTestEnvironment {
     pub fn create_test_collection_with_storage(
         &self,
         name: &str,
-        base_location: String,
+        _base_location: String,
     ) -> Collection {
-        let storage_assignment = StorageAssignment {
-            primary_path: base_location.clone(),
-            base_location,
-            assigned_at: chrono::Utc::now().timestamp_millis(),
-            backup_paths: vec![],
-            engine: StorageEngine::Sst as i32,
-            engine_config: std::collections::HashMap::new(),
-        };
-
         let config = CollectionConfig {
             name: name.to_string(),
             dimension: 3,
@@ -539,7 +508,7 @@ impl UnifiedTestEnvironment {
             stats: Some(stats),
             created_at: chrono::Utc::now().timestamp_millis(),
             updated_at: chrono::Utc::now().timestamp_millis(),
-            storage_assignment: Some(storage_assignment),
+            storage_assignment: None,
         }
     }
 
@@ -761,7 +730,16 @@ pub mod operations {
     ) -> Result<Vec<VectorRecord>> {
         let storage_url = build_sst_storage_url(environment);
         let collection = Arc::new(environment.create_test_collection());
-        let search_params = Arc::new(proximadb::core::search::SearchParams::default());
+        let search_params = Arc::new(proximadb::core::search::SearchParams {
+            vector: Some(query_vector.to_vec()),
+            query_vectors: None,
+            top_k: Some(top_k),
+            distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+            filter_expression: None,
+            timeout_ms: None,
+            accuracy_threshold: None,
+            ..Default::default()
+        });
         let query_context = proximadb::storage::traits::StorageQueryContext {
             search_params,
             collection,
@@ -898,19 +876,6 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
         .collect()
 }
 
-/// Create test assignment (global function for backward compatibility)
-pub fn setup_test_assignment() -> StorageAssignment {
-    let temp_dir = std::env::temp_dir().join("proximadb_test");
-    StorageAssignment {
-        primary_path: format!("file://{}", temp_dir.to_str().unwrap()),
-        base_location: format!("file://{}", temp_dir.to_str().unwrap()),
-        assigned_at: chrono::Utc::now().timestamp_millis(),
-        backup_paths: vec![],
-        engine: StorageEngine::Sst as i32,
-        engine_config: std::collections::HashMap::new(),
-    }
-}
-
 /// Create metadata store config (global function for backward compatibility)  
 pub fn create_metadata_store_config() -> proximadb::storage::metadata::MetadataStoreConfig {
     let temp_dir = std::env::temp_dir().join("proximadb_test").join("metadata");
@@ -925,16 +890,7 @@ pub fn create_metadata_store_config() -> proximadb::storage::metadata::MetadataS
 }
 
 /// Create test collection with storage (global function for backward compatibility)
-pub fn create_test_collection_with_storage(name: &str, base_location: String) -> Collection {
-    let storage_assignment = StorageAssignment {
-        primary_path: base_location.clone(),
-        base_location,
-        assigned_at: chrono::Utc::now().timestamp_millis(),
-        backup_paths: vec![],
-        engine: StorageEngine::Sst as i32,
-        engine_config: std::collections::HashMap::new(),
-    };
-
+pub fn create_test_collection_with_storage(name: &str, _base_location: String) -> Collection {
     let config = CollectionConfig {
         name: name.to_string(),
         dimension: 256, // Default dimension for generic tests
@@ -955,7 +911,7 @@ pub fn create_test_collection_with_storage(name: &str, base_location: String) ->
         stats: Some(stats),
         created_at: chrono::Utc::now().timestamp_millis(),
         updated_at: chrono::Utc::now().timestamp_millis(),
-        storage_assignment: Some(storage_assignment),
+        storage_assignment: None, // StorageAssignment no longer exists
     }
 }
 
@@ -1044,14 +1000,7 @@ pub async fn flush_sst_with_block_stats(
 
     let collection_config = Collection {
         id: "test_collection".to_string(),
-        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
-            primary_path: format!("file://{}", environment.temp_dir.path().to_str().unwrap()),
-            base_location: format!("file://{}", environment.temp_dir.path().to_str().unwrap()),
-            assigned_at: 0,
-            backup_paths: vec![],
-            engine: StorageEngine::Sst as i32,
-            engine_config: std::collections::HashMap::new(),
-        }),
+        storage_assignment: None, // StorageAssignment no longer exists
         config: Some(CollectionConfig {
             name: "test_collection".to_string(),
             dimension: vectors[0].vector.len() as u32,

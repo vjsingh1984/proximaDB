@@ -177,7 +177,7 @@ async fn run_quantization_test(
                 Some(
                     &vectors
                         .iter()
-                        .map(|v| v.id.clone().unwrap_or_default())
+                        .map(|v| v.id.clone())
                         .collect::<Vec<_>>(),
                 ),
             )
@@ -217,8 +217,8 @@ async fn run_quantization_test(
         estimated_size: 0,
     };
 
-    sst_storage.insert_batch(vectors.to_vec()).await?;
-    let flush_result = sst_storage.do_flush(flush_params).await?;
+    // Vectors are already in flush_params, no need for insert_batch
+    let flush_result = sst_storage.do_flush(&flush_params).await?;
     let flush_time = flush_start.elapsed();
 
     // Perform search test
@@ -303,16 +303,15 @@ fn generate_sparse_vectors(count: usize, dim: usize, sparsity_percent: usize) ->
         }
 
         vectors.push(VectorRecord {
-            id: Some(format!("vec_{}", i)),
+            id: format!("vec_{}", i),
             vector,
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: vec![],
+            source: None,
         });
     }
 

@@ -187,7 +187,7 @@ mod unified_quantization_coverage {
         // Test different bit widths
         for bits in [4, 8, 16] {
             let level = UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Uniform(UniformQuantization {
+                level_type: Some(QuantizationLevel::Uniform(UniformQuantization {
                     bits,
                     scale: Some(1.0),
                     offset: Some(0.0),
@@ -227,7 +227,7 @@ mod unified_quantization_coverage {
 
         // Test threshold-based binary quantization
         let level = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+            level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                 threshold: Some(0.5),
                 sign_based: false,
             })),
@@ -241,7 +241,7 @@ mod unified_quantization_coverage {
 
         // Test sign-based binary quantization
         let sign_level = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+            level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                 threshold: None,
                 sign_based: true,
             })),
@@ -261,7 +261,7 @@ mod unified_quantization_coverage {
         let test_vector = vec![0.1, 0.5, 1.0, 2.0, 5.0];
 
         let level = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::Scalar(ScalarQuantization {
+            level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
                 bits: 8,
                 scale: 10.0, // Scale to handle range [0, 5]
                 offset: 0.0,
@@ -315,7 +315,7 @@ mod unified_quantization_coverage {
 
         // PQ with 8 subvectors
         let level = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
                 bits_per_code: 8,
                 num_subvectors: 8,
                 codebook_id: Some(codebook_id.to_string()),
@@ -405,7 +405,7 @@ mod unified_quantization_coverage {
         let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
         // Test helper methods
         let pq8 = UnifiedQuantizationLevel::pq8(16);
-        if let Some(QuantizationLevelType::Pq(pq)) = &pq8.level_type {
+        if let Some(QuantizationLevel::Pq(pq)) = &pq8.level_type {
             assert_eq!(pq.bits_per_code, 8);
             assert_eq!(pq.num_subvectors, 16);
         } else {
@@ -413,7 +413,7 @@ mod unified_quantization_coverage {
         }
 
         let pq4 = UnifiedQuantizationLevel::pq4(8);
-        if let Some(QuantizationLevelType::Pq(pq)) = &pq4.level_type {
+        if let Some(QuantizationLevel::Pq(pq)) = &pq4.level_type {
             assert_eq!(pq.bits_per_code, 4);
             assert_eq!(pq.num_subvectors, 8);
         } else {
@@ -421,7 +421,7 @@ mod unified_quantization_coverage {
         }
 
         let int8 = UnifiedQuantizationLevel::int8();
-        if let Some(QuantizationLevelType::Scalar(scalar)) = &int8.level_type {
+        if let Some(QuantizationLevel::Scalar(scalar)) = &int8.level_type {
             assert_eq!(scalar.bits, 8);
             assert_eq!(scalar.scale, 1.0);
             assert_eq!(scalar.offset, 0.0);
@@ -437,13 +437,13 @@ mod unified_quantization_coverage {
 
         // No quantization - full FP32
         let none = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::None(NoQuantization {})),
+            level_type: Some(QuantizationLevel::None(NoQuantization {})),
         };
         assert_eq!(none.bytes_per_vector(dimension), dimension * 4);
 
         // Uniform 8-bit
         let uniform8 = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::Uniform(UniformQuantization {
+            level_type: Some(QuantizationLevel::Uniform(UniformQuantization {
                 bits: 8,
                 scale: None,
                 offset: None,
@@ -453,7 +453,7 @@ mod unified_quantization_coverage {
 
         // Binary (1 bit per dimension)
         let binary = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+            level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                 threshold: None,
                 sign_based: true,
             })),
@@ -477,7 +477,7 @@ mod unified_quantization_coverage {
             (UnifiedQuantizationLevel::int8(), 4.0),    // 32/8
             (
                 UnifiedQuantizationLevel {
-                    level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+                    level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                         threshold: None,
                         sign_based: false,
                     })),

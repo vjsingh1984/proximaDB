@@ -91,10 +91,7 @@ async fn test_compression_for_data(
 
     // Test UNCOMPRESSED first with 256KB blocks to see vector splitting with quantization
     let mut config_uncompressed = env_uncompressed.sst_config.clone();
-    config_uncompressed
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "none".to_string();
+    config_uncompressed.compression = "none".to_string();
     config_uncompressed.compression_level = 0;
     config_uncompressed.block_size_kb = 256; // Use 256KB blocks for better quantization clustering
 
@@ -135,10 +132,7 @@ async fn test_compression_for_data(
 
     // Test COMPRESSED with 256KB blocks for better quantization clustering
     let mut config_compressed = env_compressed.sst_config.clone();
-    config_compressed
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = algorithm.to_string();
+    config_compressed.compression = algorithm.to_string();
     config_compressed.compression_level = level;
     config_compressed.block_size_kb = 256; // Use 256KB blocks to see vector grouping with quantization
 
@@ -153,36 +147,7 @@ async fn test_compression_for_data(
     let mut flush_params_compressed =
         operations::build_flush_params(&env_compressed, vectors, StorageEngine::Sst).await?;
 
-    // Add compression config to the collection config
-    if let Some(ref mut collection) = flush_params_compressed.collection_config {
-        if let Some(ref mut config) = collection.config {
-            // Map algorithm string to enum value
-            let algorithm_enum = match algorithm {
-                "zstd" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionZstd,
-                "lz4" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionLz4,
-                "snappy" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionSnappy,
-                "gzip" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionGzip,
-                "brotli" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionBrotli,
-                _ | "none" => proximadb::proto::proximadb_v1::CompressionAlgorithm::CompressionNone,
-            };
-
-            config
-                .storage_config
-                .as_ref()
-                .and_then(|s| s.compression.as_ref()) =
-                Some(proximadb::proto::proximadb_v1::CompressionConfig {
-                    algorithm: algorithm_enum as i32,
-                    level: Some(level),
-                    adaptive: false,
-                    min_ratio: None,
-                    enable_quantization: false,
-                    quantization_type: None,
-                    normalization_method: None,
-                    block_size_kb: None,        // Use default from config
-                    dynamic_block_sizing: None, // Use default from config
-                });
-        }
-    }
+    // Compression is already configured in the SstConfig
 
     let compressed_result = compressed_engine.do_flush(&flush_params_compressed).await?;
     assert!(compressed_result.success, "Compressed flush should succeed");

@@ -163,13 +163,9 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         top_k: Some(5),
         distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
         filter_expression: None,
-        include_metadata: Some(true),
-        include_vectors: Some(true),
         timeout_ms: None,
         accuracy_threshold: None,
-        enable_early_termination: None,
-        max_results_per_stage: None,
-        progressive_search: None,
+        ..Default::default()
     });
 
     let collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
@@ -178,11 +174,10 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
         storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
         tags: vec![],
-        auto_index_selection: None,
-        embedding_models: None,
+        auto_index_selection: false,
+        embedding_models: vec![],
         owner: None,
-        shared_with: vec![],
-        storage_assignment: None,
+        ..Default::default()
     };
 
     let collection = std::sync::Arc::new(proximadb::proto::proximadb_v1::Collection {
@@ -191,6 +186,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         stats: None,
         created_at: 0,
         updated_at: 0,
+        storage_assignment: None,
     });
 
     let query_context = proximadb::storage::traits::StorageQueryContext {
@@ -199,7 +195,6 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         metadata: proximadb::storage::traits::StorageQueryMetadata {
             collection_id: collection_id.to_string(),
             use_axis_indexes: false,
-            storage_url: Some(storage_url.clone()),
             ..Default::default()
         },
     };
@@ -220,8 +215,8 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
     debug!("✅ Search returned {} results", search_results.len());
     for (i, result) in search_results.iter().enumerate() {
         debug!(
-            "  Result {}: id={}, distance={:?}",
-            i, result.id, result.distance
+            "  Result {}: id={}, score={:?}",
+            i, result.id, result.score
         );
     }
 
@@ -241,13 +236,9 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         top_k: Some(5),
         distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
         filter_expression: Some(filter),
-        include_metadata: Some(true),
-        include_vectors: Some(true),
         timeout_ms: None,
         accuracy_threshold: None,
-        enable_early_termination: None,
-        max_results_per_stage: None,
-        progressive_search: None,
+        ..Default::default()
     });
 
     let filtered_query_context = proximadb::storage::traits::StorageQueryContext {
@@ -256,7 +247,6 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         metadata: proximadb::storage::traits::StorageQueryMetadata {
             collection_id: collection_id.to_string(),
             use_axis_indexes: false,
-            storage_url: Some(storage_url.clone()),
             ..Default::default()
         },
     };

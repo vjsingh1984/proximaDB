@@ -189,9 +189,12 @@ async fn test_sstable_format_inspection() {
 
     // Now try to read with unified reader
     use proximadb::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem;
+    use proximadb::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig;
+
+    let zero_copy_config = ZeroCopyIOConfig::default();
     let zero_copy_system = std::sync::Arc::new(
         ZeroCopyIOSystem::new(
-            std::path::Path::new("/tmp"),
+            zero_copy_config,
             filesystem.clone(),
             vec![],
         ).await.unwrap(),

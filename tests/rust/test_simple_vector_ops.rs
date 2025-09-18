@@ -54,11 +54,11 @@ async fn test_vector_search_request_structure() -> Result<()> {
         }
     });
 
-    assert_eq!(search_request.get("k"), 10);
-    assert_eq!(search_request.get("filters")["category"], "test");
-    assert_eq!(search_request.get("include_vectors"), true);
+    assert_eq!(search_request.get("k").unwrap(), 10);
+    assert_eq!(search_request.get("filters").unwrap()["category"], "test");
+    assert_eq!(search_request.get("include_vectors").unwrap(), true);
     assert_eq!(
-        search_request.get("optimization_hints")["enable_two_stage_search"],
+        search_request.get("optimization_hints").unwrap()["enable_two_stage_search"],
         true
     );
 
@@ -159,12 +159,12 @@ async fn test_vector_mutation_operations() -> Result<()> {
         "soft_delete": true
     });
 
-    assert_eq!(update_request.get("operation"), "UPDATE");
-    assert_eq!(update_request.get("vector_id"), "test_vector_1");
-    assert_eq!(update_request.get("metadata_updates")["priority"], "medium");
+    assert_eq!(update_request.get("operation").unwrap(), "UPDATE");
+    assert_eq!(update_request.get("vector_id").unwrap(), "test_vector_1");
+    assert_eq!(update_request.get("metadata_updates").unwrap()["priority"], "medium");
 
-    assert_eq!(delete_request.get("operation"), "DELETE");
-    assert_eq!(delete_request.get("soft_delete"), true);
+    assert_eq!(delete_request.get("operation").unwrap(), "DELETE");
+    assert_eq!(delete_request.get("soft_delete").unwrap(), true);
 
     debug!("✅ Vector mutation operations test passed");
     Ok(())

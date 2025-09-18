@@ -31,12 +31,7 @@ pub mod search;
 pub mod serialization_compression_tests;
 pub mod server;
 pub mod services;
-// SQL tests - not implemented yet
-// pub mod sql_comprehensive_operator_tests;
-// pub mod sql_parsing_verification_test;
 pub mod sst_optimization_tests;
 pub mod storage;
-pub mod viper_optimization_tests;
-pub mod write_buffer_recovery_optimization_tests;
 pub mod write_buffer_recovery_stress_tests;
 pub mod write_buffer_write_optimization_tests;

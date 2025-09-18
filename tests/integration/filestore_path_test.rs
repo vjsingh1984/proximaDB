@@ -67,18 +67,8 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
             dimension: 128,
             distance_metric: 0, // Cosine
             storage_engine: 0,  // VIPER
-            primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-            filterable_columns: vec![],
-            index_configs: vec![],
-            quantization: None,
-            primary_index: String::new(),
-            auto_index_selection: false,
-            description: Some("Test collection".to_string()),
             tags: vec!["test".to_string()],
-            owner: Some("test_user".to_string()),
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
+            ..Default::default()
         }),
         stats: Some(CollectionStats {
             vector_count: 0,
@@ -87,7 +77,6 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: None,
     }
 }
 
@@ -120,7 +109,6 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
     // Create filestore backend
     let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
-        enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
@@ -195,7 +183,6 @@ async fn test_absolute_url_no_path_duplication() -> Result<()> {
     // Create filestore backend
     let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
-        enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
@@ -241,7 +228,6 @@ async fn test_atomic_operations_path_handling() -> Result<()> {
     // Create filestore backend
     let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
-        enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };

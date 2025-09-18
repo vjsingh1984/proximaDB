@@ -12,7 +12,7 @@ mod common {
 use common::integration_test_helpers::UnifiedTestEnvironment;
 
 use anyhow::Result;
-use proximadb::StorageEngine;
+use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::CompressionAlgorithm as ProtoCompressionAlgorithm;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
@@ -27,9 +27,15 @@ fn create_dense_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
                 .map(|j| ((i * 7 + j * 13) % 100) as f32 / 100.0)
                 .collect();
             VectorRecord {
-                id: Some(format!("dense_{}", i)),
+                id: format!("dense_{}", i),
                 vector,
-                ..Default::default()
+                metadata: Default::default(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             }
         })
         .collect()
@@ -46,9 +52,15 @@ fn create_sparse_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
                 vector[idx] = ((i + j) % 100) as f32 / 10.0;
             }
             VectorRecord {
-                id: Some(format!("sparse_{}", i)),
+                id: format!("sparse_{}", i),
                 vector,
-                ..Default::default()
+                metadata: Default::default(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: vec![],
+                source: None,
             }
         })
         .collect()
@@ -93,9 +105,7 @@ async fn test_engine_compression(
                 .await?;
 
             // Insert vectors directly (simulating memtable)
-            for batch in vectors.chunks(100) {
-                let _ = engine.do_flush(&flush_params).await?;
-            }
+            let _ = engine.flush(flush_params).await?;
 
             let uncompressed_size =
                 get_directory_size(env_uncompressed.get_sst_data_directory().as_path()).await;
@@ -132,9 +142,7 @@ async fn test_engine_compression(
                 )
                 .await?;
 
-            for batch in vectors.chunks(100) {
-                let _ = engine.do_flush(&flush_params).await?;
-            }
+            let _ = engine.flush(flush_params).await?;
 
             let compressed_size =
                 get_directory_size(env_compressed.get_sst_data_directory().as_path()).await;
@@ -146,10 +154,9 @@ async fn test_engine_compression(
         }
         "VIPER" => {
             let mut viper_config = env_uncompressed.viper_config.clone();
-            viper_config
-                .storage_config
-                .as_ref()
-                .and_then(|s| s.compression.as_ref()) = "none".to_string();
+            if let Some(storage_config) = viper_config.storage_config.as_mut() {
+                storage_config.compression = Some("none".to_string());
+            }
 
             let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
                 viper_config,
@@ -166,9 +173,7 @@ async fn test_engine_compression(
                 )
                 .await?;
 
-            for batch in vectors.chunks(100) {
-                let _ = engine.do_flush(&flush_params).await?;
-            }
+            let _ = engine.flush(flush_params).await?;
 
             let uncompressed_size =
                 get_directory_size(env_uncompressed.get_viper_data_directory().as_path()).await;
@@ -176,10 +181,9 @@ async fn test_engine_compression(
             // Now test COMPRESSED
             let env_compressed = UnifiedTestEnvironment::new().await?;
             let mut viper_config = env_compressed.viper_config.clone();
-            viper_config
-                .storage_config
-                .as_ref()
-                .and_then(|s| s.compression.as_ref()) = algorithm.to_string();
+            if let Some(storage_config) = viper_config.storage_config.as_mut() {
+                storage_config.compression = Some(algorithm.to_string());
+            }
             viper_config.compression_level = level;
 
             let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
@@ -204,9 +208,7 @@ async fn test_engine_compression(
                 )
                 .await?;
 
-            for batch in vectors.chunks(100) {
-                let _ = engine.do_flush(&flush_params).await?;
-            }
+            let _ = engine.flush(flush_params).await?;
 
             let compressed_size =
                 get_directory_size(env_compressed.get_viper_data_directory().as_path()).await;

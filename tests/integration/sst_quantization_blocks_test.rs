@@ -42,7 +42,7 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
         // Setup SST with specific block size
         let mut sst_config = SstConfig::default();
         sst_config.block_size_kb = block_size_kb;
-        sst_config.compression = Some(proximadb::core::compression::CompressionAlgorithm::Zstd);
+        sst_config.compression = "zstd".to_string();
         sst_config.compression_level = 3;
 
         let fs_config = FilesystemConfig {
@@ -71,12 +71,10 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
         info!("    • Vectors per block: ~{}", vectors_per_block);
         info!("    • Expected blocks: ~{}", expected_blocks);
 
-        // Insert vectors
-        sst_storage.insert_batch(vectors.clone()).await?;
-
         // Flush with collection config for quantization
+        // Note: vectors are passed in flush_params, not inserted separately
         let flush_params = FlushParameters {
-            vector_records: vec![],
+            vector_records: vectors.clone(),
             force: false,
             collection_id: Some("test_collection".to_string()),
             collection_config: None,
@@ -150,9 +148,9 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     let dimension = 512;
     let vectors = generate_clustered_vectors(num_vectors, dimension);
 
-    // Setup quantization adapter
-    let pq_config = UnifiedQuantizationLevel {
-        level_type: Some(proximadb::compute::quantization::unified_quantization_level::LevelType::Pq(PqConfig {
+    // Setup quantization adapter (for future use when SstQuantizationAdapter is available)
+    let _pq_config = UnifiedQuantizationLevel {
+        level_type: Some(proximadb::compute::quantization::QuantizationLevel::Pq(PqConfig {
             num_subvectors: 8,
             bits_per_code: 8,
             codebook_id: None,
@@ -161,7 +159,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     };
 
     // TODO: Implement SstQuantizationAdapter when available
-    // let adapter = SstQuantizationAdapter::new();
+    // let adapter = SstQuantizationAdapter::new(_pq_config);
 
     // Test with 256KB blocks
     let temp_dir = TempDir::new()?;
@@ -169,7 +167,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
 
     let mut sst_config = SstConfig::default();
     sst_config.block_size_kb = 256;
-    sst_config.compression = Some(proximadb::core::compression::CompressionAlgorithm::Zstd);
+    sst_config.compression = "zstd".to_string();
     sst_config.compression_level = 3;
 
     info!("\n📊 Configuration:");
@@ -219,10 +217,9 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     ));
     let mut sst_storage = SstStorage::new(sst_config, filesystem, distance_compute).await?;
 
-    // Insert and flush
-    sst_storage.insert_batch(vectors.clone()).await?;
+    // Flush with vectors
     let flush_params = FlushParameters {
-        vector_records: vec![],
+        vector_records: vectors.clone(),
         force: false,
         collection_id: Some("test_collection".to_string()),
         collection_config: None,

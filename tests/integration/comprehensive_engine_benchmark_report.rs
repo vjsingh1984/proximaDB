@@ -13,7 +13,7 @@ mod common {
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 
 use anyhow::Result;
-use proximadb::proto::proximadb_v1::{VectorRecord, StorageEngine};
+use proximadb::proto::proximadb_v1::{VectorRecord, StorageEngine, SqlValue, sql_value, CompressionConfig, CompressionAlgorithm};
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 use std::collections::HashMap;
@@ -139,43 +139,40 @@ fn create_randomized_vector_set(
         query_vectors.push(VectorRecord {
             id: format!("query_s{}_{}", sparsity_percent, q),
             vector,
-            metadata: vec![
-                proximadb::proto::proximadb_v1::MetadataItem {
-                    key: "type".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            "query".to_string(),
-                        ),
-                    ),
-                },
-                proximadb::proto::proximadb_v1::MetadataItem {
-                    key: "sparsity".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                            sparsity_percent as f64,
-                        ),
-                    ),
-                },
-                proximadb::proto::proximadb_v1::MetadataItem {
-                    key: "index".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(q as f64),
-                    ),
-                },
-                proximadb::proto::proximadb_v1::MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
-                            "cat_{}",
-                            q % 5
-                        )),
-                    ),
-                },
-            ],
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert(
+                    "type".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("query".to_string())),
+                    },
+                );
+                metadata.insert(
+                    "sparsity".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::NumberValue(sparsity_percent as f64)),
+                    },
+                );
+                metadata.insert(
+                    "index".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::NumberValue(q as f64)),
+                    },
+                );
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue(format!("cat_{}", q % 5))),
+                    },
+                );
+                metadata
+            },
             timestamp: chrono::Utc::now().timestamp(),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         });
     }
 
@@ -235,43 +232,36 @@ fn create_randomized_vector_set(
             all_vectors.push(VectorRecord {
                 id: format!("vec_s{}_{:06}", sparsity_percent, i),
                 vector,
-                metadata: vec![
-                    proximadb::proto::proximadb_v1::MetadataItem {
-                        key: "type".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                "regular".to_string(),
-                            ),
-                        ),
-                    },
-                    proximadb::proto::proximadb_v1::MetadataItem {
-                        key: "batch_id".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                                (i / 100) as f64,
-                            ),
-                        ),
-                    },
-                    proximadb::proto::proximadb_v1::MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                                i as f64,
-                            ),
-                        ),
-                    },
-                    proximadb::proto::proximadb_v1::MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                format!("cat_{}", i % 10),
-                            ),
-                        ),
-                    },
-                    proximadb::proto::proximadb_v1::MetadataItem {
-                        key: "status".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert(
+                        "type".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue("regular".to_string())),
+                        },
+                    );
+                    metadata.insert(
+                        "batch_id".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::NumberValue((i / 100) as f64)),
+                        },
+                    );
+                    metadata.insert(
+                        "index".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::NumberValue(i as f64)),
+                        },
+                    );
+                    metadata.insert(
+                        "category".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 10))),
+                        },
+                    );
+                    metadata.insert(
+                        "status".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(
                                 if i % 3 == 0 {
                                     "active"
                                 } else if i % 3 == 1 {
@@ -280,14 +270,17 @@ fn create_randomized_vector_set(
                                     "archived"
                                 }
                                 .to_string(),
-                            ),
-                        ),
-                    },
-                ],
+                            )),
+                        },
+                    );
+                    metadata
+                },
                 timestamp: chrono::Utc::now().timestamp(),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             });
         }
     }
@@ -518,12 +511,12 @@ async fn run_benchmark(
 
     // Prepare algorithm enum
     let algorithm_enum = match config.algorithm.as_str() {
-        "lz4" => ProtoCompressionAlgorithm::CompressionLz4,
-        "zstd" => ProtoCompressionAlgorithm::CompressionZstd,
-        "snappy" => ProtoCompressionAlgorithm::CompressionSnappy,
-        "gzip" => ProtoCompressionAlgorithm::CompressionGzip,
-        "brotli" => ProtoCompressionAlgorithm::CompressionBrotli,
-        _ => ProtoCompressionAlgorithm::CompressionNone,
+        "lz4" => CompressionAlgorithm::CompressionLz4,
+        "zstd" => CompressionAlgorithm::CompressionZstd,
+        "snappy" => CompressionAlgorithm::CompressionSnappy,
+        "gzip" => CompressionAlgorithm::CompressionGzip,
+        "brotli" => CompressionAlgorithm::CompressionBrotli,
+        _ => CompressionAlgorithm::CompressionNone,
     } as i32;
 
     // Track metrics
@@ -1111,13 +1104,9 @@ async fn run_benchmark(
                 top_k: Some(10),
                 distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
                 filter_expression: filter,
-                include_metadata: Some(false),
-                include_vectors: Some(false),
                 timeout_ms: None,
                 accuracy_threshold: None,
-                enable_early_termination: None,
-                max_results_per_stage: None,
-                progressive_search: None,
+                ..Default::default()
             });
 
             let collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
@@ -1126,11 +1115,7 @@ async fn run_benchmark(
                 distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
                 storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
                 tags: vec![],
-                auto_index_selection: None,
-                embedding_models: None,
-                owner: None,
-                shared_with: vec![],
-                storage_assignment: None,
+                ..Default::default()
             };
 
             let collection = std::sync::Arc::new(proximadb::proto::proximadb_v1::Collection {
@@ -1147,7 +1132,6 @@ async fn run_benchmark(
                 metadata: proximadb::storage::traits::StorageQueryMetadata {
                     collection_id: env.collection_id().to_string(),
                     use_axis_indexes: false,
-                    storage_url: Some(format!("file://{}/data", env.persistent_dir.to_str().unwrap())),
                     ..Default::default()
                 },
             };
@@ -1278,13 +1262,9 @@ async fn run_benchmark(
                 top_k: Some(10),
                 distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
                 filter_expression: None,
-                include_metadata: Some(true),
-                include_vectors: Some(true),
                 timeout_ms: None,
                 accuracy_threshold: None,
-                enable_early_termination: None,
-                max_results_per_stage: None,
-                progressive_search: None,
+                ..Default::default()
             });
 
             let final_query_context = proximadb::storage::traits::StorageQueryContext {
@@ -1293,7 +1273,6 @@ async fn run_benchmark(
                 metadata: proximadb::storage::traits::StorageQueryMetadata {
                     collection_id: env.collection_id().to_string(),
                     use_axis_indexes: false,
-                    storage_url: Some(storage_url.clone()),
                     ..Default::default()
                 },
             };
@@ -1379,8 +1358,8 @@ fn build_result(
     let p50_idx = sorted_latencies.len() / 2;
     let p99_idx = (sorted_latencies.len() * 99) / 100;
 
-    let query_latency_p50 = sorted_latencies.get(&(index / 2)).copied().unwrap_or(0.0);
-    let query_latency_p99 = sorted_latencies.get(&(index / 2)).copied().unwrap_or(0.0);
+    let query_latency_p50 = sorted_latencies.get(p50_idx).copied().unwrap_or(0.0);
+    let query_latency_p99 = sorted_latencies.get(p99_idx).copied().unwrap_or(0.0);
 
     // Calculate latency percentage change vs baseline
     let (latency_change_p50, latency_change_p99) = if let Some(baseline) = baseline {
@@ -1800,7 +1779,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         println!("\n  Sparsity {}%:", sparsity);
 
         // Get the pre-generated vectors for this sparsity level
-        let vector_set = vector_sets.get(&i).unwrap();
+        let vector_set = vector_sets.get(&sparsity).unwrap();
 
         // SST baseline
         match run_baseline("SST", *sparsity, vector_set, batch_count, vectors_per_batch).await {
@@ -1875,7 +1854,7 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         println!("\n━━━━━ SPARSITY LEVEL: {}% ━━━━━", sparsity);
 
         // Get the pre-generated vectors for this sparsity level
-        let vector_set = vector_sets.get(&i).unwrap();
+        let vector_set = vector_sets.get(&sparsity).unwrap();
 
         // Get baselines for this sparsity level
         let sst_baseline = baselines.get(&("SST".to_string(), sparsity));
