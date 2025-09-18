@@ -80,6 +80,7 @@ pub mod zone_maps;
 
 // Unified columnar infrastructure integration
 pub mod unified_columnar_integration;
+pub mod unified_metadata_serializer;
 
 // Re-export main engine type and optimized components
 pub use engine::NovaEngine;

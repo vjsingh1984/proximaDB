@@ -121,7 +121,7 @@ impl NovaEngine {
             UniversalPerformanceOptimizer::with_strategy(UniversalOptimizationStrategy::Balanced)
                 .await?;
 
-        // NOVA benefits from IntelligentFilesystem for caching hierarchical stats
+        // NOVA benefits from UnifiedCachingFilesystem for caching hierarchical stats
         // We'll create collection-specific instances during operations since we need
         // the actual storage path to get the right filesystem from the factory
 
@@ -166,20 +166,20 @@ impl NovaEngine {
         collection_id: &str,
         storage_path: &str,
     ) -> Result<Vec<super::NovaFile>> {
-        // Get IntelligentFilesystem for NOVA - caches hierarchical stats and Parquet metadata
-        let intelligent_fs = self
+        // Get UnifiedCachingFilesystem for NOVA - caches hierarchical stats and Parquet metadata
+        let unified_fs = self
             .filesystem
-            .get_intelligent_filesystem(
+            .get_unified_caching_filesystem(
                 storage_path,
                 collection_id.to_string(),
                 crate::storage::engines::ENGINE_NOVA.to_string(),
             )
-            .map_err(|e| anyhow!("Failed to create intelligent filesystem: {}", e))?;
+            .map_err(|e| anyhow!("Failed to create unified filesystem: {}", e))?;
 
         // In production, this would:
         // 1. List all files in {storage_path}/{collection_id}/data/
         // 2. Filter out *.stats files and other non-data files
-        // 3. Load Parquet files with statistics from metadata properties using intelligent_fs
+        // 3. Load Parquet files with statistics from metadata properties using unified_fs
         // 4. Statistics are embedded in Parquet metadata for atomicity
         // For now, return empty vec as placeholder
         Ok(Vec::new())

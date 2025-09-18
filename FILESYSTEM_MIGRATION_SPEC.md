@@ -101,9 +101,9 @@ This specification guides the migration from the current fragmented filesystem a
 
 | Task ID | Task Description | File/Component | Status | Owner | Notes |
 |---------|-----------------|----------------|--------|-------|-------|
-| P7.1 | Migrate NOVA engine | engines/impls/nova/engine.rs | 🔴 Not Started | | Progressive storage |
-| P7.2 | Migrate SWIFT engine | engines/impls/swift/engine.rs | 🔴 Not Started | | FastLanes encoding |
-| P7.3 | Migrate RAPTOR engine | engines/impls/raptor/engine.rs | 🔴 Not Started | | Most complex - uses both layers |
+| P7.1 | Migrate NOVA engine | engines/impls/nova/engine.rs | 🟢 Complete | Claude | Migrated to UnifiedCachingFilesystem |
+| P7.2 | Create NOVA metadata serializer | engines/impls/nova/unified_metadata_serializer.rs | 🟢 Complete | Claude | Hierarchical stats caching |
+| P7.3 | Migrate SWIFT engine | engines/impls/swift/engine.rs | 🔴 Not Started | | FastLanes encoding |
 | P7.4 | Migrate PRISM engine | engines/impls/prism/engine.rs | 🔴 Not Started | | Memory-optimized |
 | P7.5 | Migrate HELIX engine | engines/impls/helix/engine.rs | 🔴 Not Started | | Time-series patterns |
 | P7.6 | Run all engine tests | tests/integration/ | 🔴 Not Started | | Full test suite |
