@@ -1,5 +1,8 @@
 //! # Intelligent Filesystem - High-Performance Caching Layer
 //!
+//! **DEPRECATED**: This module is deprecated in favor of `unified::UnifiedCachingFilesystem`.
+//! Please migrate to the new unified filesystem which consolidates all caching functionality.
+//!
 //! ## Overview
 //!
 //! IntelligentFilesystem is a caching decorator that wraps any filesystem implementation
@@ -147,6 +150,7 @@ impl Default for CacheConfig {
 ///
 /// This separation keeps FilesystemFactory stateless (routing only)
 /// and IntelligentFilesystem focused on caching only.
+#[deprecated(since = "0.2.0", note = "Use unified::UnifiedCachingFilesystem instead")]
 pub struct IntelligentFilesystem {
     /// The actual filesystem we're decorating with caching capabilities
     underlying_fs: Arc<dyn FileSystem>,

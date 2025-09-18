@@ -179,6 +179,16 @@ pub mod manager;
 pub mod write_strategy;
 pub mod zero_copy_filesystem;
 
+// Unified filesystem modules
+pub mod unified;
+pub mod unified_cache;
+pub mod unified_config;
+pub mod disk_cache;
+pub mod range_optimizer;
+pub mod access_tracker;
+pub mod prefetch_engine;
+pub mod cache_metrics;
+
 #[cfg(test)]
 pub mod tests;
 

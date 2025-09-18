@@ -1,5 +1,8 @@
 // Zero-Copy Intelligent Filesystem with Integrated Metadata Caching
 // Integrates directly with filesystem API to provide transparent cache-first, fallback-to-cloud pattern
+//
+// DEPRECATED: This module is deprecated in favor of unified::UnifiedCachingFilesystem.
+// Please migrate to the new unified filesystem which consolidates all caching functionality.
 
 use std::sync::Arc;
 
@@ -18,10 +21,11 @@ use crate::storage::persistence::filesystem::{
 ///
 /// This implementation provides transparent integration where:
 /// 1. All read operations first check metadata cache
-/// 2. If metadata indicates file can be skipped, return immediately  
+/// 2. If metadata indicates file can be skipped, return immediately
 /// 3. If selective ranges needed, download only those ranges
 /// 4. If full file needed, check disk cache before cloud download
 /// 5. All operations are transparent to existing readers
+#[deprecated(since = "0.2.0", note = "Use unified::UnifiedCachingFilesystem instead")]
 pub struct ZeroCopyFilesystem {
     /// Underlying filesystem implementation (S3, GCS, Azure, Local)
     underlying_fs: Arc<dyn FileSystem>,
