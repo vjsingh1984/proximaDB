@@ -52,7 +52,7 @@ _Navigate by your role and use case for optimized learning paths_
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e3a8a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e40af", "lineColor": "#1e40af", "sectionBkgColor": "#dbeafe", "altSectionBkgColor": "#bfdbfe", "gridColor": "#3b82f6", "tertiaryColor": "#f8fafc", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f1f5f9", "nodeTextColor": "#1e40af", "c0": "#1e3a8a", "c1": "#2563eb", "c2": "#3b82f6", "c3": "#60a5fa", "c4": "#93c5fd"}}}%%
 mindmap
   root((ProximaDB))
     Vector Intelligence
@@ -122,7 +122,7 @@ mindmap
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e3a8a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e40af", "lineColor": "#1e40af", "sectionBkgColor": "#dbeafe", "altSectionBkgColor": "#bfdbfe", "gridColor": "#3b82f6", "tertiaryColor": "#f8fafc", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f1f5f9", "nodeTextColor": "#1e40af", "c0": "#1e3a8a", "c1": "#2563eb", "c2": "#3b82f6", "c3": "#60a5fa", "c4": "#93c5fd"}}}%%
 xychart-beta
     title "Distance Computation Performance Comparison"
     x-axis [128D, 256D, 512D, 1024D, 1536D]
@@ -168,7 +168,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e3a8a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e40af", "lineColor": "#1e40af", "sectionBkgColor": "#dbeafe", "altSectionBkgColor": "#bfdbfe", "gridColor": "#3b82f6", "tertiaryColor": "#f8fafc", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f1f5f9", "nodeTextColor": "#1e40af", "c0": "#1e3a8a", "c1": "#2563eb", "c2": "#3b82f6", "c3": "#60a5fa", "c4": "#93c5fd"}}}%%
 journey
     title 30-Day ProximaDB Mastery Journey
     section Week 1: Foundation
