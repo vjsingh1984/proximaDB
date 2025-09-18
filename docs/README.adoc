@@ -52,76 +52,25 @@ _Navigate by your role and use case for optimized learning paths_
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#1e3a8a", "sectionBkgColor": "#3b82f6", "altSectionBkgColor": "#1e40af", "gridColor": "#1e3a8a", "tertiaryColor": "#dbeafe", "background": "#ffffff", "mainBkg": "#1e40af", "secondBkg": "#3b82f6", "nodeTextColor": "#ffffff"}}}%%
-flowchart TD
-    P(["<b>ProximaDB</b><br/>Unified AI Intelligence Platform"])
-
-    subgraph VI ["🔢 Vector Intelligence"]
-        V1["⚡ 20.6M ops/sec<br/>Distance Computation"]
-        V2["🏗️ 7 Storage Engines<br/>Optimized Workloads"]
-        V3["🚀 Hardware Acceleration<br/>SIMD & GPU"]
-    end
-
-    subgraph GA ["🕸️ Graph Analytics"]
-        G1["🔍 Relationship Discovery<br/>Connection Patterns"]
-        G2["📊 Pattern Analysis<br/>Behavior Insights"]
-        G3["🧠 Knowledge Graphs<br/>Semantic Networks"]
-    end
-
-    subgraph AI ["🤖 AI Integration"]
-        A1["🌐 8 LLM Providers<br/>OpenAI, Anthropic, etc."]
-        A2["💬 Natural Language<br/>Query Interface"]
-        A3["📈 Business Intelligence<br/>AI-Driven Analytics"]
-    end
-
-    subgraph EF ["🏢 Enterprise Features"]
-        E1["🏗️ Multi-Tenant<br/>Architecture"]
-        E2["🔒 Security & Compliance<br/>Enterprise-Grade"]
-        E3["📊 Monitoring & Analytics<br/>Observability"]
-    end
-
-    P --- VI
-    P --- GA
-    P --- AI
-    P --- EF
-
-    VI --- V1
-    VI --- V2
-    VI --- V3
-
-    GA --- G1
-    GA --- G2
-    GA --- G3
-
-    AI --- A1
-    AI --- A2
-    AI --- A3
-
-    EF --- E1
-    EF --- E2
-    EF --- E3
-
-    style P fill:#1e3a8a,stroke:#1e40af,stroke-width:3px,color:#ffffff
-    style VI fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style GA fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style AI fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style EF fill:#0ea5e9,stroke:#0284c7,stroke-width:2px,color:#ffffff
-
-    style V1 fill:#fee2e2,stroke:#dc2626,stroke-width:1px,color:#991b1b
-    style V2 fill:#fee2e2,stroke:#dc2626,stroke-width:1px,color:#991b1b
-    style V3 fill:#fee2e2,stroke:#dc2626,stroke-width:1px,color:#991b1b
-
-    style G1 fill:#ffedd5,stroke:#ea580c,stroke-width:1px,color:#9a3412
-    style G2 fill:#ffedd5,stroke:#ea580c,stroke-width:1px,color:#9a3412
-    style G3 fill:#ffedd5,stroke:#ea580c,stroke-width:1px,color:#9a3412
-
-    style A1 fill:#dcfce7,stroke:#16a34a,stroke-width:1px,color:#14532d
-    style A2 fill:#dcfce7,stroke:#16a34a,stroke-width:1px,color:#14532d
-    style A3 fill:#dcfce7,stroke:#16a34a,stroke-width:1px,color:#14532d
-
-    style E1 fill:#e0f2fe,stroke:#0ea5e9,stroke-width:1px,color:#0c4a6e
-    style E2 fill:#e0f2fe,stroke:#0ea5e9,stroke-width:1px,color:#0c4a6e
-    style E3 fill:#e0f2fe,stroke:#0ea5e9,stroke-width:1px,color:#0c4a6e
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#1e3a8a", "sectionBkgColor": "#3b82f6", "altSectionBkgColor": "#1e40af", "gridColor": "#1e3a8a", "tertiaryColor": "#dbeafe", "background": "#ffffff", "mainBkg": "#1e40af", "secondBkg": "#3b82f6", "nodeTextColor": "#ffffff", "c0": "#dc2626", "c1": "#ea580c", "c2": "#16a34a", "c3": "#0ea5e9", "c4": "#8b5cf6"}}}%%
+mindmap
+  root((ProximaDB))
+    Vector Intelligence
+      20.6M ops/sec
+      7 storage engines
+      Hardware acceleration
+    Graph Analytics
+      Relationship discovery
+      Pattern analysis
+      Knowledge graphs
+    AI Integration
+      8 LLM providers
+      Natural language queries
+      Business intelligence
+    Enterprise Features
+      Multi-tenant architecture
+      Security compliance
+      Monitoring analytics
 ----
 
 === 📊 **Platform Comparison**
