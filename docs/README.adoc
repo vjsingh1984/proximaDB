@@ -168,25 +168,52 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e3a8a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e40af", "lineColor": "#1e40af", "sectionBkgColor": "#dbeafe", "altSectionBkgColor": "#bfdbfe", "gridColor": "#3b82f6", "tertiaryColor": "#f8fafc", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f1f5f9", "nodeTextColor": "#1e40af", "c0": "#1e3a8a", "c1": "#2563eb", "c2": "#3b82f6", "c3": "#60a5fa", "c4": "#93c5fd"}}}%%
-journey
-    title 30-Day ProximaDB Mastery Journey
-    section Week 1: Foundation
-      Quick start setup: 5: Developer
-      Basic operations: 4: Developer
-      Engine selection: 5: Developer
-    section Week 2: Integration
-      API integration: 4: Developer
-      Performance optimization: 5: Developer
-      Security setup: 3: Developer
-    section Week 3: Advanced Features
-      Graph analytics: 4: Developer
-      AI integration: 5: Developer
-      Multi-tenant setup: 4: Developer
-    section Week 4: Production
-      Production deployment: 3: Developer
-      Monitoring setup: 4: Developer
-      Operations training: 5: Developer
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e3a8a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e40af", "lineColor": "#1e40af", "sectionBkgColor": "#dbeafe", "altSectionBkgColor": "#bfdbfe", "gridColor": "#3b82f6", "tertiaryColor": "#f8fafc", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f1f5f9", "nodeTextColor": "#1e40af"}}}%%
+flowchart LR
+    subgraph "Week 1: Foundation"
+        A1["🚀 Quick Start<br/>Setup & Deploy"]
+        A2["⚙️ Basic Operations<br/>CRUD & Search"]
+        A3["🎯 Engine Selection<br/>Optimize Performance"]
+    end
+
+    subgraph "Week 2: Integration"
+        B1["🔌 API Integration<br/>REST & gRPC"]
+        B2["⚡ Performance Tuning<br/>Hardware Acceleration"]
+        B3["🔒 Security Setup<br/>Authentication"]
+    end
+
+    subgraph "Week 3: Advanced"
+        C1["📊 Graph Analytics<br/>Relationships"]
+        C2["🤖 AI Integration<br/>LLM Providers"]
+        C3["🏢 Multi-Tenant<br/>Architecture"]
+    end
+
+    subgraph "Week 4: Production"
+        D1["🚀 Production Deploy<br/>Enterprise Setup"]
+        D2["📈 Monitoring<br/>Observability"]
+        D3["🎓 Operations<br/>Training Complete"]
+    end
+
+    A1 --> A2 --> A3
+    A3 --> B1
+    B1 --> B2 --> B3
+    B3 --> C1
+    C1 --> C2 --> C3
+    C3 --> D1
+    D1 --> D2 --> D3
+
+    style A1 fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style A2 fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style A3 fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style B1 fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style B2 fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style B3 fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style C1 fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style C2 fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style C3 fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style D1 fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style D2 fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style D3 fill:#10b981,stroke:#059669,stroke-width:3px,color:#ffffff
 ----
 
 === **Role-Based Quick Paths**
