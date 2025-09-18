@@ -967,6 +967,8 @@ impl FilesystemFactory {
                 "raptor" => Box::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
                 "nova" => Box::new(crate::storage::engines::impls::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
                 "swift" => Box::new(crate::storage::engines::impls::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
+                "prism" => Box::new(crate::storage::engines::impls::prism::unified_metadata_serializer::PrismUnifiedMetadataSerializer::new()),
+                "helix" => Box::new(crate::storage::engines::impls::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
                 _ => {
                     // Default serializer for other engines
                     struct DefaultSerializer;

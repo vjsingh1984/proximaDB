@@ -49,6 +49,7 @@ pub mod pca_manager;
 pub mod progressive_search;
 pub mod query_optimization;
 pub mod readers;
+pub mod unified_metadata_serializer;
 pub mod zone_maps;
 
 #[cfg(test)]

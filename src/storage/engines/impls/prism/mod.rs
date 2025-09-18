@@ -39,6 +39,7 @@ pub mod cache;
 pub mod compaction;
 pub mod fastlanes_serializer;
 pub mod memory_optimizer;
+pub mod unified_metadata_serializer;
 
 // Configuration structures
 pub use engine::*;
