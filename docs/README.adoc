@@ -52,19 +52,17 @@ _Navigate by your role and use case for optimized learning paths_
 
 [source,mermaid]
 ----
-%%{init: {"mindmap": {"padding": 20, "maxNodeWidth": 200}, "theme": "default"}}%%
 mindmap
   root((ProximaDB))
     Vector Intelligence
-      20.6M ops/sec
-      7 storage engines
+      Multiple storage engines
       Hardware acceleration
     Graph Analytics
       Relationship discovery
       Pattern analysis
       Knowledge graphs
     AI Integration
-      8 LLM providers
+      Multiple LLM providers
       Natural language queries
       Business intelligence
     Enterprise Features
