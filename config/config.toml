@@ -78,7 +78,7 @@ grpc_port = 5679
 rest_port = 5678
 max_request_size_mb = 64
 timeout_seconds = 30
-enable_tls = false
+enable_tls = true  # TLS enabled by default for production security
 # Background TTL sweeper interval in seconds (default 900 = 15 minutes)
 ttl_sweep_interval_seconds = 900
 
@@ -95,3 +95,52 @@ snapshot_threshold = 10
 
 [performance]
 sync_mode = "PerBatch"
+
+# Security Configuration
+[security]
+enabled = true
+mode = "development"  # Options: development | production | enterprise
+
+[security.authentication]
+# Authentication methods to enable
+methods = ["api_key"]  # Options: sso, jwt, api_key, mtls
+require_authentication = false  # Set to true for production
+default_session_timeout_minutes = 480
+
+[security.api_keys]
+# Development API keys (replace in production)
+"dev-key-001" = { user_id = "developer", tenant_id = "default", permissions = ["read", "write"] }
+
+[security.jwt]
+enabled = false  # Enable for production JWT authentication
+secret = "development-secret-change-in-production"
+access_token_expiration_minutes = 60
+refresh_token_expiration_days = 7
+issuer = "proximadb"
+audience = "proximadb-clients"
+
+[security.sso]
+enabled = false  # Enable for enterprise SSO integration
+providers = []  # Options: aws_iam, azure_ad, google_workspace
+token_cache_ttl_minutes = 5
+
+[security.rbac]
+enabled = true
+enable_field_level_permissions = true
+enable_audit_logging = true
+default_deny = false  # Set to true for production zero-trust
+
+[security.audit]
+enabled = true
+storage_backend = "file"  # Options: file, database, s3, combined
+log_directory = "/tmp/proximadb/audit"
+encryption_enabled = false  # Enable for production
+retention_days = 90  # 90 days for development, 2555 for compliance
+enable_real_time_alerts = false
+
+[security.tls]
+enabled = true
+require_client_certificates = false  # Set to true for mTLS
+cert_file = ""  # Path to TLS certificate
+key_file = ""   # Path to TLS private key
+ca_file = ""    # Path to CA certificate for mTLS
