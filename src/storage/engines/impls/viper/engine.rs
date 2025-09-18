@@ -177,7 +177,7 @@ impl ViperEngine {
     ) -> Result<Self> {
         // Create VIPER metadata serializer
         let metadata_serializer = Arc::new(
-            super::metadata_serializer::ViperMetadataSerializer::new()
+            super::unified_metadata_serializer::ViperMetadataSerializer::new()
         );
 
         // Get the base filesystem from factory
@@ -225,7 +225,7 @@ impl ViperEngine {
 
         // Create VIPER metadata serializer
         let metadata_serializer = Arc::new(
-            super::metadata_serializer::ViperMetadataSerializer::new()
+            super::unified_metadata_serializer::ViperMetadataSerializer::new()
         );
 
         // Get the base filesystem from factory
@@ -264,7 +264,7 @@ impl ViperEngine {
 
         // Create VIPER metadata serializer
         let metadata_serializer = Arc::new(
-            super::metadata_serializer::ViperMetadataSerializer::new()
+            super::unified_metadata_serializer::ViperMetadataSerializer::new()
         );
 
         // Get the base filesystem from factory
@@ -1451,7 +1451,7 @@ impl Default for ViperEngine {
 
                 // Create VIPER metadata serializer
                 let metadata_serializer = Arc::new(
-                    super::metadata_serializer::ViperMetadataSerializer::new()
+                    super::unified_metadata_serializer::ViperMetadataSerializer::new()
                 );
 
                 // Get base filesystem

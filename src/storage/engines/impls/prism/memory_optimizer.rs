@@ -655,7 +655,7 @@ pub enum MemoryTier {
 /// Memory optimization strategies for PRISM
 pub struct PrismMemoryOptimizer {
     storage: Arc<MemoryOptimizedStorage>,
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
 }
 
 impl PrismMemoryOptimizer {

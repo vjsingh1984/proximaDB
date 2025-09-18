@@ -160,7 +160,7 @@ pub mod types;
 pub mod compaction;
 pub mod engine;
 pub mod flush;
-pub mod metadata_serializer;
+pub mod unified_metadata_serializer;
 
 // Test modules
 

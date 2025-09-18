@@ -72,15 +72,13 @@ impl ZeroCopyReaderIntegration {
             .build()
             .await?;
 
-        // 2. Create zero-copy filesystem wrapper for columnar storage
+        // 2. Create unified caching filesystem for columnar storage
         let zero_copy_fs = filesystem_factory
-            .create_zero_copy_filesystem(
+            .get_unified_caching_filesystem(
                 base_path,
-                Arc::new(io_system),
                 collection_id.to_string(),
                 "VIPER".to_string(),
             )
-            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
         Ok(EnhancedParquetReader::new(Arc::new(zero_copy_fs)))
@@ -99,15 +97,13 @@ impl ZeroCopyReaderIntegration {
             .build()
             .await?;
 
-        // 2. Create zero-copy filesystem wrapper for hierarchical storage
+        // 2. Create unified caching filesystem for hierarchical storage
         let zero_copy_fs = filesystem_factory
-            .create_zero_copy_filesystem(
+            .get_unified_caching_filesystem(
                 base_path,
-                Arc::new(io_system),
                 collection_id.to_string(),
                 "SWIFT".to_string(),
             )
-            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
         Ok(EnhancedSwiftReader::new(Arc::new(zero_copy_fs)))
@@ -141,15 +137,13 @@ impl ZeroCopyReaderIntegration {
                 .build()
                 .await?;
 
-            // Create zero-copy filesystem
+            // Create unified caching filesystem
             let zero_copy_fs = filesystem_factory
-                .create_zero_copy_filesystem(
+                .get_unified_caching_filesystem(
                     base_path,
-                    Arc::new(io_system),
                     collection_id.to_string(),
                     engine_type.to_string(),
                 )
-                .await
                 .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
             // Create appropriate reader type

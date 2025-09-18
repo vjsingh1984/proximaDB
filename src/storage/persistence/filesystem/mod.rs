@@ -955,7 +955,7 @@ impl FilesystemFactory {
         let metadata_serializer: Box<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
             match engine_type.as_str() {
                 "sst" => Box::new(crate::storage::engines::impls::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
-                "viper" => Box::new(crate::storage::engines::impls::viper::metadata_serializer::ViperMetadataSerializer::new()),
+                "viper" => Box::new(crate::storage::engines::impls::viper::unified_metadata_serializer::ViperMetadataSerializer::new()),
                 "raptor" => Box::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
                 "nova" => Box::new(crate::storage::engines::impls::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
                 "swift" => Box::new(crate::storage::engines::impls::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
@@ -1472,58 +1472,7 @@ impl FilesystemFactory {
 
     /// Create a zero-copy filesystem wrapper for intelligent caching and optimization
     ///
-    /// This wraps any underlying filesystem (S3, GCS, Azure, Local) with the zero-copy I/O system
-    /// providing transparent cache-first, fallback-to-cloud operations for all read operations.
-    ///
-    /// # Arguments
-    /// * `url` - The base URL to determine which underlying filesystem to wrap
-    /// * `io_system` - The zero-copy I/O system for caching and optimization
-    /// * `collection_id` - Collection context for optimization
-    /// * `engine_type` - Engine type for optimization (SST, VIPER, SWIFT, NOVA, etc.)
-    ///
-    /// # Returns
-    /// A zero-copy filesystem that transparently optimizes all file operations
-    pub async fn create_zero_copy_filesystem(
-        &self,
-        url: &str,
-        io_system: std::sync::Arc<crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem>,
-        collection_id: String,
-        engine_type: String,
-    ) -> FsResult<ZeroCopyFilesystem> {
-        // Get the underlying filesystem for the URL
-        let underlying_fs = self.get_filesystem(url)?;
-
-        // Create an Arc wrapper around the underlying filesystem
-        // We need to clone the filesystem, but since we can't clone trait objects,
-        // we'll need to get it by scheme instead
-        let scheme = if url.contains("://") {
-            url.split("://").next().unwrap_or("file")
-        } else {
-            "file"
-        };
-
-        // For now, we'll create the underlying filesystem using a simplified approach
-        // In production, the FilesystemFactory should be refactored to use Arc<dyn FileSystem>
-        // throughout to support zero-copy filesystem creation more efficiently
-        let underlying_fs_arc = if scheme == "file" {
-            let local_config = self.config.local.clone().unwrap_or_default();
-            let local_fs = LocalFileSystem::new(local_config).await?;
-            std::sync::Arc::new(local_fs) as std::sync::Arc<dyn FileSystem>
-        } else {
-            return Err(FilesystemError::UnsupportedScheme(format!(
-                "Zero-copy filesystem not yet supported for scheme: {}",
-                scheme
-            )));
-        };
-
-        // Build the zero-copy filesystem
-        ZeroCopyFilesystemBuilder::new()
-            .with_collection_id(collection_id)
-            .with_engine_type(engine_type)
-            .with_io_system(io_system)
-            .build(underlying_fs_arc)
-            .map_err(|e| FilesystemError::Config(e.to_string()))
-    }
+    // create_zero_copy_filesystem removed - functionality integrated into get_unified_caching_filesystem
 
     /// Unified filesystem operations - automatically route to correct backend
     pub async fn read(&self, url: &str) -> FsResult<Vec<u8>> {

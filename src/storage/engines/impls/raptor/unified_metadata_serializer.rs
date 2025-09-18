@@ -10,7 +10,34 @@ use std::fmt::Debug;
 
 use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 
-use super::metadata_serializer::RaptorCachedMetadata;
+use super::common::{CentroidStats, VectorCentroidCompressionMetadata};
+
+/// Cached RAPTOR metadata structure
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RaptorCachedMetadata {
+    /// File size in bytes
+    pub file_size: u64,
+    /// Number of vectors in the file
+    pub vector_count: usize,
+    /// Vector dimension
+    pub dimension: usize,
+    /// Centroid statistics for boundary detection
+    pub centroid_stats: Vec<CentroidStats>,
+    /// Row group offsets for selective reading
+    pub rowgroup_offsets: Vec<u64>,
+    /// Bloom filter data for ID lookups
+    pub bloom_filter_data: Vec<u8>,
+    /// Compression metadata for quantization
+    pub compression_metadata: VectorCentroidCompressionMetadata,
+    /// File creation timestamp
+    pub creation_timestamp: u64,
+    /// P×K matrix coverage percentage (for spillover detection)
+    pub pxk_coverage: f32,
+    /// Whether file has HNSW index
+    pub has_hnsw: bool,
+    /// HNSW graph offset if present
+    pub hnsw_offset: Option<u64>,
+}
 
 /// RAPTOR metadata serializer for UnifiedCachingFilesystem
 #[derive(Debug)]

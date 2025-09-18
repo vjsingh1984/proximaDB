@@ -41,7 +41,7 @@ pub mod consolidated_compactor;
 pub mod consolidated_reader;
 pub mod engine;
 pub mod matrix_builder;
-pub mod metadata_serializer;
+// metadata_serializer removed - functionality consolidated into unified_metadata_serializer
 pub mod unified_metadata_serializer;
 pub mod writer;
 // ivf_manager removed - obsolete with Matrix Trinity (P² + K² + P×K)
