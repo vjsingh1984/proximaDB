@@ -52,7 +52,7 @@ _Navigate by your role and use case for optimized learning paths_
 
 [source,mermaid]
 ----
-%%{init: {"mindmap": {"padding": 20, "maxNodeWidth": 200}, "theme": "base", "themeVariables": {"primaryColor": "#3b82f6", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e40af", "lineColor": "#374151", "secondaryColor": "#ef4444", "tertiaryColor": "#10b981", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f8fafc"}}}%%
+%%{init: {"mindmap": {"padding": 20, "maxNodeWidth": 200}, "theme": "forest"}}%%
 mindmap
   root((ProximaDB))
     Vector Intelligence
