@@ -469,7 +469,7 @@ curl -X POST http://localhost:5678/v1/ai/ask \
 | Feature comparison without vendor bias
 | **Decision makers**
 
-| **link:docs/business/roi_calculator.adoc[ROI Analysis]**
+| **link:docs/business/executive_overview.adoc[ROI Analysis]**
 | Calculate savings and performance gains
 | **Finance, Procurement**
 |===
@@ -484,11 +484,11 @@ curl -X POST http://localhost:5678/v1/ai/ask \
 | Production deployment in 5 minutes
 | **All developers**
 
-| **link:docs/technical/unified_architecture.adoc[Technical Architecture]**
+| **link:docs/technical/platform_architecture.adoc[Technical Architecture]**
 | Multi-engine, AI-native system design
 | **Architects, Senior devs**
 
-| **link:docs/reference/api_complete.adoc[API Reference]**
+| **link:docs/reference/graph_api_reference.adoc[API Reference]**
 | REST, gRPC, SDK documentation
 | **Integration teams**
 |===
@@ -499,15 +499,15 @@ curl -X POST http://localhost:5678/v1/ai/ask \
 |===
 | Resource | Description | Audience
 
-| **link:docs/operations/production_deployment.adoc[Production Guide]**
+| **link:docs/enterprise/production_deployment_guide.adoc[Production Guide]**
 | Enterprise-grade deployment setup
 | **Platform teams**
 
-| **link:docs/operations/monitoring_observability.adoc[Monitoring Setup]**
+| **link:docs/operations/PRODUCTION_RUNBOOK.adoc[Monitoring Setup]**
 | Comprehensive observability framework
 | **SRE, DevOps**
 
-| **link:docs/operations/security_compliance.adoc[Security Framework]**
+| **link:docs/security.adoc[Security Framework]**
 | Enterprise security and compliance
 | **Security teams**
 |===
@@ -569,7 +569,7 @@ flowchart LR
 | **10 minutes**
 
 | **Production Planning**
-| **link:docs/operations/production_deployment.adoc[Production Guide]** - Enterprise setup
+| **link:docs/enterprise/production_deployment_guide.adoc[Production Guide]** - Enterprise setup
 | **2-4 hours**
 |===
 
