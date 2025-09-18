@@ -351,7 +351,7 @@ graph TD
 | Daily operations and troubleshooting
 
 | **Developer**
-| link:09-roadmap/analysis/class_diagram.mmd[Class Diagram]
+| link:technical/storage_engine_layouts.adoc[Storage Architecture]
 | Complete architecture visualization
 
 | **Reference**

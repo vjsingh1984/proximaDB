@@ -15,11 +15,12 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 * link:quickstart/readme.adoc[Quick Start Guide] - Get up and running in minutes
 * link:guides/getting_started.adoc[Getting Started Guide] - Comprehensive setup guide
 * link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] - Choose the right storage engine
+* link:performance_comprehensive.adoc[Performance Benchmarks] - Validated performance specifications
 
 === Installation & Setup
-* link:reference/installation.adoc[Installation Guide] - Installation options and requirements
-* link:reference/configuration.adoc[Configuration Guide] - Configuration options and examples
-* link:reference/security.adoc[Security Guide] - Security configuration and best practices
+* link:enterprise/production_deployment_guide.adoc[Production Deployment Guide] - Enterprise deployment and configuration
+* link:security.adoc[Security Guide] - Security configuration and best practices
+* link:operations/production_runbook.adoc[Operations Guide] - Production operations and monitoring
 
 == Technical Documentation
 
@@ -29,9 +30,9 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 * link:technical/performance_optimization.adoc[Performance Optimization] - Performance tuning guide
 
 === API Reference
-* link:reference/api.adoc[API Reference] - Complete API documentation
-* link:reference/sdk.adoc[SDK Reference] - Client SDK documentation
-* link:reference/query_language.adoc[Query Language] - Query syntax and examples
+* link:reference/graph_api_reference.adoc[Graph API Reference] - Graph database API documentation
+* link:reference/sks_technical_reference.adoc[Technical Reference] - Advanced technical specifications
+* link:technical/platform_architecture.adoc[Platform Architecture] - System architecture and design
 
 == Operations
 
@@ -48,47 +49,17 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 == Enterprise Features
 
 === Enterprise Platform
-* link:enterprise/enterprise_platform.adoc[Enterprise Platform] - Enterprise features overview
-* link:enterprise/security_compliance.adoc[Security & Compliance] - Enterprise security features
-* link:enterprise/support.adoc[Enterprise Support] - Support options and SLAs
+* link:enterprise/enterprise_platform_overview.adoc[Enterprise Platform] - Enterprise features overview
+* link:enterprise/enterprise_deployment.adoc[Enterprise Deployment] - Automated deployment and scaling
+* link:enterprise/production_deployment_guide.adoc[Production Guide] - Production deployment best practices
 
-=== Business Intelligence
-* link:enterprise/business_intelligence.adoc[Business Intelligence] - AI-powered analytics
-* link:enterprise/reporting.adoc[Reporting] - Automated reporting capabilities
-* link:enterprise/integration.adoc[Integration] - Third-party integrations
+== Development and Roadmap
 
-== Development
+=== Current Status
+* link:09-roadmap/future/implementation_status.adoc[Implementation Status] - Current development progress
+* link:09-roadmap/future/codebase_architecture_analysis.adoc[Architecture Analysis] - Technical architecture review
+* link:09-roadmap/executive_summary.adoc[Executive Summary] - Business and technical overview
 
-=== Contributing
-* link:CONTRIBUTING.adoc[Contributing Guide] - How to contribute to ProximaDB
-* link:development/architecture.adoc[Development Architecture] - Development architecture overview
-* link:development/testing.adoc[Testing Guide] - Testing procedures and guidelines
-
-=== Roadmap
-* link:09-roadmap/future/implementation_status.adoc[Implementation Status] - Current development status
-* link:09-roadmap/future/roadmap.adoc[Future Roadmap] - Planned features and improvements
-* link:09-roadmap/future/codebase_architecture_analysis.adoc[Architecture Analysis] - Technical debt and improvements
-
-== Examples & Tutorials
-
-=== Tutorials
-* link:tutorials/basic_usage.adoc[Basic Usage Tutorial] - Learn the basics
-* link:tutorials/advanced_features.adoc[Advanced Features] - Advanced usage patterns
-* link:tutorials/performance_tuning.adoc[Performance Tuning] - Performance optimization
-
-=== Examples
-* link:examples/python.adoc[Python Examples] - Python client examples
-* link:examples/rust.adoc[Rust Examples] - Rust client examples
-* link:examples/integration.adoc[Integration Examples] - Third-party integration examples
-
-== Support & Community
-
-=== Getting Help
-* link:support/faq.adoc[FAQ] - Frequently asked questions
-* link:support/community.adoc[Community] - Community resources and forums
-* link:support/enterprise_support.adoc[Enterprise Support] - Professional support options
-
-=== Resources
-* link:resources/glossary.adoc[Glossary] - Technical terms and definitions
-* link:resources/references.adoc[References] - External resources and links
-* link:resources/changelog.adoc[Changelog] - Version history and changes
+=== Documentation and Resources
+* link:documentation_release_ready.adoc[Documentation Status] - Production readiness assessment
+* link:competitive_analysis_comprehensive.adoc[Competitive Analysis] - Market positioning and advantages

@@ -462,7 +462,7 @@ stateDiagram-v2
 
 |**Production Deployment**
 |Deploy in production environment
-|link:../operations/production_runbook.adoc[Operations Guide]
+|link:../enterprise/production_deployment_guide.adoc[Production Guide]
 
 |**Evaluate Business Value**
 |Assess ROI and competitive advantages

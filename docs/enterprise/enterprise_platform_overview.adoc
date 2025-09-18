@@ -21,7 +21,7 @@ ProximaDB delivers a **comprehensive AI-powered enterprise platform** that unifi
 graph TB
     subgraph "AI-POWERED INTELLIGENCE PLATFORM"
         A[Natural Language Business Intelligence<br/>Query data in plain English<br/>Automated executive insights]
-        B[Multi-LLM Provider Ecosystem<br/>9 providers with automatic fallback<br/>OpenAI, Anthropic, Azure, AWS, Ollama]
+        B[Multi-LLM Provider Ecosystem<br/>8 providers with automatic fallback<br/>OpenAI, Anthropic, Azure, AWS, Ollama]
         C[Executive Dashboard Automation<br/>AI-generated business insights<br/>Automated recommendation engine]
     end
 
@@ -71,7 +71,7 @@ graph TB
 Transform how executives and business users access enterprise data:
 - **Plain English Querying**: "Show me our top customers by revenue this quarter"
 - **Automated Business Insights**: AI-generated executive summaries and recommendations
-- **Multi-Provider AI Ecosystem**: 9 LLM providers with automatic fallback and optimization
+- **Multi-Provider AI Ecosystem**: 8 LLM providers with automatic fallback and optimization
 
 ==== Executive Dashboard Automation
 [source,mermaid]
@@ -207,7 +207,7 @@ ProximaDB provides **7 specialized storage engines** optimized for different ent
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "PROXIMADB COMPREHENSIVE PLATFORM"
-        A[AI-Powered Intelligence<br/>Natural language business intelligence<br/>9 LLM provider ecosystem]
+        A[AI-Powered Intelligence<br/>Natural language business intelligence<br/>8 LLM provider ecosystem]
         B[Enterprise Architecture<br/>Complete multi-tenant platform<br/>SOC 2 compliance framework]
         C[Operational Excellence<br/>Automated deployment and billing<br/>Customer success automation]
     end
