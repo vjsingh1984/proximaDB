@@ -78,13 +78,13 @@ graph TB
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "QUERY INTERFACE"
-        A[Natural Language<br/>"Show me trending customers"]
+        A[Natural Language<br/>Show me trending customers]
         B[REST API<br/>Port 5678]
         C[gRPC API<br/>Port 5679]
     end
 
     subgraph "AI INTELLIGENCE LAYER"
-        D[8 LLM Providers<br/>OpenAI, Anthropic, Azure]
+        D[8 LLM Providers<br/>OpenAI Anthropic Azure]
         E[Business Intelligence<br/>Automated insights]
         F[Query Translation<br/>English to SQL]
     end
@@ -134,11 +134,18 @@ graph TB
 [source,mermaid]
 ----
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
-xychart-beta
-    title "ProximaDB Performance Benchmarks (ops/sec)"
-    x-axis ["128D DotProduct", "256D Euclidean", "512D Cosine", "1536D Manhattan"]
-    y-axis "Operations/Second (millions)" 0 --> 25
-    bar [20.6, 7.9, 3.7, 1.2]
+graph LR
+    subgraph "Performance Benchmarks (Million ops/sec)"
+        A[128D DotProduct<br/>20.6M ops/sec]
+        B[256D Euclidean<br/>7.9M ops/sec]
+        C[512D Cosine<br/>3.7M ops/sec]
+        D[1536D Manhattan<br/>1.2M ops/sec]
+    end
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:3px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:3px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:3px,color:#ffffff
+    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:3px,color:#ffffff
 ----
 
 === **Memory Efficiency by Engine**
@@ -176,12 +183,12 @@ xychart-beta
 ----
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
-    A["CEO asks:<br/>'Who are our top customers<br/>by profitability this quarter?'"] --> B[ProximaDB AI<br/>Natural Language Processing]
+    A[CEO asks:<br/>Who are our top customers<br/>by profitability this quarter?] --> B[ProximaDB AI<br/>Natural Language Processing]
     B --> C[Query Translation<br/>English to Data Operations]
     C --> D[Vector Search<br/>Customer similarity analysis]
     D --> E[Graph Analysis<br/>Relationship discovery]
     E --> F[Business Intelligence<br/>Automated insights]
-    F --> G["Answer:<br/>'Based on analysis of 50K customers,<br/>here are your top 10 by 40% profit margin<br/>with growth recommendations'"]
+    F --> G[Answer:<br/>Based on analysis of 50K customers<br/>here are your top 10 by 40% profit margin<br/>with growth recommendations]
 
     style A fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
     style B fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
@@ -441,7 +448,7 @@ curl -X POST http://localhost:5678/v1/ai/ask \
 ----
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
 flowchart TD
-    A[What's your goal?] --> B{Technical Evaluation?}
+    A[What is your goal?] --> B{Technical Evaluation?}
     A --> C{Business Assessment?}
     A --> D{Production Deployment?}
 
