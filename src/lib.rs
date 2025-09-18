@@ -113,6 +113,9 @@ pub mod auth;
 /// Comprehensive audit system for enterprise compliance
 pub mod audit;
 
+/// Unified security architecture consolidating auth, RBAC, and audit
+pub mod security;
+
 /// AI-powered intelligence for Release 2 enterprise platform
 pub mod ai;
 
