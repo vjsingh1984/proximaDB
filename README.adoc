@@ -3,7 +3,7 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: highlight.js
-:imagesdir: assets
+:imagesdir: docs/assets
 
 [.lead]
 **The only platform that unifies vector search, graph relationships, and AI-powered business intelligence in a single enterprise solution.** +

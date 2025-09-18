@@ -7,7 +7,7 @@
 [.lead]
 **Complete production deployment guide** for ProximaDB's 7 storage engines with performance optimization and enterprise configuration.
 
-== 🚀 **Production Architecture Overview**
+== icon:rocket[] **Production Architecture Overview**
 
 === Storage Engine Portfolio
 
@@ -18,28 +18,28 @@ ProximaDB offers **7 production-ready storage engines** optimized for different 
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "REAL-TIME ENGINES"
-        A[SST Engine<br/>✅ Row-based OLTP<br/>200K vec/sec writes<br/>5ms query latency]
-        B[SWIFT Engine<br/>✅ Fast Traversal<br/>FastLanes encoding<br/>Ultra-low latency]
+        A[SST Engine<br/>icon:check[] Row-based OLTP<br/>200K vec/sec writes<br/>5ms query latency]
+        B[SWIFT Engine<br/>icon:check[] Fast Traversal<br/>FastLanes encoding<br/>Ultra-low latency]
     end
 
     subgraph "ANALYTICS ENGINES"
-        C[VIPER Engine<br/>✅ Columnar Analytics<br/>Parquet optimization<br/>5K vec/sec throughput]
-        D[NOVA Engine<br/>✅ Advanced Analytics<br/>Progressive quantization<br/>4K vec/sec, 90% compression]
+        C[VIPER Engine<br/>icon:check[] Columnar Analytics<br/>Parquet optimization<br/>5K vec/sec throughput]
+        D[NOVA Engine<br/>icon:check[] Advanced Analytics<br/>Progressive quantization<br/>4K vec/sec, 90% compression]
     end
 
     subgraph "SPECIALIZED ENGINES"
-        E[RAPTOR Engine<br/>✅ Adaptive Workloads<br/>P×K optimization<br/>Dynamic adaptation]
-        F[PRISM Engine<br/>✅ Memory Optimized<br/>Multi-resolution quantization<br/>60% memory reduction]
-        G[HELIX Engine<br/>✅ Time-series Data<br/>Hilbert curve locality<br/>Temporal optimization]
+        E[RAPTOR Engine<br/>icon:check[] Adaptive Workloads<br/>P×K optimization<br/>Dynamic adaptation]
+        F[PRISM Engine<br/>icon:check[] Memory Optimized<br/>Multi-resolution quantization<br/>60% memory reduction]
+        G[HELIX Engine<br/>icon:check[] Time-series Data<br/>Hilbert curve locality<br/>Temporal optimization]
     end
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
 ----
 
 === Performance Specifications
@@ -86,7 +86,7 @@ graph TB
 | Hilbert curve locality, temporal patterns
 |===
 
-== 📋 **Engine Selection Guide**
+== icon:clipboard[] **Engine Selection Guide**
 
 === Workload-Based Engine Selection
 
@@ -114,12 +114,12 @@ flowchart TD
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
     style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style J fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style L fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style I fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style J fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
+    style K fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+    style L fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
 ----
 
 === Engine Selection Matrix
@@ -171,7 +171,7 @@ flowchart TD
 | <1ms queries
 |===
 
-== 🛠️ **Production Configuration**
+== icon:wrench[] **Production Configuration**
 
 === Basic Production Setup
 
@@ -319,7 +319,7 @@ background_thread_count = 4
 io_thread_pool_size = 8
 ```
 
-== 🔧 **Production Deployment Steps**
+== icon:wrench[] **Production Deployment Steps**
 
 === Step 1: Environment Preparation
 
@@ -452,7 +452,7 @@ curl -X POST http://localhost:5678/v1/collections/production_test/search \
   }'
 ```
 
-== 📊 **Monitoring and Operations**
+== icon:bar-chart[] **Monitoring and Operations**
 
 === Production Monitoring
 
@@ -505,7 +505,7 @@ RUST_LOG=proximadb::storage=info ./proximadb-server 2>&1 | grep throughput
 cargo run --release --bin proximadb-bench -- --engine SST --vectors 100000
 ```
 
-== 🔄 **Backup and Recovery**
+== icon:refresh[] **Backup and Recovery**
 
 === Backup Strategy
 
@@ -554,7 +554,7 @@ sudo systemctl start proximadb
 curl http://localhost:5678/health
 ```
 
-== 🚀 **Production Checklist**
+== icon:rocket[] **Production Checklist**
 
 === Pre-Deployment Checklist
 
@@ -575,7 +575,7 @@ curl http://localhost:5678/health
 - [ ] **Backup Testing**: Recovery procedures verified
 - [ ] **Load Testing**: Production workload simulation successful
 
-== 📚 **Troubleshooting Guide**
+== icon:book[] **Troubleshooting Guide**
 
 === Common Issues
 

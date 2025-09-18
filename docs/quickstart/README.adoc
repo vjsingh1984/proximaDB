@@ -490,7 +490,7 @@ default_engine = "PRISM"
 
 ---
 
-**🎉 Congratulations! You now have ProximaDB Enterprise running with complete vector, graph, and knowledge capabilities.**
+**icon:check[] Congratulations! You now have ProximaDB Enterprise running with complete vector, graph, and knowledge capabilities.**
 
 **Ready for production deployment?** Contact our solutions engineering team: solutions-engineering@proximadb.com
 

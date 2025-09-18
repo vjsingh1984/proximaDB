@@ -48,11 +48,11 @@ graph TB
     style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
     style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
     style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style H fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style I fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 === Enterprise Value Proposition
@@ -89,9 +89,9 @@ flowchart LR
     style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
     style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
     style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
 **Business Value**: Reduces executive reporting time from hours to minutes while providing deeper insights
@@ -223,8 +223,8 @@ graph TB
     C --> F
 
     style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
     style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
     style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
     style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff

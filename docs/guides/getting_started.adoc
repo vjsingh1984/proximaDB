@@ -75,12 +75,12 @@ docker run -d \
 curl http://localhost:5678/health
 
 # 3. Create your first collection
-curl -X POST http://localhost:5678/api/v1/collections \
+curl -X POST http://localhost:5678/v1/collections \
   -H "Content-Type: application/json" \
   -d '{"name": "my_vectors", "dimension": 384}'
 
 # 4. Insert sample vectors
-curl -X POST http://localhost:5678/api/v1/collections/my_vectors/vectors \
+curl -X POST http://localhost:5678/v1/collections/my_vectors/vectors \
   -H "Content-Type: application/json" \
   -d '{
     "vectors": [
@@ -93,7 +93,7 @@ curl -X POST http://localhost:5678/api/v1/collections/my_vectors/vectors \
   }'
 
 # 5. Search vectors
-curl -X POST http://localhost:5678/api/v1/collections/my_vectors/search \
+curl -X POST http://localhost:5678/v1/collections/my_vectors/search \
   -H "Content-Type: application/json" \
   -d '{
     "vector": [0.1, 0.2, 0.3, ...],
@@ -157,6 +157,7 @@ curl http://localhost:5678/health
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 mindmap
   root((config.toml))
     [server]
@@ -197,9 +198,9 @@ flowchart TD
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
     style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
     style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style F fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
 ----
 
 **Configuration Examples:**
@@ -296,17 +297,17 @@ sequenceDiagram
     participant API as REST API
     participant ProximaDB as ProximaDB
 
-    App->>API: POST /collections
+    App->>API: POST /v1/collections
     API->>ProximaDB: Create collection
     ProximaDB-->>API: Collection created
     API-->>App: 201 Created
 
-    App->>API: POST /collections/{name}/vectors
+    App->>API: POST /v1/collections/{name}/vectors
     API->>ProximaDB: Insert vectors
     ProximaDB-->>API: Vectors stored
     API-->>App: 200 OK
 
-    App->>API: POST /collections/{name}/search
+    App->>API: POST /v1/collections/{name}/search
     API->>ProximaDB: Vector search
     ProximaDB-->>API: Search results
     API-->>App: 200 OK + Results

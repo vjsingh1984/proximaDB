@@ -7,10 +7,11 @@ ProximaDB brand assets and visual guidelines for marketing and presentation mate
 
 toc::[]
 
-== 🎨 Logo Variants
+== icon:palette[] Logo Variants
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart LR
     subgraph "Logo Types"
         A[Symbol Only<br/>Small sizes]
@@ -24,8 +25,8 @@ flowchart LR
     E --> C
     E --> D
     
-    style B fill:#1e88e5
-    style E fill:#e3f2fd
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 === Available Assets
@@ -69,12 +70,13 @@ inkscape logos/proximadb-symbol.svg -w 180 -h 180 -o icons/apple-touch-icon-180.
 convert icons/favicon-{16,32,48}.png icons/favicon.ico
 ----
 
-== 📄 Cover Images
+== icon:file-image[] Cover Images
 
 === Social Media Covers
 
 [source,mermaid]
 ----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph LR
     subgraph "Cover Formats"
         A[Standard<br/>1200×600]
@@ -88,7 +90,7 @@ graph LR
     E --> C
     E --> D
     
-    style E fill:#1e88e5
+    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
 **Export Commands:**
@@ -107,7 +109,7 @@ inkscape proximadb_cover.svg -w 1128 -h 191 -o covers/proximadb_linkedin.png
 inkscape proximadb_cover.svg -w 1500 -h 500 -o covers/proximadb_twitter.png
 ----
 
-== 🎯 Brand Guidelines
+== icon:bullseye[] Brand Guidelines
 
 === Usage Standards
 
@@ -126,7 +128,7 @@ inkscape proximadb_cover.svg -w 1500 -h 500 -o covers/proximadb_twitter.png
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 pie title Brand Color Usage
     "Primary Blue (#1e88e5)" : 40
     "Success Green (#43a047)" : 25
@@ -161,7 +163,7 @@ pie title Brand Color Usage
 |Secondary text, borders
 |===
 
-== 📱 Digital Assets
+== icon:mobile[] Digital Assets
 
 === Presentation Materials
 
@@ -190,7 +192,7 @@ pie title Brand Color Usage
 <meta name="twitter:image" content="/covers/proximadb_twitter.png">
 ----
 
-== 🎨 Asset Creation Guidelines
+== icon:palette[] Asset Creation Guidelines
 
 === Logo Modifications
 

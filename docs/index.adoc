@@ -15,7 +15,7 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 * link:quickstart/readme.adoc[Quick Start Guide] - Get up and running in minutes
 * link:guides/getting_started.adoc[Getting Started Guide] - Comprehensive setup guide
 * link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] - Choose the right storage engine
-* link:performance_comprehensive.adoc[Performance Benchmarks] - Validated performance specifications
+* link:PERFORMANCE.adoc[Performance Benchmarks] - Validated performance specifications
 
 === Installation & Setup
 * link:enterprise/production_deployment_guide.adoc[Production Deployment Guide] - Enterprise deployment and configuration
@@ -32,7 +32,6 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 === API Reference
 * link:reference/graph_api_reference.adoc[Graph API Reference] - Graph database API documentation
 * link:reference/sks_technical_reference.adoc[Technical Reference] - Advanced technical specifications
-* link:technical/platform_architecture.adoc[Platform Architecture] - System architecture and design
 
 == Operations
 
@@ -41,8 +40,7 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 * link:enterprise/production_deployment_guide.adoc[Production Deployment] - Enterprise deployment guide
 
 === Performance and Monitoring
-* link:performance_comprehensive.adoc[Performance Guide] - Complete performance analysis
-* link:performance_benchmark_charts.adoc[Benchmark Charts] - Performance visualization
+* link:PERFORMANCE.adoc[Performance Guide] - Complete performance analysis
 
 == Enterprise Features
 
@@ -54,10 +52,7 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 == Development and Roadmap
 
 === Current Status
-* link:09-roadmap/future/implementation_status.adoc[Implementation Status] - Current development progress
-* link:09-roadmap/future/codebase_architecture_analysis.adoc[Architecture Analysis] - Technical architecture review
-* link:09-roadmap/executive_summary.adoc[Executive Summary] - Business and technical overview
+* link:09-roadmap/STATUS.adoc[Implementation Status] - Current development progress
 
 === Documentation and Resources
-* link:documentation_release_ready.adoc[Documentation Status] - Production readiness assessment
-* link:competitive_analysis_comprehensive.adoc[Competitive Analysis] - Market positioning and advantages
+* link:COMPETITIVE_ANALYSIS_COMPREHENSIVE.adoc[Competitive Analysis] - Market positioning and advantages

@@ -7,7 +7,7 @@
 [.lead]
 **Complete guide** for selecting and optimizing ProximaDB's 7 production-ready storage engines for maximum performance.
 
-== 🎯 **Engine Selection Decision Tree**
+== icon:bullseye[] **Engine Selection Decision Tree**
 
 === Quick Selection Guide
 
@@ -34,13 +34,13 @@ flowchart TD
     E -->|Mixed patterns| K
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#673ab7,stroke:#4527a0,stroke-width:2px,color:#ffffff
-    style J fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style K fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style L fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style I fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style J fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
+    style K fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+    style L fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
 ----
 
 === Detailed Engine Comparison
@@ -99,7 +99,7 @@ flowchart TD
 | Hilbert curve locality, temporal patterns
 |===
 
-== 🔧 **Engine-Specific Optimization**
+== icon:wrench[] **Engine-Specific Optimization**
 
 === SST Engine (Real-time OLTP)
 
@@ -452,7 +452,7 @@ RUST_LOG=helix::hilbert=debug proximadb-server 2>&1 | grep "locality_preserved"
 - **Locality preservation**: 90%+ for temporal data
 - **Space efficiency**: Natural temporal grouping reduces storage
 
-== 🚀 **Multi-Engine Strategies**
+== icon:rocket[] **Multi-Engine Strategies**
 
 === Hybrid Engine Deployments
 
@@ -525,7 +525,7 @@ curl localhost:5678/metrics | grep helix_
 # - helix_cluster_adaptation_frequency
 ```
 
-== 📊 **Benchmarking and Testing**
+== icon:bar-chart[] **Benchmarking and Testing**
 
 === Engine-Specific Benchmarks
 
@@ -625,39 +625,39 @@ if __name__ == "__main__":
         benchmark_engine(engine, vector_count=1000)  # Smaller dataset for testing
 ```
 
-== 🎯 **Best Practices Summary**
+== icon:bullseye[] **Best Practices Summary**
 
 === Engine Selection Checklist
 
 **For Real-time Applications:**
-- ✅ Use **SST** for high-throughput OLTP (200K+ vec/sec)
-- ✅ Use **SWIFT** for ultra-low latency (<1ms)
-- ✅ Configure adequate memory buffers
-- ✅ Enable write-ahead logging for ACID compliance
+- icon:check[] Use **SST** for high-throughput OLTP (200K+ vec/sec)
+- icon:check[] Use **SWIFT** for ultra-low latency (<1ms)
+- icon:check[] Configure adequate memory buffers
+- icon:check[] Enable write-ahead logging for ACID compliance
 
 **For Analytics Workloads:**
-- ✅ Use **VIPER** for standard analytics (5K vec/sec)
-- ✅ Use **NOVA** for advanced research (4K vec/sec, 90% compression)
-- ✅ Optimize row group sizes for query patterns
-- ✅ Enable column-level compression
+- icon:check[] Use **VIPER** for standard analytics (5K vec/sec)
+- icon:check[] Use **NOVA** for advanced research (4K vec/sec, 90% compression)
+- icon:check[] Optimize row group sizes for query patterns
+- icon:check[] Enable column-level compression
 
 **For Resource-Constrained Environments:**
-- ✅ Use **PRISM** for 60% memory reduction
-- ✅ Configure aggressive quantization
-- ✅ Enable memory pooling and pressure monitoring
-- ✅ Monitor memory metrics continuously
+- icon:check[] Use **PRISM** for 60% memory reduction
+- icon:check[] Configure aggressive quantization
+- icon:check[] Enable memory pooling and pressure monitoring
+- icon:check[] Monitor memory metrics continuously
 
 **For Variable/Unknown Workloads:**
-- ✅ Use **RAPTOR** for adaptive optimization
-- ✅ Enable P×K optimization and workload learning
-- ✅ Configure reasonable adaptation intervals
-- ✅ Monitor adaptation metrics
+- icon:check[] Use **RAPTOR** for adaptive optimization
+- icon:check[] Enable P×K optimization and workload learning
+- icon:check[] Configure reasonable adaptation intervals
+- icon:check[] Monitor adaptation metrics
 
 **For Time-Series Data:**
-- ✅ Use **HELIX** for temporal optimization
-- ✅ Configure appropriate temporal grouping windows
-- ✅ Enable liquid clustering for query patterns
-- ✅ Optimize Hilbert curve order for data dimensionality
+- icon:check[] Use **HELIX** for temporal optimization
+- icon:check[] Configure appropriate temporal grouping windows
+- icon:check[] Enable liquid clustering for query patterns
+- icon:check[] Optimize Hilbert curve order for data dimensionality
 
 === Performance Optimization Principles
 
