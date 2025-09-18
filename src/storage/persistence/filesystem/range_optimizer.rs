@@ -79,6 +79,92 @@ impl RangeOptimizer {
         vec![]
     }
 
+    /// Determine optimal range strategy based on storage engine
+    pub async fn optimize_engine_ranges(
+        &self,
+        file_path: &str,
+        file_size: u64,
+        storage_engine: &str,
+        column_indices: Option<Vec<usize>>,
+        row_group_indices: Option<Vec<usize>>,
+    ) -> Vec<OptimizedRange> {
+        let mut ranges = Vec::new();
+
+        // Optimize based on storage engine type
+        match storage_engine.to_lowercase().as_str() {
+            "viper" | "nova" => {
+                // VIPER and NOVA use Parquet format
+            // Always need the footer (last 8 bytes + footer size)
+            // Estimate footer size as 1% of file or 64KB, whichever is smaller
+            let footer_size = std::cmp::min(file_size / 100, 65536);
+            ranges.push(OptimizedRange {
+                start: file_size.saturating_sub(footer_size),
+                end: file_size,
+            });
+
+            // If specific row groups requested, calculate their ranges
+            if let Some(row_groups) = row_group_indices {
+                // Estimate row group size (divide file by typical number of row groups)
+                let estimated_rg_size = file_size / 10; // Assume ~10 row groups
+                for rg_idx in row_groups {
+                    let start = (rg_idx as u64) * estimated_rg_size;
+                    let end = std::cmp::min(start + estimated_rg_size, file_size);
+                    ranges.push(OptimizedRange { start, end });
+                }
+            }
+
+                // If specific columns requested, we'd need the footer first to determine column chunks
+                // For now, this is a placeholder for column-specific optimization
+
+                self.merge_ranges(ranges)
+            }
+            "sst" | "lsm" => {
+                // SST uses sorted string tables, typically need header and index blocks
+                // Read first 4KB for header and last portion for index
+                ranges.push(OptimizedRange {
+                    start: 0,
+                    end: std::cmp::min(4096, file_size),
+                });
+
+                // Index typically at the end
+                let index_size = std::cmp::min(file_size / 20, 32768);
+                ranges.push(OptimizedRange {
+                    start: file_size.saturating_sub(index_size),
+                    end: file_size,
+                });
+
+                self.merge_ranges(ranges)
+            }
+            "swift" => {
+                // SWIFT uses FastLanes encoding with superblocks
+                // Need header and potentially specific superblocks
+                ranges.push(OptimizedRange {
+                    start: 0,
+                    end: std::cmp::min(8192, file_size), // Superblock header
+                });
+
+                // Add ranges for requested superblocks if specified
+                self.merge_ranges(ranges)
+            }
+            "raptor" => {
+                // RAPTOR uses adaptive row groups
+                // Similar to Parquet but with different chunking
+                let footer_size = std::cmp::min(file_size / 50, 32768);
+                ranges.push(OptimizedRange {
+                    start: file_size.saturating_sub(footer_size),
+                    end: file_size,
+                });
+
+                self.merge_ranges(ranges)
+            }
+            _ => {
+                // Unknown engine or engines that don't benefit from range optimization
+                // Use regular optimization based on access patterns
+                self.optimize_ranges(file_path, file_size).await
+            }
+        }
+    }
+
     /// Record a range access for learning
     pub async fn record_access(&self, file_path: &str, start: u64, end: u64) {
         let mut entry = self.range_history.entry(file_path.to_string()).or_insert_with(Vec::new);

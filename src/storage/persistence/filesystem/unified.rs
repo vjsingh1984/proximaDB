@@ -148,6 +148,23 @@ impl UnifiedCachingFilesystem {
         format!("{}:{}:{}", path, self.collection_id, self.engine_type)
     }
 
+    /// Get filesystem cache metrics
+    pub async fn get_metrics(&self) -> FilesystemMetrics {
+        let metadata_stats = self.metadata_cache.stats();
+        let disk_stats = self.disk_cache.stats();
+        let cache_report = self.metrics.get_report().await;
+
+        FilesystemMetrics {
+            metadata_cache_size: metadata_stats.memory_usage_bytes,
+            metadata_cache_entries: metadata_stats.entries,
+            disk_cache_size: disk_stats.bytes_saved as usize,
+            disk_cache_entries: disk_stats.entries,
+            total_hits: cache_report.total_hits,
+            total_misses: cache_report.total_misses,
+            hit_rate: cache_report.overall_hit_rate,
+        }
+    }
+
     /// Record access for pattern learning
     async fn record_access(&self, path: &str, operation: AccessOperation) {
         self.access_tracker.record(path, operation).await;
@@ -218,6 +235,18 @@ impl FileSystem for UnifiedCachingFilesystem {
 
         // Fall back to regular read
         let data = self.underlying_fs.read(path).await?;
+
+        // Extract and cache metadata based on storage engine
+        match self.engine_type.to_lowercase().as_str() {
+            "viper" | "nova" => {
+                // These engines use Parquet format
+                self.metadata_cache.extract_parquet_metadata(&cache_key, &data).await;
+            }
+            // Other engines might have different metadata formats
+            _ => {
+                // For now, just cache the file metadata
+            }
+        }
 
         // Cache locally if appropriate
         if self.should_cache_locally(path, data.len()) {
@@ -425,10 +454,28 @@ pub enum CacheType {
     Memory,
 }
 
+/// Filesystem cache metrics
+#[derive(Debug, Clone)]
+pub struct FilesystemMetrics {
+    pub metadata_cache_size: usize,
+    pub metadata_cache_entries: usize,
+    pub disk_cache_size: usize,
+    pub disk_cache_entries: usize,
+    pub total_hits: u64,
+    pub total_misses: u64,
+    pub hit_rate: f64,
+}
+
 impl UnifiedCachingFilesystem {
     async fn optimized_range_read(&self, path: &str, metadata: &FileMetadata) -> FsResult<Vec<u8>> {
-        // Use range optimizer to determine optimal read strategy
-        let ranges = self.range_optimizer.optimize_ranges(path, metadata.size).await;
+        // Use engine-aware range optimization
+        let ranges = self.range_optimizer.optimize_engine_ranges(
+            path,
+            metadata.size,
+            &self.engine_type,
+            None,  // column_indices
+            None,  // row_group_indices
+        ).await;
 
         if ranges.is_empty() {
             // No optimization possible, read full file

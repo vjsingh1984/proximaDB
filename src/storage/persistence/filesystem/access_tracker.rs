@@ -197,9 +197,75 @@ impl AccessPatternTracker {
 
     /// Get files that are frequently accessed together
     pub async fn get_correlated_files(&self, path: &str) -> Vec<String> {
-        // In a full implementation, this would track which files are accessed
-        // in sequence and return files likely to be accessed after the given file
+        // Track files accessed within a short time window
+        let now = Instant::now();
+        let window = Duration::from_secs(10); // 10 second correlation window
+
+        // Find recent accesses to the given file
+        if let Some(entry) = self.access_history.get(path) {
+            if let Some(last_access) = entry.access_times.back() {
+                // Find other files accessed around the same time
+                let mut correlated = Vec::new();
+
+                for other_entry in self.access_history.iter() {
+                    if other_entry.key() == path {
+                        continue;
+                    }
+
+                    // Check if this file was accessed near our target file
+                    for access_time in &other_entry.value().access_times {
+                        if access_time.duration_since(*last_access) < window ||
+                           last_access.duration_since(*access_time) < window {
+                            correlated.push(other_entry.key().clone());
+                            break;
+                        }
+                    }
+                }
+
+                // Sort by access frequency
+                correlated.sort_by_key(|k| {
+                    self.access_history.get(k)
+                        .map(|e| std::cmp::Reverse(e.total_accesses))
+                        .unwrap_or(std::cmp::Reverse(0))
+                });
+
+                // Return top 5 correlated files
+                correlated.truncate(5);
+                return correlated;
+            }
+        }
+
         vec![]
+    }
+
+    /// Analyze access patterns for a collection
+    pub async fn analyze_collection_patterns(&self, collection_prefix: &str) -> CollectionAccessPattern {
+        let mut total_accesses = 0u64;
+        let mut total_reads = 0u64;
+        let mut total_writes = 0u64;
+        let mut file_count = 0usize;
+
+        for entry in self.access_history.iter() {
+            if entry.key().starts_with(collection_prefix) {
+                file_count += 1;
+                total_accesses += entry.value().total_accesses;
+                total_reads += entry.value().read_count;
+                total_writes += entry.value().write_count;
+            }
+        }
+
+        CollectionAccessPattern {
+            collection_prefix: collection_prefix.to_string(),
+            total_accesses,
+            read_write_ratio: if total_writes > 0 {
+                total_reads as f64 / total_writes as f64
+            } else {
+                f64::INFINITY
+            },
+            file_count,
+            is_read_heavy: total_reads > total_writes * 10,
+            is_write_heavy: total_writes > total_reads * 10,
+        }
     }
 
     /// Clean up old access records
@@ -262,6 +328,17 @@ pub struct AccessPatternStats {
     pub total_files: usize,
     pub total_accesses: u64,
     pub hot_files: Vec<String>,
+}
+
+/// Collection-specific access pattern
+#[derive(Debug, Clone)]
+pub struct CollectionAccessPattern {
+    pub collection_prefix: String,
+    pub total_accesses: u64,
+    pub read_write_ratio: f64,
+    pub file_count: usize,
+    pub is_read_heavy: bool,
+    pub is_write_heavy: bool,
 }
 
 #[cfg(test)]

@@ -236,6 +236,58 @@ impl UnifiedMetadataCache {
             *entry = Arc::new(new_metadata);
         }
     }
+
+    /// Extract and cache Parquet metadata from file data
+    pub async fn extract_parquet_metadata(&self, key: &str, data: &[u8]) -> Option<Vec<u8>> {
+        // Check if this is a Parquet file
+        if !key.ends_with(".parquet") || data.len() < 12 {
+            return None;
+        }
+
+        // Parquet files have "PAR1" magic bytes at start and end
+        if &data[0..4] != b"PAR1" || &data[data.len()-4..] != b"PAR1" {
+            return None;
+        }
+
+        // Footer length is stored in last 8 bytes before final magic
+        let footer_len_bytes = &data[data.len()-8..data.len()-4];
+        let footer_len = u32::from_le_bytes([
+            footer_len_bytes[0],
+            footer_len_bytes[1],
+            footer_len_bytes[2],
+            footer_len_bytes[3],
+        ]) as usize;
+
+        if footer_len > data.len() - 12 {
+            return None;
+        }
+
+        // Extract footer
+        let footer_start = data.len() - 8 - footer_len;
+        let footer = data[footer_start..data.len()-8].to_vec();
+
+        // Cache the footer
+        self.update_parquet_footer(key, footer.clone()).await;
+
+        debug!("Extracted and cached Parquet footer for {}: {} bytes", key, footer.len());
+        Some(footer)
+    }
+
+    /// Check if we have cached Parquet metadata
+    pub async fn get_parquet_footer(&self, key: &str) -> Option<Vec<u8>> {
+        if let Some(entry) = self.get(key).await {
+            return entry.parquet_footer.clone();
+        }
+        None
+    }
+
+    /// Check if we have cached bloom filter
+    pub async fn get_bloom_filter(&self, key: &str) -> Option<Vec<u8>> {
+        if let Some(entry) = self.get(key).await {
+            return entry.bloom_filter.clone();
+        }
+        None
+    }
 }
 
 impl CacheStatistics {

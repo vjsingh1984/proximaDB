@@ -188,6 +188,7 @@ pub mod range_optimizer;
 pub mod access_tracker;
 pub mod prefetch_engine;
 pub mod cache_metrics;
+pub mod orchestrator_integration;
 
 #[cfg(test)]
 pub mod tests;
