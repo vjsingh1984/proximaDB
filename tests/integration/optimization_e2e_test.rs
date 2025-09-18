@@ -374,7 +374,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
 
     let sst_query_context = proximadb::storage::traits::StorageQueryContext {
         search_params: sst_search_context_params,
-        collection: sst_collection,
+        collection: sst_collection.clone(),
         metadata: proximadb::storage::traits::StorageQueryMetadata {
             collection_id: "optimization_test".to_string(),
             use_axis_indexes: false,

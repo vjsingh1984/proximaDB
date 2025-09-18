@@ -655,7 +655,7 @@ async fn run_benchmark(
             let start_compact = Instant::now();
             // Use the same collection config with compression that was used for flush
             let compact_params =
-                operations::build_compaction_params_with_collection(&env, collection.clone());
+                operations::build_compaction_params_with_collection(&env, collection.as_ref().clone());
 
             println!(
                 "        🔧 SST: Compaction params - force: {}, collection_id: {:?}",
@@ -1124,6 +1124,7 @@ async fn run_benchmark(
                 stats: None,
                 created_at: 0,
                 updated_at: 0,
+                storage_assignment: None,
             });
 
             let query_context = proximadb::storage::traits::StorageQueryContext {
@@ -1392,8 +1393,8 @@ fn build_result(
     let filter_p50_idx = sorted_filter_latencies.len() / 2;
     let filter_p99_idx = (sorted_filter_latencies.len() * 99) / 100;
 
-    let filter_latency_p50 = sorted_filter_latencies.get("enable_two_stage_search").copied().unwrap_or(0.0);
-    let filter_latency_p99 = sorted_filter_latencies.get("enable_two_stage_search").copied().unwrap_or(0.0);
+    let filter_latency_p50 = sorted_filter_latencies.get(filter_p50_idx).copied().unwrap_or(0.0);
+    let filter_latency_p99 = sorted_filter_latencies.get(filter_p99_idx).copied().unwrap_or(0.0);
 
     let avg_filter_latency = if !sorted_filter_latencies.is_empty() {
         sorted_filter_latencies.iter().sum::<f64>() / sorted_filter_latencies.len() as f64
@@ -1857,8 +1858,8 @@ async fn test_generate_comprehensive_benchmark_report() -> Result<()> {
         let vector_set = vector_sets.get(&sparsity).unwrap();
 
         // Get baselines for this sparsity level
-        let sst_baseline = baselines.get(&("SST".to_string(), sparsity));
-        let viper_baseline = baselines.get(&("VIPER".to_string(), sparsity));
+        let sst_baseline = baselines.get(&("SST".to_string(), *sparsity));
+        let viper_baseline = baselines.get(&("VIPER".to_string(), *sparsity));
 
         for (algo, levels) in &algorithms_and_levels {
             // Skip "none" algorithm as that's our baseline

@@ -17,15 +17,15 @@
 //! Integration tests for filestore path handling to prevent path duplication issues
 
 use anyhow::Result;
-use proximadb::proto::proximadb_v1::{Collection, IndexingAlgorithm};
+use proximadb::proto::proximadb_v1::Collection;
 use proximadb::storage::metadata::backends::universal_backend::{
     UniversalMetadataBackend, UniversalMetadataConfig,
 };
-use proximadb::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use proximadb::storage::traits::InternalCollectionProvider;
+use proximadb::storage::persistence::filesystem::FilesystemFactory;
+use proximadb::storage::traits::MetadataProvider;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 static HARDWARE_INIT: Once = Once::new();
 
@@ -58,7 +58,7 @@ fn ensure_test_directories() {
 
 /// Helper to create a test collection
 fn create_test_collection(id: &str, name: &str) -> Collection {
-    use proximadb::proto::proximadb_v1::{CollectionConfig, CollectionStats};
+    use proximadb::proto::proximadb_v1::{CollectionConfig, CollectionStats, StorageAssignment};
 
     Collection {
         id: id.to_string(),
@@ -68,6 +68,9 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
             distance_metric: 0, // Cosine
             storage_engine: 0,  // VIPER
             tags: vec!["test".to_string()],
+            auto_index_selection: true,
+            owner: Some("test_user".to_string()),
+            embedding_models: vec!["test_model".to_string()],
             ..Default::default()
         }),
         stats: Some(CollectionStats {
@@ -77,6 +80,14 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: Some(StorageAssignment {
+            primary_path: "/data/collections".to_string(),
+            backup_paths: vec![],
+            engine: 0, // VIPER
+            engine_config: std::collections::HashMap::new(),
+            base_location: "/data".to_string(),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
     }
 }
 
@@ -278,7 +289,7 @@ async fn test_concurrent_operations_no_conflicts() -> Result<()> {
     // Create filestore backend
     let config = UniversalMetadataConfig {
         storage_url: metadata_url,
-        enable_compression: false,
+        compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
@@ -345,7 +356,6 @@ async fn test_metadata_url_formats() -> Result<()> {
         // Create filestore backend
         let config = UniversalMetadataConfig {
             storage_url: url.to_string(),
-            enable_compression: false,
             enable_snapshots: false,
             ..Default::default()
         };

@@ -39,9 +39,9 @@ fn create_dense_vectors(
             env.create_test_vector_record(
                 format!("dense_{}", i),
                 vector,
-                (1000 + i) as u32,
+                (1000 + i) as i64,
                 None,
-                vec![],
+                std::collections::HashMap::new(),
             )
         })
         .collect()
@@ -66,9 +66,9 @@ fn create_sparse_vectors(
             env.create_test_vector_record(
                 format!("sparse_{}", i),
                 vector,
-                (1000 + i) as u32,
+                (1000 + i) as i64,
                 None,
-                vec![],
+                std::collections::HashMap::new(),
             )
         })
         .collect()
@@ -161,7 +161,7 @@ async fn test_compression_for_data(
     info!("  • Entries flushed: {:?}", compressed_result.entries_flushed);
     info!(
         "  • Expected blocks: ~{}",
-        vectors.len() * vectors[0].vector.len() * 4 / (256 * 1024)
+        vectors_uncompressed.len() * vectors_uncompressed[0].vector.len() * 4 / (256 * 1024)
     );
 
     let compressed_size =

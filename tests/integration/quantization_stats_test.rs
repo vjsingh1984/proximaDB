@@ -222,11 +222,24 @@ async fn run_quantization_test(
     let flush_time = flush_start.elapsed();
 
     // Perform search test
-    let query = &vectors[0].vector;
+    let query = vectors[0].vector.clone();
+    let search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+        vector: Some(query),
+        top_k: Some(10),
+        distance_metric: Some(DistanceMetric::Cosine),
+        ..Default::default()
+    });
+
+    let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
+    let collection = std::sync::Arc::new(test_env.create_test_collection());
+    let query_context = proximadb::storage::traits::StorageQueryContext {
+        search_params,
+        collection,
+        metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+    };
+
     let search_start = Instant::now();
-    let search_results = sst_storage
-        .search_vectors(query, 10, None, &DistanceMetric::Cosine)
-        .await?;
+    let search_results = sst_storage.search_vectors_unified(&query_context).await?;
     let search_time = search_start.elapsed();
 
     // Calculate compression ratio

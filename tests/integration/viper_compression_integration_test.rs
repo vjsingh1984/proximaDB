@@ -262,11 +262,22 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
             distance_metric: DistanceMetric::Euclidean as i32,
             storage_engine: StorageEngine::Viper as i32,
             tags: vec![],
+            auto_index_selection: true,
+            owner: Some("test_user".to_string()),
+            embedding_models: vec!["test_model".to_string()],
             ..Default::default()
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: "/data/collections".to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Viper as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: "/data".to_string(),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
     };
 
     // Flush vectors
@@ -369,11 +380,22 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
             distance_metric: DistanceMetric::Euclidean as i32,
             storage_engine: StorageEngine::Viper as i32,
             tags: vec![],
+            auto_index_selection: true,
+            owner: Some("test_user".to_string()),
+            embedding_models: vec!["test_model".to_string()],
             ..Default::default()
         }),
         stats: None,
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+            primary_path: "/data/collections".to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Viper as i32,
+            engine_config: std::collections::HashMap::new(),
+            base_location: "/data".to_string(),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
     };
 
     // Create and flush diverse test data
@@ -728,10 +750,22 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
+                auto_index_selection: true,
+                owner: Some("test_user".to_string()),
+                embedding_models: vec!["test_model".to_string()],
+                ..Default::default()
             }),
             stats: None,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/data/collections".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Viper as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/data".to_string(),
+                assigned_at: chrono::Utc::now().timestamp(),
+            }),
         };
 
         // Flush test data
@@ -854,10 +888,22 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
                 filterable_columns: vec![],
                 index_configs: vec![],
                 quantization: None,
+                auto_index_selection: true,
+                owner: Some("test_user".to_string()),
+                embedding_models: vec!["test_model".to_string()],
+                ..Default::default()
             }),
             stats: None,
             created_at: chrono::Utc::now().timestamp(),
             updated_at: chrono::Utc::now().timestamp(),
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/data/collections".to_string(),
+                backup_paths: vec![],
+                engine: StorageEngine::Viper as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/data".to_string(),
+                assigned_at: chrono::Utc::now().timestamp(),
+            }),
         };
 
         // Flush vectors with high compression potential using sparse patterns

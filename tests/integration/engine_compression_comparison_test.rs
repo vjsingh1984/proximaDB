@@ -124,8 +124,8 @@ async fn test_engine_compression(
             // Create collection config once with compression
             let compression_config = proximadb::proto::proximadb_v1::CompressionConfig {
                 algorithm: algorithm_enum,
-                level: Some(level),
-                block_size_kb: Some(2048), // 2MB blocks for SST
+                level: Some(level as u32),
+                block_size_kb: 2048, // 2MB blocks for SST
                 ..Default::default()
             };
             let collection_compressed = env_compressed.create_test_collection_with_settings(
@@ -154,9 +154,7 @@ async fn test_engine_compression(
         }
         "VIPER" => {
             let mut viper_config = env_uncompressed.viper_config.clone();
-            if let Some(storage_config) = viper_config.storage_config.as_mut() {
-                storage_config.compression = Some("none".to_string());
-            }
+            viper_config.compression = "none".to_string();
 
             let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
                 viper_config,
@@ -181,9 +179,7 @@ async fn test_engine_compression(
             // Now test COMPRESSED
             let env_compressed = UnifiedTestEnvironment::new().await?;
             let mut viper_config = env_compressed.viper_config.clone();
-            if let Some(storage_config) = viper_config.storage_config.as_mut() {
-                storage_config.compression = Some(algorithm.to_string());
-            }
+            viper_config.compression = algorithm.to_string();
             viper_config.compression_level = level;
 
             let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(

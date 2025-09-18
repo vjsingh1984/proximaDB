@@ -115,7 +115,7 @@ async fn benchmark_configuration(
             }
             "VIPER" => {
                 let mut config = env_uncompressed.viper_config.clone();
-                config.compression = Some(proximadb::core::compression::CompressionAlgorithm::None);
+                config.compression = "none".to_string();
 
                 let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(
                     config,
@@ -157,8 +157,8 @@ async fn benchmark_configuration(
             // Create collection config once with compression
             let compression_config = proximadb::proto::proximadb_v1::CompressionConfig {
                 algorithm: algorithm_enum,
-                level: Some(level),
-                block_size_kb: Some(2048), // 2MB blocks for SST
+                level: Some(level as u32),
+                block_size_kb: 2048, // 2MB blocks for SST
                 ..Default::default()
             };
             let collection_compressed = env.create_test_collection_with_settings(
@@ -191,13 +191,7 @@ async fn benchmark_configuration(
         }
         "VIPER" => {
             let mut config = env.viper_config.clone();
-            config.compression = Some(match algorithm {
-                "zstd" => proximadb::core::compression::CompressionAlgorithm::Zstd,
-                "lz4" => proximadb::core::compression::CompressionAlgorithm::Lz4,
-                "snappy" => proximadb::core::compression::CompressionAlgorithm::Snappy,
-                "gzip" => proximadb::core::compression::CompressionAlgorithm::Gzip,
-                _ => proximadb::core::compression::CompressionAlgorithm::None,
-            });
+            config.compression = algorithm.to_string();
             config.compression_level = level;
 
             let engine = proximadb::storage::engines::impls::viper::ViperEngine::from_core_config(

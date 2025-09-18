@@ -191,7 +191,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
 
     let query_context = proximadb::storage::traits::StorageQueryContext {
         search_params,
-        collection,
+        collection: collection.clone(),
         metadata: proximadb::storage::traits::StorageQueryMetadata {
             collection_id: collection_id.to_string(),
             use_axis_indexes: false,

@@ -92,10 +92,10 @@ async fn test_rest_search_request_with_optimization_hints() -> Result<()> {
     });
 
     // Validate the structure
-    assert!(search_request.get(&key).is_some());
-    assert_eq!(search_request.get("k"), Some(&10));
+    assert!(search_request.get("optimization_hints").is_some());
+    assert_eq!(search_request.get("k"), Some(&serde_json::Value::Number(serde_json::Number::from(10))));
 
-    let hints = search_request.get(&key);
+    let hints = search_request.get("optimization_hints").unwrap();
     assert_eq!(hints["enable_two_stage_search"], true);
     assert_eq!(hints["candidate_multiplier"], 2.0);
     assert_eq!(hints["quantization_hint"], "PQ8");

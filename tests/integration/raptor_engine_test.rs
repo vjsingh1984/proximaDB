@@ -10,6 +10,7 @@ use proximadb::proto::proximadb_v1::{
 use proximadb::storage::engines::impls::raptor::RaptorEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
+use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
 /// Test setup helper
 async fn create_test_setup() -> (Arc<RaptorEngine>, TempDir) {
@@ -74,21 +75,25 @@ async fn test_raptor_engine_creation_and_insertion() {
         dimension: 128,
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Raptor as i32,
+        auto_index_selection: true,
+        owner: Some("test_user".to_string()),
+        embedding_models: vec!["test_model".to_string()],
         ..Default::default()
     };
 
     let vectors = create_test_vectors(100);
-    let batch_ids: Vec<BatchId> = (0..100).map(|i| BatchId::new(format!("batch_{}", i))).collect();
+    let batch_ids: Vec<BatchId> = (0..100).map(|_i| BatchId::new()).collect();
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("raptor_test_collection".to_string()),
         vector_records: vectors,
         batch_ids,
         force: true,
         synchronous: true,
-        collection_config: Some(config),
-        base_location: None,
-        flush_id: None,
-        merge_policy: None,
+        hints: std::collections::HashMap::new(),
+        timeout_ms: Some(30000),
+        trigger_compaction: false,
+        collection_config: None, // Will be set after creating collection
+        estimated_size: 1024 * 1024,
     };
 
     let flush_result = raptor_engine.flush(flush_params).await.unwrap();

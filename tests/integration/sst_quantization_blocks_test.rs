@@ -90,7 +90,7 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
 
         // Calculate compression ratio
         let uncompressed_size = num_vectors * vector_bytes;
-        let compression_ratio = uncompressed_size as f64 / flush_result.bytes_written as f64;
+        let compression_ratio = uncompressed_size as f64 / flush_result.bytes_written.unwrap_or(uncompressed_size as u64) as f64;
 
         info!("\n  📈 Compression Metrics:");
         info!(
@@ -99,20 +99,32 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
         );
         info!(
             "    • Compressed size: {:.2} MB",
-            flush_result.bytes_written as f64 / (1024.0 * 1024.0)
+            flush_result.bytes_written.unwrap_or(0) as f64 / (1024.0 * 1024.0)
         );
         info!("    • Compression ratio: {:.2}x", compression_ratio);
 
         // Test search to verify data integrity
+        // Test search using unified interface
         let query = vectors[0].vector.clone();
-        let search_results = sst_storage
-            .search_vectors(
-                &query,
-                10,
-                None,
-                &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-            )
-            .await?;
+        use proximadb::storage::traits::StorageQueryContext;
+
+        let search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+            vector: Some(query),
+            top_k: Some(10),
+            filters: None,
+            distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+            ..Default::default()
+        });
+
+        let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
+        let collection = std::sync::Arc::new(test_env.create_test_collection());
+        let query_context = StorageQueryContext {
+            search_params,
+            collection,
+            metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+        };
+
+        let search_results = sst_storage.search_vectors_unified(&query_context).await?;
 
         info!("\n  🔍 Search Validation:");
         info!("    • Results found: {}", search_results.len());
@@ -231,11 +243,11 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     info!("\n✅ Results with 256KB blocks:");
     info!(
         "  • Bytes written: {:.2} MB",
-        flush_result.bytes_written as f64 / (1024.0 * 1024.0)
+        flush_result.bytes_written.unwrap_or(0) as f64 / (1024.0 * 1024.0)
     );
     info!(
         "  • Actual compression: {:.1}x",
-        original_size as f64 / flush_result.bytes_written as f64
+        original_size as f64 / flush_result.bytes_written.unwrap_or(1) as f64
     );
     info!("  • Files created: {:?}", flush_result.files_created);
 
