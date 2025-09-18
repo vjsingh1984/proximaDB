@@ -2,11 +2,17 @@
 
 pub mod aws_iam;
 pub mod azure_ad;
+pub mod google_cloud;
+pub mod saml;
+pub mod oidc;
 pub mod types;
 
 pub use types::{SSOToken, SSOProvider, SSOValidationResult, EnterpriseUserContext};
 pub use aws_iam::AWSIAMIntegration;
 pub use azure_ad::AzureADIntegration;
+pub use google_cloud::GoogleCloudIntegration;
+pub use saml::SAMLIntegration;
+pub use oidc::OIDCIntegration;
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -15,10 +21,13 @@ use std::sync::Arc;
 pub struct SSOIntegrationManager {
     /// AWS IAM integration
     aws_integration: Option<Arc<AWSIAMIntegration>>,
-    
+
     /// Azure AD integration
     azure_integration: Option<Arc<AzureADIntegration>>,
-    
+
+    /// Google Cloud integration
+    google_cloud_integration: Option<Arc<GoogleCloudIntegration>>,
+
     /// Simple token cache for performance
     token_cache: Arc<dashmap::DashMap<String, CachedTokenValidation>>,
 }

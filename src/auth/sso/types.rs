@@ -18,10 +18,19 @@ pub struct SSOToken {
 /// Supported SSO providers
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SSOProvider {
+    #[serde(rename = "aws_iam")]
     AWSIAM,
+    #[serde(rename = "azure_ad")]
     AzureAD,
+    #[serde(rename = "google_cloud")]
     GoogleCloud,
+    #[serde(rename = "saml")]
+    SAML,
+    #[serde(rename = "oidc")]
+    OIDC,
+    #[serde(rename = "okta")]
     Okta,
+    #[serde(rename = "generic")]
     Generic,
 }
 

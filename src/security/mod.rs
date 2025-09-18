@@ -6,6 +6,7 @@
 pub mod unified_rbac;
 pub mod unified_auth;
 pub mod security_coordinator;
+pub mod advanced_features;
 
 pub use unified_rbac::{
     ConsolidatedRBACManager, UnifiedPermission, UnifiedRole, UnifiedUserContext,
@@ -18,6 +19,13 @@ pub use unified_auth::{
 
 pub use security_coordinator::{
     SecurityCoordinator, SecurityConfig, SecurityMode
+};
+
+pub use advanced_features::{
+    MFAService, RateLimitingService, IPAccessControlService,
+    MFAConfig, RateLimitConfig, IPAccessConfig,
+    MFAProvider, MFAChallenge, MFAVerificationResult,
+    RateLimitResult, IPAccessResult
 };
 
 /// Re-export common types for convenience
