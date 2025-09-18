@@ -170,10 +170,36 @@ impl ViperEngine {
         self.orchestrator = ctx.orchestrator.clone();
         self
     }
-    /// Create a new VIPER engine from user-facing core config
+    /// Create from core config (backward compatibility for tests)
     pub async fn from_core_config(
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
+    ) -> Result<Self> {
+        // Create VIPER metadata serializer
+        let metadata_serializer = Arc::new(
+            super::metadata_serializer::ViperMetadataSerializer::new()
+        );
+
+        // Get the base filesystem from factory
+        let base_fs = filesystem.get_filesystem("file://")?;
+
+        // Create UnifiedCachingFilesystem with VIPER serializer
+        let unified_fs = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+                base_fs,
+                "default".to_string(),
+                "viper".to_string(),
+                metadata_serializer,
+            )
+        );
+
+        Self::from_unified_filesystem(core_config, unified_fs).await
+    }
+
+    /// Create a new VIPER engine from user-facing core config
+    pub async fn from_unified_filesystem(
+        core_config: crate::core::config::ViperConfig,
+        filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     ) -> Result<Self> {
         let config = ViperEngineConfig::from_core_config(&core_config);
         Self::new_internal(config, core_config, filesystem).await
@@ -196,8 +222,27 @@ impl ViperEngine {
             "🔧 Creating VIPER engine with initial collection: {}",
             collection_id
         );
+
+        // Create VIPER metadata serializer
+        let metadata_serializer = Arc::new(
+            super::metadata_serializer::ViperMetadataSerializer::new()
+        );
+
+        // Get the base filesystem from factory
+        let base_fs = filesystem.get_filesystem("file://")?;
+
+        // Create UnifiedCachingFilesystem with VIPER serializer
+        let unified_fs = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+                base_fs,
+                collection_id.clone(),
+                "viper".to_string(),
+                metadata_serializer,
+            )
+        );
+
         // VIPER manages multiple collections, so we just log the initial one
-        Self::from_core_config(core_config, filesystem).await
+        Self::from_unified_filesystem(core_config, unified_fs).await
     }
 
     /// Constructor with explicit base location (for consistency with SST)
@@ -216,9 +261,28 @@ impl ViperEngine {
             "🔧 Creating VIPER engine for collection: {} with base location: {}",
             collection_id, base_location
         );
+
+        // Create VIPER metadata serializer
+        let metadata_serializer = Arc::new(
+            super::metadata_serializer::ViperMetadataSerializer::new()
+        );
+
+        // Get the base filesystem from factory
+        let base_fs = filesystem.get_filesystem(&base_location)?;
+
+        // Create UnifiedCachingFilesystem with VIPER serializer
+        let unified_fs = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+                base_fs,
+                collection_id,
+                "viper".to_string(),
+                metadata_serializer,
+            )
+        );
+
         // VIPER gets per-collection storage locations from collection metadata
         // The base_location here could be used as a fallback or override
-        Self::from_core_config(core_config, filesystem).await
+        Self::from_unified_filesystem(core_config, unified_fs).await
     }
 
     /// Internal constructor with both configs
@@ -237,7 +301,7 @@ impl ViperEngine {
     async fn new_internal(
         config: ViperEngineConfig,
         core_config: crate::core::config::ViperConfig,
-        filesystem: Arc<FilesystemFactory>,
+        filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     ) -> Result<Self> {
         let collection_service = Arc::new(RwLock::new(None));
 
@@ -1377,14 +1441,33 @@ impl Default for ViperEngine {
         tokio::runtime::Runtime::new()
             .unwrap()
             .block_on(async {
-                let filesystem = Arc::new(
+                let filesystem_factory = Arc::new(
                     FilesystemFactory::new(
                         crate::storage::persistence::filesystem::FilesystemConfig::default(),
                     )
                     .await
                     .unwrap(),
                 );
-                Self::from_core_config(crate::core::config::ViperConfig::default(), filesystem)
+
+                // Create VIPER metadata serializer
+                let metadata_serializer = Arc::new(
+                    super::metadata_serializer::ViperMetadataSerializer::new()
+                );
+
+                // Get base filesystem
+                let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+
+                // Create UnifiedCachingFilesystem
+                let unified_fs = Arc::new(
+                    crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+                        base_fs,
+                        "default".to_string(),
+                        "viper".to_string(),
+                        metadata_serializer,
+                    )
+                );
+
+                Self::from_unified_filesystem(crate::core::config::ViperConfig::default(), unified_fs)
                     .await
             })
             .unwrap()
