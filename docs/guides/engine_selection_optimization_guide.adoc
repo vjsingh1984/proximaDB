@@ -409,6 +409,15 @@ cat /proc/$(pgrep proximadb-server)/status | grep VmRSS
 - Log analytics
 - Temporal pattern recognition
 
+**Technical Deep Dive:**
+HELIX is a highly specialized engine optimized for temporal and time-series data. It achieves this through a sophisticated multi-stage process:
+
+1.  **Dimensionality Reduction with PCA**: High-dimensional vectors are first projected into a lower-dimensional space using Principal Component Analysis (PCA). This captures the most significant variance in the data, making the subsequent locality-preserving steps more effective.
+
+2.  **Locality-Preserving with Hilbert Curve**: The lower-dimensional vectors are then mapped onto a 1D Hilbert curve. This ensures that vectors that are close in the multi-dimensional space are also close on the 1D curve, providing excellent spatial locality.
+
+3.  **Temporal Optimization with Liquid Clustering**: This is the core of HELIX's temporal optimization. The engine monitors query patterns and access frequencies to identify "hot" (frequently and recently accessed) data. The liquid clustering mechanism then adaptively reorganizes the data, grouping these hot vectors together. This ensures that temporally relevant data is physically co-located, leading to significant performance improvements for time-series queries.
+
 **Configuration Optimization:**
 ```toml
 [storage.engines.helix]
