@@ -42,6 +42,7 @@ pub mod batch_operations;
 pub mod optimized_operations;
 pub mod progressive_search;
 pub mod superblock_cache;
+pub mod unified_metadata_serializer;
 pub mod unified_reader;
 
 // Re-export main engine type and cache
