@@ -234,7 +234,7 @@ flowchart LR
 == Additional Resources
 
 === **Community & Support**
-- **GitHub Repository**: https://github.com/proximadb/proximadb
+- **GitHub Repository**: https://github.com/vjsingh1984/proximadb
 - **Documentation Issues**: Report documentation gaps and improvements
 - **Community Discussions**: Technical questions and use cases
 - **Enterprise Support**: Priority support for production deployments
