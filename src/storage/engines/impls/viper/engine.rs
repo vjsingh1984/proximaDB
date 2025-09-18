@@ -92,9 +92,9 @@ pub struct ViperEngine {
     collection_service:
         Arc<RwLock<Option<Arc<crate::services::collection::manager::CollectionService>>>>,
 
-    /// Filesystem interface for storage operations
-    /// Supports local, S3, Azure, GCS backends transparently
-    filesystem: Arc<FilesystemFactory>,
+    /// Unified caching filesystem for optimized storage operations
+    /// Provides metadata caching, range optimization, and access tracking
+    filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
 
     /// Schema for columnar storage (shared with NOVA)
     /// Defines column types, compression, and encoding strategies

@@ -189,6 +189,7 @@ pub mod access_tracker;
 pub mod prefetch_engine;
 pub mod cache_metrics;
 pub mod orchestrator_integration;
+pub mod metadata_traits;
 
 #[cfg(test)]
 pub mod tests;

@@ -32,6 +32,7 @@ use super::range_optimizer::RangeOptimizer;
 use super::access_tracker::AccessPatternTracker;
 use super::prefetch_engine::PrefetchEngine;
 use super::cache_metrics::CacheMetrics;
+use super::metadata_traits::{EngineMetadataSerializer, GenericMetadataSerializer};
 
 /// Unified caching filesystem that consolidates all caching layers
 pub struct UnifiedCachingFilesystem {
@@ -60,6 +61,9 @@ pub struct UnifiedCachingFilesystem {
 
     /// Metrics
     metrics: Arc<CacheMetrics>,
+
+    /// Engine-specific metadata serializer (provided by the storage engine)
+    metadata_serializer: Arc<dyn EngineMetadataSerializer>,
 }
 
 impl UnifiedCachingFilesystem {
@@ -77,12 +81,45 @@ impl UnifiedCachingFilesystem {
         )
     }
 
-    /// Create with specific configuration
+    /// Create with engine-provided metadata serializer
+    pub fn with_serializer(
+        underlying_fs: Arc<dyn FileSystem>,
+        collection_id: String,
+        engine_type: String,
+        metadata_serializer: Arc<dyn EngineMetadataSerializer>,
+    ) -> Self {
+        Self::with_config_and_serializer(
+            underlying_fs,
+            UnifiedCacheConfig::default(),
+            collection_id,
+            engine_type,
+            metadata_serializer,
+        )
+    }
+
+    /// Create with specific configuration (uses generic serializer)
     pub fn with_config(
         underlying_fs: Arc<dyn FileSystem>,
         config: UnifiedCacheConfig,
         collection_id: String,
         engine_type: String,
+    ) -> Self {
+        Self::with_config_and_serializer(
+            underlying_fs,
+            config,
+            collection_id,
+            engine_type,
+            Arc::new(GenericMetadataSerializer),
+        )
+    }
+
+    /// Create with both configuration and serializer
+    pub fn with_config_and_serializer(
+        underlying_fs: Arc<dyn FileSystem>,
+        config: UnifiedCacheConfig,
+        collection_id: String,
+        engine_type: String,
+        metadata_serializer: Arc<dyn EngineMetadataSerializer>,
     ) -> Self {
         let config = Arc::new(config);
 
@@ -124,6 +161,7 @@ impl UnifiedCachingFilesystem {
             collection_id,
             engine_type,
             metrics,
+            metadata_serializer,
         }
     }
 
