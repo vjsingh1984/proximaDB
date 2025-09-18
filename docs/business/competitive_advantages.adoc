@@ -14,7 +14,7 @@
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 quadrantChart
     title Vector Database Platform Positioning
     x-axis Low Performance --> High Performance
@@ -85,7 +85,7 @@ quadrantChart
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 xychart-beta
     title "Multi-Platform Performance Leadership (Million ops/sec)"
     x-axis [128D, 256D, 512D, 1024D, 1536D]
@@ -105,7 +105,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 graph TB
     subgraph "TRADITIONAL SINGLE-ENGINE APPROACH"
         A[Single Storage Engine<br/>One-size-fits-all<br/>Performance compromises]
@@ -132,15 +132,15 @@ graph TB
     E --> H
     F --> I
 
-    style A fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style B fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style C fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style D fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style E fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style F fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style G fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style H fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style I fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
 ----
 
 === **Storage Engine Specialization Benefits**
@@ -191,7 +191,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 graph LR
     subgraph "TRADITIONAL AI INTEGRATION"
         A[Manual Development<br/>Custom code required<br/>Expert teams needed]
@@ -209,12 +209,12 @@ graph LR
     B --> E
     C --> F
 
-    style A fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style B fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style C fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style D fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style E fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style F fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
 ----
 
 === **AI Provider Ecosystem Comparison**
@@ -298,7 +298,7 @@ graph LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 gantt
     title Deployment Timeline Comparison
     dateFormat X
@@ -331,7 +331,7 @@ gantt
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 pie title "Annual Enterprise Platform Costs Comparison"
     "Traditional Multi-Vendor ($425K)" : 425
     "Single Vector Platform ($100K)" : 100
@@ -383,7 +383,7 @@ pie title "Annual Enterprise Platform Costs Comparison"
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 graph TB
     subgraph "PERFORMANCE LEADERSHIP"
         A[20.6M+ ops/sec<br/>Hardware acceleration<br/>Multi-platform optimization]
@@ -406,11 +406,11 @@ graph TB
     C --> E
     D --> E
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style B fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
     style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
     style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
 ----
 
 === **Competitive Advantages by Market Segment**
@@ -451,7 +451,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 pie title "Vector Database Market Segmentation (TAM: $4.3B by 2025)"
     "Enterprise Managed ($2.1B)" : 49
     "Infrastructure Platforms ($1.3B)" : 30

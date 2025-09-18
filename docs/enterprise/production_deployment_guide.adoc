@@ -7,7 +7,7 @@
 [.lead]
 **Complete production deployment guide** for ProximaDB's 7 storage engines with performance optimization and enterprise configuration.
 
-== icon:rocket[] **Production Architecture Overview**
+== image:icons/rocket.svg[Rocket,16,16] **Production Architecture Overview**
 
 === Storage Engine Portfolio
 
@@ -18,19 +18,19 @@ ProximaDB offers **7 production-ready storage engines** optimized for different 
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "REAL-TIME ENGINES"
-        A[SST Engine<br/>icon:check[] Row-based OLTP<br/>200K vec/sec writes<br/>5ms query latency]
-        B[SWIFT Engine<br/>icon:check[] Fast Traversal<br/>FastLanes encoding<br/>Ultra-low latency]
+        A[SST Engine<br/>✓ Row-based OLTP<br/>200K vec/sec writes<br/>5ms query latency]
+        B[SWIFT Engine<br/>✓ Fast Traversal<br/>FastLanes encoding<br/>Ultra-low latency]
     end
 
     subgraph "ANALYTICS ENGINES"
-        C[VIPER Engine<br/>icon:check[] Columnar Analytics<br/>Parquet optimization<br/>5K vec/sec throughput]
-        D[NOVA Engine<br/>icon:check[] Advanced Analytics<br/>Progressive quantization<br/>4K vec/sec, 90% compression]
+        C[VIPER Engine<br/>✓ Columnar Analytics<br/>Parquet optimization<br/>5K vec/sec throughput]
+        D[NOVA Engine<br/>✓ Advanced Analytics<br/>Progressive quantization<br/>4K vec/sec, 90% compression]
     end
 
     subgraph "SPECIALIZED ENGINES"
-        E[RAPTOR Engine<br/>icon:check[] Adaptive Workloads<br/>P×K optimization<br/>Dynamic adaptation]
-        F[PRISM Engine<br/>icon:check[] Memory Optimized<br/>Multi-resolution quantization<br/>60% memory reduction]
-        G[HELIX Engine<br/>icon:check[] Time-series Data<br/>Hilbert curve locality<br/>Temporal optimization]
+        E[RAPTOR Engine<br/>✓ Adaptive Workloads<br/>P×K optimization<br/>Dynamic adaptation]
+        F[PRISM Engine<br/>✓ Memory Optimized<br/>Multi-resolution quantization<br/>60% memory reduction]
+        G[HELIX Engine<br/>✓ Time-series Data<br/>Hilbert curve locality<br/>Temporal optimization]
     end
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
@@ -86,7 +86,7 @@ graph TB
 | Hilbert curve locality, temporal patterns
 |===
 
-== icon:clipboard[] **Engine Selection Guide**
+== image:icons/clipboard.svg[Clipboard,16,16] **Engine Selection Guide**
 
 === Workload-Based Engine Selection
 
@@ -171,7 +171,7 @@ flowchart TD
 | <1ms queries
 |===
 
-== icon:wrench[] **Production Configuration**
+== image:icons/wrench.svg[Wrench,16,16] **Production Configuration**
 
 === Basic Production Setup
 
@@ -319,7 +319,7 @@ background_thread_count = 4
 io_thread_pool_size = 8
 ```
 
-== icon:wrench[] **Production Deployment Steps**
+== image:icons/wrench.svg[Wrench,16,16] **Production Deployment Steps**
 
 === Step 1: Environment Preparation
 
@@ -452,7 +452,7 @@ curl -X POST http://localhost:5678/v1/collections/production_test/search \
   }'
 ```
 
-== icon:bar-chart[] **Monitoring and Operations**
+== image:icons/bar-chart.svg[Bar Chart,16,16] **Monitoring and Operations**
 
 === Production Monitoring
 
@@ -505,7 +505,7 @@ RUST_LOG=proximadb::storage=info ./proximadb-server 2>&1 | grep throughput
 cargo run --release --bin proximadb-bench -- --engine SST --vectors 100000
 ```
 
-== icon:refresh[] **Backup and Recovery**
+== image:icons/refresh.svg[Refresh,16,16] **Backup and Recovery**
 
 === Backup Strategy
 
@@ -554,7 +554,7 @@ sudo systemctl start proximadb
 curl http://localhost:5678/health
 ```
 
-== icon:rocket[] **Production Checklist**
+== image:icons/rocket.svg[Rocket,16,16] **Production Checklist**
 
 === Pre-Deployment Checklist
 
@@ -575,7 +575,7 @@ curl http://localhost:5678/health
 - [ ] **Backup Testing**: Recovery procedures verified
 - [ ] **Load Testing**: Production workload simulation successful
 
-== icon:book[] **Troubleshooting Guide**
+== image:icons/book.svg[Book,16,16] **Troubleshooting Guide**
 
 === Common Issues
 

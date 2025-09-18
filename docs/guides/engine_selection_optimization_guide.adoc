@@ -7,7 +7,7 @@
 [.lead]
 **Complete guide** for selecting and optimizing ProximaDB's 7 production-ready storage engines for maximum performance.
 
-== icon:bullseye[] **Engine Selection Decision Tree**
+== image:icons/bullseye.svg[Bullseye,16,16] **Engine Selection Decision Tree**
 
 === Quick Selection Guide
 
@@ -99,7 +99,7 @@ flowchart TD
 | Hilbert curve locality, temporal patterns
 |===
 
-== icon:wrench[] **Engine-Specific Optimization**
+== image:icons/wrench.svg[Wrench,16,16] **Engine-Specific Optimization**
 
 === SST Engine (Real-time OLTP)
 
@@ -461,7 +461,7 @@ RUST_LOG=helix::hilbert=debug proximadb-server 2>&1 | grep "locality_preserved"
 - **Locality preservation**: 90%+ for temporal data
 - **Space efficiency**: Natural temporal grouping reduces storage
 
-== icon:rocket[] **Multi-Engine Strategies**
+== image:icons/rocket.svg[Rocket,16,16] **Multi-Engine Strategies**
 
 === Hybrid Engine Deployments
 
@@ -534,7 +534,7 @@ curl localhost:5678/metrics | grep helix_
 # - helix_cluster_adaptation_frequency
 ```
 
-== icon:bar-chart[] **Benchmarking and Testing**
+== image:icons/bar-chart.svg[Bar Chart,16,16] **Benchmarking and Testing**
 
 === Engine-Specific Benchmarks
 
@@ -634,39 +634,39 @@ if __name__ == "__main__":
         benchmark_engine(engine, vector_count=1000)  # Smaller dataset for testing
 ```
 
-== icon:bullseye[] **Best Practices Summary**
+== image:icons/bullseye.svg[Bullseye,16,16] **Best Practices Summary**
 
 === Engine Selection Checklist
 
 **For Real-time Applications:**
-- icon:check[] Use **SST** for high-throughput OLTP (200K+ vec/sec)
-- icon:check[] Use **SWIFT** for ultra-low latency (<1ms)
-- icon:check[] Configure adequate memory buffers
-- icon:check[] Enable write-ahead logging for ACID compliance
+- image:icons/check.svg[Check,16,16] Use **SST** for high-throughput OLTP (200K+ vec/sec)
+- image:icons/check.svg[Check,16,16] Use **SWIFT** for ultra-low latency (<1ms)
+- image:icons/check.svg[Check,16,16] Configure adequate memory buffers
+- image:icons/check.svg[Check,16,16] Enable write-ahead logging for ACID compliance
 
 **For Analytics Workloads:**
-- icon:check[] Use **VIPER** for standard analytics (5K vec/sec)
-- icon:check[] Use **NOVA** for advanced research (4K vec/sec, 90% compression)
-- icon:check[] Optimize row group sizes for query patterns
-- icon:check[] Enable column-level compression
+- image:icons/check.svg[Check,16,16] Use **VIPER** for standard analytics (5K vec/sec)
+- image:icons/check.svg[Check,16,16] Use **NOVA** for advanced research (4K vec/sec, 90% compression)
+- image:icons/check.svg[Check,16,16] Optimize row group sizes for query patterns
+- image:icons/check.svg[Check,16,16] Enable column-level compression
 
 **For Resource-Constrained Environments:**
-- icon:check[] Use **PRISM** for 60% memory reduction
-- icon:check[] Configure aggressive quantization
-- icon:check[] Enable memory pooling and pressure monitoring
-- icon:check[] Monitor memory metrics continuously
+- image:icons/check.svg[Check,16,16] Use **PRISM** for 60% memory reduction
+- image:icons/check.svg[Check,16,16] Configure aggressive quantization
+- image:icons/check.svg[Check,16,16] Enable memory pooling and pressure monitoring
+- image:icons/check.svg[Check,16,16] Monitor memory metrics continuously
 
 **For Variable/Unknown Workloads:**
-- icon:check[] Use **RAPTOR** for adaptive optimization
-- icon:check[] Enable P×K optimization and workload learning
-- icon:check[] Configure reasonable adaptation intervals
-- icon:check[] Monitor adaptation metrics
+- image:icons/check.svg[Check,16,16] Use **RAPTOR** for adaptive optimization
+- image:icons/check.svg[Check,16,16] Enable P×K optimization and workload learning
+- image:icons/check.svg[Check,16,16] Configure reasonable adaptation intervals
+- image:icons/check.svg[Check,16,16] Monitor adaptation metrics
 
 **For Time-Series Data:**
-- icon:check[] Use **HELIX** for temporal optimization
-- icon:check[] Configure appropriate temporal grouping windows
-- icon:check[] Enable liquid clustering for query patterns
-- icon:check[] Optimize Hilbert curve order for data dimensionality
+- image:icons/check.svg[Check,16,16] Use **HELIX** for temporal optimization
+- image:icons/check.svg[Check,16,16] Configure appropriate temporal grouping windows
+- image:icons/check.svg[Check,16,16] Enable liquid clustering for query patterns
+- image:icons/check.svg[Check,16,16] Optimize Hilbert curve order for data dimensionality
 
 === Performance Optimization Principles
 

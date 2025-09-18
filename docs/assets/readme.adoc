@@ -7,7 +7,7 @@ ProximaDB brand assets and visual guidelines for marketing and presentation mate
 
 toc::[]
 
-== icon:palette[] Logo Variants
+== image:icons/palette.svg[Palette,16,16] Logo Variants
 
 [source,mermaid]
 ----
@@ -70,7 +70,7 @@ inkscape logos/proximadb-symbol.svg -w 180 -h 180 -o icons/apple-touch-icon-180.
 convert icons/favicon-{16,32,48}.png icons/favicon.ico
 ----
 
-== icon:file-image[] Cover Images
+== image:icons/file-image.svg[File Image,16,16] Cover Images
 
 === Social Media Covers
 
@@ -109,7 +109,7 @@ inkscape proximadb_cover.svg -w 1128 -h 191 -o covers/proximadb_linkedin.png
 inkscape proximadb_cover.svg -w 1500 -h 500 -o covers/proximadb_twitter.png
 ----
 
-== icon:bullseye[] Brand Guidelines
+== image:icons/bullseye.svg[Bullseye,16,16] Brand Guidelines
 
 === Usage Standards
 
@@ -163,7 +163,7 @@ pie title Brand Color Usage
 |Secondary text, borders
 |===
 
-== icon:mobile[] Digital Assets
+== image:icons/mobile.svg[Mobile,16,16] Digital Assets
 
 === Presentation Materials
 
@@ -192,7 +192,7 @@ pie title Brand Color Usage
 <meta name="twitter:image" content="/covers/proximadb_twitter.png">
 ----
 
-== icon:palette[] Asset Creation Guidelines
+== image:icons/palette.svg[Palette,16,16] Asset Creation Guidelines
 
 === Logo Modifications
 

@@ -52,7 +52,7 @@ graph LR
     style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
 ----
 
-**ProximaDB Enterprise v1.0.4** is **icon:check[] 100% production certified** with enterprise-grade capabilities.
+**ProximaDB Enterprise v1.0.4** is **✓ 100% production certified** with enterprise-grade capabilities.
 
 == Level 2: Technical Architecture (Medium Abstraction)
 
@@ -129,10 +129,10 @@ graph TB
 === Performance Architecture
 
 **Production Metrics**:
-- **Query Throughput**: 2,847+ queries/second icon:check[]
-- **Latency**: 23.4ms avg, 89.2ms P95, 156.7ms P99 icon:check[]
-- **Cache Efficiency**: 94.2% overall hit rate icon:check[]
-- **Memory Optimization**: 60-80% allocation reduction icon:check[]
+- **Query Throughput**: 2,847+ queries/second ✓
+- **Latency**: 23.4ms avg, 89.2ms P95, 156.7ms P99 ✓
+- **Cache Efficiency**: 94.2% overall hit rate ✓
+- **Memory Optimization**: 60-80% allocation reduction ✓
 
 [source,mermaid]
 ----
@@ -207,8 +207,8 @@ classDiagram
     ExecutionPlanner --> VectorPool
     CrossCacheOrchestrator --> VectorPool
     
-    note for UnifiedStorageEngine "All 7 storage engines<br/>implement this trait<br/>icon:check[] Production Ready"
-    note for CrossCacheOrchestrator "Unified cache coordination<br/>icon:check[] 94.2% Hit Rate<br/>icon:check[] 14 Cache Types"
+    note for UnifiedStorageEngine "All 7 storage engines<br/>implement this trait<br/>✓ Production Ready"
+    note for CrossCacheOrchestrator "Unified cache coordination<br/>✓ 94.2% Hit Rate<br/>✓ 14 Cache Types"
 ----
 
 === Query System Implementation
@@ -286,14 +286,14 @@ flowchart TD
 **Deployment Commands**:
 [source,bash]
 ----
-# icon:check[] One-click enterprise deployment
+# ✓ One-click enterprise deployment
 ./scripts/enterprise_deploy.sh --env production --replicas 3
 
-# icon:check[] Health verification
+# ✓ Health verification
 curl http://localhost:5678/health
 grpc-health-probe -addr=localhost:5679
 
-# icon:check[] Dashboard access
+# ✓ Dashboard access
 open http://localhost:5678/dashboard
 ----
 

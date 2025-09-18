@@ -22,7 +22,7 @@ image:https://img.shields.io/badge/Cost-95%25%20Reduction-purple[Cost Savings]
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 graph TB
     subgraph "TRADITIONAL: FRAGMENTED INFRASTRUCTURE"
         A1[Vector Database<br/>$100K/year<br/>Single-purpose tool]
@@ -43,14 +43,14 @@ graph TB
     A3 -.->|2-27x Performance| B3
     A4 -.->|Single Platform| B4
 
-    style A1 fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style A2 fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style A3 fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style A4 fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style B1 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B2 fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style B3 fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style B4 fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style A1 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style A2 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style A3 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style A4 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style B1 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style B2 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style B3 fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style B4 fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
 ----
 
 === **Business Impact Analysis**
@@ -84,7 +84,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 graph TB
     subgraph "QUERY INTERFACE"
         A[Natural Language<br/>Show me trending customers]
@@ -121,19 +121,19 @@ graph TB
     H --> L
     I --> M
 
-    style A fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#673ab7,stroke:#512da8,stroke-width:2px,color:#ffffff
-    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style K fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style L fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
-    style M fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+    style A fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style B fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style F fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style H fill:#0ea5e9,stroke:#0284c7,stroke-width:2px,color:#ffffff
+    style I fill:#6366f1,stroke:#4f46e5,stroke-width:2px,color:#ffffff
+    style J fill:#0d9488,stroke:#0f766e,stroke-width:2px,color:#ffffff
+    style K fill:#e11d48,stroke:#be185d,stroke-width:2px,color:#ffffff
+    style L fill:#ca8a04,stroke:#a16207,stroke-width:2px,color:#000000
+    style M fill:#64748b,stroke:#475569,stroke-width:2px,color:#ffffff
 ----
 
 == ⚡ Performance That Scales
@@ -142,7 +142,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 graph LR
     subgraph "Performance Benchmarks (Million ops/sec)"
         A[128D DotProduct<br/>20.6M ops/sec]
@@ -151,10 +151,10 @@ graph LR
         D[1536D Manhattan<br/>1.2M ops/sec]
     end
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:3px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:3px,color:#ffffff
-    style C fill:#ff9800,stroke:#f57c00,stroke-width:3px,color:#ffffff
-    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:3px,color:#ffffff
+    style A fill:#16a34a,stroke:#15803d,stroke-width:3px,color:#ffffff
+    style B fill:#2563eb,stroke:#1d4ed8,stroke-width:3px,color:#ffffff
+    style C fill:#ea580c,stroke:#c2410c,stroke-width:3px,color:#ffffff
+    style D fill:#9333ea,stroke:#7c3aed,stroke-width:3px,color:#ffffff
 ----
 
 === **Memory Efficiency by Engine**
@@ -190,7 +190,7 @@ graph LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 flowchart LR
     A[CEO asks:<br/>Who are our top customers<br/>by profitability this quarter?] --> B[ProximaDB AI<br/>Natural Language Processing]
     B --> C[Query Translation<br/>English to Data Operations]
@@ -199,13 +199,13 @@ flowchart LR
     E --> F[Business Intelligence<br/>Automated insights]
     F --> G[Answer:<br/>Based on analysis of 50K customers<br/>here are your top 10 by 40% profit margin<br/>with growth recommendations]
 
-    style A fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style B fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style A fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style B fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style D fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style E fill:#e11d48,stroke:#be185d,stroke-width:2px,color:#ffffff
+    style F fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style G fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
 ----
 
 === **AI-Powered Applications**
@@ -304,7 +304,7 @@ cache_size = "8GB"
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 pie title "Annual Enterprise Costs Comparison"
     "Traditional Fragmented Solution" : 425
     "ProximaDB Unified Platform" : 25
@@ -526,10 +526,10 @@ flowchart TD
     C --> F[Value Proposition<br/>ROI analysis<br/>Competitive advantages]
     D --> G[Production Guide<br/>Enterprise setup<br/>Performance optimization]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style F fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style G fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
 ----
 
 == 🚀 Start Your Transformation
@@ -548,10 +548,10 @@ flowchart LR
     C --> F[Executive Overview<br/>ROI calculator<br/>Competitive analysis]
     D --> G[Production Guide<br/>Enterprise setup<br/>Security framework]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style F fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style G fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
 ----
 
 === **Immediate Next Steps**
