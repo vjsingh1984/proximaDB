@@ -1033,45 +1033,22 @@ impl AxisEventLogConsumer {
                             // Use unified cache orchestrator
                             let cache = self.cache_orchestrator.clone();
 
-                            // Create ZeroCopyFilesystem for RAPTOR
-                            use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
-                            use crate::storage::persistence::filesystem::FilesystemFactory;
-                            use crate::storage::persistence::filesystem::local::{
-                                LocalConfig, LocalFileSystem,
-                            };
-                            use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
+                            // Create UnifiedCachingFilesystem for RAPTOR
+                            use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 
-                            // Create basic filesystem
-                            let local_config = LocalConfig::default();
-                            let local_fs =
-                                Arc::new(LocalFileSystem::new(local_config).await.unwrap())
-                                    as Arc<dyn crate::storage::persistence::filesystem::FileSystem>;
-
-                            // Create filesystem factory for zero-copy system
-                            use crate::storage::persistence::filesystem::FilesystemConfig;
+                            // Create filesystem factory
                             let fs_config = FilesystemConfig::default();
                             let fs_factory =
                                 Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
 
-                            // Create zero-copy IO system
-                            use crate::storage::engines::core::io::zero_copy::ZeroCopyIOConfig;
-                            let io_config = ZeroCopyIOConfig::default();
-                            let io_system = Arc::new(
-                                ZeroCopyIOSystem::new(
-                                    io_config,
-                                    fs_factory.clone(),
-                                    vec![], // Empty metadata serializers for now
+                            // Get unified caching filesystem
+                            let unified_fs = fs_factory
+                                .get_unified_caching_filesystem(
+                                    &format!("file://{}", cache_dir),
+                                    collection_id.to_string(),
+                                    "raptor".to_string(),
                                 )
-                                .await?,
-                            );
-
-                            // Create zero-copy filesystem
-                            let zero_copy_fs = Arc::new(ZeroCopyFilesystem::new(
-                                local_fs,
-                                io_system.clone(),
-                                collection_id.to_string(),
-                                "raptor".to_string(),
-                            ));
+                                .unwrap();
 
                             // Create transaction coordinator for RAPTOR
                             let transaction_coordinator = Arc::new(
@@ -1087,8 +1064,7 @@ impl AxisEventLogConsumer {
                                 collection_id.to_string(),
                                 config,
                                 cache,
-                                zero_copy_fs.clone(),
-                                io_system.clone(),
+                                unified_fs.clone(),
                                 transaction_coordinator,
                             );
 

@@ -1236,14 +1236,14 @@ impl Flush {
             temp_file_path, final_path
         );
 
-        // Check if we have ZeroCopyFilesystem for optimal performance
-        if let Some(zero_copy_fs) =
+        // Check if we have UnifiedCachingFilesystem for optimal performance
+        if let Some(unified_fs) =
             fs.as_any()
-                .downcast_ref::<crate::storage::persistence::filesystem::ZeroCopyFilesystem>()
+                .downcast_ref::<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>()
         {
-            info!("✅ Using ZeroCopyFilesystem with intelligent staging and caching");
+            info!("✅ Using UnifiedCachingFilesystem with intelligent staging and caching");
 
-            // Read data once for zero-copy write
+            // Read data once for optimized write
             let data = std::fs::read(temp_file_path)?;
 
             // Configure write options for atomic operation
@@ -1254,13 +1254,13 @@ impl Flush {
                 ..Default::default()
             };
 
-            // Use intelligent staging which:
+            // Use unified filesystem which:
             // 1. Writes to optimal temp location
             // 2. Populates local cache for fast reads (hydrates indexes)
             // 3. Asynchronously uploads to cloud
             // 4. Returns immediately after local cache write
-            zero_copy_fs
-                .write_with_intelligent_staging(&final_path, &data, &write_options)
+            unified_fs
+                .write(&final_path, &data)
                 .await?;
 
             info!("✅ Zero-copy write complete with cache population for index hydration");

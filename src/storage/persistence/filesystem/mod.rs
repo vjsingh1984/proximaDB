@@ -173,11 +173,11 @@ use url::Url;
 
 pub mod atomic_strategy;
 pub mod auth;
-pub mod intelligent_filesystem;
+// intelligent_filesystem removed - using UnifiedCachingFilesystem instead
 pub mod local;
 pub mod manager;
 pub mod write_strategy;
-pub mod zero_copy_filesystem;
+// zero_copy_filesystem removed - functionality integrated into UnifiedCachingFilesystem
 
 // Unified filesystem modules
 pub mod unified;
@@ -194,9 +194,8 @@ pub mod metadata_traits;
 #[cfg(test)]
 pub mod tests;
 
-// Zero-copy filesystem with intelligent caching
+// Filesystem implementations
 pub use local::LocalFileSystem;
-pub use zero_copy_filesystem::{ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
 
 /// Filesystem operation result type
 pub type FsResult<T> = Result<T, FilesystemError>;
@@ -919,25 +918,18 @@ impl FilesystemFactory {
     ///     engine_type,
     /// )?;
     /// ```
+    #[deprecated(
+        since = "1.0.0",
+        note = "Use get_unified_caching_filesystem instead. This method now redirects to it."
+    )]
     pub fn get_intelligent_filesystem(
         &self,
         url: &str,
         collection_id: String,
         engine_type: String,
-    ) -> FsResult<
-        Arc<crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem>,
-    > {
-        // Get the appropriate filesystem for this URL
-        let fs = self.get_filesystem(url)?;
-
-        // Wrap it with IntelligentFilesystem for caching
-        let intelligent_fs = crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem::new(
-            fs,
-            collection_id,
-            engine_type,
-        );
-
-        Ok(Arc::new(intelligent_fs))
+    ) -> FsResult<Arc<dyn FileSystem>> {
+        // Redirect to the new unified filesystem
+        self.get_unified_caching_filesystem(url, collection_id, engine_type)
     }
 
     /// Create filesystem with unified caching

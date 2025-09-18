@@ -1952,16 +1952,16 @@ impl UnifiedStorageEngine for ViperEngine {
             search_context.collection_id
         );
 
-        // Get IntelligentFilesystem for VIPER - critical for cloud storage performance
+        // Get UnifiedCachingFilesystem for VIPER - critical for cloud storage performance
         // Caches Parquet metadata, bloom filters, and frequently accessed blocks
-        let intelligent_fs = self
+        let unified_fs = self
             .filesystem
-            .get_intelligent_filesystem(
+            .get_unified_caching_filesystem(
                 &storage_url,
                 collection_id.to_string(),
                 crate::storage::engines::ENGINE_VIPER.to_string(),
             )
-            .map_err(|e| anyhow!("Failed to create intelligent filesystem: {}", e))?;
+            .map_err(|e| anyhow!("Failed to create unified filesystem: {}", e))?;
 
         // Create the Parquet reader - it will use filesystem factory internally
         // TODO: Update UnifiedParquetReader to accept IntelligentFilesystem for better caching

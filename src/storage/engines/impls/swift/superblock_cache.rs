@@ -15,7 +15,7 @@ use tracing::info;
 // Block structures handled internally
 // Bloom filter handled internally
 
-use crate::storage::persistence::filesystem::ZeroCopyFilesystem;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// SWIFT-specific superblock cache optimized for tree navigation and instant traversal
 pub struct SwiftSuperBlockCache {
@@ -42,7 +42,7 @@ pub struct SwiftSuperBlockCache {
     tree_path_cache: Arc<DashMap<String, Arc<OptimalTreePath>>>,
 
     /// Filesystem for loading/storing cache data
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
 
     /// Cache statistics
     cache_stats: Arc<SwiftCacheStatistics>,
@@ -268,7 +268,7 @@ struct SwiftCacheStatistics {
 
 impl SwiftSuperBlockCache {
     pub fn new(
-        filesystem: Arc<ZeroCopyFilesystem>,
+        filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
         datablock_cache_size: usize,
         datablock_ttl_sec: u64,
         progressive_ttl_sec: u64,

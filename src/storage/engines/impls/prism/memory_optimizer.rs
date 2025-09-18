@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::core::VectorRecord;
-use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// Memory tier configuration for PRISM's hierarchical caching
 /// Aligned with PRISM's progressive quantization levels
@@ -98,7 +98,7 @@ pub struct MemoryOptimizedStorage {
     fp32_cache: Arc<RwLock<LruCache<String, (Arc<VectorRecord>, Instant)>>>,
 
     /// Cloud storage interface for L0 FP32 files
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
 
     /// Access statistics for adaptive caching
     access_stats: Arc<AccessStatistics>,
@@ -158,7 +158,7 @@ pub struct MemoryMonitor {
 }
 
 impl MemoryOptimizedStorage {
-    pub fn new(config: MemoryTierConfig, filesystem: Arc<ZeroCopyFilesystem>) -> Result<Self> {
+    pub fn new(config: MemoryTierConfig, filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem>) -> Result<Self> {
         let fp32_capacity =
             (config.fp32_cache_size_mb * 1024 * 1024) / std::mem::size_of::<VectorRecord>();
 
@@ -659,7 +659,7 @@ pub struct PrismMemoryOptimizer {
 }
 
 impl PrismMemoryOptimizer {
-    pub fn new(config: MemoryTierConfig, filesystem: Arc<ZeroCopyFilesystem>) -> Result<Self> {
+    pub fn new(config: MemoryTierConfig, filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem>) -> Result<Self> {
         Ok(Self {
             storage: Arc::new(MemoryOptimizedStorage::new(config, filesystem.clone())?),
             filesystem,

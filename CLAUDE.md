@@ -336,7 +336,7 @@ ProximaDB is a unified intelligence platform combining vector search, graph rela
 1. **Storage Layer** (`src/storage/`)
    - **Multiple Storage Engines**: SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX
    - **Unified Storage Interface**: All engines implement `UnifiedStorageEngine` trait
-   - **IntelligentFilesystem**: Unified filesystem abstraction with caching (wraps Local, S3, Azure, GCS)
+   - **UnifiedCachingFilesystem**: Consolidated filesystem with integrated caching for Local, S3, Azure, GCS
    - **Write-Ahead Log (WAL)**: Located in `src/storage/persistence/write_ahead_log/`
    - **Metadata Store**: Atomic operations with cloud backend support
 
@@ -397,7 +397,7 @@ ProximaDB is a unified intelligence platform combining vector search, graph rela
 2. **Zero-Copy Operations**: Direct memory access without intermediate serialization
 3. **Unified Quantization**: All engines delegate to `compute::quantization::unified`
 4. **Hardware Adaptive**: Automatic CPU/GPU feature detection and optimization
-5. **IntelligentFilesystem**: Single abstraction for all storage backends with caching
+5. **UnifiedCachingFilesystem**: Consolidated abstraction for all storage backends with integrated caching
 
 ### Configuration
 
@@ -430,7 +430,7 @@ Important Cargo feature flags (use with `--features`):
 
 ### Multi-Region Strategy
 ProximaDB leverages **cloud-native multi-region capabilities** through:
-- **IntelligentFilesystem**: Multi-cloud abstraction handles S3 Cross-Region Replication, Azure Geo-Redundancy, GCS Multi-Region buckets
+- **UnifiedCachingFilesystem**: Multi-cloud abstraction handles S3 Cross-Region Replication, Azure Geo-Redundancy, GCS Multi-Region buckets
 - **Asynchronous Storage Replication**: Cloud providers handle data replication automatically
 - **Application Coordination**: ProximaDB coordinates cross-region access through intelligent routing
 - **On-Premises**: Incremental rsync for data synchronization between sites
@@ -446,11 +446,12 @@ All storage engines use the unified quantization module at `src/compute/quantiza
 - **Hardware Acceleration**: AVX2/AVX512/NEON SIMD optimizations
 
 ### Filesystem Architecture
-IntelligentFilesystem (`src/storage/persistence/filesystem/intelligent_filesystem.rs`):
-- **Unified Interface**: Wraps Local, S3, Azure, GCS filesystems
-- **Caching Layer**: Metadata and file content caching with LRU eviction
-- **Zero-Copy I/O**: Direct memory mapping where possible
-- **Factory Pattern**: FilesystemFactory routes URLs to appropriate implementations
+UnifiedCachingFilesystem (`src/storage/persistence/filesystem/unified.rs`):
+- **Consolidated Interface**: Single entry point for all filesystem operations
+- **Integrated Caching**: Unified metadata cache, disk cache, and prefetch engine
+- **Zero-Copy I/O**: Integrated ZeroCopyIOSystem for optimized I/O operations
+- **Engine-Aware**: Engine-specific metadata serialization for optimal caching
+- **Factory Pattern**: FilesystemFactory.get_unified_caching_filesystem() for instantiation
 
 ### Storage Engine Integration
 All engines implement the `UnifiedStorageEngine` trait with:
@@ -472,7 +473,7 @@ All engines implement the `UnifiedStorageEngine` trait with:
    - `trait bound not satisfied`: Verify trait implementations and generic constraints
 4. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, SST, SWIFT, RAPTOR, PRISM, HELIX)
 5. **Quantization Issues**: All engines should use `compute::quantization::unified`
-6. **Filesystem Issues**: All engines should use `IntelligentFilesystem`
+6. **Filesystem Issues**: All engines should use `UnifiedCachingFilesystem`
 7. **Proto Types**: Use internal types, proto conversion only at service boundaries
 8. **Quick Error Resolution**:
    ```bash
@@ -521,7 +522,8 @@ All engines implement the `UnifiedStorageEngine` trait with:
 - `proto/proximadb.proto`: Protocol buffer definitions
 - `src/storage/engines/factory.rs`: Storage engine selection logic
 - `src/compute/quantization/unified.rs`: Unified quantization engine
-- `src/storage/persistence/filesystem/intelligent_filesystem.rs`: Unified filesystem
+- `src/storage/persistence/filesystem/unified.rs`: Unified caching filesystem
+- `src/storage/persistence/filesystem/mod.rs`: Filesystem factory and exports
 - `build.rs`: Protocol buffer compilation and build configuration
 - `Cargo.toml`: Dependencies and feature flags configuration
 - `config/config.toml`: Main server configuration file
@@ -622,7 +624,7 @@ Supports automatic protocol selection (REST/gRPC) with:
    cargo build --target aarch64-apple-darwin  # Explicit ARM64 target on macOS
    ```
 4. **Quantization errors**: Ensure all engines use unified quantization module
-5. **Filesystem errors**: Ensure all engines use IntelligentFilesystem
+5. **Filesystem errors**: Ensure all engines use UnifiedCachingFilesystem
 6. **Compilation tracking**: Use `current_error.log` to track ongoing compilation issues
 7. **Dependency issues**:
    ```bash
