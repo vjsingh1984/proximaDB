@@ -220,7 +220,7 @@ ProximaDB is currently in **active development**. While core functionality is im
 == Getting Involved
 
 === Contributing
-* **Code Contributions**: See link:CONTRIBUTING.adoc[Contributing Guide]
+* **Code Contributions**: See project repository for contributing guidelines
 * **Documentation**: Help improve documentation
 * **Testing**: Help test features and report bugs
 * **Feedback**: Provide feedback on features and usability

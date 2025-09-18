@@ -27,7 +27,7 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 === Architecture
 * link:technical/platform_architecture.adoc[Platform Architecture] - Overall system architecture
 * link:technical/storage_engine_layouts.adoc[Storage Engine Layouts] - Detailed storage engine specifications
-* link:technical/performance_optimization.adoc[Performance Optimization] - Performance tuning guide
+* link:technical/ai_intelligence_platform.adoc[AI Intelligence Platform] - AI and LLM integration
 
 === API Reference
 * link:reference/graph_api_reference.adoc[Graph API Reference] - Graph database API documentation
@@ -38,13 +38,11 @@ Comprehensive documentation for ProximaDB vector database, including guides, tec
 
 === Production Deployment
 * link:operations/production_runbook.adoc[Production Runbook] - Production operations guide
-* link:operations/monitoring.adoc[Monitoring Guide] - Monitoring and alerting setup
-* link:operations/troubleshooting.adoc[Troubleshooting Guide] - Common issues and solutions
+* link:enterprise/production_deployment_guide.adoc[Production Deployment] - Enterprise deployment guide
 
-=== Maintenance
-* link:operations/backup_restore.adoc[Backup & Restore] - Data backup and recovery procedures
-* link:operations/upgrade.adoc[Upgrade Guide] - Version upgrade procedures
-* link:operations/scaling.adoc[Scaling Guide] - Horizontal and vertical scaling
+=== Performance and Monitoring
+* link:performance_comprehensive.adoc[Performance Guide] - Complete performance analysis
+* link:performance_benchmark_charts.adoc[Benchmark Charts] - Performance visualization
 
 == Enterprise Features
 
