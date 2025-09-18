@@ -18,11 +18,8 @@ use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistan
 use crate::core::search::results::OptimizedSearchRecord;
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
-use crate::storage::engines::core::io::zero_copy::{BandwidthOptimizer, ZeroCopyIOSystem};
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
-use crate::storage::persistence::filesystem::{
-    FileSystem, zero_copy_filesystem::ZeroCopyFilesystem,
-};
+use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 use super::common::{
@@ -239,14 +236,8 @@ pub struct RaptorReader {
     /// FastLanes decoder for SIMD-optimized decompression
     fastlanes_decoder: FastLanesDecoder,
 
-    /// Bandwidth optimizer for smart I/O decisions
-    _bandwidth_optimizer: Option<Arc<BandwidthOptimizer>>,
-
-    /// Filesystem for zero-copy operations
-    filesystem: Arc<ZeroCopyFilesystem>,
-
-    /// Zero-copy I/O system for metadata caching
-    zero_copy_system: Arc<ZeroCopyIOSystem>,
+    /// Filesystem for unified caching operations
+    filesystem: Arc<dyn FileSystem>,
 
     /// Collection ID for cache keys
     collection_id: String,
@@ -298,8 +289,7 @@ impl RaptorReader {
         collection_id: String,
         config: RaptorConfig,
         cache: Arc<CrossCacheOrchestrator>,
-        filesystem: Arc<ZeroCopyFilesystem>,
-        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        filesystem: Arc<dyn FileSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
         // Initialize FastLanes decoder based on config
@@ -316,18 +306,12 @@ impl RaptorReader {
             cache,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             fastlanes_decoder: FastLanesDecoder::new(fastlanes_scheme),
-            _bandwidth_optimizer: None,
             filesystem,
-            zero_copy_system,
             transaction_coordinator,
         }
     }
 
-    /// Create reader with bandwidth optimization support
-    pub fn with_bandwidth_optimizer(mut self, optimizer: Arc<BandwidthOptimizer>) -> Self {
-        self._bandwidth_optimizer = Some(optimizer);
-        self
-    }
+    // Bandwidth optimization is now handled internally by UnifiedCachingFilesystem
 
     /// Read row groups - DIRECT unified module usage, no wrappers
     pub async fn read_row_groups_selective(

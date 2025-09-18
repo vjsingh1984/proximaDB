@@ -146,6 +146,7 @@ pub mod multi_stage_filter;
 pub mod readers;
 pub mod row_filter;
 pub mod streaming_compaction;
+pub mod unified_metadata_serializer;
 pub mod writer;
 
 // Test modules
@@ -1546,10 +1547,8 @@ pub struct SstStorage {
     compaction_manager: Option<Arc<Compaction>>,
     filesystem: Arc<FilesystemFactory>,
     // Intelligent filesystem for caching and optimized I/O
-    // Caches SSTable metadata, bloom filters, and frequently accessed blocks
-    intelligent_fs: Option<
-        Arc<crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem>,
-    >,
+    // Unified caching filesystem for SSTable operations
+    unified_fs: Option<Arc<dyn crate::storage::persistence::filesystem::FileSystem>>,
     // Atomic coordinator for safe flush and compaction operations
     atomic_coordinator: Arc<TransactionCoordinator>,
     // Shared reader across all collections
@@ -1603,7 +1602,7 @@ impl SstStorage {
             })?,
         );
 
-        // SST will create IntelligentFilesystem instances per collection for optimal caching
+        // SST will create UnifiedCachingFilesystem instances per collection for optimal caching
         // This dramatically reduces I/O for frequently accessed SSTable blocks
 
         // Create SSTable reader - using empty collection_id as SST is now singleton
@@ -1672,7 +1671,7 @@ impl SstStorage {
             config,
             compaction_manager,
             filesystem,
-            intelligent_fs: None, // Created per collection
+            unified_fs: None, // Created per collection
             atomic_coordinator,
             sstable_reader,
             distance_compute,
@@ -4561,15 +4560,15 @@ impl SstStorage {
         let storage_url = self.get_collection_storage_url(collection_id).await?;
         let metadata_path = format!("{}/metadata.json", storage_url);
         
-        // Get IntelligentFilesystem for this collection
-        let intelligent_fs = self.filesystem.get_intelligent_filesystem(
+        // Get UnifiedCachingFilesystem for this collection
+        let unified_fs = self.filesystem.get_unified_caching_filesystem(
             &storage_url,
             collection_id.to_string(),
             "sst".to_string(),
         )?;
         
         // Try to load existing metadata, or create default if not found
-        match intelligent_fs.read("metadata.json").await {
+        match unified_fs.read("metadata.json").await {
             Ok(metadata_bytes) => {
                 // Parse existing metadata
                 let metadata: serde_json::Value = serde_json::from_slice(&metadata_bytes)
@@ -4725,14 +4724,14 @@ impl SstStorage {
     pub async fn contains_vector(&self, collection_id: &str, id: &str) -> Result<bool> {
         // Check if vector exists using bloom filters or direct lookup
         let storage_url = self.get_collection_storage_url(collection_id).await?;
-        let intelligent_fs = self.intelligent_fs.as_ref()
-            .ok_or_else(|| SstError::Internal("Intelligent filesystem not initialized".to_string()))?;
+        let unified_fs = self.unified_fs.as_ref()
+            .ok_or_else(|| SstError::Internal("Unified filesystem not initialized".to_string()))?;
         
         // SST storage uses disk-based lookup directly
         // Check if vector exists in SST files using bloom filters
         
         // Check bloom filters in SST files
-        let files = match intelligent_fs.list("/").await {
+        let files = match unified_fs.list("/").await {
             Ok(files) => files,
             Err(_) => return Ok(false),
         };
@@ -4740,7 +4739,7 @@ impl SstStorage {
         for entry in files.iter().filter(|f| f.name.ends_with(".sst")) {
             // For simplicity, assume existence if we can read the file
             // In production, we would check bloom filters here
-            if intelligent_fs.exists(&entry.name).await.unwrap_or(false) {
+            if unified_fs.exists(&entry.name).await.unwrap_or(false) {
                 // This is a placeholder - in production we'd check bloom filters
                 // For now, we'll do a simple existence check
                 return Ok(true); // Conservative approach
@@ -4753,11 +4752,11 @@ impl SstStorage {
     /// Clean up collection files
     pub async fn cleanup_collection_files(&self, collection_id: &str) -> Result<()> {
         let storage_url = self.get_collection_storage_url(collection_id).await?;
-        let intelligent_fs = self.intelligent_fs.as_ref()
-            .ok_or_else(|| SstError::Internal("Intelligent filesystem not initialized".to_string()))?;
+        let unified_fs = self.unified_fs.as_ref()
+            .ok_or_else(|| SstError::Internal("Unified filesystem not initialized".to_string()))?;
         
         // List all files for the collection
-        let files = match intelligent_fs.list("/").await {
+        let files = match unified_fs.list("/").await {
             Ok(files) => files,
             Err(e) => {
                 warn!("Failed to list collection files for cleanup: {}", e);
@@ -4768,7 +4767,7 @@ impl SstStorage {
         // Clean up SST files, bloom filters, etc.
         for entry in files.iter() {
             if entry.name.ends_with(".sst") || entry.name.ends_with(".bloom") || entry.name.ends_with(".meta") {
-                if let Err(e) = intelligent_fs.delete(&entry.name).await {
+                if let Err(e) = unified_fs.delete(&entry.name).await {
                     warn!("Failed to delete collection file {}: {}", entry.name, e);
                     // Continue with other files
                 }

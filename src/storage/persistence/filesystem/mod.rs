@@ -940,6 +940,62 @@ impl FilesystemFactory {
         Ok(Arc::new(intelligent_fs))
     }
 
+    /// Create filesystem with unified caching
+    ///
+    /// # Example
+    /// ```
+    /// let cached_fs = factory.get_unified_caching_filesystem(
+    ///     "s3://bucket/collection",
+    ///     "collection_123".to_string(),
+    ///     "sst".to_string(),
+    /// )?;
+    /// ```
+    pub fn get_unified_caching_filesystem(
+        &self,
+        url: &str,
+        collection_id: String,
+        engine_type: String,
+    ) -> FsResult<Arc<dyn FileSystem>> {
+        // Get the appropriate filesystem for this URL
+        let fs = self.get_filesystem(url)?;
+
+        // Get the metadata serializer for this engine type
+        let metadata_serializer: Box<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
+            match engine_type.as_str() {
+                "sst" => Box::new(crate::storage::engines::impls::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
+                "viper" => Box::new(crate::storage::engines::impls::viper::metadata_serializer::ViperMetadataSerializer::new()),
+                "raptor" => Box::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
+                _ => {
+                    // Default serializer for other engines
+                    struct DefaultSerializer;
+                    impl crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer for DefaultSerializer {
+                        fn serialize(&self, _metadata: &dyn std::any::Any) -> anyhow::Result<bytes::Bytes> {
+                            Ok(bytes::Bytes::new())
+                        }
+                        fn deserialize(&self, _bytes: &[u8]) -> anyhow::Result<Box<dyn std::any::Any + Send + Sync>> {
+                            Ok(Box::new(()))
+                        }
+                        fn engine_type(&self) -> &str { "default" }
+                        fn extract_cacheable_component(&self, _data: &[u8], _file_path: &str) -> Option<bytes::Bytes> {
+                            None
+                        }
+                        fn should_cache_metadata(&self, _file_path: &str) -> bool { false }
+                    }
+                    Box::new(DefaultSerializer)
+                }
+            };
+
+        // Wrap it with UnifiedCachingFilesystem for caching
+        let unified_fs = crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+            fs,
+            collection_id,
+            engine_type,
+            metadata_serializer,
+        );
+
+        Ok(Arc::new(unified_fs) as Arc<dyn FileSystem>)
+    }
+
     /// Cross-storage atomic operations - handles full URLs for source and destination
     pub async fn copy_atomic(&self, from_url: &str, to_url: &str) -> FsResult<()> {
         info!("📋 [DEBUG] copy_atomic START");

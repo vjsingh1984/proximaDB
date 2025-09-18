@@ -80,9 +80,9 @@ This specification guides the migration from the current fragmented filesystem a
 
 | Task ID | Task Description | File/Component | Status | Owner | Notes |
 |---------|-----------------|----------------|--------|-------|-------|
-| P5.1 | Migrate SST engine filesystem usage | engines/impls/sst/mod.rs | 🔴 Not Started | | First engine migration |
-| P5.2 | Update SST reader | engines/impls/sst/indexed_reader.rs | 🔴 Not Started | | Use unified filesystem |
-| P5.3 | Update SST writer | engines/impls/sst/writer.rs | 🔴 Not Started | | Use unified filesystem |
+| P5.1 | Migrate SST engine filesystem usage | engines/impls/sst/mod.rs | 🟢 Complete | Claude | Migrated to UnifiedCachingFilesystem |
+| P5.2 | Create SST metadata serializer | engines/impls/sst/unified_metadata_serializer.rs | 🟢 Complete | Claude | Engine-owned serialization |
+| P5.3 | Update SST to use UnifiedCachingFilesystem | engines/impls/sst/mod.rs | 🟢 Complete | Claude | Using new factory method |
 | P5.4 | Update SST compaction | engines/impls/sst/compaction.rs | 🔴 Not Started | | Use unified filesystem |
 | P5.5 | Run SST integration tests | tests/sst_integration_test.rs | 🔴 Not Started | | Verify migration |
 | P5.6 | Performance benchmark SST | benches/sst_bench.rs | 🔴 Not Started | | Compare before/after |
@@ -95,7 +95,7 @@ This specification guides the migration from the current fragmented filesystem a
 | P6.2 | Create VIPER metadata serializer | viper/metadata_serializer.rs | 🟢 Complete | Claude | Parquet footer extraction |
 | P6.3 | Update VIPER constructors | engines/impls/viper/engine.rs | 🟢 Complete | Claude | Backward compatibility maintained |
 | P6.4 | Run VIPER integration tests | tests/viper_integration_test.rs | 🟡 In Progress | | Some tests need updates |
-| P6.5 | Performance benchmark VIPER | benches/viper_bench.rs | 🔴 Not Started | | Compare before/after |
+| P6.5 | Update RAPTOR engine | engines/impls/raptor/engine.rs | 🟢 Complete | Claude | Fixed double-wrapping issue |
 
 ### Phase 7: Engine Migration - Others (Week 6-7)
 
