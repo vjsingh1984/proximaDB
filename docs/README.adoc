@@ -52,7 +52,7 @@ _Navigate by your role and use case for optimized learning paths_
 
 [source,mermaid]
 ----
-%%{init: {"mindmap": {"padding": 20, "maxNodeWidth": 200}, "theme": "forest"}}%%
+%%{init: {"mindmap": {"padding": 20, "maxNodeWidth": 200}, "theme": "default"}}%%
 mindmap
   root((ProximaDB))
     Vector Intelligence
