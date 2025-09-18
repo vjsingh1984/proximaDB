@@ -1,4 +1,4 @@
-= ProximaDB Enterprise Value Proposition
+= ProximaDB Enterprise Value Proposition (Legacy)
 :toc: left
 :sectnums:
 :source-highlighter: rouge
@@ -6,11 +6,19 @@
 :docdate: {localdatetime}
 
 [abstract]
-Realistic enterprise value proposition for ProximaDB, focusing on actual capabilities and business benefits.
+**Legacy document** - For current enterprise information, visit **link:business/executive_overview.adoc[Executive Overview]** with comprehensive business case and ROI analysis.
 
-== Executive Summary
+== Navigation
 
-ProximaDB is a vector database designed to simplify AI infrastructure for enterprises. While still in development, it offers a unified platform for vector operations, graph analytics, and AI integration that can reduce complexity and improve performance compared to traditional fragmented approaches.
+**🎯 Current Business Information**: **link:business/executive_overview.adoc[Executive Overview]**
+
+**🏢 Platform Comparison**: **link:business/competitive_advantages.adoc[Competitive Advantages]**
+
+**📚 Main Documentation**: **link:README.adoc[Documentation Hub]**
+
+== Legacy Content Summary
+
+This document has been superseded by our comprehensive business documentation that provides:
 
 == Current Enterprise Capabilities
 

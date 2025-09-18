@@ -1,26 +1,29 @@
-= ProximaDB Documentation
+= ProximaDB Documentation Index
 :toc: left
 :sectnums:
 :source-highlighter: rouge
 :icons: font
 :docdate: {localdatetime}
-:imagesdir: docs/assets
+:imagesdir: assets
 
 [abstract]
-Comprehensive documentation for ProximaDB vector database, including guides, technical specifications, and operational procedures.
+**Navigation redirector** - For the complete documentation experience, visit **link:README.adoc[ProximaDB Documentation Hub]** with role-based navigation.
 
-== Getting Started
+== Quick Navigation
 
-=== Quick Start
-* link:quickstart/readme.adoc[Quick Start Guide] - Get up and running in minutes
-* link:guides/getting_started.adoc[Getting Started Guide] - Comprehensive setup guide
-* link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] - Choose the right storage engine
+**📚 Main Documentation Hub**: **link:README.adoc[Complete Documentation Hub]**
+
+**🚀 Get Started**: **link:quickstart/getting_started.adoc[5-Minute Quick Start]**
+
+**💼 Business Overview**: **link:business/executive_overview.adoc[Executive Overview]**
+
+**👨‍💻 Technical Details**: **link:technical/platform_architecture.adoc[Platform Architecture]**
+
+== Legacy Navigation (Use Main Hub Above)
+
+=== Getting Started
+* link:quickstart/getting_started.adoc[Quick Start Guide] - Production deployment in 5 minutes
 * link:PERFORMANCE.adoc[Performance Benchmarks] - Validated performance specifications
-
-=== Installation & Setup
-* link:enterprise/production_deployment_guide.adoc[Production Deployment Guide] - Enterprise deployment and configuration
-* link:security.adoc[Security Guide] - Security configuration and best practices
-* link:operations/production_runbook.adoc[Operations Guide] - Production operations and monitoring
 
 == Technical Documentation
 
