@@ -52,7 +52,7 @@ _Navigate by your role and use case for optimized learning paths_
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#1e3a8a", "sectionBkgColor": "#3b82f6", "altSectionBkgColor": "#1e40af", "gridColor": "#1e3a8a", "tertiaryColor": "#dbeafe", "background": "#ffffff", "mainBkg": "#1e40af", "secondBkg": "#3b82f6", "nodeTextColor": "#ffffff", "c0": "#dc2626", "c1": "#ea580c", "c2": "#16a34a", "c3": "#0ea5e9", "c4": "#8b5cf6"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#1e3a8a", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f8fafc", "tertiaryColor": "#e2e8f0", "quadraternaryColor": "#cbd5e1", "primaryBorderColor": "#1e3a8a", "primaryTextColor": "#ffffff", "lineColor": "#1e3a8a", "sectionBkgColor": "#1e40af", "altSectionBkgColor": "#3b82f6", "gridColor": "#1e3a8a", "cScale0": "#dc2626", "cScale1": "#ea580c", "cScale2": "#16a34a", "cScale3": "#0ea5e9", "cScale4": "#8b5cf6", "cScale5": "#ec4899", "cScale6": "#f59e0b", "cScale7": "#10b981", "c0": "#dc2626", "c1": "#ea580c", "c2": "#16a34a", "c3": "#0ea5e9", "c4": "#8b5cf6", "c5": "#ec4899", "c6": "#f59e0b", "c7": "#10b981"}}}%%
 mindmap
   root((ProximaDB))
     Vector Intelligence
