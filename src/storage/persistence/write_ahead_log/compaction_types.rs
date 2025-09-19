@@ -17,7 +17,7 @@
 //! This module defines enhanced compaction result types that include
 //! vector-level information needed for AXIS index updates.
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Enhanced engine compaction result with vector tracking
 #[derive(Debug, Clone)]

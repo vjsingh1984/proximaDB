@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, error, info, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::{Filesystem, FilesystemFactory};
 use crate::storage::persistence::write_ahead_log::avro_serialization_strategy::AvroSerializationStrategy;
 use crate::storage::persistence::write_ahead_log::bincode_serialization_strategy::BincodeSerializationStrategy;

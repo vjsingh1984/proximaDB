@@ -12,7 +12,7 @@ use tracing::{debug, info, warn};
 use super::batch_strategy::WALBatchStrategy;
 use super::{BatchId, FlushResult, WALConfig, WALStats};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{

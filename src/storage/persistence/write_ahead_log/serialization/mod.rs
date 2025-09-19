@@ -3,7 +3,7 @@
 //! This module provides clean serialization/deserialization interfaces
 //! without any I/O operations, memtable management, or other concerns.
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 
 /// Trait for vector batch serialization

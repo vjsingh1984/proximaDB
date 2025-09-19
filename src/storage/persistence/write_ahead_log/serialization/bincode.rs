@@ -2,7 +2,7 @@
 //!
 //! Provides maximum performance for native Rust serialization.
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::{Context, Result};
 
 /// Bincode serializer - optimized for performance

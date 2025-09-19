@@ -1348,7 +1348,7 @@ pub struct FlushParameters {
     pub timeout_ms: Option<u64>,
 
     /// Vector records to flush (provided by FlushCoordinator from WAL)
-    pub vector_records: Vec<crate::core::VectorRecord>,
+    pub vector_records: Vec<crate::proto::proximadb_v1::VectorRecord>,
 
     /// Whether to trigger compaction after flush
     pub trigger_compaction: bool,

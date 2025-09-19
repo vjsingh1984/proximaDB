@@ -81,7 +81,7 @@ use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, SimilarityResult, UnifiedDistanceCompute,
 };
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Collection partition within the global memtable
 ///

@@ -10,7 +10,7 @@ use tokio::runtime::Runtime;
 
 use proximadb::storage::engines::factory::StorageEngineFactory;
 use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue};
 
 /// Benchmark setup helper
 struct BenchmarkSetup {
@@ -31,11 +31,13 @@ impl BenchmarkSetup {
             .map(|i| VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32 / count as f32; dimension],
-                metadata: Default::default(),
+                metadata: std::collections::HashMap::new(),
                 timestamp: i as i64,
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             })
             .collect()
     }

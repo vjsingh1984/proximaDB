@@ -25,8 +25,8 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 
 /// Generate test vectors with internal structure
-fn generate_vectors(count: usize, dimension: usize) -> Vec<proximadb::core::VectorRecord> {
-    use proximadb::core::VectorRecord;
+fn generate_vectors(count: usize, dimension: usize) -> Vec<proximadb::proto::proximadb_v1::VectorRecord> {
+    use proximadb::proto::proximadb_v1::VectorRecord;
 
     (0..count)
         .map(|i| VectorRecord {
@@ -37,6 +37,8 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<proximadb::core::Vect
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         })
         .collect()
 }

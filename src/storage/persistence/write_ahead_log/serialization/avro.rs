@@ -2,7 +2,7 @@
 //!
 //! Provides schema evolution support for backward compatibility.
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 use apache_avro::{Reader, Schema, Writer, types::Value};
 use std::collections::HashMap;

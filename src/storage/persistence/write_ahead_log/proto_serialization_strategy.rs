@@ -14,7 +14,7 @@ use super::{BatchId, FlushResult, WALConfig, WALStats};
 use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute,
 };
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
