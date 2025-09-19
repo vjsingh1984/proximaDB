@@ -7,9 +7,64 @@
 [.lead]
 **Comprehensive visualization of storage engine data layouts** using diagram-as-code tools optimized for GitHub integration and documentation clarity.
 
-== Overview: Serialization Architecture
+== Storage Engine Layouts - Multi-Level Analysis
 
-=== Unified Format Foundation
+=== **Level 1: Data Layout Strategy Overview**
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+mindmap
+  root((Data Layout Strategies))
+    Row-Based Layouts
+      SST Engine
+      SWIFT Engine
+      RAPTOR Matrix
+    Column-Based Layouts
+      VIPER Parquet
+      NOVA Hierarchical
+      PRISM Multi-res
+    Hybrid Layouts
+      HELIX Temporal
+      Cross-Engine Optimization
+    Compression Strategies
+      Quantization Levels
+      SIMD Acceleration
+      Memory Efficiency
+----
+
+=== **Level 2: Engine Selection Decision Tree**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+flowchart TD
+    A[Workload Analysis] --> B{Primary Use Case?}
+
+    B -->|Real-time OLTP| C{Latency Requirements?}
+    B -->|Analytics/BI| D{Compression Priority?}
+    B -->|Research/ML| E{Memory Constraints?}
+    B -->|Time-series| F[HELIX Engine<br/>Temporal optimization]
+
+    C -->|Ultra-low <1ms| G[SWIFT Engine<br/>FastLanes deep hierarchy]
+    C -->|Standard 5ms| H[SST Engine<br/>Linear sequential]
+
+    D -->|Maximum compression| I[VIPER Engine<br/>Parquet columnar]
+    D -->|Balanced performance| J[NOVA Engine<br/>Progressive quantization]
+
+    E -->|Memory limited| K[PRISM Engine<br/>Multi-resolution]
+    E -->|Adaptive workload| L[RAPTOR Engine<br/>P×K optimization]
+
+    style G fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style H fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style I fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style J fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style K fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style L fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style F fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+----
+
+=== **Level 3: Unified Format Foundation
 
 [source,mermaid]
 ----
@@ -387,6 +442,57 @@ graph TB
 - **Temporal Grouping**: Natural time-based clustering
 - **Query Pruning**: 90%+ range query optimization
 - **LSM Efficiency**: Reduced compaction overhead
+
+== **Level 4: Engine Comparison Matrix**
+
+=== Storage Layout Performance Analysis
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+xychart-beta
+    title "Storage Engine Performance vs Memory Efficiency"
+    x-axis ["Memory Usage (GB per 1M vectors)"]
+    y-axis "Throughput (K vec/sec)" 0 --> 250
+    "SST (Real-time)" [1.0, 200]
+    "SWIFT (Ultra-fast)" [1.2, 150]
+    "VIPER (Analytics)" [0.6, 80]
+    "NOVA (Advanced)" [0.4, 120]
+    "RAPTOR (Adaptive)" [0.8, 140]
+    "PRISM (Memory-opt)" [0.3, 90]
+    "HELIX (Time-series)" [0.7, 110]
+----
+
+=== Data Layout Efficiency Comparison
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+graph TB
+    subgraph "REAL-TIME ENGINES"
+        A[SST: Linear Sequential<br/>✓ Simple format<br/>✓ Fast writes<br/>✓ Good read performance<br/>⚠ Higher memory usage]
+        B[SWIFT: Deep Hierarchical<br/>✓ Ultra-low latency<br/>✓ FastLanes encoding<br/>✓ Sub-1ms queries<br/>⚠ Complex format]
+    end
+
+    subgraph "ANALYTICS ENGINES"
+        C[VIPER: Parquet Columnar<br/>✓ 90% compression<br/>✓ Column-major SIMD<br/>✓ Zone map pruning<br/>⚠ Write overhead]
+        D[NOVA: Hierarchical Stats<br/>✓ Progressive quantization<br/>✓ Multi-tier statistics<br/>✓ Query optimization<br/>⚠ Complex hierarchy]
+    end
+
+    subgraph "SPECIALIZED ENGINES"
+        E[RAPTOR: Matrix Trinity<br/>✓ P×K optimization<br/>✓ Adaptive layout<br/>✓ Dynamic workloads<br/>⚠ Memory overhead]
+        F[PRISM: Multi-Resolution<br/>✓ 60% memory reduction<br/>✓ Multiple quantization<br/>✓ Resource efficient<br/>⚠ Lossy compression]
+        G[HELIX: Temporal<br/>✓ Time-series optimization<br/>✓ Hilbert curve locality<br/>✓ Temporal patterns<br/>⚠ Specialized use case]
+    end
+
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style D fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style F fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style G fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+----
 
 == Tool Selection Summary
 
