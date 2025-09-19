@@ -8,13 +8,107 @@
 [.lead]
 **ProximaDB AI Intelligence Platform** - Comprehensive natural language business intelligence with multi-provider LLM ecosystem.
 
-== AI Platform Overview
+== AI Intelligence Platform - Multi-Level Architecture
 
-=== Executive Summary
+=== **Level 1: AI Platform Capabilities Overview**
 
-ProximaDB provides the **industry's first comprehensive AI-powered vector intelligence platform** that enables executives and business users to access complex data insights through natural language querying and automated business intelligence.
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+mindmap
+  root((AI Intelligence Platform))
+    Natural Language Interface
+      Plain English queries
+      No SQL knowledge required
+      Business user friendly
+    Multi-LLM Ecosystem
+      8 provider support
+      Automatic failover
+      Cost optimization
+    Business Intelligence
+      Automated insights
+      Executive dashboards
+      Trend analysis
+    Enterprise Security
+      SQL injection prevention
+      Tenant isolation
+      Audit compliance
+----
 
-=== Core AI Capabilities
+=== **Level 2: LLM Provider Ecosystem**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+flowchart TD
+    A[User Query] --> B{LLM Router}
+
+    B -->|Commercial Grade| C[Primary Providers]
+    B -->|Cloud Integration| D[Enterprise Providers]
+    B -->|Data Sovereignty| E[Self-Hosted Providers]
+    B -->|Cost Optimization| F[Fallback Providers]
+
+    C --> C1[OpenAI GPT-4<br/>High accuracy]
+    C --> C2[Anthropic Claude<br/>Safety focused]
+    C --> C3[Cohere<br/>Enterprise optimized]
+
+    D --> D1[Azure OpenAI<br/>Enterprise SLA]
+    D --> D2[AWS Bedrock<br/>Multi-model access]
+
+    E --> E1[Ollama<br/>Local deployment]
+    E --> E2[vLLM<br/>High performance]
+    E --> E3[HuggingFace<br/>Open models]
+
+    F --> F1[TogetherAI<br/>Cost effective]
+
+    style C1 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style C2 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style C3 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style D1 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style D2 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style E1 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style E2 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style E3 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style F1 fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+----
+
+=== **Level 3: Query Processing Pipeline**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+sequenceDiagram
+    participant User
+    participant API
+    participant NLProcessor
+    participant SecurityValidator
+    participant LLMRouter
+    participant SchemaContext
+    participant QueryEngine
+    participant BusinessIntelligence
+
+    User->>API: "Show me our top customers this quarter"
+    API->>NLProcessor: Parse natural language
+    NLProcessor->>SecurityValidator: Validate user permissions
+    SecurityValidator->>SchemaContext: Get accessible tables
+    SchemaContext-->>NLProcessor: Schema information + permissions
+    NLProcessor->>LLMRouter: Generate SQL with context
+
+    alt Primary LLM Available
+        LLMRouter->>LLMRouter: Use OpenAI/Anthropic
+    else Primary LLM Unavailable
+        LLMRouter->>LLMRouter: Fallback to alternative provider
+    end
+
+    LLMRouter-->>SecurityValidator: Generated SQL query
+    SecurityValidator->>SecurityValidator: Validate for SQL injection
+    SecurityValidator->>QueryEngine: Execute validated query
+    QueryEngine-->>BusinessIntelligence: Raw results
+    BusinessIntelligence->>BusinessIntelligence: Generate insights
+    BusinessIntelligence-->>User: Formatted business insights + visualizations
+----
+
+=== **Level 4: Core AI Capabilities
 
 [source,mermaid]
 ----
@@ -111,17 +205,97 @@ graph TB
 - **vLLM**: High-performance inference for cost optimization
 - **HuggingFace**: Open-source models for specialized requirements
 
-== AI Security and Compliance
+== **Level 5: Enterprise AI Security & Performance**
 
-=== Enterprise Security Framework
+=== AI Security State Machine
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#dc2626", "primaryTextColor": "#ffffff", "primaryBorderColor": "#b91c1c", "lineColor": "#374151"}}}%%
+stateDiagram-v2
+    [*] --> QueryReceived
+    QueryReceived --> AuthenticationCheck
+
+    AuthenticationCheck --> AuthenticationFailed : Invalid credentials
+    AuthenticationCheck --> TenantValidation : Valid user
+
+    TenantValidation --> AccessDenied : Invalid tenant
+    TenantValidation --> InputValidation : Valid tenant
+
+    InputValidation --> MaliciousInputDetected : Suspicious patterns
+    InputValidation --> PermissionCheck : Clean input
+
+    PermissionCheck --> InsufficientPermissions : Restricted access
+    PermissionCheck --> SQLGeneration : Authorized
+
+    SQLGeneration --> SQLValidation
+    SQLValidation --> SQLInjectionDetected : Malicious SQL
+    SQLValidation --> QueryExecution : Safe SQL
+
+    QueryExecution --> AuditLog
+    AuditLog --> [*]
+
+    AuthenticationFailed --> [*]
+    AccessDenied --> [*]
+    MaliciousInputDetected --> [*]
+    InsufficientPermissions --> [*]
+    SQLInjectionDetected --> [*]
+----
+
+=== LLM Provider Performance & Failover
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#16a34a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#15803d", "lineColor": "#374151"}}}%%
+xychart-beta
+    title "LLM Provider Performance Metrics"
+    x-axis ["OpenAI GPT-4", "Anthropic Claude", "Azure OpenAI", "AWS Bedrock", "Cohere", "vLLM Local", "Ollama", "HuggingFace"]
+    y-axis "Response Time (ms)" 0 --> 3000
+    "Average Latency" [800, 1200, 900, 1500, 1100, 400, 600, 2800]
+    "99th Percentile" [2000, 2800, 2200, 3500, 2600, 800, 1200, 5000]
+----
+
+=== Cost Optimization Strategy
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+flowchart TD
+    A[Query Analysis] --> B{Complexity Assessment}
+
+    B -->|Simple Query| C[Use Cost-Effective Provider<br/>TogetherAI, Local Ollama]
+    B -->|Medium Complexity| D[Use Balanced Provider<br/>Cohere, Azure OpenAI]
+    B -->|High Complexity| E[Use Premium Provider<br/>GPT-4, Claude]
+    B -->|Critical Business| F[Use Most Reliable<br/>Enterprise SLA providers]
+
+    C --> G[Cache Result<br/>24-hour TTL]
+    D --> H[Cache Result<br/>12-hour TTL]
+    E --> I[Cache Result<br/>6-hour TTL]
+    F --> J[Cache Result<br/>1-hour TTL]
+
+    G --> K[Monitor Usage<br/>Cost tracking]
+    H --> K
+    I --> K
+    J --> K
+
+    K --> L{Monthly Budget Check}
+    L -->|Under Budget| M[Continue Current Strategy]
+    L -->|Approaching Limit| N[Shift to Cost-Effective Providers]
+    L -->|Over Budget| O[Activate Emergency Fallback<br/>Local-only mode]
+
+    style C fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style F fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+----
+
+=== Enterprise AI Compliance Framework
 
 **Comprehensive AI security validation**:
 - **SQL Injection Prevention**: Multi-layer validation prevents malicious queries
 - **Tenant Isolation**: AI operations respect multi-tenant security boundaries
 - **Input Validation**: Malicious prompt detection and prevention
 - **Audit Logging**: Complete AI operation audit trail for compliance
-
-=== Performance and Reliability
 
 **Enterprise-grade AI operations**:
 - **Provider Fallback**: Automatic failover between LLM providers
