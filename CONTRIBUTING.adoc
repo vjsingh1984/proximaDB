@@ -81,7 +81,7 @@ cargo test --all
 
 == Questions?
 * Open a link:https://github.com/vjsingh1984/proximadb/discussions[GitHub Discussion]
-* Join our link:https://discord.gg/proximadb[Discord]
+* Join GitHub discussions for community support
 * Email: singhvjd@gmail.com
 
 == License
