@@ -199,25 +199,19 @@ impl QueryPreprocessor {
 
     /// Normalize vector using SIMD operations
     fn normalize_vector_simd(&self, vector: &[f32]) -> Arc<Vec<f32>> {
-        println!("[SIMD] normalize_vector_simd called with vector len: {}", vector.len());
         trace!("normalize_vector_simd called with vector len: {}", vector.len());
         self.stats.write().simd_operations += 1;
 
         // Use hardware-accelerated normalization if available
         #[cfg(target_arch = "x86_64")]
         {
-            println!("[SIMD] On x86_64 - AVX2: {}, SSE42: {}",
-                self.hardware.cpu.features.avx2_support,
-                self.hardware.cpu.features.sse42_support);
             trace!("On x86_64 - AVX2: {}, SSE42: {}",
                 self.hardware.cpu.features.avx2_support,
                 self.hardware.cpu.features.sse42_support);
             if self.hardware.cpu.features.avx2_support {
-                println!("[SIMD] Using AVX2 normalization");
                 trace!("Using AVX2 normalization");
                 return Arc::new(self.normalize_avx2(vector));
             } else if self.hardware.cpu.features.sse42_support {
-                println!("[SIMD] Using SSE normalization");
                 trace!("Using SSE normalization");
                 return Arc::new(self.normalize_sse(vector));
             }
@@ -225,17 +219,14 @@ impl QueryPreprocessor {
 
         #[cfg(target_arch = "aarch64")]
         {
-            println!("[SIMD] On aarch64 - NEON: {}", self.hardware.cpu.features.neon_support);
             trace!("On aarch64 - NEON: {}", self.hardware.cpu.features.neon_support);
             if self.hardware.cpu.features.neon_support {
-                println!("[SIMD] Using NEON normalization");
                 trace!("Using NEON normalization");
                 return Arc::new(self.normalize_neon(vector));
             }
         }
 
         // Fallback to scalar implementation
-        println!("[SIMD] Using scalar normalization fallback");
         trace!("Using scalar normalization");
         Arc::new(self.normalize_scalar(vector))
     }
@@ -357,7 +348,6 @@ impl QueryPreprocessor {
     /// NEON accelerated normalization (ARM64 only)
     #[cfg(target_arch = "aarch64")]
     fn normalize_neon(&self, vector: &[f32]) -> Vec<f32> {
-        println!("[SIMD] normalize_neon called, forwarding to scalar");
         trace!("normalize_neon called, forwarding to scalar");
         // For now, use scalar implementation on ARM64
         // TODO: Implement actual NEON intrinsics when stable
@@ -372,22 +362,17 @@ impl QueryPreprocessor {
     }
 
     fn normalize_scalar(&self, vector: &[f32]) -> Vec<f32> {
-        println!("[SIMD] normalize_scalar called with vector len: {}", vector.len());
         trace!("normalize_scalar called with vector len: {}", vector.len());
         let mag_sq: f32 = vector.iter().map(|x| x * x).sum();
-        println!("[SIMD] Magnitude squared: {}", mag_sq);
         trace!("Magnitude squared: {}", mag_sq);
         let mag = mag_sq.sqrt();
-        println!("[SIMD] Magnitude: {}", mag);
         trace!("Magnitude: {}", mag);
 
         if mag > 0.0 {
             let result = vector.iter().map(|x| x / mag).collect();
-            println!("[SIMD] Normalized vector successfully");
             trace!("Normalized vector successfully");
             result
         } else {
-            println!("[SIMD] Zero magnitude, returning original vector");
             trace!("Zero magnitude, returning original vector");
             vector.to_vec()
         }

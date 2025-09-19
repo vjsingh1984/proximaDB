@@ -24,60 +24,58 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_preprocessing_with_simd() {
-        println!("[TEST] Starting SIMD test on architecture: {}", std::env::consts::ARCH);
+        use tracing::debug;
 
-        println!("[TEST] Step 1: Initializing test environment");
+        debug!("Starting SIMD test on architecture: {}", std::env::consts::ARCH);
+
+        debug!("Initializing test environment");
         init_test_environment();
-        println!("[TEST] Step 1 completed");
+        debug!("Test environment initialized");
 
-        println!("[TEST] Step 2: Getting hardware capabilities");
+        debug!("Getting hardware capabilities");
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        println!("[TEST] Hardware caps - AVX2: {}, SSE42: {}, NEON: {}",
+        debug!("Hardware caps - AVX2: {}, SSE42: {}, NEON: {}",
             hardware.cpu.features.avx2_support,
             hardware.cpu.features.sse42_support,
             hardware.cpu.features.neon_support
         );
-        println!("[TEST] Step 2 completed");
 
-        println!("[TEST] Step 3: Creating QueryPreprocessor");
+        debug!("Creating QueryPreprocessor");
         let preprocessor = QueryPreprocessor::new(100);
-        println!("[TEST] Step 3 completed - QueryPreprocessor created");
+        debug!("QueryPreprocessor created successfully");
 
         // Test vector normalization with SIMD
-        println!("[TEST] Step 4: Creating test vector");
         let query_vector = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-        println!("[TEST] Query vector created: {:?}", query_vector);
-        println!("[TEST] Step 4 completed");
+        debug!("Query vector created: {:?}", query_vector);
 
-        println!("[TEST] Step 5: Calling preprocessor.preprocess");
+        debug!("Calling preprocessor.preprocess");
         let result = preprocessor
             .preprocess(&query_vector, DistanceMetric::Cosine, None)
             .await;
-        println!("[TEST] Step 5 completed - Preprocess done");
+        debug!("Preprocess completed successfully");
 
         let cached = result;
 
         // Verify normalization
-        println!("[TEST] Step 6: Verifying normalization");
+        debug!("Verifying normalization");
         let norm: f32 = cached.normalized.iter().map(|x| x * x).sum::<f32>().sqrt();
-        println!("[TEST] Computed norm: {}", norm);
+        debug!("Computed norm: {}", norm);
         assert!((norm - 1.0).abs() < 0.001, "Vector should be normalized");
-        println!("[TEST] Step 6 completed");
 
         // Verify quantization levels were created
-        println!("[TEST] Checking quantization - binary: {}, int8: {}",
+        debug!("Checking quantization - binary: {}, int8: {}",
             cached.quantized_binary.is_some(),
             cached.quantized_int8.is_some()
         );
 
         // Test cache hit
-        println!("[TEST] Step 7: Testing cache hit");
+        debug!("Testing cache hit");
         let result2 = preprocessor
             .preprocess(&query_vector, DistanceMetric::Cosine, None)
             .await;
         let cached2 = result2;
         assert_eq!(cached.vector_hash, cached2.vector_hash, "Should hit cache");
-        println!("[TEST] Step 7 completed - All tests passed!");
+        debug!("All SIMD tests passed!");
     }
 
     // Commented out test_parallel_wal_search due to API changes
