@@ -2,7 +2,8 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::{
-    DistanceMetric, UnifiedDistanceCompute,
+    DistanceMetric,
+    engine::UnifiedDistanceCompute,
 };
 
 fn benchmark_distance_computation(c: &mut Criterion) {
@@ -21,7 +22,7 @@ fn benchmark_distance_computation(c: &mut Criterion) {
             DistanceMetric::Euclidean,
             DistanceMetric::DotProduct,
         ] {
-            let compute = UnifiedDistanceCompute::new(metric);
+            let compute = UnifiedDistanceCompute::default();
 
             group.bench_with_input(
                 BenchmarkId::new(format!("{:?}", metric), dim),
@@ -29,7 +30,7 @@ fn benchmark_distance_computation(c: &mut Criterion) {
                 |bencher, (a, b)| {
                     bencher.iter(|| {
                         let result =
-                            compute.calculate_distance(a, b, metric);
+                            compute.calculate_distance(a, b, &metric);
                         black_box(result)
                     });
                 },
@@ -52,7 +53,7 @@ fn benchmark_batch_operations(c: &mut Criterion) {
             .collect();
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
-        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let compute = UnifiedDistanceCompute::default();
 
         group.bench_with_input(
             BenchmarkId::new("cosine_batch", batch_size),
@@ -66,7 +67,7 @@ fn benchmark_batch_operations(c: &mut Criterion) {
                                 .calculate_distance(
                                     query,
                                     v,
-                                    DistanceMetric::Cosine,
+                                    &DistanceMetric::Cosine,
                                 )
                         })
                         .collect();
