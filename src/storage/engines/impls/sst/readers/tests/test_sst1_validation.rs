@@ -17,6 +17,7 @@ use crate::storage::engines::impls::sst::readers::sst_query_engine::{
     CollectionContext, UnifiedSstableReader,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// Helper to create a test reader
 async fn create_test_reader() -> Arc<UnifiedSstableReader> {
@@ -25,13 +26,15 @@ async fn create_test_reader() -> Arc<UnifiedSstableReader> {
             .await
             .expect("Failed to create filesystem factory"),
     );
+    let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
     Arc::new(UnifiedSstableReader::new(
         filesystem_factory.clone(),
-        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
-            filesystem_factory,
-            vec![],
-        ).await.unwrap()),
+        unified_fs,
         "test_collection".to_string(),
     ))
 }

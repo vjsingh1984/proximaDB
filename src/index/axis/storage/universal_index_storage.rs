@@ -35,6 +35,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 
 /// Universal index data that can be stored across tiers
@@ -366,21 +367,19 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?;
                 let filesystem = Arc::new(filesystem_factory);
                 // Create zero-copy system for the reader
-                let zero_copy_config =
-                    crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(
-                    );
-                let zero_copy_system = Arc::new(
-                    crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-                        zero_copy_config,
-                        filesystem.clone(),
-                        vec![],
-                    ).await.map_err(|e| ProximaDBError::Storage(StorageError::DiskIO(
-                        std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create zero-copy system: {}", e))
-                    )))?
-                );
+                // Create UnifiedCachingFilesystem for the reader
+                let base_fs = filesystem.get_filesystem("file://")
+                    .map_err(|e| ProximaDBError::Storage(StorageError::DiskIO(
+                        std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to get base filesystem: {}", e))
+                    )))?;
+                let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+                    base_fs,
+                    self.collection_id.clone(),
+                    "universal_index".to_string(),
+                ));
                 let reader = UnifiedSstableReader::new(
                     filesystem,
-                    zero_copy_system,
+                    unified_fs,
                     self.collection_id.clone(),
                 );
                 // UnifiedSstableReader's get_vector returns a VectorRecord, not raw bytes

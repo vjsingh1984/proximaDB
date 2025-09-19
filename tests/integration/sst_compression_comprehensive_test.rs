@@ -5,9 +5,12 @@
 //! - Sparse data (mostly zeros - excellent compression)
 //! - Multiple compression algorithms and levels
 
-mod common {
-    include!("../common/mod.rs");
-}
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
@@ -143,6 +146,10 @@ async fn test_compression_for_data(
     )
     .await?;
 
+    // Save dimensions before vectors is moved
+    let vector_count = vectors.len();
+    let vector_dim = if !vectors.is_empty() { vectors[0].vector.len() } else { 0 };
+
     // Build flush params with compression config in the collection
     let mut flush_params_compressed =
         operations::build_flush_params(&env_compressed, vectors, StorageEngine::Sst).await?;
@@ -161,7 +168,7 @@ async fn test_compression_for_data(
     info!("  • Entries flushed: {:?}", compressed_result.entries_flushed);
     info!(
         "  • Expected blocks: ~{}",
-        vectors_uncompressed.len() * vectors_uncompressed[0].vector.len() * 4 / (256 * 1024)
+        vector_count * vector_dim * 4 / (256 * 1024)
     );
 
     let compressed_size =

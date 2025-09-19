@@ -1,3 +1,7 @@
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 use anyhow::Result;
 use proximadb::compute::quantization::{
     ProductQuantization as PqConfig, UnifiedQuantizationLevel,

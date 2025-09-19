@@ -1259,8 +1259,7 @@ impl Flush {
             // 2. Populates local cache for fast reads (hydrates indexes)
             // 3. Asynchronously uploads to cloud
             // 4. Returns immediately after local cache write
-            unified_fs
-                .write(&final_path, &data)
+            fs.write(&final_path, &data, Some(write_options.clone()))
                 .await?;
 
             info!("✅ Zero-copy write complete with cache population for index hydration");

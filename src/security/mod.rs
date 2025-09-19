@@ -14,7 +14,7 @@ pub use unified_rbac::{
 };
 
 pub use unified_auth::{
-    UnifiedAuthService, AuthenticationResult, AuthenticationMethod
+    UnifiedAuthService, AuthenticationResult, AuthenticationMethod, AuthenticationData, AuthenticationConfig
 };
 
 pub use security_coordinator::{
@@ -29,7 +29,7 @@ pub use advanced_features::{
 };
 
 /// Re-export common types for convenience
-pub use crate::audit::logger::AuditLogger;
+pub use crate::audit::logger::{AuditLogger, AuditConfig, AuditStorageBackend};
 pub use crate::network::auth::{AuthError, JwtConfig};
 
 use anyhow::Result;
@@ -51,7 +51,7 @@ pub async fn initialize_security(config: SecurityConfig) -> Result<SecurityCoord
     // Create unified auth service
     let auth_service = UnifiedAuthService::new(config.authentication.clone())?;
 
-    // Create audit logger
+    // Create audit logger - config.audit is now directly AuditConfig from audit::logger
     let audit_logger = AuditLogger::new(config.audit.clone()).await?;
 
     // Create security coordinator

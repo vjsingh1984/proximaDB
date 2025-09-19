@@ -29,6 +29,7 @@ use tracing::{debug, info};
 
 use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 
 // Type alias for compatibility
@@ -292,18 +293,16 @@ impl PostingListStorage {
                         .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
                 );
                 // Create zero-copy system for the reader
-                let zero_copy_config =
-                    crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(
-                    );
-                let zero_copy_system = Arc::new(
-                    crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-                        zero_copy_config,
-                        filesystem.clone(),
-                        vec![],
-                    ).await.map_err(|e| anyhow!("Failed to create zero-copy system: {}", e))?
-                );
+                // Create UnifiedCachingFilesystem for the reader
+                let base_fs = filesystem.get_filesystem("file://")
+                    .map_err(|e| anyhow!("Failed to get base filesystem: {}", e))?;
+                let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+                    base_fs,
+                    cluster_id.to_string(),
+                    "ivf".to_string(),
+                ));
                 let _reader =
-                    UnifiedSstableReader::new(filesystem, zero_copy_system, cluster_id.to_string());
+                    UnifiedSstableReader::new(filesystem, unified_fs, cluster_id.to_string());
                 let entries = Vec::new();
 
                 // Read all entries for this cluster

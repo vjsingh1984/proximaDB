@@ -6,13 +6,16 @@
 //! This module has been refactored to use the unified test utilities for consistent
 //! and reliable test infrastructure across all ProximaDB test modules.
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use anyhow::Result;
 use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
-mod common {
-    include!("../common/mod.rs");
-}
 use common::integration_test_helpers::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};

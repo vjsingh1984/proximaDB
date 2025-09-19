@@ -81,9 +81,15 @@ pub mod zone_maps;
 // Unified columnar infrastructure integration
 pub mod unified_columnar_integration;
 pub mod unified_metadata_serializer;
+pub mod unified_strategy_reader;
 
 // Re-export main engine type and optimized components
 pub use engine::NovaEngine;
+
+// Re-export unified strategy readers
+pub use unified_strategy_reader::{
+    UnifiedNOVAReader, DirectNOVAReader, CachedNOVAReader
+};
 
 // Re-export unified columnar integration
 pub use hierarchical_cache::{

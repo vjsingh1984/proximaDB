@@ -835,6 +835,15 @@ impl std::fmt::Debug for FilesystemFactory {
 }
 
 impl FilesystemFactory {
+    /// Create filesystem factory with default configuration
+    pub fn default() -> Self {
+        Self {
+            config: FilesystemConfig::default(),
+            filesystems: HashMap::new(),
+            tier_mapping: HashMap::new(),
+        }
+    }
+
     /// Create new filesystem factory with configuration
     pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
         let mut factory = Self {
@@ -952,17 +961,18 @@ impl FilesystemFactory {
         let fs = self.get_filesystem(url)?;
 
         // Get the metadata serializer for this engine type
-        let metadata_serializer: Box<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
+        let metadata_serializer: Arc<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
             match engine_type.as_str() {
-                "sst" => Box::new(crate::storage::engines::impls::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
-                "viper" => Box::new(crate::storage::engines::impls::viper::unified_metadata_serializer::ViperMetadataSerializer::new()),
-                "raptor" => Box::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
-                "nova" => Box::new(crate::storage::engines::impls::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
-                "swift" => Box::new(crate::storage::engines::impls::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
-                "prism" => Box::new(crate::storage::engines::impls::prism::unified_metadata_serializer::PrismUnifiedMetadataSerializer::new()),
-                "helix" => Box::new(crate::storage::engines::impls::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
+                "sst" => Arc::new(crate::storage::engines::impls::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
+                "viper" => Arc::new(crate::storage::engines::impls::viper::unified_metadata_serializer::ViperMetadataSerializer::new()),
+                "raptor" => Arc::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
+                "nova" => Arc::new(crate::storage::engines::impls::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
+                "swift" => Arc::new(crate::storage::engines::impls::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
+                "prism" => Arc::new(crate::storage::engines::impls::prism::unified_metadata_serializer::PrismUnifiedMetadataSerializer::new()),
+                "helix" => Arc::new(crate::storage::engines::impls::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
                 _ => {
                     // Default serializer for other engines
+                    #[derive(Debug)]
                     struct DefaultSerializer;
                     impl crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer for DefaultSerializer {
                         fn serialize(&self, _metadata: &dyn std::any::Any) -> anyhow::Result<bytes::Bytes> {
@@ -977,19 +987,19 @@ impl FilesystemFactory {
                         }
                         fn should_cache_metadata(&self, _file_path: &str) -> bool { false }
                     }
-                    Box::new(DefaultSerializer)
+                    Arc::new(DefaultSerializer)
                 }
             };
 
         // Wrap it with UnifiedCachingFilesystem for caching
         let unified_fs = crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
             fs,
-            collection_id,
-            engine_type,
+            collection_id.to_string(),
+            engine_type.to_string(),
             metadata_serializer,
         );
 
-        Ok(Arc::new(unified_fs) as Arc<dyn FileSystem>)
+        Ok(Arc::new(unified_fs))
     }
 
     /// Cross-storage atomic operations - handles full URLs for source and destination

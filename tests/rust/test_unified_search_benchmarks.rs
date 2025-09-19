@@ -1,3 +1,7 @@
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 //! Unified Search Performance Benchmarks
 //!
 //! This module benchmarks the unified search implementation across:

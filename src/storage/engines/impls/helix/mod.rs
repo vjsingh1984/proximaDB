@@ -50,6 +50,7 @@ pub mod progressive_search;
 pub mod query_optimization;
 pub mod readers;
 pub mod unified_metadata_serializer;
+pub mod unified_strategy_reader;
 pub mod zone_maps;
 
 #[cfg(test)]
@@ -949,3 +950,8 @@ impl UnifiedStorageEngine for HelixEngine {
         &self.filesystem_factory
     }
 }
+
+// Re-export unified strategy readers
+pub use unified_strategy_reader::{
+    UnifiedHELIXReader, DirectHELIXReader, CachedHELIXReader
+};

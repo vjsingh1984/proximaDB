@@ -6,6 +6,14 @@
 //! - Vector search operations
 //! - Health and metrics endpoints
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use std::collections::HashMap;
 use serde_json::json;
 use tempfile::TempDir;

@@ -1694,7 +1694,7 @@ pub struct VectorCentroidMatrixRef {
 
 /// Compression metadata for vector-centroid matrices
 /// Uses sophisticated encoding since distances have different characteristics per centroid
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct VectorCentroidCompressionMetadata {
     /// Per-centroid statistics for adaptive encoding
     /// Each centroid column may have different distance distribution
@@ -1710,7 +1710,7 @@ pub struct VectorCentroidCompressionMetadata {
 }
 
 /// Per-centroid distance statistics for adaptive compression
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CentroidDistanceStats {
     /// Centroid ID
     pub centroid_id: u16,

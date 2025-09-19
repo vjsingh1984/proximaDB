@@ -1,3 +1,7 @@
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 //! Integration tests for progressive quantization-aware search
 //!
 //! Tests the complete progressive search pipeline with real data

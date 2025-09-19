@@ -96,6 +96,9 @@ pub struct ViperEngine {
     /// Provides metadata caching, range optimization, and access tracking
     filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
 
+    /// Filesystem factory for components that need it
+    filesystem_factory: Arc<FilesystemFactory>,
+
     /// Schema for columnar storage (shared with NOVA)
     /// Defines column types, compression, and encoding strategies
     schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema,
@@ -193,7 +196,7 @@ impl ViperEngine {
             )
         );
 
-        Self::from_unified_filesystem(core_config, unified_fs).await
+        Self::from_unified_filesystem_and_factory(core_config, unified_fs, filesystem).await
     }
 
     /// Create a new VIPER engine from user-facing core config
@@ -201,8 +204,19 @@ impl ViperEngine {
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
     ) -> Result<Self> {
+        // Create a dummy filesystem factory for backward compatibility
+        let filesystem_factory = Arc::new(FilesystemFactory::default());
+        Self::from_unified_filesystem_and_factory(core_config, filesystem, filesystem_factory).await
+    }
+
+    /// Create a new VIPER engine with both filesystems
+    pub async fn from_unified_filesystem_and_factory(
+        core_config: crate::core::config::ViperConfig,
+        filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem_factory: Arc<FilesystemFactory>,
+    ) -> Result<Self> {
         let config = ViperEngineConfig::from_core_config(&core_config);
-        Self::new_internal(config, core_config, filesystem).await
+        Self::new_internal(config, core_config, filesystem, filesystem_factory).await
     }
     /// Standard constructor matching SST engine interface
     /// This provides consistency across storage engines
@@ -242,7 +256,7 @@ impl ViperEngine {
         );
 
         // VIPER manages multiple collections, so we just log the initial one
-        Self::from_unified_filesystem(core_config, unified_fs).await
+        Self::from_unified_filesystem_and_factory(core_config, unified_fs, filesystem).await
     }
 
     /// Constructor with explicit base location (for consistency with SST)
@@ -282,7 +296,7 @@ impl ViperEngine {
 
         // VIPER gets per-collection storage locations from collection metadata
         // The base_location here could be used as a fallback or override
-        Self::from_unified_filesystem(core_config, unified_fs).await
+        Self::from_unified_filesystem_and_factory(core_config, unified_fs, filesystem).await
     }
 
     /// Internal constructor with both configs
@@ -302,6 +316,7 @@ impl ViperEngine {
         config: ViperEngineConfig,
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         let collection_service = Arc::new(RwLock::new(None));
 
@@ -377,13 +392,13 @@ impl ViperEngine {
         // Initialize utilities with default configuration
         let utilities = ViperUtilities::new(
             super::utilities::ViperUtilitiesConfig::default(),
-            filesystem.clone(),
+            filesystem_factory.clone(),
         )
         .await?;
         // Create managers with async constructors
         let compaction =
-            Compaction::new(collection_service.clone(), filesystem.clone(), None).await?;
-        let flush_manager = Flush::new(collection_service.clone(), filesystem.clone()).await?;
+            Compaction::new(collection_service.clone(), filesystem_factory.clone(), None).await?;
+        let flush_manager = Flush::new(collection_service.clone(), filesystem_factory.clone()).await?;
         
         // Register VIPER cache providers with global orchestrator
         if let Some(ref orch) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
@@ -427,6 +442,7 @@ impl ViperEngine {
             core_config,
             collection_service: collection_service.clone(),
             filesystem: filesystem.clone(),
+            filesystem_factory,
             schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema::new(),
             compaction,
             flush_manager,
@@ -824,14 +840,9 @@ impl ViperEngine {
         for parquet_file in parquet_files {
             debug!("🔍 Searching file: {}", parquet_file);
 
-            // Read Parquet file using filesystem API
-            let fs = match self.filesystem.get_filesystem("file:///") {
-                Ok(fs) => fs,
-                Err(e) => {
-                    warn!("Failed to get filesystem: {}", e);
-                    continue;
-                }
-            };
+            // Read Parquet file using filesystem API through factory
+            let fs = self.filesystem_factory.get_filesystem(&parquet_file)
+                .map_err(|e| anyhow::anyhow!("Failed to get filesystem: {}", e))?;
             let parquet_data = match fs.read(&parquet_file).await {
                 Ok(data) => data,
                 Err(e) => {
@@ -1323,7 +1334,7 @@ impl ViperEngine {
         debug!("    storage_url: {}", storage_url);
         // Use filesystem API for all storage backends - it handles the differences
         debug!("📁 Listing files at: {}", storage_url);
-        let parquet_files = match self.filesystem.list(storage_url).await {
+        let parquet_files = match self.filesystem_factory.list(storage_url).await {
             Ok(files) => {
                 debug!("📁 filesystem.list returned {} entries", files.len());
                 let parquet_files: Vec<String> = files
@@ -1377,7 +1388,7 @@ impl ViperEngine {
         );
 
         // Use filesystem API for all storage backends - it handles the differences
-        let parquet_files = match self.filesystem.list(&storage_url).await {
+        let parquet_files = match self.filesystem_factory.list(&storage_url).await {
             Ok(entries) => {
                 let mut files: Vec<String> = entries
                     .into_iter()
@@ -1952,21 +1963,13 @@ impl UnifiedStorageEngine for ViperEngine {
             search_context.collection_id
         );
 
-        // Get UnifiedCachingFilesystem for VIPER - critical for cloud storage performance
+        // Use the existing UnifiedCachingFilesystem - critical for cloud storage performance
         // Caches Parquet metadata, bloom filters, and frequently accessed blocks
-        let unified_fs = self
-            .filesystem
-            .get_unified_caching_filesystem(
-                &storage_url,
-                collection_id.to_string(),
-                crate::storage::engines::ENGINE_VIPER.to_string(),
-            )
-            .map_err(|e| anyhow!("Failed to create unified filesystem: {}", e))?;
+        let unified_fs = self.filesystem.clone();
 
-        // Create the Parquet reader - it will use filesystem factory internally
-        // TODO: Update UnifiedParquetReader to accept IntelligentFilesystem for better caching
+        // Create the Parquet reader using filesystem_factory
         let parquet_reader = crate::storage::engines::core::formats::columnar::parquet_query_engine::UnifiedParquetReader::new(
-            self.filesystem.clone()
+            self.filesystem_factory.clone()
         ).await?;
 
         // Create collection context for the reader
@@ -2250,7 +2253,7 @@ impl UnifiedStorageEngine for ViperEngine {
     fn get_filesystem_factory(
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-        &self.filesystem
+        &self.filesystem_factory
     }
 
     /// Convenient compact_collection method for CompactionCoordinator integration

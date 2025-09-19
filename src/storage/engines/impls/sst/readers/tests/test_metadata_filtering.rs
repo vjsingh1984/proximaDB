@@ -11,6 +11,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
 use crate::storage::engines::impls::sst::readers::{CollectionContext, UnifiedSstableReader};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -126,16 +127,15 @@ async fn test_metadata_filtering_basic() {
     info!("Wrote SSTable with 10 records (5 category A, 5 category B)");
 
     // Create reader and load metadata
-    let zero_copy_config = crate::storage::engines::core::io::zero_copy::ZeroCopyIOConfig::default();
-    let serializers: Vec<Box<dyn crate::storage::engines::core::io::zero_copy::traits::MetadataSerializer>> = vec![];
-    let io_system = Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-        zero_copy_config,
-        filesystem.clone(),
-        serializers,
-    ).await.unwrap());
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
     let reader = UnifiedSstableReader::new(
         filesystem.clone(),
-        io_system,
+        unified_fs,
         "test_collection".to_string(),
     );
     let file_url = format!("file://{}", sstable_path.display());
@@ -353,16 +353,15 @@ async fn test_metadata_bloom_filter_optimization() {
     info!("Wrote SSTable with metadata bloom filters");
 
     // Create reader
-    let zero_copy_config = crate::storage::engines::core::io::zero_copy::ZeroCopyIOConfig::default();
-    let serializers: Vec<Box<dyn crate::storage::engines::core::io::zero_copy::traits::MetadataSerializer>> = vec![];
-    let io_system = Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-        zero_copy_config,
-        filesystem.clone(),
-        serializers,
-    ).await.unwrap());
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
     let reader = UnifiedSstableReader::new(
         filesystem.clone(),
-        io_system,
+        unified_fs,
         "test_collection".to_string(),
     );
     let file_url = format!("file://{}", sstable_path.display());

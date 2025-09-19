@@ -3,10 +3,10 @@
 //! Provides SSO authentication using OpenID Connect standard
 //! Compatible with providers like Auth0, Keycloak, Okta, and custom OIDC implementations.
 
-use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext};
+use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext, SecurityClearance, ProviderUserContext};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc, Duration};
 use tracing::{info, warn, debug};
 use uuid::Uuid;
@@ -158,7 +158,8 @@ impl OIDCIntegration {
         // 2. Build OAuth2 authorization URL with proper parameters
         // 3. Include PKCE challenge if supported
 
-        let state_param = state.unwrap_or(&Uuid::new_v4().to_string());
+        let default_state = Uuid::new_v4().to_string();
+        let state_param = state.unwrap_or(&default_state);
         let scopes = self.config.scopes.join(" ");
 
         // Placeholder authorization URL
@@ -212,16 +213,21 @@ impl OIDCIntegration {
             organization_id: "oidc_org".to_string(),
             roles: vec!["oidc_user".to_string()],
             permissions: HashSet::new(),
-            provider: SSOProvider::Generic,
-            provider_user_id: user_id,
-            groups: vec!["oidc_users".to_string()],
-            expires_at: Some(Utc::now() + Duration::minutes(self.config.max_token_age_minutes as i64)),
-            metadata: Some({
-                let mut metadata = HashMap::new();
-                metadata.insert("provider".to_string(), "oidc".to_string());
-                metadata.insert("client_id".to_string(), self.config.client_id.clone());
-                metadata
-            }),
+            security_clearance: SecurityClearance::Internal,
+            department: None,
+            cost_center: None,
+            session_id: Uuid::new_v4().to_string(),
+            login_timestamp: Utc::now(),
+            last_activity: Utc::now(),
+            provider_context: ProviderUserContext::Generic {
+                provider_user_id: user_id,
+                attributes: {
+                    let mut attrs = HashMap::new();
+                    attrs.insert("provider".to_string(), "oidc".to_string());
+                    attrs.insert("client_id".to_string(), self.config.client_id.clone());
+                    attrs
+                },
+            },
         })
     }
 
@@ -314,7 +320,7 @@ mod tests {
         assert!(result.is_ok());
 
         let user_context = result.unwrap();
-        assert_eq!(user_context.provider, SSOProvider::Generic);
+        assert!(matches!(user_context.provider_context, ProviderUserContext::Generic { .. }));
         assert_eq!(user_context.tenant_id, "oidc_tenant");
         assert!(user_context.roles.contains(&"oidc_user".to_string()));
 

@@ -6,6 +6,14 @@
 //! - Collection management
 //! - Performance metrics
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use std::sync::Arc;
 use std::collections::HashMap;
 use tempfile::TempDir;

@@ -9,9 +9,12 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-mod common {
-    include!("../common/mod.rs");
-}
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 // Old test utilities are no longer used - using UnifiedTestEnvironment instead
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;

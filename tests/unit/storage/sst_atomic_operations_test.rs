@@ -1,5 +1,10 @@
 // Test suite for SST atomic operations with unified atomic coordinator
 
+// Import the common test helpers
+#[path = "../../common/mod.rs"]
+mod common;
+
+use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -8,12 +13,6 @@ use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
-
-// Include common test utilities
-mod common {
-    include!("../../common/mod.rs");
-}
-use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use common::unique_collection_id;
 use proximadb::proto::proximadb_v1::StorageEngine;
 use tempfile::TempDir;

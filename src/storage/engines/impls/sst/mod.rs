@@ -147,6 +147,7 @@ pub mod readers;
 pub mod row_filter;
 pub mod streaming_compaction;
 pub mod unified_metadata_serializer;
+pub mod unified_reader;
 pub mod writer;
 
 // Test modules
@@ -177,7 +178,8 @@ use crate::compute::quantization::unified::{
 use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+// Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::optimization::SortingStats;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::traits::{
@@ -1587,28 +1589,22 @@ impl SstStorage {
                 })?,
         );
 
-        // Create Zero-copy IO system for the reader
-        let zero_copy_config =
-            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
-        let zero_copy_system = Arc::new(
-            ZeroCopyIOSystem::new(
-                zero_copy_config,
-                filesystem.clone(),
-                vec![], // No custom serializers
-            )
-            .await
-            .map_err(|e| {
-                SstError::Internal(format!("Failed to create zero-copy IO system: {}", e))
-            })?,
-        );
-
+        // Create UnifiedCachingFilesystem for the reader
         // SST will create UnifiedCachingFilesystem instances per collection for optimal caching
         // This dramatically reduces I/O for frequently accessed SSTable blocks
+        let base_fs = filesystem.get_filesystem("file://").map_err(|e| {
+            SstError::Internal(format!("Failed to get base filesystem: {}", e))
+        })?;
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            String::new(), // Empty collection_id for singleton
+            "sst".to_string(),
+        ));
 
         // Create SSTable reader - using empty collection_id as SST is now singleton
         let sstable_reader = Arc::new(UnifiedSstableReader::new(
             filesystem.clone(),
-            zero_copy_system,
+            unified_fs,
             String::new(), // Empty collection_id for singleton
         ));
 
@@ -2862,33 +2858,26 @@ impl UnifiedStorageEngine for SstStorage {
                 .file_name()
                 .and_then(|n| n.to_str());
 
-            // Create a zero-copy system for the reader
-            use crate::storage::engines::core::io::zero_copy::{
-                ZeroCopyIOConfig, ZeroCopyIOSystem,
-            };
-            let zero_copy_config = ZeroCopyIOConfig::default();
-            let zero_copy_system = match ZeroCopyIOSystem::new(
-                zero_copy_config,
-                self.filesystem.clone(),
-                vec![],
-            )
-            .await
-            {
-                Ok(system) => Arc::new(system),
+            // Create unified caching filesystem for the reader
+            let base_fs = match self.filesystem.get_filesystem("file://") {
+                Ok(fs) => fs,
                 Err(e) => {
-                    warn!(
-                        "Failed to create zero-copy system, skipping bloom filter optimization: {}",
-                        e
-                    );
+                    warn!("Failed to get base filesystem: {}, skipping bloom filter optimization", e);
                     continue;
                 }
             };
 
+            let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+                base_fs,
+                collection_id.to_string(),
+                "sst".to_string(),
+            ));
+
             // Use unified SSTable reader with bloom filter
             let reader = UnifiedSstableReader::new(
                 self.filesystem.clone(),
-                zero_copy_system,
-                "sst_lookup".to_string(),
+                unified_fs,
+                collection_id.to_string(),
             );
 
             // Load metadata (includes bloom filter)
@@ -3366,6 +3355,10 @@ impl UnifiedStorageEngine for SstStorage {
 }
 
 impl SstStorage {
+    /// Get the unified caching filesystem if available
+    pub fn get_unified_caching_filesystem(&self) -> Option<Arc<dyn crate::storage::persistence::filesystem::FileSystem>> {
+        self.unified_fs.clone()
+    }
     // =============================================================================
     // SST IMPLEMENTATION HELPER METHODS (Private)
     // =============================================================================

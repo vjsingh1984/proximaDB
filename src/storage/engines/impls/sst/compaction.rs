@@ -25,7 +25,8 @@ use crate::core::VectorRecord; // OPTIMIZED: Added VectorRecord import
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::core::{SstConfig, String}; // OPTIMIZED: VectorRecord imported above
 use crate::storage::Result;
-use crate::storage::engines::core::io::zero_copy::{ZeroCopyIOConfig, ZeroCopyIOSystem};
+// Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -182,27 +183,25 @@ impl Compaction {
             .await
             .map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?,
         );
-        let zero_copy_config = ZeroCopyIOConfig {
-            metadata_cache:
-                crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
-                    max_memory_mb: 100,
-                    ..Default::default()
-                },
-            ..Default::default()
-        };
-        let zero_copy_system = Arc::new(
-            ZeroCopyIOSystem::new(zero_copy_config, filesystem_factory.clone(), Vec::new())
-                .await
-                .map_err(|e| {
-                    crate::core::StorageError::SstStorage(format!(
-                        "Failed to create zero-copy system: {}",
-                        e
-                    ))
-                })?,
+        // Create unified caching filesystem for compaction
+        let base_fs = filesystem_factory
+            .get_filesystem("file://")
+            .map_err(|e| {
+                crate::core::StorageError::SstStorage(format!(
+                    "Failed to get base filesystem: {}",
+                    e
+                ))
+            })?;
+        let unified_fs = Arc::new(
+            UnifiedCachingFilesystem::new(
+                base_fs,
+                "compaction".to_string(), // collection_id
+                "sst_compaction".to_string(),
+            )
         );
         let unified_reader = Arc::new(UnifiedSstableReader::new(
             filesystem_factory.clone(),
-            zero_copy_system,
+            unified_fs,
             String::from("compaction"),
         ));
 

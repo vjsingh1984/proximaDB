@@ -17,6 +17,8 @@ use chrono::{DateTime, Utc, Duration};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn, debug};
 use dashmap::DashMap;
+use std::pin::Pin;
+use std::future::Future;
 
 /// Multi-Factor Authentication (MFA) service
 pub struct MFAService {
@@ -74,10 +76,13 @@ pub struct MFASession {
 }
 
 /// MFA provider implementation trait
-pub trait MFAProviderImpl {
-    async fn send_challenge(&self, user_context: &UnifiedUserContext) -> Result<String>;
-    async fn verify_challenge(&self, session_id: &str, challenge_response: &str) -> Result<bool>;
-    async fn is_configured_for_user(&self, user_context: &UnifiedUserContext) -> Result<bool>;
+pub trait MFAProviderImpl: Send + Sync {
+    fn send_challenge(&self, user_context: &UnifiedUserContext)
+        -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>>;
+    fn verify_challenge(&self, session_id: &str, challenge_response: &str)
+        -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
+    fn is_configured_for_user(&self, user_context: &UnifiedUserContext)
+        -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
 }
 
 impl MFAService {
@@ -144,13 +149,14 @@ impl MFAService {
         let challenge_data = format!("challenge_{}", uuid::Uuid::new_v4());
 
         // Create MFA session
+        let expires_at = Utc::now() + Duration::minutes(self.config.session_timeout_minutes as i64);
         let session = MFASession {
             session_id: session_id.clone(),
             user_id: user_context.user_id.clone(),
             tenant_id: user_context.tenant_id.clone(),
             provider: provider.clone(),
             challenge_sent_at: Utc::now(),
-            expires_at: Utc::now() + Duration::minutes(self.config.session_timeout_minutes as i64),
+            expires_at,
             attempts: 0,
             verified: false,
         };
@@ -171,7 +177,7 @@ impl MFAService {
             session_id,
             provider,
             challenge_data,
-            expires_at: session.expires_at,
+            expires_at,
         })
     }
 
@@ -641,7 +647,7 @@ fn create_mfa_audit_event(
     session_id: Option<&str>,
     success: bool,
 ) -> crate::audit::types::AuditEvent {
-    use crate::audit::types::{AuditEvent, AuditEventType};
+    use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
     AuditEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
@@ -649,22 +655,32 @@ fn create_mfa_audit_event(
         timestamp: Utc::now(),
         user_id: Some(user_context.user_id.clone()),
         tenant_id: user_context.tenant_id.clone(),
-        resource_type: "mfa".to_string(),
-        resource_id: session_id.unwrap_or("unknown").to_string(),
+        resource: AuditResource {
+            resource_type: "mfa".to_string(),
+            resource_id: session_id.unwrap_or("unknown").to_string(),
+            parent_resource: None,
+        },
         action: action.to_string(),
-        result: if success { "success".to_string() } else { "failure".to_string() },
-        source_ip: None,
+        result: if success {
+            AuditResult::Success
+        } else {
+            AuditResult::Failure {
+                error_code: "MFA_FAILED".to_string(),
+                error_message: "MFA verification failed".to_string(),
+            }
+        },
+        ip_address: None,
         user_agent: None,
         session_id: session_id.map(|s| s.to_string()),
         request_id: None,
-        duration_ms: 0,
-        metadata: serde_json::json!({
-            "mfa_action": action,
-            "success": success,
-            "user_id": user_context.user_id,
-        }),
-        risk_score: if success { 0 } else { 80 },
-        compliance_tags: vec!["mfa".to_string(), "authentication".to_string()],
+        details: {
+            let mut details = HashMap::new();
+            details.insert("mfa_action".to_string(), serde_json::json!(action));
+            details.insert("success".to_string(), serde_json::json!(success));
+            details.insert("user_id".to_string(), serde_json::json!(user_context.user_id));
+            details
+        },
+        risk_score: if success { Some(0.0) } else { Some(0.8) },
     }
 }
 

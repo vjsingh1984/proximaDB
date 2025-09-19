@@ -3,10 +3,10 @@
 //! Provides SSO authentication using any SAML 2.0 compatible identity provider
 //! including Okta, Auth0, Ping Identity, ADFS, and custom SAML implementations.
 
-use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext};
+use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext, SecurityClearance, ProviderUserContext};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc, Duration};
 use tracing::{info, warn, debug};
 
@@ -176,16 +176,21 @@ impl SAMLIntegration {
             organization_id: "saml_org".to_string(),
             roles: vec!["saml_user".to_string()],
             permissions: HashSet::new(),
-            provider: SSOProvider::Generic,
-            provider_user_id: user_id,
-            groups: vec!["saml_users".to_string()],
-            expires_at: Some(Utc::now() + Duration::minutes(self.config.max_assertion_age_minutes as i64)),
-            metadata: Some({
-                let mut metadata = HashMap::new();
-                metadata.insert("provider".to_string(), "saml".to_string());
-                metadata.insert("sp_entity_id".to_string(), self.config.sp_entity_id.clone());
-                metadata
-            }),
+            security_clearance: SecurityClearance::Internal,
+            department: None,
+            cost_center: None,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            login_timestamp: Utc::now(),
+            last_activity: Utc::now(),
+            provider_context: ProviderUserContext::Generic {
+                provider_user_id: user_id,
+                attributes: {
+                    let mut attrs = HashMap::new();
+                    attrs.insert("provider".to_string(), "saml".to_string());
+                    attrs.insert("sp_entity_id".to_string(), self.config.sp_entity_id.clone());
+                    attrs
+                },
+            },
         })
     }
 
@@ -250,17 +255,22 @@ impl SAMLIntegration {
             organization_id: "saml_org".to_string(),
             roles,
             permissions: HashSet::new(),
-            provider: SSOProvider::Generic,
-            provider_user_id: user_id.clone(),
-            groups,
-            expires_at: Some(Utc::now() + Duration::minutes(self.config.max_assertion_age_minutes as i64)),
-            metadata: Some({
-                let mut metadata = HashMap::new();
-                metadata.insert("provider".to_string(), "saml".to_string());
-                metadata.insert("email".to_string(), email.clone());
-                metadata.insert("display_name".to_string(), display_name.clone());
-                metadata
-            }),
+            security_clearance: SecurityClearance::Internal,
+            department: None,
+            cost_center: None,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            login_timestamp: Utc::now(),
+            last_activity: Utc::now(),
+            provider_context: ProviderUserContext::Generic {
+                provider_user_id: user_id.clone(),
+                attributes: {
+                    let mut attrs = HashMap::new();
+                    attrs.insert("provider".to_string(), "saml".to_string());
+                    attrs.insert("email".to_string(), email.clone());
+                    attrs.insert("display_name".to_string(), display_name.clone());
+                    attrs
+                },
+            },
         })
     }
 
@@ -360,7 +370,7 @@ mod tests {
         assert!(result.is_ok());
 
         let user_context = result.unwrap();
-        assert_eq!(user_context.provider, SSOProvider::Generic);
+        assert!(matches!(user_context.provider_context, ProviderUserContext::Generic { .. }));
         assert_eq!(user_context.tenant_id, "saml_tenant");
         assert!(user_context.roles.contains(&"saml_user".to_string()));
 

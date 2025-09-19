@@ -3,6 +3,11 @@
 //! This test validates that SST engine with integrated quantization
 //! achieves better compression through block-based quantization.
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
 use anyhow::Result;
 use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, CompressionConfig};
 use proximadb::storage::engines::impls::sst::SstStorage;
@@ -16,7 +21,6 @@ use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
 
 // Use the unified test utilities for test environment only
-mod common;
 use common::integration_test_helpers::UnifiedTestEnvironment;
 
 /// Test SST compression with integrated quantization features

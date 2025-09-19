@@ -19,6 +19,10 @@
 //! This module organizes all integration tests that test multiple components
 //! working together and end-to-end functionality.
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 // Integration test modules - these are organized by functional area
 // Each subdirectory contains integration tests for that area
 
@@ -98,18 +102,17 @@ pub mod sst_compression_integration_test;
 pub mod sst_compression_sparse_dense_test;
 pub mod viper_compression_integration_test;
 
-// Benchmark and comparison tests
-pub mod comprehensive_engine_benchmark_report;
-pub mod engine_compression_comparison_test;
-pub mod engine_sparsity_compression_benchmark;
+// Benchmark and comparison tests - moved to benches/
+// pub mod comprehensive_engine_benchmark_report; // Moved to benches/comprehensive_engine_report.rs
+// pub mod engine_compression_comparison_test; // Removed - duplicate of engine_sparsity_compression_bench.rs
+// pub mod engine_sparsity_compression_benchmark; // Moved to benches/engine_sparsity_compression_bench.rs
 
 // Early termination optimization tests
 pub mod early_termination_test;
 
-// Quantization statistics tests
+// Quantization tests
 pub mod quantization_stats_test;
-
-// Quantization with block sizes test
 pub mod sst_quantization_blocks_test;
+pub mod sst_quantization_comprehensive_test; // Comprehensive quantization coverage
 
 // Middleware integration tests are at this level since they cross-cut concerns

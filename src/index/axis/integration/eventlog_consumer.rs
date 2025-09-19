@@ -662,23 +662,15 @@ impl AxisEventLogConsumer {
         );
 
         // Create zero-copy IO system once for all files - this enables cross-file optimization
-        // Note: ZeroCopyIOSystem requires configuration and filesystem factory
-        use crate::storage::engines::core::io::zero_copy::{
-            access_tracker::AccessEvent,
-            config::{WorkloadType, ZeroCopyIOConfig},
-            orchestrator::ZeroCopyIOSystem,
-            traits::QueryType as ZeroCopyQueryType,
-        };
+        // Use UnifiedCachingFilesystem for all engines
+        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
-        let zero_copy_config = ZeroCopyIOConfig::for_workload(WorkloadType::HighPerformance);
-        let zero_copy_system = Arc::new(
-            ZeroCopyIOSystem::new(
-                zero_copy_config,
-                filesystem_factory.clone(),
-                vec![], // No custom serializers needed for now
-            )
-            .await?,
-        );
+        let base_fs = filesystem_factory.get_filesystem("file://")?;
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            collection_id.to_string(),
+            "axis".to_string(),
+        ));
 
         // Note: For AXIS indexing, we need full scan of all records, not selective reads
         // The zero-copy system should prioritize local disk reads for recently flushed/compacted files
@@ -690,16 +682,8 @@ impl AxisEventLogConsumer {
         // Track which files are likely on local disk (recently flushed/compacted)
         // These should be read from local cache to avoid cloud storage costs
         for file_path in files {
-            // Create access event for tracking
-            let _access_event = AccessEvent {
-                file_path: file_path.to_string(),
-                collection_id: collection_id.to_string(),
-                query_type: ZeroCopyQueryType::FullScan,
-                timestamp: std::time::Instant::now(),
-                result_type: "axis_indexing".to_string(),
-            };
-            // Note: ZeroCopyIOSystem tracks access patterns internally
-            // The access tracker is used for pattern learning and optimization
+            // UnifiedCachingFilesystem handles access tracking internally
+            // No need to create access events manually
         }
 
         info!(
@@ -733,7 +717,7 @@ impl AxisEventLogConsumer {
 
                         let reader = UnifiedSstableReader::new(
                             filesystem_factory.clone(),
-                            zero_copy_system.clone(),
+                            unified_fs.clone(),
                             collection_id.to_string(),
                         );
 
@@ -792,7 +776,7 @@ impl AxisEventLogConsumer {
                             let reader = UnifiedSwiftReader::new(
                                 filesystem_factory.clone(),
                                 file_path.clone(),
-                                zero_copy_system.clone(),
+                                unified_fs.clone(),
                                 collection_id.to_string(),
                                 config,
                             )

@@ -5,6 +5,7 @@ use crate::core::config::SstConfig;
 use crate::storage::engines::impls::sst::SstableWriter;
 use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -65,13 +66,16 @@ async fn test_sstable_format_with_bloom_filter() {
         .unwrap();
 
     // Read SSTable metadata (this will test bloom filter reading)
+    let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+    let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
     let reader = UnifiedSstableReader::new(
-        filesystem.clone(),
-        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
-            filesystem.clone(),
-            vec![],
-        ).await.unwrap()),
+        filesystem_factory,
+        unified_fs,
         "test_collection".to_string(),
     );
     let file_url = format!("file://{}", sstable_path.display());
@@ -120,19 +124,21 @@ async fn test_sstable_empty_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
 
     // Create an empty file
     let empty_file = temp_path.join("empty.sstable");
     tokio::fs::write(&empty_file, b"").await.unwrap();
 
+    let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
     let reader = UnifiedSstableReader::new(
-        filesystem.clone(),
-        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
-            filesystem.clone(),
-            vec![],
-        ).await.unwrap()),
+        filesystem_factory,
+        unified_fs,
         "test_collection".to_string(),
     );
     let file_url = format!("file://{}", empty_file.display());
@@ -157,7 +163,7 @@ async fn test_sstable_truncated_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
 
     // Create a file with only header length but no header data
     let truncated_file = temp_path.join("truncated.sstable");
@@ -166,13 +172,15 @@ async fn test_sstable_truncated_file_handling() {
         .await
         .unwrap();
 
+    let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
     let reader = UnifiedSstableReader::new(
-        filesystem.clone(),
-        Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
-            filesystem.clone(),
-            vec![],
-        ).await.unwrap()),
+        filesystem_factory,
+        unified_fs,
         "test_collection".to_string(),
     );
     let file_url = format!("file://{}", truncated_file.display());

@@ -210,22 +210,21 @@ impl StreamingCompactor {
                 total_input_size += metadata.size;
             }
 
-            // Create streaming reader - for compaction, we use simplified zero-copy and collection ID
-            let zero_copy_config =
-                crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
-            let zero_copy_system = Arc::new(
-                crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
-                    zero_copy_config,
-                    self.filesystem.clone(),
-                    Vec::new(),
+            // Create streaming reader - for compaction, we use unified caching filesystem
+            let base_fs = self.filesystem.get_filesystem("file://").map_err(|e| {
+                anyhow::anyhow!("Failed to get base filesystem: {}", e)
+            })?;
+            let unified_fs = Arc::new(
+                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                    base_fs,
+                    "compaction".to_string(), // Use generic collection_id for compaction
+                    "sst_compaction".to_string(),
                 )
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to create zero-copy system: {}", e))?,
             );
 
             let reader = UnifiedSstableReader::new(
                 self.filesystem.clone(),
-                zero_copy_system,
+                unified_fs,
                 "compaction".to_string(),
             );
 

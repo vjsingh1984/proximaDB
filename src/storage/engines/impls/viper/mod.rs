@@ -161,6 +161,7 @@ pub mod compaction;
 pub mod engine;
 pub mod flush;
 pub mod unified_metadata_serializer;
+pub mod unified_strategy_reader;
 
 // Test modules
 
@@ -194,6 +195,11 @@ pub use compaction::Compaction;
 pub use engine::ViperEngine;
 pub use eventlog_flush::ViperFlushNotifier;
 pub use flush::Flush;
+
+// Re-export unified strategy readers
+pub use unified_strategy_reader::{
+    UnifiedVIPERReader, DirectVIPERReader, CachedVIPERReader
+};
 // pub use clustering_models::{ClusteringModelManager, EfficientClusteringModel, ClusteringStats}; // Moved to AXIS
 
 // Unified search engine removed - using IntegratedSearchOptimizer from core::search

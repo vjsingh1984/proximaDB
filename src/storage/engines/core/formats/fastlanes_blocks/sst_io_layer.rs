@@ -61,9 +61,9 @@ use anyhow::Result;
 use tracing::info;
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-// Using zero-copy I/O system for efficient caching
+// Using UnifiedCachingFilesystem for efficient caching
 use crate::core::error::{ProximaDBError, StorageError};
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// File type enum for cache key discrimination
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -96,8 +96,8 @@ pub struct SharedSstFormatReader {
     /// Memory mapping strategy (kept for region-specific optimizations)
     mmap_strategy: SstMmapStrategy,
 
-    /// UNIFIED CACHE: Zero-copy system replaces all specialized caches
-    zero_copy_system: Arc<ZeroCopyIOSystem>,
+    /// UNIFIED CACHE: UnifiedCachingFilesystem replaces all specialized caches
+    unified_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
     collection_id: String,
@@ -142,13 +142,13 @@ impl SharedSstFormatReader {
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
         mmap_strategy: SstMmapStrategy,
-        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        unified_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
     ) -> Self {
         Self {
             filesystem,
             mmap_strategy,
-            zero_copy_system,
+            unified_filesystem,
             collection_id,
             stats: Arc::new(ReaderStats::default()),
         }

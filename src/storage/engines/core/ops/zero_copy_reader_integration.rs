@@ -49,14 +49,11 @@ impl ZeroCopyReaderIntegration {
                 base_path,
                 collection_id.to_string(),
                 "sst".to_string(),
-                collection_id.to_string(),
-                "SST".to_string(),
             )
-            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
-        // 3. Create enhanced reader with zero-copy filesystem
-        Ok(EnhancedSstReader::new(Arc::new(zero_copy_fs)))
+        // 3. Create enhanced reader with unified caching filesystem
+        Ok(EnhancedSstReader::new(zero_copy_fs))
     }
 
     /// Example: Create a zero-copy enhanced Parquet reader
@@ -81,7 +78,7 @@ impl ZeroCopyReaderIntegration {
             )
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
-        Ok(EnhancedParquetReader::new(Arc::new(zero_copy_fs)))
+        Ok(EnhancedParquetReader::new(zero_copy_fs))
     }
 
     /// Example: Create a zero-copy enhanced SWIFT reader
@@ -106,7 +103,7 @@ impl ZeroCopyReaderIntegration {
             )
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
-        Ok(EnhancedSwiftReader::new(Arc::new(zero_copy_fs)))
+        Ok(EnhancedSwiftReader::new(zero_copy_fs))
     }
 
     /// Example: Batch creation of zero-copy readers for multiple engines
@@ -148,9 +145,9 @@ impl ZeroCopyReaderIntegration {
 
             // Create appropriate reader type
             let reader: Box<dyn EnhancedReader> = match engine_type {
-                "SST" => Box::new(EnhancedSstReader::new(Arc::new(zero_copy_fs))),
-                "VIPER" => Box::new(EnhancedParquetReader::new(Arc::new(zero_copy_fs))),
-                "SWIFT" => Box::new(EnhancedSwiftReader::new(Arc::new(zero_copy_fs))),
+                "SST" => Box::new(EnhancedSstReader::new(zero_copy_fs.clone())),
+                "VIPER" => Box::new(EnhancedParquetReader::new(zero_copy_fs.clone())),
+                "SWIFT" => Box::new(EnhancedSwiftReader::new(zero_copy_fs.clone())),
                 _ => {
                     return Err(ProximaDBError::Config(format!(
                         "Unsupported engine type: {}",

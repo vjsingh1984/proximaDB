@@ -38,6 +38,7 @@ impl SSOIntegrationManager {
         Self {
             aws_integration: None,
             azure_integration: None,
+            google_cloud_integration: None,
             token_cache: Arc::new(dashmap::DashMap::new()),
         }
     }

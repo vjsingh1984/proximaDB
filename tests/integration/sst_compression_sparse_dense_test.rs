@@ -4,9 +4,12 @@
 //! - Sparse data (mostly zeros) compresses very well
 //! - Dense random data doesn't compress well
 
-mod common {
-    include!("../common/mod.rs");
-}
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;

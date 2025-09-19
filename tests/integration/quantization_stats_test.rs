@@ -1,3 +1,7 @@
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 use anyhow::Result;
 use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb::compute::quantization::{
@@ -163,7 +167,7 @@ async fn run_quantization_test(
             distance_compute.clone(),
             codebook_store,
         ));
-        let quantization_engine =
+        let mut quantization_engine =
             StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
         // Train quantization model

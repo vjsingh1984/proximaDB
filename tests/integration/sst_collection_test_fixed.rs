@@ -3,9 +3,10 @@
 //! This test properly creates a collection with SST storage engine and
 //! verifies that flush operations route to SST correctly.
 
-mod common {
-    include!("../common/mod.rs");
-}
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::proto::proximadb_v1::{VectorRecord, StorageEngine, SqlValue, sql_value};

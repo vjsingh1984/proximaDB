@@ -49,11 +49,11 @@ pub struct CacheableMetadata {
     /// Last modified timestamp
     pub last_modified: i64,
 
-    /// Engine-specific serialized metadata
-    pub engine_metadata: Option<Bytes>,
+    /// Engine-specific serialized metadata (stored as Vec<u8> for serialization)
+    pub engine_metadata: Option<Vec<u8>>,
 
-    /// Extracted cacheable component (e.g., Parquet footer)
-    pub cached_component: Option<Bytes>,
+    /// Extracted cacheable component (e.g., Parquet footer, stored as Vec<u8> for serialization)
+    pub cached_component: Option<Vec<u8>>,
 }
 
 /// Default serializer for unknown/generic engines

@@ -3,13 +3,18 @@
 //! Tests WriteBuffer functionality with completely isolated environments
 //! to ensure reliable testing without cross-test contamination.
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use anyhow::Result;
 use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 
-mod common {
-    include!("../common/mod.rs");
-}
 use common::integration_test_helpers::{UnifiedTestEnvironment as IsolatedTestEnvironment, setup_hardware_capabilities};
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::MetadataItem;

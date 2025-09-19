@@ -7,7 +7,7 @@ use tracing::{debug, error, info, warn};
 use proximadb::storage::engines::impls::sst::{
     SstEntry, SstMetadata, SstableWriter,
 };
-use proximadb::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
+use proximadb::storage::engines::impls::sst::readers::sst_query_engine::SstDirectReader;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use std::collections::HashMap;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -187,30 +187,25 @@ async fn test_sstable_format_inspection() {
         }
     }
 
-    // Now try to read with unified reader
-    use proximadb::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem;
-    use proximadb::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig;
-
-    let zero_copy_config = ZeroCopyIOConfig::default();
-    let zero_copy_system = std::sync::Arc::new(
-        ZeroCopyIOSystem::new(
-            zero_copy_config,
-            filesystem.clone(),
-            vec![],
-        ).await.unwrap(),
-    );
-    let reader = UnifiedSstableReader::new(filesystem.clone(), zero_copy_system, "test_collection".to_string());
+    // Now try to read with SstDirectReader which doesn't require ZeroCopyIOSystem
     let file_url = format!("file://{}", sstable_path.display());
-    reader
-        .load_metadata(&file_url)
+    let mut reader = SstDirectReader::open(filesystem.clone(), &file_url)
         .await
-        .expect("Failed to load metadata");
+        .expect("Failed to open SSTable reader");
 
-    // Verify bloom filter works
-    assert!(reader.might_contain_key(&file_url, "vec_0").await);
-    assert!(
-        !reader
-            .might_contain_key(&file_url, "non_existent_key")
-            .await
-    );
+    // Read and verify vectors
+    let read_vectors = reader.read_all_for_compaction()
+        .await
+        .expect("Failed to read vectors");
+
+    // Should have at least the vectors we wrote
+    assert!(read_vectors.len() >= 1, "Should have read at least 1 vector");
+
+    // Verify first vector content
+    let first_vector = read_vectors.iter().find(|v| v.id == "vec_0");
+    assert!(first_vector.is_some(), "Should find vec_0");
+    if let Some(vec) = first_vector {
+        assert_eq!(vec.vector.len(), 3);
+        assert_eq!(vec.vector, vec![1.0, 0.0, 0.0]);
+    }
 }

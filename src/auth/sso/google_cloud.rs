@@ -3,10 +3,10 @@
 //! Provides SSO authentication using Google Cloud Platform Identity and Access Management (IAM)
 //! and Google Workspace identity federation.
 
-use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext};
+use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext, SecurityClearance, ProviderUserContext};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc, Duration};
 use tracing::{info, warn, debug};
 
@@ -106,17 +106,28 @@ impl GoogleCloudIntegration {
             .unwrap_or_else(|| "google_workspace".to_string());
 
         Ok(EnterpriseUserContext {
-            user_id: simulated_user_email,
+            user_id: simulated_user_email.clone(),
+            email: simulated_user_email.clone(),
+            display_name: simulated_user_email.clone(),
             tenant_id,
+            organization_id: "google_workspace".to_string(),
             roles: vec!["workspace_user".to_string()],
-            provider: SSOProvider::GoogleCloud,
-            expires_at: Some(Utc::now() + Duration::minutes(self.config.session_duration_minutes as i64)),
-            metadata: Some({
-                let mut metadata = HashMap::new();
-                metadata.insert("provider".to_string(), "google_cloud".to_string());
-                metadata.insert("project_id".to_string(), self.config.project_id.clone());
-                metadata
-            }),
+            permissions: HashSet::new(),
+            security_clearance: SecurityClearance::Internal,
+            department: None,
+            cost_center: None,
+            session_id: uuid::Uuid::new_v4().to_string(),
+            login_timestamp: Utc::now(),
+            last_activity: Utc::now(),
+            provider_context: ProviderUserContext::Generic {
+                provider_user_id: simulated_user_email,
+                attributes: {
+                    let mut attrs = HashMap::new();
+                    attrs.insert("provider".to_string(), "google_cloud".to_string());
+                    attrs.insert("project_id".to_string(), self.config.project_id.clone());
+                    attrs
+                },
+            },
         })
     }
 
@@ -225,7 +236,7 @@ mod tests {
         assert!(result.is_ok());
 
         let user_context = result.unwrap();
-        assert_eq!(user_context.provider, SSOProvider::GoogleCloud);
+        assert!(matches!(user_context.provider_context, ProviderUserContext::Generic { .. }));
         assert_eq!(user_context.tenant_id, "test_tenant");
         assert!(user_context.roles.contains(&"workspace_user".to_string()));
 

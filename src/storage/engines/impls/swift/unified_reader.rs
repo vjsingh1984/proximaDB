@@ -62,7 +62,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
 };
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 use super::MetadataFilter;
 
@@ -129,8 +129,8 @@ pub struct UnifiedSwiftReader {
     /// This is the key differentiator from basic SST - SuperBlock hierarchy for 3-tier filtering
     cached_superblock_metadata: Arc<RwLock<HashMap<u32, SuperBlockMetadata>>>,
 
-    /// Zero-copy system for cache-first metadata access
-    zero_copy_system: Arc<ZeroCopyIOSystem>,
+    /// Unified caching filesystem for cache-first metadata access
+    unified_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for cache key generation
     collection_id: String,
@@ -177,19 +177,19 @@ enum ReadPurpose {
 }
 
 impl UnifiedSwiftReader {
-    /// Create new SWIFT reader with zero-copy cache integration
+    /// Create new SWIFT reader with unified caching filesystem
     /// SWIFT extends SST format with SuperBlock hierarchy for 3-tier filtering
     pub async fn new(
         filesystem: Arc<FilesystemFactory>,
         file_path: String,
-        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        unified_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
         config: SwiftReaderConfig,
     ) -> Result<Self> {
         Self::new_with_bandwidth_optimizer(
             filesystem,
             file_path,
-            zero_copy_system,
+            unified_filesystem,
             collection_id,
             config,
             None,
@@ -202,7 +202,7 @@ impl UnifiedSwiftReader {
     pub async fn new_with_bandwidth_optimizer(
         filesystem: Arc<FilesystemFactory>,
         file_path: String,
-        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        unified_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
         config: SwiftReaderConfig,
         bandwidth_optimizer: Option<
@@ -228,7 +228,7 @@ impl UnifiedSwiftReader {
         let shared_reader = Arc::new(SharedSstFormatReader::new(
             filesystem.clone(),
             mmap_strategy,
-            zero_copy_system.clone(),
+            unified_filesystem.clone(),
             collection_id.clone(),
         ));
 
@@ -237,7 +237,7 @@ impl UnifiedSwiftReader {
             file_path: file_path.clone(),
             config,
             cached_superblock_metadata: Arc::new(RwLock::new(HashMap::new())),
-            zero_copy_system,
+            unified_filesystem,
             collection_id,
             cached_id_index: None,
             cached_header: None,
@@ -402,30 +402,12 @@ impl UnifiedSwiftReader {
             self.file_path, self.collection_id, superblock_id
         );
 
-        match self.zero_copy_system.get_cached_metadata(&cache_key).await {
-            Ok(Some(cached_metadata)) => {
-                debug!(
-                    "✅ Cache HIT for SWIFT SuperBlock {}: {}",
-                    superblock_id, self.file_path
-                );
-                // Extract SuperBlockMetadata from cached data
-                return self
-                    .extract_superblock_from_cache(cached_metadata, superblock_id)
-                    .await;
-            }
-            Ok(None) => {
-                debug!(
-                    "❌ Cache MISS for SWIFT SuperBlock {}: {}",
-                    superblock_id, self.file_path
-                );
-            }
-            Err(e) => {
-                warn!(
-                    "⚠️ Cache error for SuperBlock {}: {}, falling back to file read",
-                    superblock_id, e
-                );
-            }
-        }
+        // TODO: UnifiedCachingFilesystem doesn't expose direct cache access yet
+        // For now, always load from file
+        debug!(
+            "Loading SWIFT SuperBlock {} from file: {}",
+            superblock_id, self.file_path
+        );
 
         // FALLBACK: Load SuperBlock metadata from file via SharedSstFormatReader
         self.load_superblock_from_file(superblock_id).await

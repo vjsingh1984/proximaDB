@@ -44,9 +44,13 @@ pub mod progressive_search;
 pub mod superblock_cache;
 pub mod unified_metadata_serializer;
 pub mod unified_reader;
+pub mod unified_strategy_reader;
 
 // Re-export main engine type and cache
 pub use engine::SwiftEngine;
+pub use unified_strategy_reader::{
+    UnifiedSWIFTReader, DirectSWIFTReader, CachedSWIFTReader
+};
 pub use superblock_cache::{
     CachedSuperBlockMetadata, OptimalTreePath, SwiftSuperBlockCache, TreeNavigationHints,
 };

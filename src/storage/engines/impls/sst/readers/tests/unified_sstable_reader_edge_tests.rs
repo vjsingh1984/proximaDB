@@ -14,6 +14,7 @@ mod edge_tests {
         CollectionContext, ReaderConfig, UnifiedSstableReader,
     };
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
     use chrono::Utc;
     use serde_json::json;
     use std::collections::HashMap;
@@ -31,14 +32,16 @@ mod edge_tests {
     // Helper to create reader
     async fn create_test_reader() -> UnifiedSstableReader {
         let config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "sst".to_string(),
+        ));
         UnifiedSstableReader::new(
-            filesystem.clone(),
-            Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-                crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
-                filesystem,
-                vec![],
-            ).await.unwrap()),
+            filesystem_factory,
+            unified_fs,
             "test_collection".to_string(),
         )
     }
@@ -662,13 +665,20 @@ mod edge_tests {
             .unwrap();
 
         // Create reader and context
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(FilesystemConfig::default())
+                .await
+                .unwrap(),
+        );
+        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "sst".to_string(),
+        ));
         let reader = Arc::new(UnifiedSstableReader::new(
-            filesystem.clone(),
-            Arc::new(crate::storage::engines::core::io::zero_copy::orchestrator::ZeroCopyIOSystem::new(
-                crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default(),
-                filesystem,
-                vec![],
-            ).await.unwrap()),
+            filesystem_factory,
+            unified_fs,
             "test_collection".to_string(),
         ));
         reader.load_metadata(&file_url).await.unwrap();

@@ -4,8 +4,8 @@
 //! authentication, authorization, audit, and security policy enforcement.
 
 use super::unified_rbac::{ConsolidatedRBACManager, UnifiedUserContext, UnifiedPermission, RBACConfig};
-use super::unified_auth::{UnifiedAuthService, AuthenticationConfig, AuthenticationResult, AuthenticationData};
-use crate::audit::logger::AuditLogger;
+use super::unified_auth::{UnifiedAuthService, AuthenticationConfig, AuthenticationResult, AuthenticationData, AuthenticationMethod, JwtConfig, SSOConfig};
+use crate::audit::logger::{AuditLogger, AuditConfig};
 
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
@@ -36,17 +36,6 @@ pub enum SecurityMode {
     Enterprise,
 }
 
-/// Audit configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditConfig {
-    pub enabled: bool,
-    pub storage_backend: String,
-    pub log_directory: Option<String>,
-    pub encryption_enabled: bool,
-    pub retention_days: u32,
-    pub enable_real_time_alerts: bool,
-    pub alert_webhook_url: Option<String>,
-}
 
 /// TLS configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,7 +187,7 @@ impl SecurityCoordinator {
         // Create auth service
         let auth_service = UnifiedAuthService::new(config.authentication.clone())?;
 
-        // Create audit logger
+        // Create audit logger - config.audit is already AuditConfig
         let audit_logger = AuditLogger::new(config.audit.clone()).await?;
 
         Ok(Self::new(auth_service, rbac_manager, audit_logger, config))
@@ -228,7 +217,7 @@ impl SecurityCoordinator {
         }
 
         // Check audit health
-        if !self.config.audit.enabled {
+        if !self.config.audit.enable_audit_logging {
             status.audit_healthy = false;
             status.issues.push("Audit logging disabled".to_string());
         }
@@ -341,7 +330,8 @@ fn create_authorization_failure_event(
     requested_permission: &UnifiedPermission,
     start_time: chrono::DateTime<Utc>,
 ) -> crate::audit::types::AuditEvent {
-    use crate::audit::types::{AuditEvent, AuditEventType};
+    use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
+    use std::collections::HashMap;
 
     AuditEvent {
         event_id: uuid::Uuid::new_v4().to_string(),
@@ -349,23 +339,31 @@ fn create_authorization_failure_event(
         timestamp: Utc::now(),
         user_id: Some(user_context.user_id.clone()),
         tenant_id: user_context.tenant_id.clone(),
-        resource_type: "permission".to_string(),
-        resource_id: format!("{:?}", requested_permission),
+        resource: AuditResource {
+            resource_type: "permission".to_string(),
+            resource_id: format!("{:?}", requested_permission),
+            parent_resource: None,
+        },
         action: "check_permission".to_string(),
-        result: "denied".to_string(),
-        source_ip: None,
+        result: AuditResult::Failure {
+            error_code: "PERMISSION_DENIED".to_string(),
+            error_message: "Permission denied".to_string(),
+        },
+        ip_address: None,
         user_agent: None,
         session_id: Some(user_context.session_id.clone()),
         request_id: None,
-        duration_ms: (Utc::now() - start_time).num_milliseconds() as u64,
-        metadata: serde_json::json!({
-            "requested_permission": format!("{:?}", requested_permission),
-            "user_roles": user_context.roles,
-            "auth_method": format!("{:?}", user_context.auth_method),
-            "tenant_id": user_context.tenant_id,
-        }),
-        risk_score: 75, // High risk for authorization failures
-        compliance_tags: vec!["authorization".to_string(), "access_denied".to_string()],
+        details: {
+            let mut details = HashMap::new();
+            details.insert("requested_permission".to_string(), serde_json::json!(format!("{:?}", requested_permission)));
+            details.insert("user_roles".to_string(), serde_json::json!(user_context.roles));
+            details.insert("auth_method".to_string(), serde_json::json!(format!("{:?}", user_context.auth_method)));
+            if let Some(tenant) = &user_context.tenant_id {
+                details.insert("tenant_id".to_string(), serde_json::json!(tenant));
+            }
+            details
+        },
+        risk_score: Some(0.75), // High risk for authorization failures
     }
 }
 
@@ -380,11 +378,11 @@ mod tests {
             mode: SecurityMode::Development,
             authentication: AuthenticationConfig {
                 enabled: true,
-                methods: vec![super::unified_auth::AuthenticationMethod::ApiKey],
+                methods: vec![AuthenticationMethod::ApiKey],
                 require_authentication: false,
                 default_session_timeout_minutes: 480,
                 api_keys: HashMap::new(),
-                jwt: super::unified_auth::JwtConfig {
+                jwt: JwtConfig {
                     enabled: false,
                     secret: "test-secret".to_string(),
                     access_token_expiration_minutes: 15,
@@ -393,7 +391,7 @@ mod tests {
                     audience: "test".to_string(),
                     algorithm: "HS256".to_string(),
                 },
-                sso: super::unified_auth::SSOConfig {
+                sso: SSOConfig {
                     enabled: false,
                     providers: vec![],
                     token_cache_ttl_minutes: 5,
@@ -402,15 +400,7 @@ mod tests {
                 },
             },
             rbac: RBACConfig::default(),
-            audit: AuditConfig {
-                enabled: true,
-                storage_backend: "file".to_string(),
-                log_directory: Some("/tmp/test_audit".to_string()),
-                encryption_enabled: false,
-                retention_days: 90,
-                enable_real_time_alerts: false,
-                alert_webhook_url: None,
-            },
+            audit: AuditConfig::default(),
             tls: TlsConfig {
                 enabled: false,
                 require_client_certificates: false,

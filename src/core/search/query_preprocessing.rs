@@ -76,28 +76,40 @@ struct CacheStats {
 impl QueryPreprocessor {
     /// Create a new query preprocessor with specified cache size
     pub fn new(cache_size: usize) -> Self {
+        trace!("QueryPreprocessor::new called with cache_size: {}", cache_size);
         let cache_size = NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::new(100).unwrap());
 
         // Initialize quantization engine with default configuration
         // Create required components for quantization engine
+        trace!("Creating UnifiedDistanceCompute");
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
+
+        trace!("Creating InMemoryCodebookStore");
         let codebook_store =
             Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+
+        trace!("Creating UnifiedQuantizationEngine");
         let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
             distance_compute.clone(),
             codebook_store,
         ));
 
+        trace!("Creating StorageQuantizationEngine");
         let quantization_engine = Some(Arc::new(StorageQuantizationEngine::new(
             unified_engine,
             distance_compute,
             StorageQuantizationConfig::default(),
         )));
 
+        trace!("Getting hardware capabilities");
+        let hardware = get_hardware_capabilities();
+        trace!("Hardware capabilities retrieved");
+
+        trace!("QueryPreprocessor creation complete");
         Self {
             cache: Arc::new(RwLock::new(LruCache::new(cache_size.get()))),
             quantization_engine,
-            hardware: get_hardware_capabilities(),
+            hardware,
             stats: Arc::new(RwLock::new(CacheStats::default())),
         }
     }
@@ -109,10 +121,15 @@ impl QueryPreprocessor {
         distance_metric: DistanceMetric,
         quantization_config: Option<&QuantizationConfig>,
     ) -> Arc<QueryVectorCache> {
+        trace!("preprocess called - vector len: {}, metric: {:?}", query.len(), distance_metric);
+
         // Compute hash of query vector
+        trace!("Computing vector hash");
         let vector_hash = self.compute_vector_hash(query);
+        trace!("Vector hash: {}", vector_hash);
 
         // Check cache first
+        trace!("Checking cache");
         {
             let mut cache = self.cache.write();
             if let Some(cached) = cache.get(&vector_hash) {
@@ -123,24 +140,35 @@ impl QueryPreprocessor {
                 }
             }
         }
+        trace!("Cache miss, preprocessing query");
 
         // Cache miss - preprocess the query
         self.stats.write().misses += 1;
         let start = std::time::Instant::now();
 
         // Normalize vector if needed for cosine similarity
+        trace!("Checking if normalization needed for {:?}", distance_metric);
         let normalized = if distance_metric == DistanceMetric::Cosine {
-            self.normalize_vector_simd(query)
+            trace!("Calling normalize_vector_simd");
+            let result = self.normalize_vector_simd(query);
+            trace!("normalize_vector_simd completed");
+            result
         } else {
+            trace!("No normalization needed, using original vector");
             Arc::new(query.to_vec())
         };
+        trace!("Normalization step completed");
 
         // Quantize to all levels if config provided
+        trace!("Checking quantization config: {:?}", quantization_config.is_some());
         let (binary, int8, pq4, pq8) = if let Some(config) = quantization_config {
+            trace!("Quantizing with config");
             self.quantize_all_levels(&normalized, config).await
         } else {
+            trace!("No quantization config, skipping quantization");
             (None, None, None, None)
         };
+        trace!("Quantization step completed");
 
         let cached = Arc::new(QueryVectorCache {
             original: Arc::new(query.to_vec()),
@@ -171,19 +199,48 @@ impl QueryPreprocessor {
 
     /// Normalize vector using SIMD operations
     fn normalize_vector_simd(&self, vector: &[f32]) -> Arc<Vec<f32>> {
+        println!("[SIMD] normalize_vector_simd called with vector len: {}", vector.len());
+        trace!("normalize_vector_simd called with vector len: {}", vector.len());
         self.stats.write().simd_operations += 1;
 
         // Use hardware-accelerated normalization if available
-        if self.hardware.cpu.features.avx2_support {
-            Arc::new(self.normalize_avx2(vector))
-        } else if self.hardware.cpu.features.sse42_support {
-            Arc::new(self.normalize_sse(vector))
-        } else {
-            Arc::new(self.normalize_scalar(vector))
+        #[cfg(target_arch = "x86_64")]
+        {
+            println!("[SIMD] On x86_64 - AVX2: {}, SSE42: {}",
+                self.hardware.cpu.features.avx2_support,
+                self.hardware.cpu.features.sse42_support);
+            trace!("On x86_64 - AVX2: {}, SSE42: {}",
+                self.hardware.cpu.features.avx2_support,
+                self.hardware.cpu.features.sse42_support);
+            if self.hardware.cpu.features.avx2_support {
+                println!("[SIMD] Using AVX2 normalization");
+                trace!("Using AVX2 normalization");
+                return Arc::new(self.normalize_avx2(vector));
+            } else if self.hardware.cpu.features.sse42_support {
+                println!("[SIMD] Using SSE normalization");
+                trace!("Using SSE normalization");
+                return Arc::new(self.normalize_sse(vector));
+            }
         }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            println!("[SIMD] On aarch64 - NEON: {}", self.hardware.cpu.features.neon_support);
+            trace!("On aarch64 - NEON: {}", self.hardware.cpu.features.neon_support);
+            if self.hardware.cpu.features.neon_support {
+                println!("[SIMD] Using NEON normalization");
+                trace!("Using NEON normalization");
+                return Arc::new(self.normalize_neon(vector));
+            }
+        }
+
+        // Fallback to scalar implementation
+        println!("[SIMD] Using scalar normalization fallback");
+        trace!("Using scalar normalization");
+        Arc::new(self.normalize_scalar(vector))
     }
 
-    /// AVX2 accelerated normalization
+    /// AVX2 accelerated normalization (x86_64 only)
     #[cfg(target_arch = "x86_64")]
     fn normalize_avx2(&self, vector: &[f32]) -> Vec<f32> {
         use std::arch::x86_64::*;
@@ -234,7 +291,7 @@ impl QueryPreprocessor {
         }
     }
 
-    /// SSE accelerated normalization
+    /// SSE accelerated normalization (x86_64 only)
     #[cfg(target_arch = "x86_64")]
     fn normalize_sse(&self, vector: &[f32]) -> Vec<f32> {
         use std::arch::x86_64::*;
@@ -297,13 +354,41 @@ impl QueryPreprocessor {
     }
 
     /// Scalar normalization fallback
+    /// NEON accelerated normalization (ARM64 only)
+    #[cfg(target_arch = "aarch64")]
+    fn normalize_neon(&self, vector: &[f32]) -> Vec<f32> {
+        println!("[SIMD] normalize_neon called, forwarding to scalar");
+        trace!("normalize_neon called, forwarding to scalar");
+        // For now, use scalar implementation on ARM64
+        // TODO: Implement actual NEON intrinsics when stable
+        self.normalize_scalar(vector)
+    }
+
+    /// Stub for NEON when not on aarch64
+    #[cfg(not(target_arch = "aarch64"))]
+    fn normalize_neon(&self, _vector: &[f32]) -> Vec<f32> {
+        // This should never be called on non-ARM platforms
+        unreachable!("normalize_neon called on non-ARM platform")
+    }
+
     fn normalize_scalar(&self, vector: &[f32]) -> Vec<f32> {
+        println!("[SIMD] normalize_scalar called with vector len: {}", vector.len());
+        trace!("normalize_scalar called with vector len: {}", vector.len());
         let mag_sq: f32 = vector.iter().map(|x| x * x).sum();
+        println!("[SIMD] Magnitude squared: {}", mag_sq);
+        trace!("Magnitude squared: {}", mag_sq);
         let mag = mag_sq.sqrt();
+        println!("[SIMD] Magnitude: {}", mag);
+        trace!("Magnitude: {}", mag);
 
         if mag > 0.0 {
-            vector.iter().map(|x| x / mag).collect()
+            let result = vector.iter().map(|x| x / mag).collect();
+            println!("[SIMD] Normalized vector successfully");
+            trace!("Normalized vector successfully");
+            result
         } else {
+            println!("[SIMD] Zero magnitude, returning original vector");
+            trace!("Zero magnitude, returning original vector");
             vector.to_vec()
         }
     }

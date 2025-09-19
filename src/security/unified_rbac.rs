@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 use tracing::{info, warn, debug};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
+use std::future::Future;
 
 /// Unified permission model consolidating all permission types
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,7 +172,7 @@ pub struct UserRoleAssignment {
 }
 
 /// RBAC configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RBACConfig {
     pub enabled: bool,
     pub enable_field_level_permissions: bool,
@@ -194,28 +196,28 @@ impl Default for RBACConfig {
 }
 
 /// RBAC event logger trait
-pub trait RBACEventLogger {
-    async fn log_permission_check(
+pub trait RBACEventLogger: Send + Sync {
+    fn log_permission_check(
         &self,
         user_context: &UnifiedUserContext,
         permission: &UnifiedPermission,
         result: bool,
-    ) -> Result<()>;
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
-    async fn log_role_assignment(
+    fn log_role_assignment(
         &self,
         user_id: &str,
         tenant_id: Option<&str>,
         roles: &[String],
         assigned_by: &str,
-    ) -> Result<()>;
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
-    async fn log_permission_denial(
+    fn log_permission_denial(
         &self,
         user_context: &UnifiedUserContext,
         attempted_permission: &UnifiedPermission,
         reason: &str,
-    ) -> Result<()>;
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 }
 
 impl ConsolidatedRBACManager {
@@ -411,8 +413,8 @@ impl ConsolidatedRBACManager {
         // Validate role exists
         let role_exists = if let Some(tenant_id) = tenant_id {
             self.tenant_roles.get(tenant_id)
-                .and_then(|roles| roles.get(role_name))
-                .is_some()
+                .map(|roles| roles.contains_key(role_name))
+                .unwrap_or(false)
         } else {
             false
         };

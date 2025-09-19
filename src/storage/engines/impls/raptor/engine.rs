@@ -247,9 +247,9 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         let base_fs = fs_factory.get_filesystem(&base_path)?;
 
         // Create RAPTOR metadata serializer
-        let metadata_serializer = Box::new(
+        let metadata_serializer = Arc::new(
             super::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()
-        );
+        ) as Arc<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer>;
 
         // ============================================================================
         // UNIFIED CACHING FILESYSTEM SETUP

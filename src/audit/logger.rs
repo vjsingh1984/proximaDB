@@ -35,6 +35,23 @@ pub struct AuditConfig {
     pub compliance_frameworks: Vec<String>,
 }
 
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            enable_audit_logging: true,
+            storage_backend: AuditStorageBackend::File {
+                directory: "/tmp/proximadb/audit".to_string(),
+            },
+            encryption_enabled: false,
+            external_audit_endpoint: None,
+            retention_days: 30,
+            enable_real_time_alerts: false,
+            alert_webhook_url: None,
+            compliance_frameworks: vec![],
+        }
+    }
+}
+
 /// Audit storage backend options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditStorageBackend {
@@ -608,26 +625,5 @@ impl AlertSender {
         }
 
         Ok(())
-    }
-}
-
-impl Default for AuditConfig {
-    fn default() -> Self {
-        Self {
-            enable_audit_logging: true,
-            storage_backend: AuditStorageBackend::File {
-                directory: "/tmp/proximadb_audit".to_string(),
-            },
-            encryption_enabled: true,
-            external_audit_endpoint: None,
-            retention_days: 2555, // 7 years for compliance
-            enable_real_time_alerts: true,
-            alert_webhook_url: None,
-            compliance_frameworks: vec![
-                "SOC2".to_string(),
-                "GDPR".to_string(),
-                "HIPAA".to_string(),
-            ],
-        }
     }
 }

@@ -9,6 +9,7 @@ use super::unified_rbac::{UnifiedUserContext, AuthMethod, UnifiedPermission};
 use crate::auth::{EnterpriseAuthManager, SSOToken, EnterpriseUserContext};
 use crate::network::auth::{AuthResult, JwtService, TokenPair};
 use crate::audit::logger::AuditLogger;
+use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
@@ -16,6 +17,8 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn, debug};
+use dashmap::DashMap;
+use uuid::Uuid;
 
 /// Unified authentication service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,7 +137,16 @@ impl UnifiedAuthService {
 
         // Initialize JWT service if enabled
         if config.jwt.enabled {
-            let jwt_service = JwtService::new(config.jwt.clone())?;
+            // Convert unified JwtConfig to network JwtConfig
+            let network_jwt_config = crate::network::auth::config::JwtConfig {
+                secret: Some(config.jwt.secret.clone()),
+                expiration_secs: config.jwt.access_token_expiration_minutes * 60,
+                refresh_expiration_secs: config.jwt.refresh_token_expiration_days * 24 * 3600,
+                issuer: config.jwt.issuer.clone(),
+                audience: config.jwt.audience.clone(),
+                algorithm: crate::network::auth::config::JwtAlgorithm::HS256, // Default to HS256
+            };
+            let jwt_service = JwtService::new(network_jwt_config)?;
             service.jwt_service = Some(Arc::new(jwt_service));
         }
 
@@ -160,24 +172,37 @@ impl UnifiedAuthService {
     pub async fn authenticate(&self, auth_data: AuthenticationData) -> Result<AuthenticationResult> {
         let start_time = Utc::now();
 
-        let result = match auth_data {
+        let result = match &auth_data {
             AuthenticationData::SSOToken(token) => {
-                self.authenticate_sso_token(&token).await
+                self.authenticate_sso_token(token).await
             }
             AuthenticationData::JWTToken(token) => {
-                self.authenticate_jwt_token(&token).await
+                self.authenticate_jwt_token(token).await
             }
             AuthenticationData::ApiKey(key) => {
-                self.authenticate_api_key(&key).await
+                self.authenticate_api_key(key).await
             }
             AuthenticationData::ClientCertificate(cert_data) => {
-                self.authenticate_client_certificate(&cert_data).await
+                self.authenticate_client_certificate(cert_data).await
             }
         };
 
         // Log authentication attempt
         if let Some(audit_logger) = &self.audit_logger {
-            let auth_event = create_auth_audit_event(&auth_data, &result, start_time);
+            let auth_event = match &result {
+                Ok(auth_result) => create_auth_audit_event(&auth_data, auth_result, start_time),
+                Err(_) => {
+                    // Create failed auth event
+                    let failed_result = AuthenticationResult {
+                        user_context: UnifiedUserContext::anonymous(),
+                        auth_method: AuthMethod::Internal,
+                        success: false,
+                        error_message: Some("Authentication failed".to_string()),
+                        requires_mfa: false,
+                    };
+                    create_auth_audit_event(&auth_data, &failed_result, start_time)
+                }
+            };
             let _ = audit_logger.log_event(auth_event).await;
         }
 
@@ -203,7 +228,7 @@ impl UnifiedAuthService {
                         let user_context = self.convert_enterprise_user_to_unified(enterprise_user);
                         Ok(AuthenticationResult {
                             user_context,
-                            auth_method: AuthMethod::SSO { provider: token.provider.to_string() },
+                            auth_method: AuthMethod::SSO { provider: format!("{:?}", token.provider) },
                             success: true,
                             error_message: None,
                             requires_mfa: false,
@@ -213,7 +238,7 @@ impl UnifiedAuthService {
                         warn!("SSO authentication failed: {}", e);
                         Ok(AuthenticationResult {
                             user_context: UnifiedUserContext::anonymous(),
-                            auth_method: AuthMethod::SSO { provider: token.provider.to_string() },
+                            auth_method: AuthMethod::SSO { provider: format!("{:?}", token.provider) },
                             success: false,
                             error_message: Some(e.to_string()),
                             requires_mfa: false,
@@ -241,7 +266,7 @@ impl UnifiedAuthService {
 
         match &self.jwt_service {
             Some(jwt_service) => {
-                match jwt_service.verify_token(token).await {
+                match jwt_service.verify_token(token) {
                     Ok(claims) => {
                         let user_context = self.convert_jwt_claims_to_unified(claims);
                         Ok(AuthenticationResult {
@@ -345,16 +370,23 @@ impl UnifiedAuthService {
 
     /// Convert enterprise user context to unified context
     fn convert_enterprise_user_to_unified(&self, enterprise_user: EnterpriseUserContext) -> UnifiedUserContext {
+        // Determine SSO provider from provider_context
+        let provider_name = match &enterprise_user.provider_context {
+            crate::auth::sso::types::ProviderUserContext::AWS { .. } => "aws_iam",
+            crate::auth::sso::types::ProviderUserContext::Azure { .. } => "azure_ad",
+            crate::auth::sso::types::ProviderUserContext::Generic { .. } => "generic",
+        };
+
         UnifiedUserContext {
             user_id: enterprise_user.user_id,
             tenant_id: Some(enterprise_user.tenant_id),
             roles: enterprise_user.roles,
             effective_permissions: HashSet::new(), // Will be populated by RBAC manager
-            auth_method: AuthMethod::SSO { provider: enterprise_user.provider.to_string() },
-            session_id: format!("sso_{}", uuid::Uuid::new_v4()),
-            expires_at: enterprise_user.expires_at,
-            created_at: Utc::now(),
-            metadata: enterprise_user.metadata.unwrap_or_default(),
+            auth_method: AuthMethod::SSO { provider: provider_name.to_string() },
+            session_id: enterprise_user.session_id,
+            expires_at: None, // SSO tokens handle their own expiration
+            created_at: enterprise_user.login_timestamp,
+            metadata: HashMap::new(), // No direct metadata on EnterpriseUserContext
         }
     }
 
@@ -417,9 +449,9 @@ impl UnifiedAuthService {
             Some(jwt_service) => {
                 jwt_service.generate_token_pair(
                     &user_context.user_id,
-                    user_context.tenant_id.as_deref(),
+                    user_context.tenant_id.clone(),
                     user_context.roles.clone(),
-                ).await
+                ).await.map_err(|e| anyhow!(e))
             }
             None => Err(anyhow!("JWT service not configured"))
         }
@@ -429,7 +461,7 @@ impl UnifiedAuthService {
     pub async fn refresh_token(&self, refresh_token: &str) -> Result<TokenPair> {
         match &self.jwt_service {
             Some(jwt_service) => {
-                jwt_service.refresh_token(refresh_token).await
+                jwt_service.refresh_token(refresh_token, None).await.map_err(|e| anyhow!(e))
             }
             None => Err(anyhow!("JWT service not configured"))
         }
@@ -502,8 +534,7 @@ fn create_auth_audit_event(
     auth_data: &AuthenticationData,
     result: &AuthenticationResult,
     start_time: DateTime<Utc>,
-) -> crate::audit::types::AuditEvent {
-    use crate::audit::types::{AuditEvent, AuditEventType};
+) -> AuditEvent {
 
     let auth_method_name = match auth_data {
         AuthenticationData::SSOToken(_) => "sso",
@@ -518,24 +549,36 @@ fn create_auth_audit_event(
         timestamp: Utc::now(),
         user_id: Some(result.user_context.user_id.clone()),
         tenant_id: result.user_context.tenant_id.clone(),
-        resource_type: "authentication".to_string(),
-        resource_id: result.user_context.session_id.clone(),
+        resource: AuditResource {
+            resource_type: "authentication".to_string(),
+            resource_id: result.user_context.session_id.clone(),
+            parent_resource: None,
+        },
         action: "authenticate".to_string(),
-        result: if result.success { "success".to_string() } else { "failure".to_string() },
-        source_ip: None, // Would be populated by middleware
+        result: if result.success {
+            AuditResult::Success
+        } else {
+            AuditResult::Failure {
+                error_code: "AUTH_FAILED".to_string(),
+                error_message: result.error_message.clone().unwrap_or_else(|| "Authentication failed".to_string()),
+            }
+        },
+        ip_address: None, // Would be populated by middleware
         user_agent: None,
         session_id: Some(result.user_context.session_id.clone()),
         request_id: None,
-        duration_ms: (Utc::now() - start_time).num_milliseconds() as u64,
-        metadata: serde_json::json!({
-            "auth_method": auth_method_name,
-            "success": result.success,
-            "error_message": result.error_message,
-            "requires_mfa": result.requires_mfa,
-            "roles": result.user_context.roles,
-        }),
-        risk_score: if result.success { 0 } else { 50 },
-        compliance_tags: vec!["authentication".to_string()],
+        details: {
+            let mut details = HashMap::new();
+            details.insert("auth_method".to_string(), serde_json::json!(auth_method_name));
+            details.insert("success".to_string(), serde_json::json!(result.success));
+            if let Some(err_msg) = &result.error_message {
+                details.insert("error_message".to_string(), serde_json::json!(err_msg));
+            }
+            details.insert("requires_mfa".to_string(), serde_json::json!(result.requires_mfa));
+            details.insert("roles".to_string(), serde_json::json!(result.user_context.roles));
+            details
+        },
+        risk_score: if result.success { Some(0.0) } else { Some(0.5) },
     }
 }
 

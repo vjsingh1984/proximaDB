@@ -10,9 +10,12 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-mod common {
-    include!("../common/mod.rs");
-}
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use common::ensure_test_directories;
 use common::integration_test_helpers::{
     UnifiedTestEnvironment, create_metadata_store_config, create_test_collection_with_storage,
