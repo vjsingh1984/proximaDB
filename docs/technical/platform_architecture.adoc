@@ -11,6 +11,103 @@ _Detailed technical information for architects, engineers, and technical decisio
 
 == Platform Architecture Overview
 
+=== **Level 1: Executive Overview - Platform Capabilities**
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+mindmap
+  root((ProximaDB Platform))
+    Vector Intelligence
+      20.6M ops/sec
+      7 storage engines
+      Hardware acceleration
+    Graph Analytics
+      ORION engine
+      PULSAR engine
+      QUASAR engine
+    AI Integration
+      8 LLM providers
+      Natural language
+      Business intelligence
+    Enterprise Features
+      Multi-tenant
+      Security compliance
+      Cloud native
+----
+
+=== **Level 2: System Architecture - Component View**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151", "sectionBkgColor": "#dbeafe", "altSectionBkgColor": "#bfdbfe", "gridColor": "#6b7280", "tertiaryColor": "#f8fafc"}}}%%
+graph TB
+    subgraph "API GATEWAY"
+        A[REST API<br/>Port 5678]
+        B[gRPC API<br/>Port 5679]
+        C[WebSocket<br/>Real-time]
+    end
+
+    subgraph "AI INTELLIGENCE"
+        D[LLM Router<br/>8 Providers]
+        E[Query Processor<br/>NL to SQL]
+        F[Business Intelligence<br/>Insights Engine]
+    end
+
+    subgraph "CORE SERVICES"
+        G[Collection Service<br/>Multi-tenant]
+        H[Vector Operations<br/>Search & Similarity]
+        I[Graph Service<br/>Relationships]
+    end
+
+    subgraph "STORAGE ENGINES"
+        J[SST<br/>Real-time]
+        K[VIPER<br/>Analytics]
+        L[NOVA<br/>Advanced]
+        M[SWIFT<br/>Low-latency]
+        N["...+3 More"]
+    end
+
+    subgraph "GRAPH ENGINES"
+        O[ORION<br/>Discovery]
+        P[PULSAR<br/>Analysis]
+        Q[QUASAR<br/>Knowledge]
+    end
+
+    A --> G
+    B --> H
+    C --> I
+    D --> G
+    E --> H
+    F --> I
+    G --> J
+    H --> K
+    I --> L
+    G --> O
+    H --> P
+    I --> Q
+
+    style A fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style B fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style C fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
+    style D fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style F fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style H fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style I fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style J fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style K fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style L fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style M fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style N fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style O fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style P fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style Q fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+----
+
+=== **Level 3: Detailed Technical Architecture**
+
 === Core Architecture Principles
 
 ProximaDB is built on **five foundational architecture principles**:
@@ -20,7 +117,7 @@ ProximaDB is built on **five foundational architecture principles**:
 - **Cloud-Native Operations**: Leveraging cloud provider capabilities for scale and reliability
 - **Security by Default**: Comprehensive security and compliance framework integrated throughout
 
-=== System Architecture
+=== Detailed System Architecture
 
 [source,mermaid]
 ----
@@ -114,15 +211,438 @@ sequenceDiagram
     Query_Engine-->>User: Business insights
 ----
 
+== Storage Engine Architecture - Multi-Level View
+
+=== **Level 1: Storage Engine Portfolio Overview**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+flowchart TD
+    A[Workload Analysis] --> B{Data Pattern?}
+
+    B -->|Real-time OLTP| C[SST Engine<br/>200K vec/sec]
+    B -->|Analytics| D[VIPER Engine<br/>90% compression]
+    B -->|Advanced Research| E[NOVA Engine<br/>Multi-resolution]
+    B -->|Ultra-low Latency| F[SWIFT Engine<br/>Sub-1ms]
+    B -->|Adaptive Workloads| G[RAPTOR Engine<br/>P×K optimization]
+    B -->|Memory Constrained| H[PRISM Engine<br/>60% memory reduction]
+    B -->|Time-series| I[HELIX Engine<br/>Temporal optimization]
+
+    style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style F fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style G fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style H fill:#ec4899,stroke:#db2777,stroke-width:2px,color:#ffffff
+    style I fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
+----
+
+=== **Level 2: Storage Engine Internal Architecture**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+graph TB
+    subgraph "WRITE PATH"
+        A[Vector Insert] --> B[Memtable Buffer]
+        B --> C[WAL Log]
+        C --> D{Flush Threshold?}
+        D -->|Yes| E[Background Flush]
+        D -->|No| F[Continue Buffering]
+    end
+
+    subgraph "READ PATH"
+        G[Search Query] --> H[Query Planner]
+        H --> I[Index Lookup]
+        I --> J[Engine Selection]
+        J --> K[Parallel Search]
+        K --> L[Result Merging]
+    end
+
+    subgraph "COMPACTION ENGINE"
+        E --> M[Compaction Scheduler]
+        M --> N[Level-based Merge]
+        N --> O[Quantization Optimization]
+        O --> P[Index Rebuilding]
+    end
+
+    subgraph "CACHING LAYER"
+        L --> Q[Result Cache]
+        Q --> R[LRU Eviction]
+        R --> S[Cache Warming]
+    end
+
+    style A fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style G fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style Q fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+----
+
+=== **Level 3: Quantization and Hardware Acceleration**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+stateDiagram-v2
+    [*] --> VectorInput
+    VectorInput --> QuantizationAnalysis
+
+    QuantizationAnalysis --> Binary : Low precision OK
+    QuantizationAnalysis --> INT8 : Medium precision
+    QuantizationAnalysis --> PQ4 : High compression
+    QuantizationAnalysis --> PQ8 : Balanced
+    QuantizationAnalysis --> PQ16 : High precision
+    QuantizationAnalysis --> Float32 : Maximum precision
+
+    Binary --> SIMDProcessing
+    INT8 --> SIMDProcessing
+    PQ4 --> SIMDProcessing
+    PQ8 --> SIMDProcessing
+    PQ16 --> SIMDProcessing
+    Float32 --> SIMDProcessing
+
+    SIMDProcessing --> AVX512 : Intel/AMD
+    SIMDProcessing --> AVX2 : Standard x86
+    SIMDProcessing --> NEON : ARM processors
+    SIMDProcessing --> SSE : Legacy support
+
+    AVX512 --> Results
+    AVX2 --> Results
+    NEON --> Results
+    SSE --> Results
+
+    Results --> [*]
+----
+
+=== **Level 4: Implementation Details - Engine-Specific**
+
+==== SST Engine (Real-time OLTP)
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#dc2626", "primaryTextColor": "#ffffff", "primaryBorderColor": "#b91c1c", "lineColor": "#374151"}}}%%
+flowchart LR
+    A[Vector Insert] --> B[Row-based Layout]
+    B --> C[Three-stage Filter]
+    C --> D[Bloom Filter]
+    D --> E[Range Filter]
+    E --> F[Exact Match]
+    F --> G[Result: 200K vec/sec]
+
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+----
+
+==== VIPER Engine (Analytics)
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+flowchart LR
+    A[Batch Insert] --> B[Columnar Layout]
+    B --> C[Parquet Format]
+    C --> D[Advanced Quantization]
+    D --> E[Dictionary Encoding]
+    E --> F[Delta Compression]
+    F --> G[Result: 90% compression]
+
+    style A fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+----
+
+== Graph Engine Architecture - Multi-Level View
+
+=== **Level 1: Graph Engine Ecosystem**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#8b5cf6", "primaryTextColor": "#ffffff", "primaryBorderColor": "#7c3aed", "lineColor": "#374151"}}}%%
+graph TB
+    subgraph "GRAPH QUERY INTERFACE"
+        A[Cypher Queries]
+        B[Graph API]
+        C[Hybrid Vector+Graph]
+    end
+
+    subgraph "ORION ENGINE - Discovery"
+        D[Node Discovery<br/>High-performance indexing]
+        E[Relationship Mining<br/>Pattern detection]
+        F[Community Detection<br/>Clustering algorithms]
+    end
+
+    subgraph "PULSAR ENGINE - Analysis"
+        G[Path Analysis<br/>Shortest paths, centrality]
+        H[Graph Algorithms<br/>PageRank, betweenness]
+        I[Traversal Optimization<br/>Query planning]
+    end
+
+    subgraph "QUASAR ENGINE - Knowledge"
+        J[Knowledge Graphs<br/>Semantic relationships]
+        K[Ontology Management<br/>Schema evolution]
+        L[Reasoning Engine<br/>Inference rules]
+    end
+
+    A --> D
+    B --> G
+    C --> J
+    D --> G
+    G --> J
+    E --> H
+    H --> K
+    F --> I
+    I --> L
+
+    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style B fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style D fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style F fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style G fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style H fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style I fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style J fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style K fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style L fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+----
+
+=== **Level 2: Graph Processing Pipeline**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#8b5cf6", "primaryTextColor": "#ffffff", "primaryBorderColor": "#7c3aed", "lineColor": "#374151"}}}%%
+sequenceDiagram
+    participant Client
+    participant GraphAPI
+    participant QueryPlanner
+    participant ORION
+    participant PULSAR
+    participant QUASAR
+    participant VectorEngine
+
+    Client->>GraphAPI: Graph Query
+    GraphAPI->>QueryPlanner: Parse & Optimize
+
+    alt Simple Node/Edge Query
+        QueryPlanner->>ORION: Direct Index Lookup
+        ORION-->>Client: Fast Results
+    else Complex Traversal
+        QueryPlanner->>PULSAR: Multi-hop Analysis
+        PULSAR->>ORION: Node Data
+        PULSAR-->>Client: Path Results
+    else Semantic Query
+        QueryPlanner->>QUASAR: Knowledge Processing
+        QUASAR->>VectorEngine: Similarity Search
+        VectorEngine-->>QUASAR: Vector Results
+        QUASAR-->>Client: Semantic Results
+    end
+----
+
+=== **Level 3: Hybrid Vector+Graph Processing**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#8b5cf6", "primaryTextColor": "#ffffff", "primaryBorderColor": "#7c3aed", "lineColor": "#374151"}}}%%
+flowchart TD
+    A[Hybrid Query] --> B{Query Type Analysis}
+
+    B -->|Vector-first| C[Vector Similarity Search]
+    B -->|Graph-first| D[Graph Traversal]
+    B -->|Balanced| E[Parallel Processing]
+
+    C --> F[Find Similar Entities]
+    F --> G[Expand via Relationships]
+    G --> H[Graph Context Assembly]
+
+    D --> I[Traverse Relationships]
+    I --> J[Collect Connected Entities]
+    J --> K[Vector Similarity Scoring]
+
+    E --> L[Concurrent Vector+Graph]
+    L --> M[Result Intersection]
+    M --> N[Unified Ranking]
+
+    H --> O[Combined Results]
+    K --> O
+    N --> O
+
+    O --> P[Score Normalization]
+    P --> Q[Final Rankings]
+
+    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style O fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style Q fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+----
+
 == Multi-Tenant Enterprise Architecture
 
-=== Tenant Isolation Design
+=== **Level 1: Multi-Tenant Architecture Overview**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#10b981", "primaryTextColor": "#ffffff", "primaryBorderColor": "#059669", "lineColor": "#374151"}}}%%
+graph TB
+    subgraph "TENANT A - Enterprise Corp"
+        A1[Dedicated Namespace]
+        A2[Isolated Data Storage]
+        A3[Resource Quotas]
+        A4[Custom Security Policies]
+    end
+
+    subgraph "TENANT B - Startup Inc"
+        B1[Dedicated Namespace]
+        B2[Isolated Data Storage]
+        B3[Resource Quotas]
+        B4[Custom Security Policies]
+    end
+
+    subgraph "SHARED INFRASTRUCTURE"
+        C1[API Gateway<br/>Tenant Routing]
+        C2[Authentication Service<br/>Multi-tenant SSO]
+        C3[Resource Manager<br/>SLA Enforcement]
+        C4[Audit Service<br/>Cross-tenant Monitoring]
+    end
+
+    C1 --> A1
+    C1 --> B1
+    C2 --> A4
+    C2 --> B4
+    C3 --> A3
+    C3 --> B3
+    C4 --> A2
+    C4 --> B2
+
+    style A1 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style A2 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style A3 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style A4 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style B1 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style B2 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style B3 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style B4 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style C1 fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
+    style C2 fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
+    style C3 fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
+    style C4 fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
+----
+
+=== **Level 2: Tenant Isolation Design**
 
 **Complete enterprise-grade isolation** across all platform components:
 - **Data Isolation**: Tenant-specific data storage with cross-tenant access prevention
 - **Compute Isolation**: Resource limits and performance SLA enforcement
 - **Security Isolation**: Comprehensive RBAC with audit logging
 - **API Isolation**: Tenant-aware endpoints with rate limiting
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#10b981", "primaryTextColor": "#ffffff", "primaryBorderColor": "#059669", "lineColor": "#374151"}}}%%
+stateDiagram-v2
+    [*] --> TenantRequest
+    TenantRequest --> AuthenticationCheck
+
+    AuthenticationCheck --> ValidToken : Valid JWT/API Key
+    AuthenticationCheck --> AccessDenied : Invalid credentials
+
+    ValidToken --> TenantExtraction
+    TenantExtraction --> NamespaceValidation
+
+    NamespaceValidation --> ResourceCheck : Valid namespace
+    NamespaceValidation --> AccessDenied : Invalid namespace
+
+    ResourceCheck --> QuotaValidation
+    QuotaValidation --> ProcessRequest : Within limits
+    QuotaValidation --> RateLimited : Quota exceeded
+
+    ProcessRequest --> AuditLog
+    AuditLog --> [*]
+
+    AccessDenied --> [*]
+    RateLimited --> [*]
+----
+
+== Performance Architecture & Scaling
+
+=== **Level 1: Performance Timeline - Platform Evolution**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+timeline
+    title ProximaDB Performance Evolution
+
+    section 2024 Q4
+        Foundation : Initial SST engine
+                   : 50K ops/sec baseline
+                   : Basic vector operations
+
+    section 2025 Q1
+        Multi-Engine : VIPER analytics engine
+                     : NOVA advanced engine
+                     : 500K ops/sec achieved
+
+    section 2025 Q2
+        SIMD Acceleration : Hardware optimization
+                          : AVX2/AVX512 support
+                          : 5M ops/sec breakthrough
+
+    section 2025 Q3
+        Graph Integration : ORION/PULSAR/QUASAR
+                          : Hybrid queries
+                          : 15M ops/sec performance
+
+    section 2025 Q4
+        Current State : 20.6M ops/sec achieved
+                      : Full 7-engine portfolio
+                      : Enterprise ready
+----
+
+=== **Level 2: Performance Scaling Characteristics**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+xychart-beta
+    title "ProximaDB Scaling Performance"
+    x-axis ["1K vectors", "10K vectors", "100K vectors", "1M vectors", "10M vectors", "100M vectors"]
+    y-axis "Operations per Second (millions)" 0 --> 25
+    bar [22.5, 21.8, 20.6, 18.2, 15.4, 12.1]
+    line [20.0, 19.5, 18.8, 16.5, 13.2, 9.8]
+----
+
+**Legend**: Bar = ProximaDB Performance | Line = Industry Average
+
+=== **Level 3: Engine-Specific Performance Matrix**
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+graph LR
+    subgraph "REAL-TIME ENGINES"
+        A[SST: 200K vec/sec<br/>1GB/1M vectors<br/>5ms latency]
+        B[SWIFT: 150K vec/sec<br/>1.2GB/1M vectors<br/>Sub-1ms latency]
+    end
+
+    subgraph "ANALYTICS ENGINES"
+        C[VIPER: 80K vec/sec<br/>600MB/1M vectors<br/>90% compression]
+        D[NOVA: 120K vec/sec<br/>400MB/1M vectors<br/>Advanced quantization]
+    end
+
+    subgraph "SPECIALIZED ENGINES"
+        E[RAPTOR: Adaptive<br/>P×K optimization<br/>Dynamic workloads]
+        F[PRISM: Memory opt<br/>60% reduction<br/>Resource constrained]
+        G[HELIX: Time-series<br/>Temporal patterns<br/>Hilbert curves]
+    end
+
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style D fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style F fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+----
 
 === Security Framework
 
