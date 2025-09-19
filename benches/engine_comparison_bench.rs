@@ -46,7 +46,6 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<proximadb::proto::pro
 /// Benchmark vector insertion across all 7 engines in specified order
 fn bench_all_engines_insertion(c: &mut Criterion) {
     let _ = hardware_capabilities::initialize_hardware_capabilities_default();
-    let rt = Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("engine_comparison_insertion");
 
@@ -73,7 +72,7 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
                     b.iter_batched(
                         || {
                             // Setup: Create fresh engine for each iteration
-                            rt.block_on(async {
+                            futures::executor::block_on(async {
                                 match *engine_type {
                                     "sst" => StorageEngineFactory::create_sst().unwrap(),
                                     "viper" => StorageEngineFactory::create_viper().unwrap(),
@@ -88,7 +87,7 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
                         },
                         |engine| {
                             // Benchmark: Flush vectors to storage
-                            rt.block_on(async {
+                            futures::executor::block_on(async {
                                 use proximadb::storage::traits::FlushParameters;
 
                                 let params = FlushParameters {
@@ -115,7 +114,6 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
 /// Benchmark search performance across all 7 engines
 fn bench_all_engines_search(c: &mut Criterion) {
     let _ = hardware_capabilities::initialize_hardware_capabilities_default();
-    let rt = Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("engine_comparison_search");
 
@@ -135,11 +133,11 @@ fn bench_all_engines_search(c: &mut Criterion) {
     ];
 
     for (engine_name, engine_type) in engines.iter() {
-        group.bench_function(engine_name, |b| {
+        group.bench_function(*engine_name, |b| {
             b.iter_batched(
                 || {
                     // Setup: Create engine with test data
-                    rt.block_on(async {
+                    futures::executor::block_on(async {
                         let engine = match *engine_type {
                             "sst" => StorageEngineFactory::create_sst().unwrap(),
                             "viper" => StorageEngineFactory::create_viper().unwrap(),
@@ -169,7 +167,7 @@ fn bench_all_engines_search(c: &mut Criterion) {
                 },
                 |engine| {
                     // Benchmark: Search operation
-                    rt.block_on(async {
+                    futures::executor::block_on(async {
                         use proximadb::{
                             storage::traits::{StorageQueryContext, StorageQueryMetadata},
                             core::search::SearchParams,

@@ -5,8 +5,19 @@ use proximadb::compute::distance_computation::{
     DistanceMetric,
     engine::UnifiedDistanceCompute,
 };
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+fn init_hardware() {
+    INIT.call_once(|| {
+        // Initialize hardware capabilities once
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
 
 fn benchmark_distance_computation(c: &mut Criterion) {
+    init_hardware();
     let dimensions = vec![128, 256, 512, 1024, 2048];
 
     for dim in dimensions {
@@ -42,6 +53,7 @@ fn benchmark_distance_computation(c: &mut Criterion) {
 }
 
 fn benchmark_batch_operations(c: &mut Criterion) {
+    init_hardware();
     let mut group = c.benchmark_group("batch_operations");
 
     let query: Vec<f32> = (0..256).map(|i| (i as f32).sin()).collect();
@@ -68,7 +80,7 @@ fn benchmark_batch_operations(c: &mut Criterion) {
                                     query,
                                     v,
                                     &DistanceMetric::Cosine,
-                                )
+                                ).distance
                         })
                         .collect();
                     black_box(results)
