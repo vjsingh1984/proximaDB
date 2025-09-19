@@ -39,7 +39,7 @@
 == Operations
 
 === Production Deployment
-* link:operations/production_runbook.adoc[Production Runbook] - Production operations guide
+* link:operations/PRODUCTION_RUNBOOK.adoc[Production Runbook] - Production operations guide
 * link:enterprise/production_deployment_guide.adoc[Production Deployment] - Enterprise deployment guide
 
 === Performance and Monitoring
@@ -55,7 +55,7 @@
 == Development and Roadmap
 
 === Current Status
-* link:09-roadmap/STATUS.adoc[Implementation Status] - Current development progress
+* link:unified_strategy_usage_guide.adoc[Implementation Guide] - Current implementation strategy
 
 === Documentation and Resources
-* link:COMPETITIVE_ANALYSIS_COMPREHENSIVE.adoc[Competitive Analysis] - Market positioning and advantages
+* link:business/competitive_advantages.adoc[Competitive Analysis] - Market positioning and advantages

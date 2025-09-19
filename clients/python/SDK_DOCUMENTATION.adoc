@@ -625,7 +625,7 @@ client = ProximaDBClient(
 * **Documentation**: link:../../docs/index.adoc[ProximaDB Documentation]
 * **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
 * **GitHub Discussions**: https://github.com/vjsingh1984/proximadb/discussions
-* **Contributing**: link:../../docs/developer/developer_guide.adoc[Developer Guide]
+* **Contributing**: link:../../CONTRIBUTING.adoc[Contributing Guide]
 
 ---
 *SDK Version: 1.0.0*

@@ -644,7 +644,7 @@ journey
 |===
 | Resource | Description | Time Investment
 
-| **link:../technical/unified_architecture.adoc[Technical Architecture]**
+| **link:../technical/platform_architecture.adoc[Technical Architecture]**
 | Deep dive into system design
 | 2-3 hours
 
@@ -652,31 +652,31 @@ journey
 | ROI and competitive advantages
 | 1 hour
 
-| **link:../operations/production_deployment.adoc[Production Guide]**
+| **link:../enterprise/production_deployment_guide.adoc[Production Guide]**
 | Enterprise deployment best practices
 | 4-6 hours
 
-| **link:../guides/performance_tuning.adoc[Performance Optimization]**
+| **link:../technical/storage_engine_layouts.adoc[Storage Engine Optimization]**
 | Advanced tuning and optimization
 | 3-4 hours
 
-| **link:../reference/api_complete.adoc[Complete API Reference]**
+| **link:../reference/graph_api_reference.adoc[API Reference]**
 | Comprehensive API documentation
 | Reference as needed
 |===
 
 === **Community & Support**
 
-- **GitHub Repository**: https://github.com/proximadb/proximadb
-- **Documentation**: https://docs.proximadb.com
-- **Community Forum**: https://community.proximadb.com
-- **Enterprise Support**: enterprise@proximadb.com
+- **GitHub Repository**: https://github.com/vjsingh1984/proximadb
+- **Documentation**: Complete documentation in this repository
+- **Issues & Support**: GitHub Issues for technical questions
+- **Enterprise Support**: Contact through GitHub Discussions
 
 ---
 
 **🎉 Congratulations!** You now have ProximaDB running with complete vector database, graph analytics, and AI intelligence capabilities.
 
-**Ready for production deployment?** Continue with our **link:../operations/production_deployment.adoc[Production Deployment Guide]** for enterprise-grade setup.
+**Ready for production deployment?** Continue with our **link:../enterprise/production_deployment_guide.adoc[Production Deployment Guide]** for enterprise-grade setup.
 
 ---
 

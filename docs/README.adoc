@@ -15,36 +15,36 @@ _Navigate by your role and use case for optimized learning paths_
 
 ==== Getting Started (5 minutes)
 * **link:quickstart/getting_started.adoc[Quick Start Guide]** - Docker to production in 5 minutes
-* **link:guides/first_application.adoc[First Application]** - Build your first AI-powered app
-* **link:reference/api_complete.adoc[API Reference]** - REST, gRPC, and SDK documentation
+* **link:reference/graph_api_reference.adoc[Graph API Reference]** - Complete API documentation
+* **link:reference/sks_technical_reference.adoc[Technical Reference]** - Advanced technical specifications
 
 ==== Technical Implementation
-* **link:technical/unified_architecture.adoc[System Architecture]** - Multi-engine, AI-native design
-* **link:guides/engine_optimization.adoc[Engine Selection Guide]** - Choose optimal storage engines
-* **link:guides/performance_tuning.adoc[Performance Optimization]** - Hardware acceleration and tuning
+* **link:technical/platform_architecture.adoc[System Architecture]** - Multi-engine, AI-native design
+* **link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide]** - Choose optimal storage engines
+* **link:technical/storage_engine_layouts.adoc[Storage Engine Layouts]** - Detailed engine specifications
 
 === 💼 **Decision Makers & Executives**
 
 ==== Business Value
 * **link:business/executive_overview.adoc[Executive Overview]** - 90% cost reduction, 18x faster deployment
 * **link:business/competitive_advantages.adoc[Competitive Advantages]** - Feature comparison without vendor bias
-* **link:business/roi_calculator.adoc[ROI Analysis]** - Calculate your cost savings and performance gains
+* **link:PERFORMANCE.adoc[Performance Benchmarks]** - Validated performance specifications
 
 ==== Strategic Planning
-* **link:business/use_cases.adoc[Enterprise Use Cases]** - Real-world implementations and outcomes
-* **link:business/deployment_strategy.adoc[Deployment Strategy]** - Cloud, on-premises, and hybrid options
+* **link:technical/ai_intelligence_platform.adoc[AI Intelligence Platform]** - LLM integration and natural language processing
+* **link:enterprise/production_deployment_guide.adoc[Production Deployment]** - Enterprise deployment strategy
 
 === 🏢 **Platform & Operations Teams**
 
 ==== Production Deployment
-* **link:operations/production_deployment.adoc[Production Deployment Guide]** - Enterprise-grade setup
-* **link:operations/monitoring_observability.adoc[Monitoring & Observability]** - Comprehensive monitoring setup
-* **link:operations/security_compliance.adoc[Security & Compliance]** - Enterprise security framework
+* **link:enterprise/production_deployment_guide.adoc[Production Deployment Guide]** - Enterprise-grade setup
+* **link:operations/PRODUCTION_RUNBOOK.adoc[Production Operations]** - Day-to-day operational procedures
+* **link:security.adoc[Security Framework]** - Comprehensive security and compliance
 
 ==== Day-to-Day Operations
-* **link:operations/administration.adoc[Administration Guide]** - Daily operational procedures
-* **link:operations/troubleshooting.adoc[Troubleshooting]** - Common issues and solutions
-* **link:operations/backup_recovery.adoc[Backup & Recovery]** - Data protection strategies
+* **link:security/unified_authentication_flow.adoc[Authentication Flow]** - Unified authentication system
+* **link:enterprise/enterprise_platform_overview.adoc[Enterprise Platform]** - Enterprise features overview
+* **link:enterprise/enterprise_deployment.adoc[Enterprise Deployment]** - Automated deployment and scaling
 
 == Feature-Based Navigation
 
@@ -217,17 +217,17 @@ flowchart LR
 === **Role-Based Quick Paths**
 
 **🔧 Developer (Technical Focus)**
-1. **link:quickstart/getting_started.adoc[5-Minute Quick Start]** → **link:guides/first_application.adoc[First Application]** → **link:reference/api_complete.adoc[API Reference]**
+1. **link:quickstart/getting_started.adoc[5-Minute Quick Start]** → **link:reference/graph_api_reference.adoc[API Reference]** → **link:technical/platform_architecture.adoc[Architecture]**
 2. Time investment: 2-4 hours
 3. Outcome: Production-ready integration
 
 **💼 Business Stakeholder (Value Focus)**
-1. **link:business/executive_overview.adoc[Executive Overview]** → **link:business/competitive_advantages.adoc[Competitive Analysis]** → **link:business/roi_calculator.adoc[ROI Calculator]**
+1. **link:business/executive_overview.adoc[Executive Overview]** → **link:business/competitive_advantages.adoc[Competitive Analysis]** → **link:PERFORMANCE.adoc[Performance Benchmarks]**
 2. Time investment: 30-60 minutes
 3. Outcome: Business case validation
 
 **🏢 Platform Engineer (Operations Focus)**
-1. **link:operations/production_deployment.adoc[Production Deployment]** → **link:operations/monitoring_observability.adoc[Monitoring Setup]** → **link:operations/security_compliance.adoc[Security Framework]**
+1. **link:enterprise/production_deployment_guide.adoc[Production Deployment]** → **link:operations/PRODUCTION_RUNBOOK.adoc[Operations Guide]** → **link:security.adoc[Security Framework]**
 2. Time investment: 1-2 days
 3. Outcome: Enterprise-ready deployment
 
