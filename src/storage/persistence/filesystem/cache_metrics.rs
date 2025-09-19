@@ -111,8 +111,8 @@ impl CacheMetrics {
     }
 
     /// Record access latency
-    pub fn record_latency(&self, latency_us: u64, is_hit: bool) {
-        let mut perf = self.performance.blocking_write();
+    pub async fn record_latency(&self, latency_us: u64, is_hit: bool) {
+        let mut perf = self.performance.write().await;
 
         perf.latency_samples.push(latency_us);
 
@@ -348,9 +348,9 @@ mod tests {
     async fn test_latency_tracking() {
         let metrics = CacheMetrics::new();
 
-        metrics.record_latency(100, true);
-        metrics.record_latency(200, true);
-        metrics.record_latency(1000, false);
+        metrics.record_latency(100, true).await;
+        metrics.record_latency(200, true).await;
+        metrics.record_latency(1000, false).await;
 
         let report = metrics.get_report().await;
 

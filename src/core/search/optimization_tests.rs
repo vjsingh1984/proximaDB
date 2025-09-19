@@ -19,68 +19,71 @@ mod tests {
     use tokio;
 
     fn init_test_environment() {
-        println!("[INIT] Initializing hardware capabilities");
+        use tracing::debug;
+        debug!("Initializing hardware capabilities");
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        println!("[INIT] Hardware capabilities initialized");
+        debug!("Hardware capabilities initialized");
     }
 
     #[tokio::test]
     async fn test_hardware_init_only() {
-        println!("[TEST] Starting hardware-only test");
+        use tracing::debug;
+        debug!("Starting hardware-only test");
         init_test_environment();
-        println!("[TEST] Hardware initialized - test passed!");
+        debug!("Hardware initialized - test passed!");
     }
 
     #[tokio::test]
     async fn test_preprocessor_create_only() {
-        println!("[TEST] Starting preprocessor-create-only test");
+        use tracing::debug;
+        debug!("Starting preprocessor-create-only test");
         init_test_environment();
-        println!("[TEST] Creating QueryPreprocessor");
+        debug!("Creating QueryPreprocessor");
         let preprocessor = QueryPreprocessor::new(100);
-        println!("[TEST] Preprocessor created");
+        debug!("Preprocessor created");
         drop(preprocessor);
-        println!("[TEST] Preprocessor dropped - test passed!");
+        debug!("Preprocessor dropped - test passed!");
     }
 
     #[tokio::test]
     async fn test_query_preprocessing_minimal() {
+        use tracing::debug;
         // Minimal test to isolate segfault
-        println!("[TEST] Starting minimal test");
+        debug!("Starting minimal test");
 
         init_test_environment();
-        println!("[TEST] Environment initialized");
+        debug!("Environment initialized");
 
         // Create the preprocessor
-        println!("[TEST] Creating QueryPreprocessor");
+        debug!("Creating QueryPreprocessor");
         let preprocessor = QueryPreprocessor::new(100);
-        println!("[TEST] Preprocessor created");
+        debug!("Preprocessor created");
 
         // Simple vector
         let vector = vec![1.0, 2.0, 3.0, 4.0];
-        println!("[TEST] Vector created: {:?}", vector);
+        debug!("Vector created: {:?}", vector);
 
         // Call preprocess
-        println!("[TEST] Calling preprocess");
+        debug!("Calling preprocess");
         let result = preprocessor
             .preprocess(&vector, DistanceMetric::Cosine, None)
             .await;
-        println!("[TEST] Preprocess completed");
+        debug!("Preprocess completed");
 
         // Explicitly drop result first
-        println!("[TEST] Dropping result");
+        debug!("Dropping result");
         drop(result);
-        println!("[TEST] Result dropped");
+        debug!("Result dropped");
 
         // Explicitly drop preprocessor
-        println!("[TEST] Dropping preprocessor");
+        debug!("Dropping preprocessor");
         drop(preprocessor);
-        println!("[TEST] Preprocessor dropped");
+        debug!("Preprocessor dropped");
 
-        println!("[TEST] Test passed!");
+        debug!("Test passed!");
     }
 
     #[tokio::test]
-    #[ignore] // Original test - temporarily disabled
     async fn test_query_preprocessing_with_simd() {
         use tracing::debug;
 

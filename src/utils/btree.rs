@@ -405,6 +405,36 @@ impl BTreeIterator {
             forward,
         }
     }
+
+    fn new_with_start(leaf: Option<NodeRef>, start_key: Option<Vec<u8>>, end_key: Option<Vec<u8>>, forward: bool) -> Self {
+        let mut iterator = BTreeIterator {
+            current_leaf: leaf,
+            current_index: 0,
+            end_key,
+            forward,
+        };
+
+        // Position the iterator at the first key >= start_key
+        if let (Some(leaf_ref), Some(start)) = (&iterator.current_leaf, &start_key) {
+            if let Ok(leaf_guard) = leaf_ref.read() {
+                if let Node::Leaf(leaf) = &*leaf_guard {
+                    // Find the first entry >= start_key
+                    for (i, (key, _)) in leaf.entries.iter().enumerate() {
+                        if key.as_slice() >= start.as_slice() {
+                            iterator.current_index = i;
+                            break;
+                        }
+                    }
+                    // If no entry >= start_key in this leaf, we'll move to next leaf in next()
+                    if iterator.current_index >= leaf.entries.len() {
+                        iterator.current_index = leaf.entries.len(); // This will trigger next leaf lookup
+                    }
+                }
+            }
+        }
+
+        iterator
+    }
 }
 
 impl Iterator for BTreeIterator {
@@ -692,7 +722,12 @@ impl BPlusTree {
             self.find_first_leaf()
         };
 
-        BTreeIterator::new(start_leaf, end.map(|k| k.to_vec()), true)
+        BTreeIterator::new_with_start(
+            start_leaf,
+            start.map(|k| k.to_vec()),
+            end.map(|k| k.to_vec()),
+            true
+        )
     }
 
     /// Get all keys with a common prefix
@@ -733,7 +768,7 @@ impl BPlusTree {
                 current_leaf = LeafNode::new();
                 self.stats.leaf_nodes += 1;
             }
-            current_leaf.entries.push((key.clone(), key.clone()));
+            current_leaf.entries.push((key.clone(), value.clone()));
             self.stats.entries += 1;
         }
 
@@ -757,30 +792,28 @@ impl BPlusTree {
 
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
-            let mut current_internal = InternalNode::new();
+            let mut i = 0;
 
-            for (i, node_ref) in current_level.into_iter().enumerate() {
-                if i == 0 {
-                    current_internal.children.push(node_ref);
-                } else {
+            while i < current_level.len() {
+                let mut internal_node = InternalNode::new();
+
+                // Add first child
+                internal_node.children.push(current_level[i].clone());
+                i += 1;
+
+                // Add up to max_keys additional children (with their separator keys)
+                while i < current_level.len() && internal_node.children.len() < self.max_keys + 1 {
                     // Get the first key of this node as the separator
-                    if let Ok(node_guard) = node_ref.read() {
+                    if let Ok(node_guard) = current_level[i].read() {
                         if let Some(first_key) = node_guard.first_key() {
-                            current_internal.keys.push(first_key.clone());
+                            internal_node.keys.push(first_key.clone());
                         }
                     }
-                    current_internal.children.push(node_ref);
-
-                    if current_internal.children.len() > self.max_keys {
-                        next_level.push(NodeRef::new_internal(current_internal));
-                        current_internal = InternalNode::new();
-                        self.stats.internal_nodes += 1;
-                    }
+                    internal_node.children.push(current_level[i].clone());
+                    i += 1;
                 }
-            }
 
-            if !current_internal.children.is_empty() {
-                next_level.push(NodeRef::new_internal(current_internal));
+                next_level.push(NodeRef::new_internal(internal_node));
                 self.stats.internal_nodes += 1;
             }
 

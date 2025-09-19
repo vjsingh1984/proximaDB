@@ -12,7 +12,7 @@
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use proximadb::core::search::results::OptimizedSearchRecord;
-use proximadb::proto::proximadb::{MetadataItem, VectorRecord};
+use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::sync::Arc;
@@ -41,28 +41,26 @@ fn create_vector_record(id: &str, vector: Vec<f32>) -> VectorRecord {
     VectorRecord {
         id: id.to_string(),
         vector,
-        metadata: vec![MetadataItem {
-            key: "category".to_string(),
-            value: Some(
-                proximadb::proto::proximadb::metadata_item::Value::StringValue(
+        metadata: std::collections::HashMap::from([
+            ("category".to_string(), SqlValue {
+                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
                     "benchmark".to_string(),
-                ),
-            ),
-        }],
+                )),
+            }),
+        ]),
         timestamp: 1234567890,
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
-        quantized_vector: None,
+        quantized_vector: vec![],
         source: None,
     }
 }
 
 /// Create test OptimizedSearchRecord
 fn create_optimized_record(id: &str, vector: Vec<f32>, score: f32) -> OptimizedSearchRecord {
-    let mut record = OptimizedSearchRecord::new(id.to_string(), score);
-    record.add_vector(Arc::new(vector));
-    record
+    let record = OptimizedSearchRecord::new(id.to_string(), score);
+    record.add_vector(vector)
 }
 
 /// Benchmark OptimizedSearchRecord vs VectorRecord cloning

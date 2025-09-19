@@ -150,7 +150,7 @@ impl StorageEngineFactory {
     ///
     /// Uses tokio runtime blocking to bridge async/sync gap.
     /// In production, prefer async factory methods.
-    fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
         // VIPER needs async initialization, block on it for now
         // TODO: Consider making factory methods async
@@ -191,7 +191,7 @@ impl StorageEngineFactory {
     ///
     /// SST serves as the default fallback engine due to its
     /// general-purpose nature and production stability.
-    fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
         // SST needs async initialization, block on it for now
         let runtime = tokio::runtime::Runtime::new()?;
@@ -225,7 +225,7 @@ impl StorageEngineFactory {
     ///
     /// SWIFT is optimized for low-latency point lookups while
     /// maintaining good scan performance.
-    fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
@@ -248,7 +248,7 @@ impl StorageEngineFactory {
     ///
     /// HELIX excels at high-dimensional data by reducing dimensions
     /// while preserving 95%+ of variance.
-    fn create_helix() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_helix() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating HELIX storage engine");
         // HELIX needs async initialization
         let runtime = tokio::runtime::Runtime::new()?;
@@ -282,7 +282,7 @@ impl StorageEngineFactory {
     ///
     /// NOVA enhances columnar storage with advanced indexing
     /// and statistics for superior analytics performance.
-    fn create_nova() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_nova() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(NovaEngine::new())?;
@@ -301,7 +301,7 @@ impl StorageEngineFactory {
     /// This provides 3x faster navigation with 50% less memory than HNSW.
     ///
     /// Note: Requires async initialization with collection metadata.
-    fn create_raptor_default() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_raptor_default() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("RAPTOR engine requires async initialization with collection info");
         // For now, return SST as fallback
         // RAPTOR needs collection dimensions for Matrix Trinity setup
@@ -343,7 +343,7 @@ impl StorageEngineFactory {
     }
 
     /// Create PRISM engine (Progressive Retrieval through Indexed Storage Management)
-    fn create_prism() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_prism() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!(
             "Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine"
         );

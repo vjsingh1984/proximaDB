@@ -14,7 +14,7 @@ use proximadb::compute::quantization::unified::UnifiedQuantizationEngine;
 use proximadb::core::search::progressive_quantization::{
     ProgressiveSearchConfig, SearchScenario, StageSizes,
 };
-use proximadb::storage::engines::common::progressive_search::ProgressiveSearchExecutor;
+// Note: ProgressiveSearchExecutor not available, using simulated implementation
 use rand::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
@@ -290,7 +290,7 @@ fn bench_simd_delegation(c: &mut Criterion) {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let dimensions = vec![128, 256, 512, 1024, 2048];
-    let distance_compute = Arc::new(UnifiedDistanceCompute::new());
+    let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
     for dimension in dimensions {
         let vec1: Vec<f32> = (0..dimension).map(|i| i as f32 / 100.0).collect();
@@ -301,7 +301,7 @@ fn bench_simd_delegation(c: &mut Criterion) {
             BenchmarkId::new("simd_l2", format!("d{}", dimension)),
             &(&vec1, &vec2),
             |b, (v1, v2)| {
-                b.iter(|| distance_compute.calculate_l2_distance(black_box(v1), black_box(v2)));
+                b.iter(|| distance_compute.calculate_distance(black_box(v1), black_box(v2), &proximadb::compute::distance_computation::DistanceMetric::Euclidean));
             },
         );
 
@@ -310,7 +310,7 @@ fn bench_simd_delegation(c: &mut Criterion) {
             BenchmarkId::new("simd_cosine", format!("d{}", dimension)),
             &(&vec1, &vec2),
             |b, (v1, v2)| {
-                b.iter(|| distance_compute.calculate_cosine_distance(black_box(v1), black_box(v2)));
+                b.iter(|| distance_compute.calculate_distance(black_box(v1), black_box(v2), &proximadb::compute::distance_computation::DistanceMetric::Cosine));
             },
         );
 
@@ -319,7 +319,7 @@ fn bench_simd_delegation(c: &mut Criterion) {
             BenchmarkId::new("simd_dot", format!("d{}", dimension)),
             &(&vec1, &vec2),
             |b, (v1, v2)| {
-                b.iter(|| distance_compute.calculate_dot_product(black_box(v1), black_box(v2)));
+                b.iter(|| distance_compute.calculate_distance(black_box(v1), black_box(v2), &proximadb::compute::distance_computation::DistanceMetric::DotProduct));
             },
         );
     }
@@ -343,11 +343,16 @@ fn bench_quantization_paths(c: &mut Criterion) {
     // Create test vectors with pre-quantized data (HIGH PERFORMANCE PATH)
     let mut pre_quantized_vectors = Vec::new();
     for (i, vector) in database.iter().enumerate() {
-        let mut record = proximadb::proto::proximadb::VectorRecord {
-            id: Some(format!("vec_{}", i)),
+        let mut record = proximadb::proto::proximadb_v1::VectorRecord {
+            id: format!("vec_{}", i),
             vector: vector.clone(),
-            quantized_vector: Some(vec![1, 2, 3, 4]), // Simulated pre-quantized data
-            ..Default::default()
+            quantized_vector: vec![1, 2, 3, 4], // Simulated pre-quantized data
+            metadata: std::collections::HashMap::new(),
+            timestamp: i as i64,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            source: None,
         };
         pre_quantized_vectors.push(record);
     }
@@ -355,11 +360,16 @@ fn bench_quantization_paths(c: &mut Criterion) {
     // Create test vectors without pre-quantized data (STORAGE OPTIMIZED PATH)
     let mut runtime_vectors = Vec::new();
     for (i, vector) in database.iter().enumerate() {
-        let record = proximadb::proto::proximadb::VectorRecord {
-            id: Some(format!("vec_{}", i)),
+        let record = proximadb::proto::proximadb_v1::VectorRecord {
+            id: format!("vec_{}", i),
             vector: vector.clone(),
-            quantized_vector: None, // No pre-quantized data
-            ..Default::default()
+            quantized_vector: vec![], // No pre-quantized data
+            metadata: std::collections::HashMap::new(),
+            timestamp: i as i64,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            source: None,
         };
         runtime_vectors.push(record);
     }

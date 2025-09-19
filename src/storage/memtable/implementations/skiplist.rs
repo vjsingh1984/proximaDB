@@ -5,37 +5,39 @@
 //! - Efficient range queries for level merging
 //! - Lock-free operations for high throughput
 //! - Better write performance for high-volume ingestion
+//!
+//! Now using DashMap for better concurrent performance and stability.
 
 use anyhow::Result;
 use async_trait::async_trait;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-
-// Use crossbeam-skiplist for lock-free concurrent access
-use crate::utils::skiplist::SkipList;
+use dashmap::DashMap;
 
 use super::super::core::{MemtableCore, MemtableMetrics};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-/// SkipList-based memtable implementation
+/// SkipList-based memtable implementation using DashMap
 ///
 /// Provides concurrent access with excellent write throughput and range query performance.
-/// Optimal for LSM operations where concurrent reads during compaction are essential.
-#[derive(Debug)]
+/// Using DashMap for better concurrent performance and stability.
+#[derive(Debug, Clone)]
 pub struct SkipListMemtable<K, V>
 where
     K: Clone + Ord + Hash + Send + Sync + Debug + 'static,
     V: Clone + Send + Sync + Debug + 'static,
 {
-    /// Main SkipList storage with lock-free concurrent access
-    data: Arc<SkipList<K, V>>,
+    /// Main storage using DashMap for lock-free concurrent access
+    data: Arc<DashMap<K, V>>,
 
     /// Approximate memory usage tracking (atomic for concurrent access)
-    size_bytes: Arc<std::sync::atomic::AtomicUsize>,
+    size_bytes: Arc<AtomicUsize>,
 
-    /// Performance metrics (protected by RwLock for occasional updates)
-    metrics: Arc<RwLock<MemtableMetrics>>,
+    /// Performance metrics - use atomics to avoid lock contention
+    insert_count: Arc<AtomicU64>,
+    get_count: Arc<AtomicU64>,
+    scan_count: Arc<AtomicU64>,
 }
 
 impl<K, V> SkipListMemtable<K, V>
@@ -46,9 +48,11 @@ where
     /// Create new SkipList memtable
     pub fn new() -> Self {
         Self {
-            data: Arc::new(SkipList::new()),
-            size_bytes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            metrics: Arc::new(RwLock::new(MemtableMetrics::default())),
+            data: Arc::new(DashMap::new()),
+            size_bytes: Arc::new(AtomicUsize::new(0)),
+            insert_count: Arc::new(AtomicU64::new(0)),
+            get_count: Arc::new(AtomicU64::new(0)),
+            scan_count: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -72,67 +76,63 @@ where
 
         // Check if key already exists for size calculation
         let old_entry_size = if self.data.contains_key(&key) {
-            // For SkipList, we can't easily get the old value, so estimate conservatively
             entry_size // Assume same size for updates
         } else {
             0
         };
 
-        // Insert into SkipList (lock-free operation)
+        // Insert into DashMap (lock-free operation)
         self.data.insert(key, value);
 
         // Update size tracking atomically
         let size_delta = if entry_size > old_entry_size {
             let delta = entry_size - old_entry_size;
-            self.size_bytes
-                .fetch_add(delta, std::sync::atomic::Ordering::Relaxed);
+            self.size_bytes.fetch_add(delta, Ordering::Relaxed);
             delta
         } else {
             0
         };
 
-        // Update metrics (less frequent, so RwLock is acceptable)
-        let mut metrics = self.metrics.write().await;
-        metrics.insert_count += 1;
-        metrics.size_bytes = self.size_bytes.load(std::sync::atomic::Ordering::Relaxed);
-        metrics.entry_count = self.data.len();
+        // Update metrics using atomics (lock-free)
+        self.insert_count.fetch_add(1, Ordering::Relaxed);
 
         Ok(size_delta as u64)
     }
 
     async fn get(&self, key: &K) -> Result<Option<V>> {
         // Lock-free read operation
-        let result = self.data.get(key);
+        let result = self.data.get(key).map(|v| v.clone());
 
-        // Update metrics
-        let mut metrics = self.metrics.write().await;
-        metrics.get_count += 1;
+        // Update metrics using atomics (lock-free)
+        self.get_count.fetch_add(1, Ordering::Relaxed);
 
         Ok(result)
     }
 
     async fn range_scan(&self, from: K, limit: Option<usize>) -> Result<Vec<(K, V)>> {
-        let mut results = Vec::new();
+        // DashMap doesn't have built-in range scan, so we need to collect and sort
+        let mut results: Vec<(K, V)> = self.data
+            .iter()
+            .filter(|entry| *entry.key() >= from)
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
 
-        // Lock-free range iteration
-        for entry in self.data.range(from..) {
-            if let Some(limit) = limit {
-                if results.len() >= limit {
-                    break;
-                }
-            }
-            results.push(entry);
+        // Sort by key
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Apply limit if specified
+        if let Some(limit) = limit {
+            results.truncate(limit);
         }
 
-        // Update metrics
-        let mut metrics = self.metrics.write().await;
-        metrics.scan_count += 1;
+        // Update metrics using atomics (lock-free)
+        self.scan_count.fetch_add(1, Ordering::Relaxed);
 
         Ok(results)
     }
 
     async fn size_bytes(&self) -> usize {
-        self.size_bytes.load(std::sync::atomic::Ordering::Relaxed)
+        self.size_bytes.load(Ordering::Relaxed)
     }
 
     async fn len(&self) -> usize {
@@ -143,12 +143,16 @@ where
         let mut removed_count = 0;
         let mut removed_size = 0;
 
-        // Collect keys to remove (lock-free iteration)
-        let keys_to_remove: Vec<K> = self.data.range(..=threshold).map(|(key, _)| key).collect();
+        // Collect keys to remove
+        let keys_to_remove: Vec<K> = self.data
+            .iter()
+            .filter(|entry| *entry.key() <= threshold)
+            .map(|entry| entry.key().clone())
+            .collect();
 
-        // Remove entries (each remove is lock-free)
+        // Remove entries
         for key in keys_to_remove {
-            if let Some(value) = self.data.remove(&key) {
+            if let Some((_, value)) = self.data.remove(&key) {
                 let entry_size = Self::estimate_entry_size(&key, &value);
                 removed_size += entry_size;
                 removed_count += 1;
@@ -156,8 +160,7 @@ where
         }
 
         // Update size tracking atomically
-        self.size_bytes
-            .fetch_sub(removed_size, std::sync::atomic::Ordering::Relaxed);
+        self.size_bytes.fetch_sub(removed_size, Ordering::Relaxed);
 
         Ok(removed_count)
     }
@@ -167,15 +170,19 @@ where
         self.data.clear();
 
         // Reset size tracking
-        self.size_bytes
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.size_bytes.store(0, Ordering::Relaxed);
 
         Ok(())
     }
 
     async fn get_all_ordered(&self) -> Result<Vec<(K, V)>> {
-        // Lock-free iteration in sorted order
-        let results = self.data.iter().map(|entry| entry).collect();
+        // Collect all entries and sort by key
+        let mut results: Vec<(K, V)> = self.data
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect();
+
+        results.sort_by(|a, b| a.0.cmp(&b.0));
 
         Ok(results)
     }
@@ -191,7 +198,7 @@ where
     }
 }
 
-/// Specialized SkipList operations for concurrent access patterns
+/// Specialized operations for concurrent access patterns
 impl<K, V> SkipListMemtable<K, V>
 where
     K: Clone + Ord + Hash + Send + Sync + Debug + 'static,
@@ -202,7 +209,7 @@ where
         let mut results = Vec::with_capacity(keys.len());
 
         for key in keys {
-            let value = self.data.get(key);
+            let value = self.data.get(key).map(|v| v.clone());
             results.push((key.clone(), value));
         }
 
@@ -216,21 +223,26 @@ where
         to: Option<K>,
         limit: Option<usize>,
     ) -> Result<Vec<(K, V)>> {
-        let mut results = Vec::new();
-
-        let iter: Box<dyn Iterator<Item = (K, V)>> = if let Some(to) = to {
-            Box::new(self.data.range(from..=to))
+        let mut results: Vec<(K, V)> = if let Some(to) = to {
+            self.data
+                .iter()
+                .filter(|entry| *entry.key() >= from && *entry.key() <= to)
+                .map(|entry| (entry.key().clone(), entry.value().clone()))
+                .collect()
         } else {
-            Box::new(self.data.range(from..))
+            self.data
+                .iter()
+                .filter(|entry| *entry.key() >= from)
+                .map(|entry| (entry.key().clone(), entry.value().clone()))
+                .collect()
         };
 
-        for (key, value) in iter {
-            if let Some(limit) = limit {
-                if results.len() >= limit {
-                    break;
-                }
-            }
-            results.push((key, value));
+        // Sort by key
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Apply limit if specified
+        if let Some(limit) = limit {
+            results.truncate(limit);
         }
 
         Ok(results)
@@ -238,13 +250,17 @@ where
 
     /// Count entries in range without loading values (memory efficient)
     pub async fn count_range(&self, from: K, to: Option<K>) -> usize {
-        let iter: Box<dyn Iterator<Item = (K, V)>> = if let Some(to) = to {
-            Box::new(self.data.range(from..=to))
+        if let Some(to) = to {
+            self.data
+                .iter()
+                .filter(|entry| *entry.key() >= from && *entry.key() <= to)
+                .count()
         } else {
-            Box::new(self.data.range(from..))
-        };
-
-        iter.count()
+            self.data
+                .iter()
+                .filter(|entry| *entry.key() >= from)
+                .count()
+        }
     }
 }
 

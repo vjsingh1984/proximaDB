@@ -94,13 +94,9 @@ impl Crc32 {
 
     /// Update the CRC32 with new data (optimized)
     pub fn update(&mut self, data: &[u8]) {
-        // Use hardware CRC32C if available
-        if has_hardware_crc32c() {
-            self.value = unsafe { self.update_hardware_crc32c(data, self.value) };
-        } else {
-            // Use slicing-by-8 for better performance
-            self.value = self.update_slicing_by_8(data, self.value);
-        }
+        // Always use software implementation for CRC32 to ensure standard IEEE 802.3 results
+        // Hardware CRC32C uses different polynomial and would give different results
+        self.value = self.update_byte_by_byte(data, self.value);
     }
 
     /// Hardware-accelerated CRC32C (20-50x faster)
@@ -138,7 +134,16 @@ impl Crc32 {
 
     #[cfg(not(target_arch = "x86_64"))]
     unsafe fn update_hardware_crc32c(&self, data: &[u8], crc: u32) -> u32 {
-        self.update_slicing_by_8(data, crc)
+        self.update_byte_by_byte(data, crc)
+    }
+
+    /// Byte-by-byte CRC32 implementation (reliable and correct)
+    fn update_byte_by_byte(&self, data: &[u8], mut crc: u32) -> u32 {
+        for &byte in data {
+            let index = ((crc ^ byte as u32) & 0xFF) as usize;
+            crc = (crc >> 8) ^ self.table[index];
+        }
+        crc
     }
 
     /// Slicing-by-8 algorithm (3-4x faster than byte-by-byte)
@@ -315,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_crc32() {
-        // Test vectors from standard CRC32
+        // Test vectors from standard CRC32 (IEEE 802.3)
         assert_eq!(Crc32::checksum(b""), 0x00000000);
         assert_eq!(Crc32::checksum(b"123456789"), 0xCBF43926);
         assert_eq!(
@@ -371,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_crc32_known_vectors() {
-        // Additional known test vectors
+        // Additional known test vectors (IEEE 802.3 standard)
         assert_eq!(Crc32::checksum(b"a"), 0xE8B7BE43);
         assert_eq!(Crc32::checksum(b"abc"), 0x352441C2);
         assert_eq!(Crc32::checksum(b"message digest"), 0x20159D7F);

@@ -930,8 +930,8 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry_url = &entries[0].url;
 
-        // Count occurrences of "metadata_info" in the URL
-        let metadata_count = entry_url.matches("metadata_info").count();
+        // Count occurrences of "metadata" in the URL path segments
+        let metadata_count = entry_url.matches("metadata").count();
         assert_eq!(
             metadata_count, 1,
             "Path 'metadata' should appear only once in URL: {}",

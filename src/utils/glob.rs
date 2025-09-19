@@ -132,7 +132,29 @@ impl GlobPattern {
 
         while i < chars.len() {
             match chars[i] {
-                '*' => elements.push(PatternElement::Star),
+                '*' => {
+                    // Check for ** pattern
+                    if i + 1 < chars.len() && chars[i + 1] == '*' {
+                        elements.push(PatternElement::Star); // First *
+                        elements.push(PatternElement::Star); // Second *
+                        i += 1; // Skip the second *
+
+                        // If followed by '/', make it optional for zero-directory matching
+                        if i + 1 < chars.len() && chars[i + 1] == '/' {
+                            // Add an alternative: either match the slash or skip it
+                            let with_slash = CompiledPattern {
+                                elements: vec![PatternElement::Literal('/')]
+                            };
+                            let without_slash = CompiledPattern {
+                                elements: vec![]
+                            };
+                            elements.push(PatternElement::Alternatives(vec![with_slash, without_slash]));
+                            i += 1; // Skip the '/'
+                        }
+                    } else {
+                        elements.push(PatternElement::Star);
+                    }
+                },
                 '?' => elements.push(PatternElement::Question),
                 '[' => {
                     let (char_class, new_i) = Self::parse_character_class(&chars, i)?;

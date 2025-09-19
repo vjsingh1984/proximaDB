@@ -9,11 +9,11 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use proximadb::{
     compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute},
-    core::{hardware_capabilities, VectorRecord},
-    proto::proximadb_v1::StorageEngine,
+    core::hardware_capabilities,
+    proto::proximadb_v1::{VectorRecord, StorageEngine},
     storage::{
         engines::impls::{sst::SstStorage, viper::ViperEngine},
-        persistence::filesystem::FilesystemFactory,
+        persistence::filesystem::{FilesystemFactory, FilesystemConfig},
         traits::{FlushParameters, UnifiedStorageEngine},
     },
 };
@@ -79,13 +79,15 @@ fn bench_sst_sparsity_compression(c: &mut Criterion) {
             );
 
             group.bench_with_input(bench_id, sparsity, |b, &sparsity| {
-                b.to_async(&rt).iter(|| async move {
+                b.iter(|| {
+                    rt.block_on(async move {
                     let temp_dir = TempDir::new().unwrap();
                     let vectors = create_vectors_with_sparsity(100, 256, sparsity);
 
                     // Create filesystem factory
+                    let filesystem_config = FilesystemConfig::default();
                     let filesystem_factory = Arc::new(
-                        FilesystemFactory::default()
+                        FilesystemFactory::new(filesystem_config).await.unwrap()
                     );
 
                     // Create distance compute
@@ -122,8 +124,8 @@ fn bench_sst_sparsity_compression(c: &mut Criterion) {
                     let flush_time = start.elapsed();
 
                     black_box((result.success, flush_time, vectors.len()))
+                    })
                 });
-            });
         }
     }
 
@@ -155,13 +157,15 @@ fn bench_viper_sparsity_compression(c: &mut Criterion) {
             );
 
             group.bench_with_input(bench_id, sparsity, |b, &sparsity| {
-                b.to_async(&rt).iter(|| async move {
+                b.iter(|| {
+                    rt.block_on(async move {
                     let temp_dir = TempDir::new().unwrap();
                     let vectors = create_vectors_with_sparsity(100, 256, sparsity);
 
                     // Create filesystem factory
+                    let filesystem_config = FilesystemConfig::default();
                     let filesystem_factory = Arc::new(
-                        FilesystemFactory::default()
+                        FilesystemFactory::new(filesystem_config).await.unwrap()
                     );
 
                     // Create VIPER config with compression
@@ -193,8 +197,8 @@ fn bench_viper_sparsity_compression(c: &mut Criterion) {
                     let flush_time = start.elapsed();
 
                     black_box((result.success, flush_time, vectors.len()))
+                    })
                 });
-            });
         }
     }
 
@@ -217,7 +221,8 @@ fn bench_compression_ratio_by_sparsity(c: &mut Criterion) {
             BenchmarkId::new("sst_zstd3", sparsity),
             sparsity,
             |b, &sparsity| {
-                b.to_async(&rt).iter(|| async move {
+                b.iter(|| {
+                    rt.block_on(async move {
                     let temp_dir = TempDir::new().unwrap();
                     let vectors = create_vectors_with_sparsity(500, 512, sparsity);
 
@@ -225,8 +230,9 @@ fn bench_compression_ratio_by_sparsity(c: &mut Criterion) {
                     let vector_size = vectors.len() * 512 * 4; // 4 bytes per f32
 
                     // Create filesystem factory
+                    let filesystem_config = FilesystemConfig::default();
                     let filesystem_factory = Arc::new(
-                        FilesystemFactory::default()
+                        FilesystemFactory::new(filesystem_config).await.unwrap()
                     );
 
                     // Create distance compute
@@ -278,6 +284,7 @@ fn bench_compression_ratio_by_sparsity(c: &mut Criterion) {
                     };
 
                     black_box((result.success, ratio, sparsity))
+                    })
                 });
             },
         );

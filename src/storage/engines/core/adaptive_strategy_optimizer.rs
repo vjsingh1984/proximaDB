@@ -122,6 +122,8 @@ pub struct AdaptiveConfig {
     pub min_improvement_pct: f64,
     /// Maximum number of strategy switches per hour
     pub max_switches_per_hour: u64,
+    /// Minimum time between strategy switches (seconds)
+    pub min_time_between_switches_secs: u64,
 }
 
 impl Default for AdaptiveConfig {
@@ -133,6 +135,7 @@ impl Default for AdaptiveConfig {
             latency_threshold_us: 1000.0, // 1ms
             min_improvement_pct: 10.0,   // 10% improvement
             max_switches_per_hour: 6,    // At most every 10 minutes
+            min_time_between_switches_secs: 600, // 10 minutes
         }
     }
 }
@@ -329,7 +332,7 @@ impl AdaptiveStrategyOptimizer {
         }
 
         // Check minimum time since last update
-        let min_time_between_switches = Duration::from_secs(600); // 10 minutes
+        let min_time_between_switches = Duration::from_secs(self.config.min_time_between_switches_secs);
         collection_metrics.last_updated.elapsed() >= min_time_between_switches
     }
 
@@ -345,17 +348,19 @@ impl AdaptiveStrategyOptimizer {
             None => return true, // No data, allow the switch
         };
 
-        // Simple heuristic: if current hit rate is below threshold and new strategy
-        // is expected to improve it, allow the switch
+        // Logic: evaluate if the new strategy is appropriate for current performance characteristics
         match new_strategy {
             ReadAccessStrategy::DirectStream => {
-                // Switch to direct if cache hit rate is very low
-                collection_metrics.hit_rate() < 0.3
+                // Switch to direct if cache hit rate is very low or latency is very high
+                collection_metrics.hit_rate() < 0.3 || collection_metrics.avg_latency_us > 2000.0
             }
-            ReadAccessStrategy::CachedSearch { .. } |
+            ReadAccessStrategy::CachedSearch { .. } => {
+                // Cached search is appropriate for high hit rates and low latencies (search workloads)
+                collection_metrics.hit_rate() > 0.6 && collection_metrics.avg_latency_us < 1000.0
+            }
             ReadAccessStrategy::CachedSelective { .. } => {
-                // Switch to cached if we expect better hit rate
-                collection_metrics.hit_rate() < self.config.cache_hit_threshold
+                // Cached selective is appropriate for medium hit rates
+                collection_metrics.hit_rate() > 0.4 && collection_metrics.avg_latency_us < 1500.0
             }
             ReadAccessStrategy::Adaptive { .. } => {
                 // Adaptive is always worth trying for mixed workloads
@@ -466,6 +471,8 @@ mod tests {
     async fn test_strategy_optimization() {
         let optimizer = AdaptiveStrategyOptimizer::new(AdaptiveConfig {
             min_operations: 5,
+            max_switches_per_hour: 100, // Allow many switches for testing
+            min_time_between_switches_secs: 0, // No time constraint for testing
             ..Default::default()
         });
 

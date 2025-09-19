@@ -5,12 +5,11 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use proximadb::{
     compute::distance_computation::DistanceMetric,
     core::hardware_capabilities,
-    proto::proximadb_v1::{VectorRecord, SqlValue},
     storage::{
         engines::{
             factory::StorageEngineFactory,
             impls::{
-                sst::SstEngine,
+                sst::SstStorage,
                 viper::ViperEngine,
                 nova::NovaEngine,
                 swift::SwiftEngine,
@@ -25,8 +24,10 @@ use proximadb::{
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
-/// Generate test vectors with correct protobuf structure
-fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
+/// Generate test vectors with internal structure
+fn generate_vectors(count: usize, dimension: usize) -> Vec<proximadb::core::VectorRecord> {
+    use proximadb::core::VectorRecord;
+
     (0..count)
         .map(|i| VectorRecord {
             id: format!("vec_{:08}", i),
@@ -36,8 +37,6 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
-            source: None,
         })
         .collect()
 }
@@ -73,19 +72,32 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
                         || {
                             // Setup: Create fresh engine for each iteration
                             rt.block_on(async {
-                                StorageEngineFactory::create_engine(
-                                    engine_type,
-                                    &format!("/tmp/bench_{}", engine_type),
-                                    None,
-                                ).await.unwrap()
+                                match *engine_type {
+                                    "sst" => StorageEngineFactory::create_sst().unwrap(),
+                                    "viper" => StorageEngineFactory::create_viper().unwrap(),
+                                    "helix" => StorageEngineFactory::create_helix().unwrap(),
+                                    "raptor" => StorageEngineFactory::create_sst().unwrap(), // Fallback
+                                    "swift" => StorageEngineFactory::create_swift().unwrap(),
+                                    "nova" => StorageEngineFactory::create_nova().unwrap(),
+                                    "prism" => StorageEngineFactory::create_sst().unwrap(), // Fallback
+                                    _ => StorageEngineFactory::create_sst().unwrap(),
+                                }
                             })
                         },
                         |engine| {
-                            // Benchmark: Insert vectors
+                            // Benchmark: Flush vectors to storage
                             rt.block_on(async {
-                                for vector in &vectors {
-                                    let _ = engine.insert_vector("bench_collection", vector.clone()).await;
-                                }
+                                use proximadb::storage::traits::FlushParameters;
+
+                                let params = FlushParameters {
+                                    collection_id: Some("bench_collection".to_string()),
+                                    vector_records: vectors.clone(),
+                                    force: true,
+                                    synchronous: true,
+                                    ..Default::default()
+                                };
+
+                                let _ = engine.flush(params).await;
                             })
                         },
                         criterion::BatchSize::PerIteration,
@@ -126,16 +138,29 @@ fn bench_all_engines_search(c: &mut Criterion) {
                 || {
                     // Setup: Create engine with test data
                     rt.block_on(async {
-                        let engine = StorageEngineFactory::create_engine(
-                            engine_type,
-                            &format!("/tmp/bench_{}", engine_type),
-                            None,
-                        ).await.unwrap();
+                        let engine = match *engine_type {
+                            "sst" => StorageEngineFactory::create_sst().unwrap(),
+                            "viper" => StorageEngineFactory::create_viper().unwrap(),
+                            "helix" => StorageEngineFactory::create_helix().unwrap(),
+                            "raptor" => StorageEngineFactory::create_sst().unwrap(), // Fallback
+                            "swift" => StorageEngineFactory::create_swift().unwrap(),
+                            "nova" => StorageEngineFactory::create_nova().unwrap(),
+                            "prism" => StorageEngineFactory::create_sst().unwrap(), // Fallback
+                            _ => StorageEngineFactory::create_sst().unwrap(),
+                        };
 
-                        // Insert test vectors
-                        for vector in &test_vectors {
-                            let _ = engine.insert_vector("bench_collection", vector.clone()).await;
-                        }
+                        // Flush test vectors to storage
+                        use proximadb::storage::traits::FlushParameters;
+
+                        let params = FlushParameters {
+                            collection_id: Some("bench_collection".to_string()),
+                            vector_records: test_vectors.clone(),
+                            force: true,
+                            synchronous: true,
+                            ..Default::default()
+                        };
+
+                        let _ = engine.flush(params).await;
 
                         engine
                     })
@@ -143,16 +168,50 @@ fn bench_all_engines_search(c: &mut Criterion) {
                 |engine| {
                     // Benchmark: Search operation
                     rt.block_on(async {
-                        let results = engine.search_vectors_unified(
-                            "bench_collection",
-                            &format!("/tmp/bench_{}/bench_collection", engine_type),
-                            &query,
-                            top_k,
-                            DistanceMetric::Euclidean,
-                            None,
-                            None,
-                            None,
-                        ).await.unwrap();
+                        use proximadb::{
+                            storage::traits::{StorageQueryContext, StorageQueryMetadata},
+                            core::search::SearchParams,
+                            proto::proximadb_v1::Collection,
+                        };
+                        use std::sync::Arc;
+
+                        // Create search context
+                        let search_params = Arc::new(SearchParams {
+                            vector: Some(query.clone()),
+                            query_vectors: None,
+                            top_k: Some(top_k),
+                            distance_metric: Some(DistanceMetric::Euclidean),
+                            filter_expression: None,
+                            filters: None,
+                            accuracy_threshold: None,
+                            include_expired: Some(false),
+                            ..Default::default()
+                        });
+
+                        use proximadb::proto::proximadb_v1::{CollectionConfig, CollectionStats};
+
+                        let collection = Arc::new(Collection {
+                            id: "bench_collection".to_string(),
+                            config: Some(CollectionConfig {
+                                name: "bench_collection".to_string(),
+                                dimension: 768,
+                                distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Euclidean as i32,
+                                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                                ..Default::default()
+                            }),
+                            stats: Some(CollectionStats::default()),
+                            created_at: 0,
+                            updated_at: 0,
+                            storage_assignment: None,
+                        });
+
+                        let ctx = StorageQueryContext {
+                            search_params,
+                            collection,
+                            metadata: StorageQueryMetadata::default(),
+                        };
+
+                        let results = engine.search_vectors_unified(&ctx).await.unwrap();
                         black_box(results)
                     })
                 },

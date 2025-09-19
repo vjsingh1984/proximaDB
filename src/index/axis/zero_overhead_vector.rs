@@ -318,6 +318,22 @@ impl ZeroOverheadCollection {
         }
     }
 
+    /// Remove a vector by ID
+    pub fn remove(&mut self, id: &str) -> Option<ZeroOverheadVector> {
+        if let Some((_, index)) = self.id_index.remove(id) {
+            // Update indices for all vectors after the removed one
+            for mut entry in self.id_index.iter_mut() {
+                if *entry.value() > index {
+                    *entry.value_mut() -= 1;
+                }
+            }
+            // Remove and return the vector
+            Some(self.vectors.remove(index))
+        } else {
+            None
+        }
+    }
+
     /// Get configuration
     pub fn config(&self) -> &CollectionConfig {
         &self.config

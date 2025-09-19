@@ -228,7 +228,7 @@ mod sst_filename_tests {
 
         // Check unified format pattern: L{level}_{timestamp}_{uuid}.{extension}
         assert!(filename.starts_with("L2_"));
-        assert!(filename.ends_with(".sstable"));
+        assert!(filename.ends_with(".sst"));
 
         // Check that it's recognized as an SST file
         assert!(FilenameCodec::new().is_tiered_filename(&filename, "sst"));
@@ -240,7 +240,7 @@ mod sst_filename_tests {
 
         // Flush files should always be level 0 with unified format
         assert!(filename.starts_with("L0_"));
-        assert!(filename.ends_with(".sstable"));
+        assert!(filename.ends_with(".sst"));
         // Note: parse_level_from_filename expects old format, will need update
     }
 
@@ -251,7 +251,7 @@ mod sst_filename_tests {
         let filename = FilenameCodec::new().generate(level as u32, "sst");
 
         assert!(filename.starts_with("L5_"));
-        assert!(filename.ends_with(".sstable"));
+        assert!(filename.ends_with(".sst"));
         // Note: parse_level_from_filename expects old format, will need update
     }
 
@@ -259,19 +259,25 @@ mod sst_filename_tests {
     fn test_parse_level_from_filename() {
         let test_cases = vec![
             // New unified format: L{level}_{timestamp}_{uuid}.sst
-            ("L0_20250814T143052_a7f3c2d1.sstable", Some(0)),
-            ("L3_20250814T143052_b8e4d3e2.sstable", Some(3)),
-            ("L15_20250814T143052_c9f5e4f3.sstable", Some(15)),
-            ("invalid_file.sstable", None),
+            ("L0_20250814T143052_a7f3c2d1.sst", Some(0)),
+            ("L3_20250814T143052_b8e4d3e2.sst", Some(3)),
+            ("L15_20250814T143052_c9f5e4f3.sst", Some(15)),
+            ("invalid_file.sst", None),
             ("no_level_file.txt", None),
-            ("LABC_123_456.sstable", None), // Invalid level number
+            ("LABC_123_456.sst", None), // Invalid level number
             // Old format should not parse
-            ("level0_123456_789.sstable", None),
+            ("level0_123456_789.sst", None),
         ];
 
         for (filename, expected) in test_cases {
+            let codec = FilenameCodec::new();
+            let result = if codec.is_tiered_filename(filename, "sst") {
+                Some(codec.parse_level(filename) as u8)
+            } else {
+                None
+            };
             assert_eq!(
-                Some(FilenameCodec::new().parse_level(filename) as u8),
+                result,
                 expected,
                 "Failed for filename: {}",
                 filename
@@ -283,15 +289,15 @@ mod sst_filename_tests {
     fn test_is_sst_file() {
         let test_cases = vec![
             // New unified format: L{level}_{timestamp}_{uuid}.sst
-            ("L0_20250814T143052_a7f3c2d1.sstable", true),
-            ("L5_20250814T143052_b8e4d3e2.sstable", true),
-            ("L3_20250814T143052_c9f5e4f3.sstable", true),
+            ("L0_20250814T143052_a7f3c2d1.sst", true),
+            ("L5_20250814T143052_b8e4d3e2.sst", true),
+            ("L3_20250814T143052_c9f5e4f3.sst", true),
             ("invalid.txt", false),
-            ("no_level.sstable", false),
+            ("no_level.sst", false),
             ("L3_20250814T143052_a7f3c2d1.parquet", false), // Wrong extension
             // Old format should not be recognized
-            ("collection_level0_123_456.sstable", false),
-            ("level0_file.sstable", false),
+            ("collection_level0_123_456.sst", false),
+            ("level0_file.sst", false),
         ];
 
         for (filename, expected) in test_cases {
@@ -2639,7 +2645,7 @@ impl UnifiedStorageEngine for SstStorage {
                     let mut entries = entries;
                     while let Ok(Some(entry)) = entries.next_entry().await {
                         if let Some(name) = entry.file_name().to_str() {
-                            if name.ends_with(".sstable") {
+                            if name.ends_with(".sst") {
                                 files.push(name.to_string());
                             }
                         }
@@ -3159,7 +3165,7 @@ impl UnifiedStorageEngine for SstStorage {
             let fs = self.filesystem.get_filesystem(&storage_url)?;
             let entries = fs.list(&storage_url).await?;
             for entry in entries {
-                if !entry.metadata.is_directory && entry.name.ends_with(".sstable") {
+                if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
                     files.push(entry.url);
                 }
             }
@@ -3204,7 +3210,7 @@ impl UnifiedStorageEngine for SstStorage {
 
         // Old code commented out - needs integration with IntegratedSearchOptimizer
         // let search_engine = unified_search_engine::SstUnifiedSearchEngine::new(
-        //     self.sstable_reader.clone(),
+        //     self.sst_reader.clone(),
         //     self.distance_compute.clone(),
         //     self.quantization_engine.clone(),
         //     storage_url.to_string(),

@@ -55,8 +55,8 @@ fn bench_node_creation(c: &mut Criterion) {
                             ),
                         ]),
                         embedding: None,
-                        created_at: None,
-                        updated_at: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
                     };
 
                     black_box(service.create_node(node).unwrap());
@@ -87,8 +87,8 @@ fn bench_edge_creation(c: &mut Criterion) {
                         labels: vec!["BenchmarkNode".to_string()],
                         properties: HashMap::new(),
                         embedding: None,
-                        created_at: None,
-                        updated_at: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
                     };
                     service.create_node(node).unwrap();
                 }
@@ -107,8 +107,8 @@ fn bench_edge_creation(c: &mut Criterion) {
                             },
                         )]),
                         weight: Some(1.0),
-                        created_at: None,
-                        updated_at: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
                     };
 
                     black_box(service.create_edge(edge).unwrap());
@@ -141,8 +141,8 @@ fn bench_node_lookup(c: &mut Criterion) {
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_node(node).unwrap();
     }
@@ -150,7 +150,7 @@ fn bench_node_lookup(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1000));
     group.bench_function("get_node_by_id", |b| {
         b.iter(|| {
-            for i in (0..size).step_by(size / 1000) {
+            for i in (0..size).step_by((size / 1000) as usize) {
                 let node_id = format!("lookup_node_{}", i);
                 black_box(service.get_node(&node_id).unwrap());
             }
@@ -180,8 +180,8 @@ fn bench_traversal(c: &mut Criterion) {
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_node(node).unwrap();
     }
@@ -195,8 +195,8 @@ fn bench_traversal(c: &mut Criterion) {
             edge_type: "PARENT_OF".to_string(),
             properties: HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_edge(edge).unwrap();
     }
@@ -258,8 +258,8 @@ fn bench_neighbor_queries(c: &mut Criterion) {
             labels: vec!["NeighborTest".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_node(node).unwrap();
     }
@@ -287,8 +287,8 @@ fn bench_neighbor_queries(c: &mut Criterion) {
                     edge_type: "CONNECTED_TO".to_string(),
                     properties: HashMap::new(),
                     weight: Some(1.0),
-                    created_at: None,
-                    updated_at: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
                 };
                 service.create_edge(edge).unwrap();
             }
@@ -298,7 +298,7 @@ fn bench_neighbor_queries(c: &mut Criterion) {
     group.throughput(Throughput::Elements(100));
     group.bench_function("get_neighbors", |b| {
         b.iter(|| {
-            for i in (0..num_nodes).step_by(num_nodes / 100) {
+            for i in (0..num_nodes).step_by((num_nodes / 100) as usize) {
                 let node_id = format!("neighbor_node_{}", i);
                 black_box(service.get_neighbors(&node_id).unwrap());
             }
@@ -337,8 +337,8 @@ fn bench_node_queries(c: &mut Criterion) {
                 ),
             ]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_node(node).unwrap();
     }
@@ -399,8 +399,8 @@ fn bench_batch_operations(c: &mut Criterion) {
                                 },
                             )]),
                             embedding: None,
-                            created_at: None,
-                            updated_at: None,
+                            created_at_ms: 0,
+                            updated_at_ms: 0,
                         })
                         .collect::<Vec<_>>();
 
@@ -424,8 +424,8 @@ fn bench_batch_operations(c: &mut Criterion) {
                             labels: vec!["BatchTest".to_string()],
                             properties: HashMap::new(),
                             embedding: None,
-                            created_at: None,
-                            updated_at: None,
+                            created_at_ms: 0,
+                            updated_at_ms: 0,
                         };
                         service.create_node(node).unwrap();
                     }
@@ -438,8 +438,8 @@ fn bench_batch_operations(c: &mut Criterion) {
                             edge_type: "CONNECTS".to_string(),
                             properties: HashMap::new(),
                             weight: Some(1.0),
-                            created_at: None,
-                            updated_at: None,
+                            created_at_ms: 0,
+                            updated_at_ms: 0,
                         })
                         .collect::<Vec<_>>();
 
@@ -467,8 +467,8 @@ fn bench_statistics(c: &mut Criterion) {
             labels: vec!["StatsTest".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_node(node).unwrap();
     }
@@ -481,8 +481,8 @@ fn bench_statistics(c: &mut Criterion) {
             edge_type: "CONNECTS".to_string(),
             properties: HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         service.create_edge(edge).unwrap();
     }

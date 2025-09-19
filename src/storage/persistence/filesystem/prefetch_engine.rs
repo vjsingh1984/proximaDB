@@ -153,15 +153,17 @@ impl PrefetchEngine {
         let mut queue = self.queue.write().await;
         let mut to_prefetch = Vec::new();
 
-        // Take up to 5 items from queue
-        while to_prefetch.len() < 5 && !queue.is_empty() {
-            if let Some(request) = queue.pop() {
-                // Mark as in progress
-                self.prefetching.insert(request.path.clone(), PrefetchStatus::InProgress);
-                to_prefetch.push(request.path);
+        // Sort queue by priority (high priority first)
+        queue.sort_by(|a, b| b.priority.partial_cmp(&a.priority).unwrap_or(std::cmp::Ordering::Equal));
 
-                self.stats.total_prefetches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
+        // Take up to 5 items from queue (highest priority first)
+        while to_prefetch.len() < 5 && !queue.is_empty() {
+            let request = queue.remove(0); // Remove from front (highest priority)
+            // Mark as in progress
+            self.prefetching.insert(request.path.clone(), PrefetchStatus::InProgress);
+            to_prefetch.push(request.path);
+
+            self.stats.total_prefetches.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
 
         to_prefetch

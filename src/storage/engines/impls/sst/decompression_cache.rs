@@ -616,8 +616,8 @@ mod tests {
             block_offset: 0,
         };
 
-        // Test miss
-        assert!(cache.get(&key).await.is_some());
+        // Test miss - should return None for empty cache
+        assert!(cache.get(&key).await.is_none());
 
         // Test put and hit
         let block = FastLanesDataBlock::new(vec![], crate::storage::engines::core::formats::fastlanes_blocks::BlockCompressionConfig::default());

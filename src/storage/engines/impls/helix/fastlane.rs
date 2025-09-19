@@ -171,8 +171,10 @@ pub async fn write_helix_sstable(
 
     // Write metadata in binary format
     let metadata_bytes = bincode::serialize(&block_metadata)?;
-    file_data.put_u32_le(metadata_bytes.len() as u32);
     file_data.put_slice(&metadata_bytes);
+
+    // Write metadata size as footer (for reader to locate metadata)
+    file_data.put_u32_le(metadata_bytes.len() as u32);
 
     // Write to filesystem
     let bytes_written = file_data.len() as u64;

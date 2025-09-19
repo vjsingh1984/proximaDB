@@ -374,7 +374,20 @@ impl AxisVectorIndex for AxisHnswIndex {
         // USING UTILS: Validate vector ID
         validation::validate_vector_id(&id)?;
 
-        // Register ID mapping and get internal node ID
+        // Check if this ID already exists
+        if let Some(existing_node_id) = self.id_mapping.internal(&id) {
+            // Update existing vector
+            {
+                let mut vectors = self.vectors.write().unwrap();
+                vectors.add_fp32(id.clone(), &vector_data)?;
+            }
+            // Return early - no need to re-add to graph structure
+            self.stats
+                .record_success(start.elapsed().as_micros() as u64);
+            return Ok(());
+        }
+
+        // Register ID mapping and get internal node ID for new vector
         let internal_node_id = self.id_mapping.register(id.clone())?;
 
         // Store vector with zero-overhead - just raw data!
@@ -515,11 +528,11 @@ impl AxisVectorIndex for AxisHnswIndex {
         }
 
         // USING UTILS: Remove from mappings and vectors
-        // TODO: ZeroOverheadCollection doesn't support remove yet
-        // {
-        //     let mut vectors = self.vectors.write().unwrap();
-        //     vectors.remove(id);
-        // }
+        // Remove from vectors collection
+        {
+            let mut vectors = self.vectors.write().unwrap();
+            vectors.remove(id);
+        }
         self.id_mapping.remove_by_external(id);
 
         // Update entry point if necessary

@@ -109,7 +109,7 @@ mod error_tests {
     #[test]
     fn test_proximadb_error_display() {
         let err = ProximaDBError::Storage(StorageError::DiskIO("Disk full".to_string()));
-        assert_eq!(err.to_string(), "Storage error: Disk full");
+        assert_eq!(err.to_string(), "Storage error: Disk IO error: Disk full");
 
         let err = ProximaDBError::Index("Corrupted index".to_string());
         assert_eq!(err.to_string(), "Index error: Corrupted index");

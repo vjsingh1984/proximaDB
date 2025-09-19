@@ -2,7 +2,7 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::{
-    DistanceMetric, DistanceMode, UnifiedDistanceCompute,
+    DistanceMetric, UnifiedDistanceCompute,
 };
 
 fn benchmark_distance_computation(c: &mut Criterion) {
@@ -29,8 +29,8 @@ fn benchmark_distance_computation(c: &mut Criterion) {
                 |bencher, (a, b)| {
                     bencher.iter(|| {
                         let result =
-                            compute.calculate_distance_with_mode(a, b, &metric, DistanceMode::Raw);
-                        black_box(result.raw_value)
+                            compute.calculate_distance(a, b, metric);
+                        black_box(result)
                     });
                 },
             );
@@ -63,13 +63,11 @@ fn benchmark_batch_operations(c: &mut Criterion) {
                         .iter()
                         .map(|v| {
                             compute
-                                .calculate_distance_with_mode(
+                                .calculate_distance(
                                     query,
                                     v,
-                                    &DistanceMetric::Cosine,
-                                    DistanceMode::Raw,
+                                    DistanceMetric::Cosine,
                                 )
-                                .raw_value
                         })
                         .collect();
                     black_box(results)

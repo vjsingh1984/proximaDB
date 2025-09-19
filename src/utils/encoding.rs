@@ -66,6 +66,10 @@ impl Base64Config {
         for (i, &c) in self.alphabet.iter().enumerate() {
             table[c as usize] = i as u8;
         }
+        // Handle padding character if padding is enabled
+        if self.padding {
+            table[b'=' as usize] = 64;
+        }
         table
     }
 }
@@ -172,6 +176,13 @@ pub fn base64_decode_config(encoded: &str, config: Base64Config) -> Result<Vec<u
     // Handle remaining characters (for unpadded input)
     let remaining = bytes.len() - i;
     if remaining > 0 {
+        // Check for invalid characters first
+        for j in i..bytes.len() {
+            if decode_table[bytes[j] as usize] == INVALID {
+                return Err(Base64Error::InvalidCharacter);
+            }
+        }
+
         if remaining == 1 {
             return Err(Base64Error::InvalidLength);
         }

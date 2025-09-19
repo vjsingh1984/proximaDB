@@ -407,7 +407,7 @@ mod tests {
         // Rebuild to finalize structure
         csr.rebuild().unwrap();
 
-        assert_eq!(csr.node_count(), 2);
+        assert_eq!(csr.node_count(), 3);
         assert_eq!(csr.edge_count(), 3);
 
         // Check neighbors
@@ -453,7 +453,7 @@ mod tests {
         csr.add_edge(10, 11, "e1".to_string()).unwrap();
         csr.rebuild().unwrap();
 
-        assert_eq!(csr.node_count(), 11);
+        assert_eq!(csr.node_count(), 12);
         assert_eq!(csr.get_degree(10).unwrap(), 1);
 
         let neighbors = csr.get_neighbors(10).unwrap();

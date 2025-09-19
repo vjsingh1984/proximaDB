@@ -435,22 +435,17 @@ impl GraphEngine for OrionGraphEngine {
         node_id: &NodeId,
         edge_type: Option<&str>,
     ) -> Result<Vec<Arc<Edge>>> {
-        let rt = tokio::runtime::Handle::current();
-        let target_nodes = rt.block_on(self.get_outgoing_targets(node_id))?;
-
+        // Get outgoing edges synchronously from edge_metadata
         let mut edges = Vec::new();
-        for target_id in target_nodes {
-            // Find edges from node_id to target_id
-            for edge_entry in self.edge_metadata.iter() {
-                let edge = edge_entry.value();
-                if edge.from_node_id == *node_id && edge.to_node_id == target_id {
-                    if let Some(filter_type) = edge_type {
-                        if edge.edge_type == filter_type {
-                            edges.push(Arc::clone(edge));
-                        }
-                    } else {
+        for edge_entry in self.edge_metadata.iter() {
+            let edge = edge_entry.value();
+            if edge.from_node_id == *node_id {
+                if let Some(filter_type) = edge_type {
+                    if edge.edge_type == filter_type {
                         edges.push(Arc::clone(edge));
                     }
+                } else {
+                    edges.push(Arc::clone(edge));
                 }
             }
         }
@@ -463,22 +458,17 @@ impl GraphEngine for OrionGraphEngine {
         node_id: &NodeId,
         edge_type: Option<&str>,
     ) -> Result<Vec<Arc<Edge>>> {
-        let rt = tokio::runtime::Handle::current();
-        let source_nodes = rt.block_on(self.get_incoming_sources(node_id))?;
-
+        // Get incoming edges synchronously from edge_metadata
         let mut edges = Vec::new();
-        for source_id in source_nodes {
-            // Find edges from source_id to node_id
-            for edge_entry in self.edge_metadata.iter() {
-                let edge = edge_entry.value();
-                if edge.from_node_id == source_id && edge.to_node_id == *node_id {
-                    if let Some(filter_type) = edge_type {
-                        if edge.edge_type == filter_type {
-                            edges.push(Arc::clone(edge));
-                        }
-                    } else {
+        for edge_entry in self.edge_metadata.iter() {
+            let edge = edge_entry.value();
+            if edge.to_node_id == *node_id {
+                if let Some(filter_type) = edge_type {
+                    if edge.edge_type == filter_type {
                         edges.push(Arc::clone(edge));
                     }
+                } else {
+                    edges.push(Arc::clone(edge));
                 }
             }
         }

@@ -127,75 +127,73 @@ impl QueryPreprocessor {
         distance_metric: DistanceMetric,
         quantization_config: Option<&QuantizationConfig>,
     ) -> Arc<QueryVectorCache> {
-        println!("[PREPROCESS] Starting preprocess function");
+        debug!("Starting preprocess function - vector len: {}, metric: {:?}", query.len(), distance_metric);
         trace!("preprocess called - vector len: {}, metric: {:?}", query.len(), distance_metric);
 
         // Compute hash of query vector
-        println!("[PREPROCESS] Computing hash for vector len: {}", query.len());
+        debug!("Computing hash for vector len: {}", query.len());
         trace!("Computing vector hash");
         let vector_hash = self.compute_vector_hash(query);
-        println!("[PREPROCESS] Hash computed: {}", vector_hash);
+        debug!("Hash computed: {}", vector_hash);
         trace!("Vector hash: {}", vector_hash);
 
         // Check cache first
-        println!("[PREPROCESS] Checking cache");
+        debug!("Checking cache");
         trace!("Checking cache");
         {
-            println!("[PREPROCESS] Acquiring cache write lock");
+            trace!("Acquiring cache write lock");
             let mut cache = self.cache.write();
-            println!("[PREPROCESS] Cache lock acquired");
+            trace!("Cache lock acquired");
             if let Some(cached) = cache.get(&vector_hash) {
                 if cached.distance_metric == distance_metric {
-                    println!("[PREPROCESS] Cache hit!");
+                    debug!("Cache hit!");
                     self.stats.write().hits += 1;
                     trace!("Query cache hit for hash {}", vector_hash);
                     return cached.clone();
                 }
             }
         }
-        println!("[PREPROCESS] Cache miss");
+        debug!("Cache miss - preprocessing query");
         trace!("Cache miss, preprocessing query");
 
         // Cache miss - preprocess the query
-        println!("[PREPROCESS] Updating miss stats");
+        trace!("Updating miss stats");
         self.stats.write().misses += 1;
-        println!("[PREPROCESS] Stats updated");
+        trace!("Stats updated");
         let start = std::time::Instant::now();
 
         // Normalize vector if needed for cosine similarity
-        println!("[PREPROCESS] Checking if normalization needed for {:?}", distance_metric);
+        debug!("Checking if normalization needed for {:?}", distance_metric);
         trace!("Checking if normalization needed for {:?}", distance_metric);
         let normalized = if distance_metric == DistanceMetric::Cosine {
-            println!("[PREPROCESS] About to call normalize_vector_simd");
+            debug!("Calling normalize_vector_simd");
             trace!("Calling normalize_vector_simd");
             let result = self.normalize_vector_simd(query);
-            println!("[PREPROCESS] normalize_vector_simd completed");
+            debug!("normalize_vector_simd completed");
             trace!("normalize_vector_simd completed");
             result
         } else {
-            println!("[PREPROCESS] No normalization needed");
+            debug!("No normalization needed");
             trace!("No normalization needed, using original vector");
             Arc::new(query.to_vec())
         };
-        println!("[PREPROCESS] Normalization step finished");
         trace!("Normalization step completed");
 
         // Quantize to all levels if config provided
-        println!("[PREPROCESS] Checking quantization config");
+        debug!("Checking quantization config: {}", quantization_config.is_some());
         trace!("Checking quantization config: {:?}", quantization_config.is_some());
         let (binary, int8, pq4, pq8) = if let Some(config) = quantization_config {
-            println!("[PREPROCESS] Quantizing with config");
+            debug!("Quantizing with config");
             trace!("Quantizing with config");
             self.quantize_all_levels(&normalized, config).await
         } else {
-            println!("[PREPROCESS] No quantization config");
+            debug!("No quantization config - skipping quantization");
             trace!("No quantization config, skipping quantization");
             (None, None, None, None)
         };
-        println!("[PREPROCESS] Quantization completed");
         trace!("Quantization step completed");
 
-        println!("[PREPROCESS] Creating QueryVectorCache");
+        debug!("Creating QueryVectorCache");
         let cached = Arc::new(QueryVectorCache {
             original: Arc::new(query.to_vec()),
             normalized: normalized.clone(),
@@ -206,25 +204,25 @@ impl QueryPreprocessor {
             vector_hash,
             distance_metric,
         });
-        println!("[PREPROCESS] QueryVectorCache created");
+        trace!("QueryVectorCache created");
 
         // Store in cache
         // Skip cache storage in tests to avoid segfault
         #[cfg(not(test))]
         {
-            println!("[PREPROCESS] Storing in cache");
+            trace!("Storing in cache");
             self.cache.write().put(vector_hash, cached.clone());
-            println!("[PREPROCESS] Stored in cache");
+            trace!("Stored in cache");
         }
         #[cfg(test)]
         {
-            println!("[PREPROCESS] Skipping cache storage in test");
+            trace!("Skipping cache storage in test mode");
         }
 
         let elapsed = start.elapsed();
-        println!("[PREPROCESS] Updating preprocessing time stats");
+        trace!("Updating preprocessing time stats");
         self.stats.write().preprocessing_time_ns += elapsed.as_nanos() as u64;
-        println!("[PREPROCESS] Stats updated");
+        trace!("Stats updated");
 
         debug!(
             "Query preprocessed in {:?} (hash: {}, dim: {})",
@@ -233,7 +231,7 @@ impl QueryPreprocessor {
             query.len()
         );
 
-        println!("[PREPROCESS] About to return cached result");
+        trace!("Returning cached result");
         cached
     }
 
@@ -276,6 +274,11 @@ impl QueryPreprocessor {
     fn normalize_avx2(&self, vector: &[f32]) -> Vec<f32> {
         use std::arch::x86_64::*;
 
+        // SAFETY: Bounds checking and alignment handling
+        if vector.is_empty() {
+            return Vec::new();
+        }
+
         unsafe {
             let len = vector.len();
             let mut result = vec![0.0f32; len];
@@ -285,13 +288,25 @@ impl QueryPreprocessor {
             let chunks = len / 8;
             let _remainder = len % 8;
 
+            // Accumulate squared values
+            let mut acc = _mm256_setzero_ps();
             for i in 0..chunks {
                 let v = _mm256_loadu_ps(vector.as_ptr().add(i * 8));
                 let sq = _mm256_mul_ps(v, v);
-                let sum = _mm256_hadd_ps(sq, sq);
-                let sum = _mm256_hadd_ps(sum, sum);
-                mag_sq += _mm256_cvtss_f32(sum);
+                acc = _mm256_add_ps(acc, sq);
             }
+
+            // Proper horizontal sum of all 8 elements
+            // Extract upper and lower 128-bit lanes
+            let upper = _mm256_extractf128_ps(acc, 1);
+            let lower = _mm256_castps256_ps128(acc);
+            let sum128 = _mm_add_ps(upper, lower);
+            // Now sum the 4 elements in the 128-bit register
+            let shuf = _mm_movehdup_ps(sum128);
+            let sums = _mm_add_ps(sum128, shuf);
+            let shuf = _mm_movehl_ps(sums, sums);
+            let sums = _mm_add_ss(sums, shuf);
+            mag_sq = _mm_cvtss_f32(sums);
 
             // Handle remainder
             for i in (chunks * 8)..len {
@@ -327,6 +342,11 @@ impl QueryPreprocessor {
     fn normalize_sse(&self, vector: &[f32]) -> Vec<f32> {
         use std::arch::x86_64::*;
 
+        // SAFETY: Bounds checking and alignment handling
+        if vector.is_empty() {
+            return Vec::new();
+        }
+
         unsafe {
             let len = vector.len();
             let mut result = vec![0.0f32; len];
@@ -336,13 +356,20 @@ impl QueryPreprocessor {
             let chunks = len / 4;
             let _remainder = len % 4;
 
+            // Accumulate squared values
+            let mut acc = _mm_setzero_ps();
             for i in 0..chunks {
                 let v = _mm_loadu_ps(vector.as_ptr().add(i * 4));
                 let sq = _mm_mul_ps(v, v);
-                let sum = _mm_hadd_ps(sq, sq);
-                let sum = _mm_hadd_ps(sum, sum);
-                mag_sq += _mm_cvtss_f32(sum);
+                acc = _mm_add_ps(acc, sq);
             }
+
+            // Proper horizontal sum of all 4 elements
+            let shuf = _mm_movehdup_ps(acc);
+            let sums = _mm_add_ps(acc, shuf);
+            let shuf = _mm_movehl_ps(sums, sums);
+            let sums = _mm_add_ss(sums, shuf);
+            mag_sq = _mm_cvtss_f32(sums);
 
             // Handle remainder
             for i in (chunks * 4)..len {

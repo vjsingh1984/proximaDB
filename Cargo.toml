@@ -163,6 +163,7 @@ jsonwebtoken = "9.2"  # JWT token creation and validation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
 # base64 = "0.21"  # Using internal implementation in utils::encoding
 crossbeam = "0.8"
+crossbeam-epoch = "0.9"
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"

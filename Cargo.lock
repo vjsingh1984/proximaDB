@@ -3877,6 +3877,7 @@ dependencies = [
  "config",
  "criterion",
  "crossbeam",
+ "crossbeam-epoch",
  "dashmap",
  "env_logger",
  "flate2",

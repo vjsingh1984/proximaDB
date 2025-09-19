@@ -287,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_range_merging() {
-        let optimizer = RangeOptimizer::new(1024, 1);
+        let optimizer = RangeOptimizer::new(50, 1);
 
         let ranges = vec![
             OptimizedRange { start: 0, end: 100 },
