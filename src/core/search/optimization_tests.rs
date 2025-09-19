@@ -19,7 +19,27 @@ mod tests {
     use tokio;
 
     fn init_test_environment() {
+        println!("[INIT] Initializing hardware capabilities");
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        println!("[INIT] Hardware capabilities initialized");
+    }
+
+    #[tokio::test]
+    async fn test_hardware_init_only() {
+        println!("[TEST] Starting hardware-only test");
+        init_test_environment();
+        println!("[TEST] Hardware initialized - test passed!");
+    }
+
+    #[tokio::test]
+    async fn test_preprocessor_create_only() {
+        println!("[TEST] Starting preprocessor-create-only test");
+        init_test_environment();
+        println!("[TEST] Creating QueryPreprocessor");
+        let preprocessor = QueryPreprocessor::new(100);
+        println!("[TEST] Preprocessor created");
+        drop(preprocessor);
+        println!("[TEST] Preprocessor dropped - test passed!");
     }
 
     #[tokio::test]
@@ -41,10 +61,22 @@ mod tests {
 
         // Call preprocess
         println!("[TEST] Calling preprocess");
-        let _result = preprocessor
+        let result = preprocessor
             .preprocess(&vector, DistanceMetric::Cosine, None)
             .await;
-        println!("[TEST] Preprocess completed - test passed!");
+        println!("[TEST] Preprocess completed");
+
+        // Explicitly drop result first
+        println!("[TEST] Dropping result");
+        drop(result);
+        println!("[TEST] Result dropped");
+
+        // Explicitly drop preprocessor
+        println!("[TEST] Dropping preprocessor");
+        drop(preprocessor);
+        println!("[TEST] Preprocessor dropped");
+
+        println!("[TEST] Test passed!");
     }
 
     #[tokio::test]
