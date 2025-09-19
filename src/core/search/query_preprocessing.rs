@@ -121,55 +121,75 @@ impl QueryPreprocessor {
         distance_metric: DistanceMetric,
         quantization_config: Option<&QuantizationConfig>,
     ) -> Arc<QueryVectorCache> {
+        println!("[PREPROCESS] Starting preprocess function");
         trace!("preprocess called - vector len: {}, metric: {:?}", query.len(), distance_metric);
 
         // Compute hash of query vector
+        println!("[PREPROCESS] Computing hash for vector len: {}", query.len());
         trace!("Computing vector hash");
         let vector_hash = self.compute_vector_hash(query);
+        println!("[PREPROCESS] Hash computed: {}", vector_hash);
         trace!("Vector hash: {}", vector_hash);
 
         // Check cache first
+        println!("[PREPROCESS] Checking cache");
         trace!("Checking cache");
         {
+            println!("[PREPROCESS] Acquiring cache write lock");
             let mut cache = self.cache.write();
+            println!("[PREPROCESS] Cache lock acquired");
             if let Some(cached) = cache.get(&vector_hash) {
                 if cached.distance_metric == distance_metric {
+                    println!("[PREPROCESS] Cache hit!");
                     self.stats.write().hits += 1;
                     trace!("Query cache hit for hash {}", vector_hash);
                     return cached.clone();
                 }
             }
         }
+        println!("[PREPROCESS] Cache miss");
         trace!("Cache miss, preprocessing query");
 
         // Cache miss - preprocess the query
+        println!("[PREPROCESS] Updating miss stats");
         self.stats.write().misses += 1;
+        println!("[PREPROCESS] Stats updated");
         let start = std::time::Instant::now();
 
         // Normalize vector if needed for cosine similarity
+        println!("[PREPROCESS] Checking if normalization needed for {:?}", distance_metric);
         trace!("Checking if normalization needed for {:?}", distance_metric);
         let normalized = if distance_metric == DistanceMetric::Cosine {
+            println!("[PREPROCESS] About to call normalize_vector_simd");
             trace!("Calling normalize_vector_simd");
             let result = self.normalize_vector_simd(query);
+            println!("[PREPROCESS] normalize_vector_simd completed");
             trace!("normalize_vector_simd completed");
             result
         } else {
+            println!("[PREPROCESS] No normalization needed");
             trace!("No normalization needed, using original vector");
             Arc::new(query.to_vec())
         };
+        println!("[PREPROCESS] Normalization step finished");
         trace!("Normalization step completed");
 
         // Quantize to all levels if config provided
+        println!("[PREPROCESS] Checking quantization config");
         trace!("Checking quantization config: {:?}", quantization_config.is_some());
         let (binary, int8, pq4, pq8) = if let Some(config) = quantization_config {
+            println!("[PREPROCESS] Quantizing with config");
             trace!("Quantizing with config");
             self.quantize_all_levels(&normalized, config).await
         } else {
+            println!("[PREPROCESS] No quantization config");
             trace!("No quantization config, skipping quantization");
             (None, None, None, None)
         };
+        println!("[PREPROCESS] Quantization completed");
         trace!("Quantization step completed");
 
+        println!("[PREPROCESS] Creating QueryVectorCache");
         let cached = Arc::new(QueryVectorCache {
             original: Arc::new(query.to_vec()),
             normalized: normalized.clone(),
@@ -180,12 +200,17 @@ impl QueryPreprocessor {
             vector_hash,
             distance_metric,
         });
+        println!("[PREPROCESS] QueryVectorCache created");
 
         // Store in cache
+        println!("[PREPROCESS] Storing in cache");
         self.cache.write().put(vector_hash, cached.clone());
+        println!("[PREPROCESS] Stored in cache");
 
         let elapsed = start.elapsed();
+        println!("[PREPROCESS] Updating preprocessing time stats");
         self.stats.write().preprocessing_time_ns += elapsed.as_nanos() as u64;
+        println!("[PREPROCESS] Stats updated");
 
         debug!(
             "Query preprocessed in {:?} (hash: {}, dim: {})",
@@ -194,6 +219,7 @@ impl QueryPreprocessor {
             query.len()
         );
 
+        println!("[PREPROCESS] About to return cached result");
         cached
     }
 
