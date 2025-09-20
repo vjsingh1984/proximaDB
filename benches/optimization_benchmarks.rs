@@ -59,7 +59,7 @@ fn create_vector_record(id: &str, vector: Vec<f32>, with_metadata: bool) -> Vect
             (
                 "score".to_string(),
                 SqlValue {
-                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::FloatValue(
+                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
                         0.95,
                     )),
                 },
@@ -270,7 +270,8 @@ fn bench_result_aggregation(c: &mut Criterion) {
                 |b, (results, top_k)| {
                     b.iter(|| {
                         let mut sorted = results.clone();
-                        sorted.select_nth_unstable_by(*top_k.min(&sorted.len()), |a, b| {
+                        let len = sorted.len();
+                        sorted.select_nth_unstable_by(*top_k.min(&len), |a, b| {
                             b.score.partial_cmp(&a.score).unwrap()
                         });
                         sorted.truncate(*top_k);

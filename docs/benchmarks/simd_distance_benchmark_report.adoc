@@ -253,14 +253,14 @@ graph LR
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
 graph TD
     subgraph "Operation Breakdown"
-        A[Dot Product<br/>N multiplications<br/>N-1 additions]
-        B[Euclidean<br/>Dot product<br/>+ sqrt()]
-        C[Cosine<br/>3 dot products<br/>+ 2 sqrt()<br/>+ 1 division]
+        A["Dot Product<br/>N multiplications<br/>N-1 additions"]
+        B["Euclidean<br/>Dot product<br/>+ square root"]
+        C["Cosine<br/>3 dot products<br/>+ 2 square roots<br/>+ 1 division"]
     end
 
-    A --> D[Fastest: 12.7-920ns]
-    B --> E[+5-20%: 15.3-936ns]
-    C --> F[+150%: 31.7-1148ns]
+    A --> D["Fastest: 12.7-920ns"]
+    B --> E["+5-20%: 15.3-936ns"]
+    C --> F["+150%: 31.7-1148ns"]
 
     style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
     style B fill:#ffc107,stroke:#f57c00,stroke-width:2px,color:#333333

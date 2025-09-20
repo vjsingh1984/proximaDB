@@ -16,6 +16,80 @@
 
 This report presents comprehensive performance benchmarking of ProximaDB's unified storage strategy, comparing four high-performance storage engines: SST, VIPER, NOVA, and SWIFT. The analysis covers engine creation overhead, flush performance, and memory scaling characteristics under various workload sizes.
 
+== Why This Benchmark Matters
+
+The unified storage strategy is the foundation of ProximaDB's ability to optimize for different workload patterns:
+
+* **Workload Optimization**: Different engines excel at different tasks - choosing the right one can improve performance by 7-8x
+* **Resource Efficiency**: Engine selection directly impacts memory usage, CPU utilization, and storage costs
+* **Deployment Flexibility**: Understanding engine characteristics enables optimal configuration for specific use cases
+* **Scalability Planning**: Memory scaling patterns determine cluster sizing and capacity planning
+
+This benchmark validates ProximaDB's ability to:
+- Initialize any engine in under 600µs for dynamic workload adaptation
+- Achieve 8,500+ vectors/second flush throughput with SWIFT/VIPER
+- Scale linearly from 1K to 10K vectors with predictable memory usage
+- Provide engine selection guidance based on workload characteristics
+
+== How to Interpret These Results
+
+.Key Metrics Explained
+[%autowidth.stretch]
+|===
+| Metric | What It Measures | Good Values | Impact on System
+
+| **Engine Creation Time**
+| Initialization overhead when switching engines
+| <500µs excellent, <1ms acceptable
+| Affects cold start latency and dynamic adaptation speed
+
+| **Flush Throughput**
+| Vectors written per second to persistent storage
+| >5,000 vec/s for production
+| Determines maximum ingestion rate and update frequency
+
+| **Memory Scaling**
+| Memory usage growth with data volume
+| Linear or sub-linear growth
+| Affects deployment costs and maximum dataset size
+
+| **Latency Variance**
+| Consistency of performance (std deviation)
+| <5% of mean time
+| Impacts P99 latency and user experience predictability
+
+| **Compression Ratio**
+| Storage efficiency vs raw data
+| 2-10x reduction typical
+| Directly affects storage costs and I/O bandwidth
+|===
+
+.Engine Selection Guide
+[%autowidth.stretch]
+|===
+| Engine | Best For | Avoid For | Key Strength
+
+| **SST**
+| Real-time queries, frequent updates
+| Large batch writes, cold storage
+| Low query latency
+
+| **VIPER**
+| Analytics, batch processing, archival
+| Real-time updates, low-latency queries
+| Maximum compression
+
+| **NOVA**
+| Mixed workloads, progressive search
+| Single-pattern workloads
+| Adaptive performance
+
+| **SWIFT**
+| High-throughput ingestion, streaming
+| Complex analytics, deep compression
+| Maximum speed
+|===
+
 == Key Findings
 
 [source,mermaid]
@@ -96,6 +170,11 @@ graph LR
 - **SST** has highest overhead due to traditional row-based structure setup
 - **VIPER** shows higher variance (±16µs) due to complex columnar initialization
 - All engines initialize in under 600µs, making them suitable for dynamic workloads
+
+**Business Impact:**
+- **Fast initialization** (<600µs) enables real-time engine switching based on query patterns
+- **Low overhead** allows multiple engines to coexist for hybrid workloads
+- **Predictable timing** (except VIPER) ensures consistent application startup
 
 == Flush Performance Analysis
 
