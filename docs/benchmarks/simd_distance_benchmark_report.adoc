@@ -16,6 +16,46 @@
 
 This report presents comprehensive performance benchmarking of ProximaDB's SIMD (Single Instruction, Multiple Data) accelerated distance computation engine. The analysis covers three distance metrics (Cosine, Euclidean, Dot Product) across dimensions from 64 to 2048, batch processing capabilities, and hardware backend comparisons. Results demonstrate exceptional performance with throughput reaching **5.0 billion elements/second** for 64-dimensional dot product calculations.
 
+=== Why This Benchmark Matters
+
+[IMPORTANT]
+====
+Distance computation is the fundamental operation in vector similarity search, consuming 60-80% of query processing time. SIMD optimization can provide 4-8x speedup over scalar implementations, directly impacting:
+
+* **Query Latency**: Every 10ns saved in distance computation translates to ~1ms reduction for 100k vector searches
+* **Throughput**: Higher computational efficiency enables more concurrent queries
+* **Cost Efficiency**: Better CPU utilization reduces infrastructure requirements
+* **Energy Efficiency**: SIMD operations process multiple data points per instruction cycle
+====
+
+=== How to Interpret These Results
+
+.Key Metrics Explained
+[%autowidth.stretch]
+|===
+| Metric | What It Measures | Good vs Bad | Business Impact
+
+| **Latency (ns)**
+| Time for single distance calculation
+| <100ns excellent, >1000ns poor
+| Direct impact on query response time
+
+| **Throughput (Gelem/s)**
+| Billions of elements processed/second
+| >1.0 good for production
+| Determines maximum query load
+
+| **Relative Speed**
+| Performance vs baseline (dot product)
+| >0.5x acceptable
+| Indicates optimization effectiveness
+
+| **Scaling Factor**
+| Performance degradation with dimension
+| <2x per doubling ideal
+| Predicts performance at scale
+|===
+
 == Performance Highlights
 
 [source,mermaid]
@@ -45,7 +85,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 .Distance Computation Performance (sorted by speed)
 [%autowidth.stretch]
 |===
-| Dimension | Metric | Time (ns) | Throughput (Gelem/s) | Relative Speed | Analysis
+| Dimension | Metric | Time (ns) | Throughput (Gelem/s) | Relative Speed | Analysis | **Interpretation**
 
 | **64**
 | Dot Product
@@ -53,6 +93,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | **5.04**
 | 1.00x (fastest)
 | Peak SIMD efficiency
+| **Baseline**: Optimal for real-time applications
 
 | 64
 | Euclidean
@@ -60,6 +101,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 4.19
 | 0.83x
 | 20% overhead for sqrt
+| **Excellent**: Minimal penalty for distance calculation
 
 | 64
 | Cosine
@@ -67,6 +109,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 2.02
 | 0.40x
 | Normalization cost
+| **Good**: 2.5x slower but necessary for semantic similarity
 
 | **128**
 | Dot Product

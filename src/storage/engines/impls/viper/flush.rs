@@ -862,7 +862,16 @@ impl Flush {
             Arc::new(expires_at_array),
         ];
 
+        info!(
+            "🔍 VIPER FLUSH DEBUG: Base columns count: {}",
+            columns.len()
+        );
+
         // Add dynamic filterable columns
+        info!(
+            "🔍 VIPER FLUSH DEBUG: Adding {} dynamic filterable arrays",
+            dynamic_filterable_arrays.len()
+        );
         columns.extend(dynamic_filterable_arrays);
 
         // Phase 2: Add quantized vector columns if quantization is enabled
@@ -911,6 +920,22 @@ impl Flush {
 
         // Add extra_meta column
         columns.push(Arc::new(extra_meta_array));
+
+        // Debug: Log the schema and columns count
+        info!(
+            "🔍 VIPER FLUSH DEBUG: Schema has {} fields, columns array has {} items",
+            schema.fields().len(),
+            columns.len()
+        );
+        info!(
+            "🔍 VIPER FLUSH DEBUG: Schema fields: {:?}",
+            schema.fields().iter().map(|f| f.name()).collect::<Vec<_>>()
+        );
+        info!(
+            "🔍 VIPER FLUSH DEBUG: has_quantization={}, filterable_metadata.len()={}",
+            has_quantization,
+            filterable_metadata.len()
+        );
 
         // Create RecordBatch
         let batch = RecordBatch::try_new(schema, columns)?;
@@ -1084,7 +1109,7 @@ impl Flush {
             enable_dictionary: true,
             dictionary_threshold: 0.5,
             enable_delta_encoding: true,
-            quantization: ColumnarQuantizationConfig {
+            quantization: crate::proto::proximadb_v1::QuantizationConfig {
                 enabled: has_quantization,
                 strategy: 0, // SMART_DEFAULTS
                 custom_levels: vec![],
@@ -1103,7 +1128,7 @@ impl Flush {
                 enable_pq: has_quantization,
                 pq_segments: 32,
                 pq_bits: 8,
-                pq_codebooks: 0,
+                pq_codebooks: 256,
                 binary_threshold: 0.5,
                 int8_threshold: 0.3,
                 pq_threshold: 0.1,

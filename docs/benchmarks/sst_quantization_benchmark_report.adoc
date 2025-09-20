@@ -16,6 +16,59 @@
 
 This report presents the performance analysis of ProximaDB's SST (Sorted String Table) quantization engine, covering quantization speed, progressive search, memory pooling, Product Quantization (PQ) configurations, compression ratios, and binary filtering capabilities. The benchmarks reveal that quantization performance scales linearly with dimension size, while progressive search maintains sub-40µs latencies even for 10,000 vectors.
 
+== Why This Benchmark Matters
+
+The SST quantization engine is the heart of ProximaDB's storage optimization strategy, directly impacting:
+
+* **Storage Costs**: Quantization reduces memory usage by 8-48x, dramatically lowering infrastructure costs
+* **Query Latency**: Progressive search enables real-time responses even on large datasets
+* **Throughput**: Efficient quantization allows processing 3,000-8,000 vectors per second
+* **Scalability**: Sub-linear search scaling enables handling millions of vectors efficiently
+
+This benchmark validates that ProximaDB can:
+- Handle production workloads with sub-40µs search latencies
+- Compress vectors by up to 97.92% without significant accuracy loss
+- Process embeddings from modern models (BERT, GPT) at scale
+- Maintain consistent performance across different quantization configurations
+
+== How to Interpret These Results
+
+.Key Metrics Explained
+[%autowidth.stretch]
+|===
+| Metric | What It Measures | Good Values | Impact on System
+
+| **Quantization Speed**
+| Time to encode vectors into compressed format
+| >3,000 vec/s
+| Determines ingestion throughput and update latency
+
+| **Progressive Search**
+| Multi-stage nearest neighbor search time
+| <100µs for 10K vectors
+| Directly affects query response time
+
+| **Memory Pool**
+| Allocation overhead for vector buffers
+| <15µs
+| Impacts memory efficiency and GC pressure
+
+| **PQ Distance Tables**
+| Lookup time for precomputed distance tables
+| <5µs
+| Affects accuracy-speed trade-off in search
+
+| **Compression Ratio**
+| Memory reduction factor
+| >8:1
+| Determines storage costs and cache efficiency
+
+| **Binary Filtering**
+| First-stage candidate pruning speed
+| >200K ops/s
+| Controls search space reduction efficiency
+|===
+
 == Key Performance Metrics
 
 [source,mermaid]

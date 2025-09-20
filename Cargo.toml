@@ -318,7 +318,7 @@ harness = false
 
 
 [[bench]]
-name = "parquet_optimizations_bench"
+name = "parquet_optimizations_bench_async"
 harness = false
 
 [[bench]]
@@ -331,4 +331,8 @@ harness = false
 
 [[bench]]
 name = "progressive_search_bench"
+harness = false
+
+[[bench]]
+name = "optimization_benchmarks"
 harness = false

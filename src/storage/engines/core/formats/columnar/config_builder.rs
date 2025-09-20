@@ -6,8 +6,9 @@
 
 use crate::core::compression::CompressionAlgorithm;
 use crate::storage::engines::core::formats::columnar::{
-    FooterCacheConfig, HybridWriterConfig, ParquetWriterConfig, QuantizationConfig, WriterMode,
+    FooterCacheConfig, HybridWriterConfig, ParquetWriterConfig, WriterMode,
 };
+use crate::proto::proximadb_v1::QuantizationConfig;
 use std::time::Duration;
 
 /// Builder for Parquet writer configuration with all optimizations enabled by default
@@ -45,7 +46,7 @@ impl ParquetConfigBuilder {
                 enable_delta_encoding: false,
                 quantization: QuantizationConfig {
                     enabled: false,
-                    strategy: 0, // SmartDefaults
+                    strategy: 0,
                     custom_levels: vec![],
                     enable_progressive_search: false,
                     binary_filter_selectivity: 0.3,
@@ -57,18 +58,15 @@ impl ParquetConfigBuilder {
                     optimize_for_storage: false,
                     optimize_for_memory: false,
                     enable_simd_acceleration: true,
-                    // Direct quantization type enables
                     enable_binary: false,
                     enable_int8: false,
                     enable_pq: false,
-                    // Product Quantization specific settings
                     pq_segments: 8,
                     pq_bits: 8,
-                    pq_codebooks: 256, // Default codebook size
-                    // Thresholds for progressive search
-                    binary_threshold: 100.0,
-                    int8_threshold: 50.0,
-                    pq_threshold: 10.0,
+                    pq_codebooks: 256,
+                    binary_threshold: 0.5,
+                    int8_threshold: 0.3,
+                    pq_threshold: 0.1,
                 },
                 id_less_storage: false,
                 write_batch_size: 1000,

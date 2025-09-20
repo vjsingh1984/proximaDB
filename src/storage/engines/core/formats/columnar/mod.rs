@@ -536,7 +536,7 @@ impl ColumnarFactory {
         let config = ParquetWriterConfig {
             enable_bloom_filters,
             id_less_storage: enable_id_less_optimization, // Should be false for customer APIs
-            quantization,
+            quantization, // Use proto config directly
             ..Default::default()
         };
 

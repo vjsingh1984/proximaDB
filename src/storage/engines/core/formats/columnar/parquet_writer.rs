@@ -23,8 +23,8 @@ use tracing::{debug, info, trace};
 
 use crate::core::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
-use crate::storage::engines::core::formats::columnar::QuantizationConfig;
 use crate::storage::engines::core::formats::columnar::native_metadata::NativeMetadataHandler;
+use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// Configuration for Parquet writing
 #[derive(Debug, Clone)]
@@ -247,6 +247,7 @@ impl StreamingParquetWriter {
         }
 
         if config.quantization.enable_pq {
+            // Cast u32 to i32 for Arrow API compatibility
             fields.push(Field::new(
                 "vector_pq",
                 DataType::FixedSizeBinary(config.quantization.pq_segments as i32),

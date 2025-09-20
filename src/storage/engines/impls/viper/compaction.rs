@@ -1191,7 +1191,7 @@ impl Compaction {
                     enable_dictionary: true,
                     dictionary_threshold: 0.5,
                     enable_delta_encoding: true,
-                    quantization: ColumnarQuantizationConfig {
+                    quantization: crate::proto::proximadb_v1::QuantizationConfig {
                         enabled: has_quantization,
                         strategy: 0, // SMART_DEFAULTS
                         custom_levels: vec![],
@@ -1210,7 +1210,7 @@ impl Compaction {
                         enable_pq: has_quantization,
                         pq_segments: 32,
                         pq_bits: 8,
-                        pq_codebooks: 0,
+                        pq_codebooks: 256,
                         binary_threshold: 0.5,
                         int8_threshold: 0.3,
                         pq_threshold: 0.1,
