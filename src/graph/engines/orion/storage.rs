@@ -56,13 +56,13 @@ use std::collections::HashMap;
 pub struct CsrStorage {
     /// Offset array: offsets[i] = start index for node i's edges
     /// Node i's edges are in targets[offsets[i]..offsets[i+1]]
-    offsets: Vec<usize>,
+    pub(super) offsets: Vec<usize>,
 
     /// Target node indices for each edge
-    targets: Vec<usize>,
+    pub(super) targets: Vec<usize>,
 
     /// Edge IDs corresponding to each target (for metadata lookup)
-    edge_ids: Vec<EdgeId>,
+    pub(super) edge_ids: Vec<EdgeId>,
 
     /// Number of nodes in the graph
     node_count: usize,

@@ -21,46 +21,52 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::{
-    graph::{Edge, GraphService, Node, PropertyValue},
+    graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
     proto::proximadb_v1::{NodeQuery, TraversalAlgorithm, TraversalRequest, property_value::Value},
 };
 use std::collections::HashMap;
+use std::sync::Arc;
+
+const DEFAULT_GRAPH_ID: &str = "benchmark_graph";
 
 /// Benchmark node creation operations
 fn bench_node_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("node_creation");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     for size in [100, 1000, 10000] {
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("create_nodes", size), &size, |b, &size| {
             b.iter(|| {
-                let service = GraphService::new();
+                let service = Arc::new(GraphOperationsService::new());
 
-                for i in 0..size {
-                    let node = Node {
-                        id: format!("bench_node_{}", i),
-                        labels: vec!["BenchmarkNode".to_string()],
-                        properties: HashMap::from([
-                            (
-                                "index".to_string(),
-                                PropertyValue {
-                                    value: Some(Value::IntValue(i as i64)),
+                runtime.block_on(async {
+                    for i in 0..size {
+                        let node = Node {
+                            id: format!("bench_node_{}", i),
+                            labels: vec!["BenchmarkNode".to_string()],
+                            properties: HashMap::from([
+                                (
+                                    "index".to_string(),
+                                    PropertyValue {
+                                        value: Some(Value::IntValue(i as i64)),
+                                    },
+                                ),
+                                (
+                                    "name".to_string(),
+                                    PropertyValue {
+                                        value: Some(Value::StringValue(format!("Node {}", i))),
                                 },
-                            ),
-                            (
-                                "name".to_string(),
-                                PropertyValue {
-                                    value: Some(Value::StringValue(format!("Node {}", i))),
-                                },
-                            ),
-                        ]),
-                        embedding: None,
-                        created_at_ms: 0,
-                        updated_at_ms: 0,
-                    };
+                                ),
+                            ]),
+                            embedding: None,
+                            created_at_ms: 0,
+                            updated_at_ms: 0,
+                        };
 
-                    black_box(service.create_node(node).unwrap());
-                }
+                        black_box(service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap());
+                    }
+                });
 
                 service
             });
@@ -73,46 +79,44 @@ fn bench_node_creation(c: &mut Criterion) {
 /// Benchmark edge creation operations
 fn bench_edge_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("edge_creation");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     for size in [100, 1000, 5000] {
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("create_edges", size), &size, |b, &size| {
             b.iter(|| {
-                let service = GraphService::new();
+                let service = Arc::new(GraphOperationsService::new());
 
-                // Create nodes first
-                for i in 0..size {
-                    let node = Node {
-                        id: format!("bench_node_{}", i),
-                        labels: vec!["BenchmarkNode".to_string()],
-                        properties: HashMap::new(),
-                        embedding: None,
-                        created_at_ms: 0,
-                        updated_at_ms: 0,
-                    };
-                    service.create_node(node).unwrap();
-                }
+                runtime.block_on(async {
+                    // Create nodes first
+                    for i in 0..size {
+                        let node = Node {
+                            id: format!("bench_node_{}", i),
+                            labels: vec!["BenchmarkNode".to_string()],
+                            properties: HashMap::new(),
+                            embedding: None,
+                            created_at_ms: 0,
+                            updated_at_ms: 0,
+                        };
+                        service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap();
+                    }
 
-                // Create edges
-                for i in 0..(size - 1) {
-                    let edge = Edge {
-                        id: format!("bench_edge_{}", i),
-                        from_node_id: format!("bench_node_{}", i),
-                        to_node_id: format!("bench_node_{}", i + 1),
-                        edge_type: "CONNECTS".to_string(),
-                        properties: HashMap::from([(
-                            "weight".to_string(),
-                            PropertyValue {
-                                value: Some(Value::DoubleValue(1.0)),
-                            },
-                        )]),
-                        weight: Some(1.0),
-                        created_at_ms: 0,
-                        updated_at_ms: 0,
-                    };
+                    // Create edges
+                    for i in 0..(size - 1) {
+                        let edge = Edge {
+                            id: format!("bench_edge_{}", i),
+                            from_node_id: format!("bench_node_{}", i),
+                            to_node_id: format!("bench_node_{}", (i + 1) % size),
+                            edge_type: "CONNECTS".to_string(),
+                            properties: HashMap::new(),
+                            weight: None,
+                            created_at_ms: 0,
+                            updated_at_ms: 0,
+                        };
 
-                    black_box(service.create_edge(edge).unwrap());
-                }
+                        black_box(service.create_edge(DEFAULT_GRAPH_ID, edge).await.unwrap());
+                    }
+                });
 
                 service
             });
@@ -122,40 +126,38 @@ fn bench_edge_creation(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark node lookup operations
-fn bench_node_lookup(c: &mut Criterion) {
-    let mut group = c.benchmark_group("node_lookup");
+/// Benchmark node retrieval operations
+fn bench_node_retrieval(c: &mut Criterion) {
+    let mut group = c.benchmark_group("node_retrieval");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Setup data once
-    let service = GraphService::new();
-    let size = 10000;
-
-    for i in 0..size {
-        let node = Node {
-            id: format!("lookup_node_{}", i),
-            labels: vec!["LookupTest".to_string()],
-            properties: HashMap::from([(
-                "index".to_string(),
-                PropertyValue {
-                    value: Some(Value::IntValue(i)),
-                },
-            )]),
-            embedding: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_node(node).unwrap();
-    }
-
-    group.throughput(Throughput::Elements(1000));
-    group.bench_function("get_node_by_id", |b| {
-        b.iter(|| {
-            for i in (0..size).step_by((size / 1000) as usize) {
-                let node_id = format!("lookup_node_{}", i);
-                black_box(service.get_node(&node_id).unwrap());
+    for size in [100, 1000, 10000] {
+        // Setup: Create nodes
+        let service = Arc::new(GraphOperationsService::new());
+        runtime.block_on(async {
+            for i in 0..size {
+                let node = Node {
+                    id: format!("bench_node_{}", i),
+                    labels: vec!["BenchmarkNode".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap();
             }
         });
-    });
+
+        group.throughput(Throughput::Elements(1));
+        group.bench_with_input(BenchmarkId::new("get_node", size), &size, |b, &_size| {
+            b.iter(|| {
+                runtime.block_on(async {
+                    let node_id = "bench_node_50";
+                    black_box(service.get_node(DEFAULT_GRAPH_ID, &node_id.to_string()).await.unwrap());
+                });
+            });
+        });
+    }
 
     group.finish();
 }
@@ -163,211 +165,218 @@ fn bench_node_lookup(c: &mut Criterion) {
 /// Benchmark graph traversal operations
 fn bench_traversal(c: &mut Criterion) {
     let mut group = c.benchmark_group("traversal");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Create a connected graph for traversal
-    let service = GraphService::new();
-    let size = 1000;
-
-    // Create nodes
-    for i in 0..size {
-        let node = Node {
-            id: format!("trav_node_{}", i),
-            labels: vec!["TraversalTest".to_string()],
-            properties: HashMap::from([(
-                "level".to_string(),
-                PropertyValue {
-                    value: Some(Value::IntValue(i / 10)), // Group into levels
-                },
-            )]),
-            embedding: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_node(node).unwrap();
-    }
-
-    // Create edges in a tree-like structure
-    for i in 0..size - 1 {
-        let edge = Edge {
-            id: format!("trav_edge_{}", i),
-            from_node_id: format!("trav_node_{}", i / 2), // Parent node
-            to_node_id: format!("trav_node_{}", i + 1),   // Child node
-            edge_type: "PARENT_OF".to_string(),
-            properties: HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_edge(edge).unwrap();
-    }
-
-    // Benchmark BFS traversal
-    group.bench_function("bfs_traversal", |b| {
-        b.iter(|| {
-            let request = TraversalRequest {
-                start_node_id: "trav_node_0".to_string(),
-                max_depth: 5,
-                edge_types: vec!["PARENT_OF".to_string()],
-                node_labels: vec![],
-                filters: vec![],
-                algorithm: TraversalAlgorithm::Bfs.into(),
-                limit: Some(100),
-                timeout_ms: None,
-                max_frontier: None,
-            };
-
-            black_box(futures::executor::block_on(service.traverse(request)).unwrap());
-        });
-    });
-
-    // Benchmark DFS traversal
-    group.bench_function("dfs_traversal", |b| {
-        b.iter(|| {
-            let request = TraversalRequest {
-                start_node_id: "trav_node_0".to_string(),
-                max_depth: 5,
-                edge_types: vec!["PARENT_OF".to_string()],
-                node_labels: vec![],
-                filters: vec![],
-                algorithm: TraversalAlgorithm::Dfs.into(),
-                limit: Some(100),
-                timeout_ms: None,
-                max_frontier: None,
-            };
-
-            black_box(futures::executor::block_on(service.traverse(request)).unwrap());
-        });
-    });
-
-    group.finish();
-}
-
-/// Benchmark neighbor queries
-fn bench_neighbor_queries(c: &mut Criterion) {
-    let mut group = c.benchmark_group("neighbor_queries");
-
-    // Create a graph with varying degrees
-    let service = GraphService::new();
-    let num_nodes = 1000;
-    let avg_degree = 10;
-
-    // Create nodes
-    for i in 0..num_nodes {
-        let node = Node {
-            id: format!("neighbor_node_{}", i),
-            labels: vec!["NeighborTest".to_string()],
-            properties: HashMap::new(),
-            embedding: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_node(node).unwrap();
-    }
-
-    // Create random connections
-    use std::collections::HashSet;
-    let mut rng = 12345u64; // Simple LCG for reproducible randomness
-
-    for i in 0..num_nodes {
-        let mut connected = HashSet::new();
-        let degree = avg_degree + ((rng % 10) as i32 - 5); // ±5 variation
-        rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-
-        for j in 0..degree.max(1) {
-            let target = (rng as usize) % num_nodes;
-            rng = rng.wrapping_mul(1103515245).wrapping_add(12345);
-
-            if target != i && !connected.contains(&target) {
-                connected.insert(target);
-
-                let edge = Edge {
-                    id: format!("neighbor_edge_{}_{}", i, target),
-                    from_node_id: format!("neighbor_node_{}", i),
-                    to_node_id: format!("neighbor_node_{}", target),
-                    edge_type: "CONNECTED_TO".to_string(),
+    for depth in [1, 2, 3] {
+        // Setup: Create a simple graph
+        let service = Arc::new(GraphOperationsService::new());
+        runtime.block_on(async {
+            // Create nodes
+            for i in 0..100 {
+                let node = Node {
+                    id: format!("bench_node_{}", i),
+                    labels: vec!["BenchmarkNode".to_string()],
                     properties: HashMap::new(),
-                    weight: Some(1.0),
+                    embedding: None,
                     created_at_ms: 0,
                     updated_at_ms: 0,
                 };
-                service.create_edge(edge).unwrap();
+                service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap();
             }
-        }
-    }
 
-    group.throughput(Throughput::Elements(100));
-    group.bench_function("get_neighbors", |b| {
-        b.iter(|| {
-            for i in (0..num_nodes).step_by((num_nodes / 100) as usize) {
-                let node_id = format!("neighbor_node_{}", i);
-                black_box(service.get_neighbors(&node_id).unwrap());
+            // Create edges in a chain
+            for i in 0..99 {
+                let edge = Edge {
+                    id: format!("bench_edge_{}", i),
+                    from_node_id: format!("bench_node_{}", i),
+                    to_node_id: format!("bench_node_{}", i + 1),
+                    edge_type: "CONNECTS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_edge(DEFAULT_GRAPH_ID, edge).await.unwrap();
             }
         });
-    });
+
+        group.throughput(Throughput::Elements(1));
+
+        // BFS traversal
+        group.bench_with_input(BenchmarkId::new("bfs", depth), &depth, |b, &depth| {
+            b.iter(|| {
+                runtime.block_on(async {
+                    let request = TraversalRequest {
+                        graph_id: DEFAULT_GRAPH_ID.to_string(),
+                        start_node_id: "bench_node_0".to_string(),
+                        algorithm: TraversalAlgorithm::Bfs as i32,
+                        max_depth: depth,
+                        edge_types: vec!["CONNECTS".to_string()],
+                        property_filters: HashMap::new(),
+                        limit: 100,
+                    };
+                    black_box(service.traverse(DEFAULT_GRAPH_ID, request).await.unwrap());
+                });
+            });
+        });
+
+        // DFS traversal
+        group.bench_with_input(BenchmarkId::new("dfs", depth), &depth, |b, &depth| {
+            b.iter(|| {
+                runtime.block_on(async {
+                    let request = TraversalRequest {
+                        graph_id: DEFAULT_GRAPH_ID.to_string(),
+                        start_node_id: "bench_node_0".to_string(),
+                        algorithm: TraversalAlgorithm::Dfs as i32,
+                        max_depth: depth,
+                        edge_types: vec!["CONNECTS".to_string()],
+                        property_filters: HashMap::new(),
+                        limit: 100,
+                    };
+                    black_box(service.traverse(DEFAULT_GRAPH_ID, request).await.unwrap());
+                });
+            });
+        });
+    }
 
     group.finish();
 }
 
-/// Benchmark node queries by labels
-fn bench_node_queries(c: &mut Criterion) {
-    let mut group = c.benchmark_group("node_queries");
+/// Benchmark neighbor retrieval operations
+fn bench_neighbor_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("neighbor_operations");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    let service = GraphService::new();
-    let num_nodes = 5000;
-    let labels = vec!["User", "Admin", "Guest", "Bot", "Service"];
+    // Setup: Create a graph with varying connectivity
+    for connectivity in [10, 50, 100] {
+        let service = Arc::new(GraphOperationsService::new());
+        runtime.block_on(async {
+            // Create hub node
+            let hub_node = Node {
+                id: "hub_node".to_string(),
+                labels: vec!["HubNode".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_node(DEFAULT_GRAPH_ID, hub_node).await.unwrap();
 
-    // Create nodes with different labels
-    for i in 0..num_nodes {
-        let label = labels[i % labels.len()];
-        let node = Node {
-            id: format!("query_node_{}", i),
-            labels: vec![label.to_string(), "Entity".to_string()],
-            properties: HashMap::from([
-                (
-                    "type".to_string(),
-                    PropertyValue {
-                        value: Some(Value::StringValue(label.to_string())),
-                    },
-                ),
-                (
-                    "index".to_string(),
-                    PropertyValue {
-                        value: Some(Value::IntValue(i as i64)),
-                    },
-                ),
-            ]),
-            embedding: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_node(node).unwrap();
+            // Create connected nodes
+            for i in 0..connectivity {
+                let node = Node {
+                    id: format!("connected_node_{}", i),
+                    labels: vec!["ConnectedNode".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap();
+
+                // Create edges from hub to connected nodes
+                let edge = Edge {
+                    id: format!("edge_{}", i),
+                    from_node_id: "hub_node".to_string(),
+                    to_node_id: format!("connected_node_{}", i),
+                    edge_type: "CONNECTS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                };
+                service.create_edge(DEFAULT_GRAPH_ID, edge).await.unwrap();
+            }
+        });
+
+        group.throughput(Throughput::Elements(1));
+        group.bench_with_input(
+            BenchmarkId::new("get_neighbors", connectivity),
+            &connectivity,
+            |b, _| {
+                b.iter(|| {
+                    runtime.block_on(async {
+                        let node_id = "hub_node";
+                        black_box(service.get_neighbors(DEFAULT_GRAPH_ID, &node_id.to_string()).await.unwrap());
+                    });
+                });
+            },
+        );
     }
 
-    group.bench_function("query_by_single_label", |b| {
-        b.iter(|| {
-            let query = NodeQuery {
-                labels: vec!["User".to_string()],
-                filters: vec![],
-                limit: Some(1000),
-                offset: Some(0),
-                continuation_token: None,
-            };
+    group.finish();
+}
 
-            black_box(service.query_nodes(query).unwrap());
+/// Benchmark node query operations
+fn bench_node_query(c: &mut Criterion) {
+    let mut group = c.benchmark_group("node_query");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    // Setup: Create nodes with properties
+    let service = Arc::new(GraphOperationsService::new());
+    runtime.block_on(async {
+        for i in 0..1000 {
+            let node = Node {
+                id: format!("query_node_{}", i),
+                labels: vec![format!("Label{}", i % 10)],
+                properties: HashMap::from([
+                    (
+                        "category".to_string(),
+                        PropertyValue {
+                            value: Some(Value::StringValue(format!("cat_{}", i % 5))),
+                        },
+                    ),
+                    (
+                        "value".to_string(),
+                        PropertyValue {
+                            value: Some(Value::IntValue((i * 10) as i64)),
+                        },
+                    ),
+                ]),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap();
+        }
+    });
+
+    group.throughput(Throughput::Elements(1));
+
+    // Query by label
+    group.bench_function("query_by_label", |b| {
+        b.iter(|| {
+            runtime.block_on(async {
+                let query = NodeQuery {
+                    graph_id: DEFAULT_GRAPH_ID.to_string(),
+                    labels: vec!["Label5".to_string()],
+                    property_filters: HashMap::new(),
+                    limit: 100,
+                    offset: 0,
+                };
+                black_box(service.query_nodes(DEFAULT_GRAPH_ID, query).await.unwrap());
+            });
         });
     });
 
-    group.bench_function("query_by_multiple_labels", |b| {
+    // Query by property
+    group.bench_function("query_by_property", |b| {
         b.iter(|| {
-            let query = NodeQuery {
-                labels: vec!["User".to_string(), "Entity".to_string()],
-                filters: vec![],
-                limit: Some(1000),
-                offset: Some(0),
-                continuation_token: None,
-            };
-
-            black_box(service.query_nodes(query).unwrap());
+            runtime.block_on(async {
+                let query = NodeQuery {
+                    graph_id: DEFAULT_GRAPH_ID.to_string(),
+                    labels: vec![],
+                    property_filters: HashMap::from([(
+                        "category".to_string(),
+                        PropertyValue {
+                            value: Some(Value::StringValue("cat_3".to_string())),
+                        },
+                    )]),
+                    limit: 100,
+                    offset: 0,
+                };
+                black_box(service.query_nodes(DEFAULT_GRAPH_ID, query).await.unwrap());
+            });
         });
     });
 
@@ -377,74 +386,73 @@ fn bench_node_queries(c: &mut Criterion) {
 /// Benchmark batch operations
 fn bench_batch_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_operations");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     for batch_size in [10, 100, 1000] {
         group.throughput(Throughput::Elements(batch_size as u64));
 
+        // Batch node creation
         group.bench_with_input(
             BenchmarkId::new("batch_create_nodes", batch_size),
             &batch_size,
             |b, &batch_size| {
                 b.iter(|| {
-                    let service = GraphService::new();
-
-                    let nodes = (0..batch_size)
-                        .map(|i| Node {
-                            id: format!("batch_node_{}", i),
-                            labels: vec!["BatchTest".to_string()],
-                            properties: HashMap::from([(
-                                "index".to_string(),
-                                PropertyValue {
-                                    value: Some(Value::IntValue(i as i64)),
-                                },
-                            )]),
-                            embedding: None,
-                            created_at_ms: 0,
-                            updated_at_ms: 0,
-                        })
-                        .collect::<Vec<_>>();
-
-                    black_box(service.batch_create_nodes(nodes).unwrap());
-                    service
+                    let service = Arc::new(GraphOperationsService::new());
+                    runtime.block_on(async {
+                        let mut nodes = Vec::new();
+                        for i in 0..batch_size {
+                            nodes.push(Node {
+                                id: format!("batch_node_{}", i),
+                                labels: vec!["BatchNode".to_string()],
+                                properties: HashMap::new(),
+                                embedding: None,
+                                created_at_ms: 0,
+                                updated_at_ms: 0,
+                            });
+                        }
+                        black_box(service.batch_create_nodes(DEFAULT_GRAPH_ID, nodes).await.unwrap());
+                    });
                 });
             },
         );
 
+        // Batch edge creation
         group.bench_with_input(
             BenchmarkId::new("batch_create_edges", batch_size),
             &batch_size,
             |b, &batch_size| {
                 b.iter(|| {
-                    let service = GraphService::new();
+                    let service = Arc::new(GraphOperationsService::new());
+                    runtime.block_on(async {
+                        // First create nodes
+                        for i in 0..(batch_size + 1) {
+                            let node = Node {
+                                id: format!("batch_node_{}", i),
+                                labels: vec!["BatchNode".to_string()],
+                                properties: HashMap::new(),
+                                embedding: None,
+                                created_at_ms: 0,
+                                updated_at_ms: 0,
+                            };
+                            service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap();
+                        }
 
-                    // Create nodes first
-                    for i in 0..batch_size {
-                        let node = Node {
-                            id: format!("batch_node_{}", i),
-                            labels: vec!["BatchTest".to_string()],
-                            properties: HashMap::new(),
-                            embedding: None,
-                            created_at_ms: 0,
-                            updated_at_ms: 0,
-                        };
-                        service.create_node(node).unwrap();
-                    }
-
-                    let edges = (0..batch_size - 1)
-                        .map(|i| Edge {
-                            id: format!("batch_edge_{}", i),
-                            from_node_id: format!("batch_node_{}", i),
-                            to_node_id: format!("batch_node_{}", i + 1),
-                            edge_type: "CONNECTS".to_string(),
-                            properties: HashMap::new(),
-                            weight: Some(1.0),
-                            created_at_ms: 0,
-                            updated_at_ms: 0,
-                        })
-                        .collect::<Vec<_>>();
-
-                    black_box(service.batch_create_edges(edges).unwrap());
-                    service
+                        // Create edges in batch
+                        let mut edges = Vec::new();
+                        for i in 0..batch_size {
+                            edges.push(Edge {
+                                id: format!("batch_edge_{}", i),
+                                from_node_id: format!("batch_node_{}", i),
+                                to_node_id: format!("batch_node_{}", i + 1),
+                                edge_type: "CONNECTS".to_string(),
+                                properties: HashMap::new(),
+                                weight: None,
+                                created_at_ms: 0,
+                                updated_at_ms: 0,
+                            });
+                        }
+                        black_box(service.batch_create_edges(DEFAULT_GRAPH_ID, edges).await.unwrap());
+                    });
                 });
             },
         );
@@ -453,43 +461,46 @@ fn bench_batch_operations(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark memory usage and statistics
-fn bench_statistics(c: &mut Criterion) {
-    let mut group = c.benchmark_group("statistics");
+/// Benchmark statistics operations
+fn bench_stats_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("stats");
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    let service = GraphService::new();
-    let size = 1000;
+    // Setup: Create a reasonably sized graph
+    let service = Arc::new(GraphOperationsService::new());
+    runtime.block_on(async {
+        for i in 0..1000 {
+            let node = Node {
+                id: format!("stats_node_{}", i),
+                labels: vec![format!("Label{}", i % 10)],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_node(DEFAULT_GRAPH_ID, node).await.unwrap();
+        }
 
-    // Create test data
-    for i in 0..size {
-        let node = Node {
-            id: format!("stats_node_{}", i),
-            labels: vec!["StatsTest".to_string()],
-            properties: HashMap::new(),
-            embedding: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_node(node).unwrap();
-    }
+        for i in 0..500 {
+            let edge = Edge {
+                id: format!("stats_edge_{}", i),
+                from_node_id: format!("stats_node_{}", i),
+                to_node_id: format!("stats_node_{}", (i + 1) * 2 % 1000),
+                edge_type: format!("TYPE{}", i % 5),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_edge(DEFAULT_GRAPH_ID, edge).await.unwrap();
+        }
+    });
 
-    for i in 0..size - 1 {
-        let edge = Edge {
-            id: format!("stats_edge_{}", i),
-            from_node_id: format!("stats_node_{}", i),
-            to_node_id: format!("stats_node_{}", i + 1),
-            edge_type: "CONNECTS".to_string(),
-            properties: HashMap::new(),
-            weight: Some(1.0),
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_edge(edge).unwrap();
-    }
-
-    group.bench_function("get_statistics", |b| {
+    group.bench_function("get_stats", |b| {
         b.iter(|| {
-            black_box(service.get_stats().unwrap());
+            runtime.block_on(async {
+                black_box(service.get_stats(DEFAULT_GRAPH_ID).await.unwrap());
+            });
         });
     });
 
@@ -500,11 +511,12 @@ criterion_group!(
     benches,
     bench_node_creation,
     bench_edge_creation,
-    bench_node_lookup,
+    bench_node_retrieval,
     bench_traversal,
-    bench_neighbor_queries,
-    bench_node_queries,
+    bench_neighbor_operations,
+    bench_node_query,
     bench_batch_operations,
-    bench_statistics
+    bench_stats_operations
 );
+
 criterion_main!(benches);

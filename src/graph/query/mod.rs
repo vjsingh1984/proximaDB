@@ -104,6 +104,8 @@ impl QueryStats {
 /// Query execution context
 #[derive(Debug)]
 pub struct QueryContext {
+    /// Graph ID for the query
+    pub graph_id: String,
     /// Query parameters
     pub parameters: HashMap<String, serde_json::Value>,
     /// Execution timeout in milliseconds
@@ -117,11 +119,17 @@ pub struct QueryContext {
 impl QueryContext {
     pub fn new() -> Self {
         Self {
+            graph_id: "default".to_string(),
             parameters: HashMap::new(),
             timeout_ms: None,
             memory_limit: None,
             collect_stats: false,
         }
+    }
+
+    pub fn with_graph_id(mut self, graph_id: String) -> Self {
+        self.graph_id = graph_id;
+        self
     }
 
     pub fn with_timeout(mut self, timeout_ms: u64) -> Self {

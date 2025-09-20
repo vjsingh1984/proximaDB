@@ -486,7 +486,7 @@ pub async fn explain_sql(
     // Build a lightweight QueryEngine with vector and graph services
     let qe = QueryEngine::new(
         state.unified_handlers.vector_operations_service.clone(),
-        state.unified_handlers.graph_service.clone(),
+        state.unified_handlers.graph_operations_service.clone(),
     );
     // Parse SQL and explain using frontend
     use crate::query::sql_frontend::parser::SqlFrontendParser;

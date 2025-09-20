@@ -138,7 +138,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_creation() {
-        let (service, _temp_dir) = create_test_service().await;
+        let (_service, _temp_dir) = create_test_service().await;
 
         // Test basic service creation works
         assert!(true, "Service created successfully");
@@ -162,7 +162,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_with_vectors() {
-        let (service, _temp_dir) = create_test_service().await;
+        let (_service, _temp_dir) = create_test_service().await;
         let test_vector = create_core_test_vector("test_vector", vec![1.0, 2.0, 3.0]);
 
         // Test that service can handle vector records

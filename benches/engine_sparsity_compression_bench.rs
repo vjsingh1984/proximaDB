@@ -17,10 +17,19 @@ use proximadb::{
         traits::{FlushParameters, UnifiedStorageEngine},
     },
 };
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::time::Instant;
 use tempfile::TempDir;
-use tokio::runtime::Runtime;
+
+/// Global initialization for hardware capabilities
+static INIT: Once = Once::new();
+
+/// Initialize hardware capabilities once for all benchmarks
+fn init_hardware() {
+    INIT.call_once(|| {
+        let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
 
 /// Create vectors with specific sparsity level
 fn create_vectors_with_sparsity(
@@ -56,8 +65,7 @@ fn create_vectors_with_sparsity(
 
 /// Benchmark SST engine with different sparsity levels and compression
 fn bench_sst_sparsity_compression(c: &mut Criterion) {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
-    let rt = Runtime::new().unwrap();
+    init_hardware();
 
     let mut group = c.benchmark_group("sst_sparsity_compression");
     group.sample_size(10);
@@ -80,7 +88,7 @@ fn bench_sst_sparsity_compression(c: &mut Criterion) {
 
             group.bench_with_input(bench_id, sparsity, |b, &sparsity| {
                 b.iter(|| {
-                    rt.block_on(async move {
+                    futures::executor::block_on(async move {
                     let temp_dir = TempDir::new().unwrap();
                     let vectors = create_vectors_with_sparsity(100, 256, sparsity);
 
@@ -126,6 +134,7 @@ fn bench_sst_sparsity_compression(c: &mut Criterion) {
                     black_box((result.success, flush_time, vectors.len()))
                     })
                 });
+            });
         }
     }
 
@@ -134,8 +143,7 @@ fn bench_sst_sparsity_compression(c: &mut Criterion) {
 
 /// Benchmark VIPER engine with different sparsity levels and compression
 fn bench_viper_sparsity_compression(c: &mut Criterion) {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
-    let rt = Runtime::new().unwrap();
+    init_hardware();
 
     let mut group = c.benchmark_group("viper_sparsity_compression");
     group.sample_size(10);
@@ -158,7 +166,7 @@ fn bench_viper_sparsity_compression(c: &mut Criterion) {
 
             group.bench_with_input(bench_id, sparsity, |b, &sparsity| {
                 b.iter(|| {
-                    rt.block_on(async move {
+                    futures::executor::block_on(async move {
                     let temp_dir = TempDir::new().unwrap();
                     let vectors = create_vectors_with_sparsity(100, 256, sparsity);
 
@@ -199,6 +207,7 @@ fn bench_viper_sparsity_compression(c: &mut Criterion) {
                     black_box((result.success, flush_time, vectors.len()))
                     })
                 });
+            });
         }
     }
 
@@ -207,8 +216,7 @@ fn bench_viper_sparsity_compression(c: &mut Criterion) {
 
 /// Compare compression effectiveness across sparsity levels
 fn bench_compression_ratio_by_sparsity(c: &mut Criterion) {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
-    let rt = Runtime::new().unwrap();
+    init_hardware();
 
     let mut group = c.benchmark_group("compression_ratio_by_sparsity");
     group.sample_size(10);
@@ -222,7 +230,7 @@ fn bench_compression_ratio_by_sparsity(c: &mut Criterion) {
             sparsity,
             |b, &sparsity| {
                 b.iter(|| {
-                    rt.block_on(async move {
+                    futures::executor::block_on(async move {
                     let temp_dir = TempDir::new().unwrap();
                     let vectors = create_vectors_with_sparsity(500, 512, sparsity);
 

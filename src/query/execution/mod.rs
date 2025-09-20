@@ -9,7 +9,7 @@ pub mod executor;
 pub mod planner;
 
 use crate::core::search::FilterExpression;
-use crate::graph::service::GraphService;
+use crate::graph::GraphOperationsService;
 use crate::query::ast::Query;
 use crate::services::operations::vectors::VectorOperationsService;
 use anyhow::{Result, anyhow};
@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// to appropriate services (VOS for vector, GraphService for graph, hybrid for SKS).
 pub struct QueryEngine {
     vector_service: Arc<VectorOperationsService>,
-    graph_service: Arc<GraphService>,
+    graph_service: Arc<GraphOperationsService>,
     planner: crate::query::execution::planner::ExecutionPlanner,
     executor: crate::query::execution::executor::QueryExecutor,
 }
@@ -30,7 +30,7 @@ impl QueryEngine {
     /// Create new unified query engine
     pub fn new(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
     ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::new(
             vector_service.clone(),
@@ -53,7 +53,7 @@ impl QueryEngine {
     /// Create query engine with planner parameters (e.g., bound SQL params)
     pub fn new_with_params(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
     ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::with_params(
@@ -76,7 +76,7 @@ impl QueryEngine {
     /// Create query engine with planner params and seeding strategy for hybrid queries
     pub fn new_with_options(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         seeding_strategy: SeedingStrategy,
         fusion_weights: Option<Vec<f64>>,
@@ -200,8 +200,9 @@ pub enum ExecutionOperation {
         top_k: usize,
         distance_metric: String,
     },
-    /// Graph traversal operation  
+    /// Graph traversal operation
     GraphTraversal {
+        graph_id: String,
         start_nodes: Vec<String>,
         edge_types: Vec<String>,
         max_depth: u32,
@@ -277,13 +278,14 @@ impl ExecutionOperation {
                 )
             }
             ExecutionOperation::GraphTraversal {
+                graph_id,
                 max_depth,
                 edge_types,
                 ..
             } => {
                 format!(
-                    "Graph Traversal (depth: {}, edges: {:?})",
-                    max_depth, edge_types
+                    "Graph Traversal on {} (depth: {}, edges: {:?})",
+                    graph_id, max_depth, edge_types
                 )
             }
             ExecutionOperation::Fusion { strategy, .. } => {

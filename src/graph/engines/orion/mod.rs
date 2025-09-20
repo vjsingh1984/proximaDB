@@ -56,6 +56,7 @@
 //! ```
 
 pub mod index;
+pub mod persistence;
 pub mod storage;
 pub mod traversal;
 
@@ -64,6 +65,7 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};
 use dashmap::DashMap;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing;
@@ -89,6 +91,9 @@ pub struct OrionGraphEngine {
 
     /// Engine statistics
     stats: Arc<RwLock<EngineStats>>,
+
+    /// Persistence manager (optional)
+    persistence: Option<Arc<persistence::OrionPersistence>>,
 }
 
 /// Engine performance statistics
@@ -115,6 +120,7 @@ impl OrionGraphEngine {
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(EngineStats::default())),
+            persistence: None,
         }
     }
 
@@ -128,7 +134,86 @@ impl OrionGraphEngine {
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(EngineStats::default())),
+            persistence: None,
         }
+    }
+
+    /// Create ORION engine with persistence enabled
+    pub async fn with_persistence(
+        base_path: impl AsRef<Path>,
+        enable_wal: bool,
+    ) -> Result<Self> {
+        // Use default base URL if path is provided
+        let base_url = format!("file://{}", base_path.as_ref().display());
+        let graph_id = "default".to_string(); // Default graph for backward compatibility
+
+        let persistence = Arc::new(
+            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?
+        );
+
+        Ok(Self {
+            memory_pool: Arc::new(GraphMemoryPool::new()),
+            csr_outgoing: Arc::new(RwLock::new(storage::CsrStorage::new())),
+            csr_incoming: Arc::new(RwLock::new(storage::CsrStorage::new())),
+            edge_metadata: Arc::new(DashMap::new()),
+            node_to_index: Arc::new(DashMap::new()),
+            index_to_node: Arc::new(RwLock::new(Vec::new())),
+            stats: Arc::new(RwLock::new(EngineStats::default())),
+            persistence: Some(persistence),
+        })
+    }
+
+    /// Create ORION engine with persistence for a specific graph
+    pub async fn with_persistence_for_graph(
+        graph_id: String,
+        base_url: String,
+        enable_wal: bool,
+    ) -> Result<Self> {
+        let persistence = Arc::new(
+            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?
+        );
+
+        Ok(Self {
+            memory_pool: Arc::new(GraphMemoryPool::new()),
+            csr_outgoing: Arc::new(RwLock::new(storage::CsrStorage::new())),
+            csr_incoming: Arc::new(RwLock::new(storage::CsrStorage::new())),
+            edge_metadata: Arc::new(DashMap::new()),
+            node_to_index: Arc::new(DashMap::new()),
+            index_to_node: Arc::new(RwLock::new(Vec::new())),
+            stats: Arc::new(RwLock::new(EngineStats::default())),
+            persistence: Some(persistence),
+        })
+    }
+
+    /// Load engine from persistent snapshot
+    pub async fn load_from_snapshot(
+        snapshot_path: impl AsRef<Path>,
+        base_path: impl AsRef<Path>,
+        enable_wal: bool,
+    ) -> Result<Self> {
+        let mut engine = Self::with_persistence(base_path, enable_wal).await?;
+
+        if let Some(persistence) = &engine.persistence {
+            persistence.load_snapshot(&engine, snapshot_path).await?;
+        }
+
+        Ok(engine)
+    }
+
+    /// Load engine from persistent snapshot for a specific graph
+    pub async fn load_from_snapshot_for_graph(
+        snapshot_path: impl AsRef<Path>,
+        graph_id: String,
+        base_url: String,
+        enable_wal: bool,
+    ) -> Result<Self> {
+        let mut engine = Self::with_persistence_for_graph(graph_id, base_url, enable_wal).await?;
+
+        if let Some(persistence) = &engine.persistence {
+            persistence.load_snapshot(&engine, snapshot_path).await?;
+        }
+
+        Ok(engine)
     }
 
     /// Get engine statistics
@@ -250,10 +335,40 @@ impl OrionGraphEngine {
             Ok(Vec::new())
         }
     }
+
+    // Convenience alias methods for persistence module compatibility
+    pub async fn create_node(&self, node: Node) -> Result<Arc<Node>> {
+        self.insert_node(node)
+    }
+
+    pub async fn create_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        self.insert_edge(edge)
+    }
+
+    pub async fn delete_node(&self, node_id: &NodeId) -> Result<Option<Arc<Node>>> {
+        GraphEngine::delete_node(self, node_id)
+    }
+
+    pub async fn delete_edge(&self, edge_id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+        GraphEngine::delete_edge(self, edge_id)
+    }
 }
 
 impl GraphEngine for OrionGraphEngine {
     fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
+        // Write to WAL if persistence is enabled
+        if let Some(persistence) = &self.persistence {
+            tokio::spawn({
+                let persistence = Arc::clone(persistence);
+                let node_for_wal = node.clone();
+                async move {
+                    if let Err(e) = persistence.write_node_operation(node_for_wal).await {
+                        tracing::error!("Failed to write node operation to WAL: {:?}", e);
+                    }
+                }
+            });
+        }
+
         let node_arc = self.memory_pool.insert_node(node);
 
         // Update stats
@@ -328,6 +443,19 @@ impl GraphEngine for OrionGraphEngine {
             )));
         }
 
+        // Write to WAL if persistence is enabled
+        if let Some(persistence) = &self.persistence {
+            tokio::spawn({
+                let persistence = Arc::clone(persistence);
+                let edge_for_wal = edge.clone();
+                async move {
+                    if let Err(e) = persistence.write_edge_operation(edge_for_wal).await {
+                        tracing::error!("Failed to write edge operation to WAL: {:?}", e);
+                    }
+                }
+            });
+        }
+
         let edge_arc = self.memory_pool.insert_edge(edge.clone());
 
         // Add to CSR structures (async task to avoid blocking)
@@ -340,6 +468,7 @@ impl GraphEngine for OrionGraphEngine {
                 node_to_index: Arc::clone(&self.node_to_index),
                 index_to_node: Arc::clone(&self.index_to_node),
                 stats: Arc::clone(&self.stats),
+                persistence: self.persistence.clone(),
             };
             let edge_for_csr = edge.clone();
 
@@ -380,6 +509,7 @@ impl GraphEngine for OrionGraphEngine {
                     node_to_index: Arc::clone(&self.node_to_index),
                     index_to_node: Arc::clone(&self.index_to_node),
                     stats: Arc::clone(&self.stats),
+                    persistence: self.persistence.clone(),
                 };
 
                 async move {
@@ -410,6 +540,7 @@ impl GraphEngine for OrionGraphEngine {
                     node_to_index: Arc::clone(&self.node_to_index),
                     index_to_node: Arc::clone(&self.index_to_node),
                     stats: Arc::clone(&self.stats),
+                    persistence: self.persistence.clone(),
                 };
                 let edge_for_removal = Arc::clone(edge);
 

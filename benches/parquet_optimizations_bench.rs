@@ -8,24 +8,29 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::{
-    core::VectorRecord,
+    proto::proximadb_v1::VectorRecord,
     storage::{
-        engines::{
-            factory::StorageEngineFactory,
-            impls::viper::ViperEngine,
-        },
+        engines::factory::StorageEngineFactory,
         traits::{UnifiedStorageEngine, FlushParameters, CompactionParameters, StorageQueryContext, StorageQueryMetadata},
     },
-    core::search::SearchParams,
+    core::{search::SearchParams, hardware_capabilities},
     compute::distance_computation::DistanceMetric,
     proto::proximadb_v1::{Collection, CollectionConfig, CollectionStats},
 };
 use std::collections::HashMap;
-use std::sync::Arc;
-use tempfile::tempdir;
-use tokio::runtime::Runtime;
+use std::sync::{Arc, Once};
 
-/// Generate test vectors
+/// Global initialization for hardware capabilities
+static INIT: Once = Once::new();
+
+/// Initialize hardware capabilities once for all benchmarks
+fn init_hardware() {
+    INIT.call_once(|| {
+        let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
+
+/// Generate test vectors with proto format
 fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| {
@@ -34,10 +39,18 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
                 .collect();
 
             let mut metadata = HashMap::new();
-            metadata.insert("category".to_string(), format!("cat_{}", i % 10));
-            metadata.insert("is_active".to_string(), (i % 2 == 0).to_string());
-            metadata.insert("count".to_string(), i.to_string());
-            metadata.insert("score".to_string(), format!("{}", (i as f32 * 0.1) % 100.0));
+            metadata.insert("category".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(format!("cat_{}", i % 10)))
+            });
+            metadata.insert("is_active".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(i % 2 == 0))
+            });
+            metadata.insert("count".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(i as i64))
+            });
+            metadata.insert("score".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(((i as f32 * 0.1) % 100.0) as f64))
+            });
 
             VectorRecord {
                 id: format!("vec_{:08}", i),
@@ -47,6 +60,8 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             }
         })
         .collect()
@@ -54,15 +69,16 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
 
 /// Benchmark VIPER engine flush operations
 fn bench_viper_flush(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    init_hardware();
     let mut group = c.benchmark_group("viper_flush");
 
-    for size in [100, 1000, 5000].iter() {
+    // Updated to use 1000+ vectors for meaningful statistics
+    for size in [1000, 5000, 10000].iter() {
         let vectors = generate_vectors(*size, 768);
 
         group.bench_with_input(BenchmarkId::new("flush", size), size, |b, _| {
             b.iter(|| {
-                rt.block_on(async {
+                futures::executor::block_on(async {
                     let engine = StorageEngineFactory::create_viper().unwrap();
 
                     let params = FlushParameters {
@@ -84,15 +100,15 @@ fn bench_viper_flush(c: &mut Criterion) {
 
 /// Benchmark VIPER engine search operations
 fn bench_viper_search(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    init_hardware();
     let mut group = c.benchmark_group("viper_search");
 
-    // Setup test data
-    let vectors = generate_vectors(1000, 768);
+    // Setup test data with 5000 vectors for better search benchmarking
+    let vectors = generate_vectors(5000, 768);
     let query_vector = vec![0.5; 768];
 
     // Create and populate engine
-    let engine = rt.block_on(async {
+    let engine = futures::executor::block_on(async {
         let engine = StorageEngineFactory::create_viper().unwrap();
 
         let params = FlushParameters {
@@ -110,7 +126,7 @@ fn bench_viper_search(c: &mut Criterion) {
     for top_k in [10, 50, 100].iter() {
         group.bench_with_input(BenchmarkId::new("search", top_k), top_k, |b, &k| {
             b.iter(|| {
-                rt.block_on(async {
+                futures::executor::block_on(async {
                     let search_params = Arc::new(SearchParams {
                         vector: Some(query_vector.clone()),
                         query_vectors: None,
@@ -119,7 +135,6 @@ fn bench_viper_search(c: &mut Criterion) {
                         filter_expression: None,
                         filters: None,
                         accuracy_threshold: None,
-                        include_metadata: Some(false),
                         include_expired: Some(false),
                         ..Default::default()
                     });
@@ -157,15 +172,16 @@ fn bench_viper_search(c: &mut Criterion) {
 
 /// Benchmark VIPER engine compaction
 fn bench_viper_compaction(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    init_hardware();
     let mut group = c.benchmark_group("viper_compaction");
 
-    for size in [500, 1000, 2000].iter() {
+    // Updated to use larger batch sizes for meaningful compaction benchmarks
+    for size in [1000, 5000, 10000].iter() {
         let vectors = generate_vectors(*size, 768);
 
         group.bench_with_input(BenchmarkId::new("compact", size), size, |b, _| {
             b.iter(|| {
-                rt.block_on(async {
+                futures::executor::block_on(async {
                     let engine = StorageEngineFactory::create_viper().unwrap();
 
                     // First flush data
@@ -198,20 +214,22 @@ fn bench_viper_compaction(c: &mut Criterion) {
 
 /// Benchmark VIPER vs SST engine comparison
 fn bench_engine_comparison(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    init_hardware();
     let mut group = c.benchmark_group("engine_comparison");
 
-    let vectors = generate_vectors(1000, 768);
+    // Use 5000 vectors for meaningful comparison
+    let vectors = Arc::new(generate_vectors(5000, 768));
 
     // Benchmark VIPER engine
+    let viper_vectors = Arc::clone(&vectors);
     group.bench_function("viper", |b| {
         b.iter(|| {
-            rt.block_on(async {
+            futures::executor::block_on(async {
                 let engine = StorageEngineFactory::create_viper().unwrap();
 
                 let params = FlushParameters {
                     collection_id: Some("bench_collection".to_string()),
-                    vector_records: vectors.clone(),
+                    vector_records: (*viper_vectors).clone(),
                     force: true,
                     synchronous: true,
                     ..Default::default()
@@ -223,14 +241,15 @@ fn bench_engine_comparison(c: &mut Criterion) {
     });
 
     // Benchmark SST engine
+    let sst_vectors = Arc::clone(&vectors);
     group.bench_function("sst", |b| {
         b.iter(|| {
-            rt.block_on(async {
+            futures::executor::block_on(async {
                 let engine = StorageEngineFactory::create_sst().unwrap();
 
                 let params = FlushParameters {
                     collection_id: Some("bench_collection".to_string()),
-                    vector_records: vectors.clone(),
+                    vector_records: (*sst_vectors).clone(),
                     force: true,
                     synchronous: true,
                     ..Default::default()

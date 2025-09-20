@@ -43,7 +43,6 @@ pub mod config_reloader;
 pub mod conversions;
 
 /// Migration utilities for vector record formats
-pub mod vector_record_migration;
 
 /// Legacy error module (being replaced by errors module)
 pub mod error;
@@ -303,9 +302,6 @@ impl VectorRecordSerialization for VectorRecord {
 }
 pub use grpc_metadata_parser::*;
 pub use metadata_query::*;
-pub use vector_record_migration::{
-    proto_batch_to_service, proto_to_service, service_batch_to_proto, service_to_proto,
-};
 
 // The VectorRecord optimization trait is already in scope
 // No need to re-export it since it's defined in this module

@@ -23,18 +23,18 @@ use super::planner::{PlanStepType, QueryPlan};
 use super::{QueryContext, QueryResult};
 use crate::core::QueryError;
 use crate::core::error::{ProximaDBError, VectorDBError};
-use crate::graph::GraphService;
+use crate::graph::GraphOperationsService;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Query executor responsible for executing a QueryPlan
 pub struct QueryExecutor {
-    graph_service: Arc<GraphService>,
+    graph_service: Arc<GraphOperationsService>,
 }
 
 impl QueryExecutor {
     /// Create a new QueryExecutor
-    pub fn new(graph_service: Arc<GraphService>) -> Self {
+    pub fn new(graph_service: Arc<GraphOperationsService>) -> Self {
         Self { graph_service }
     }
 
@@ -59,6 +59,7 @@ impl QueryExecutor {
                         if let Some(label) = labels.first() {
                             use crate::proto::proximadb_v1::NodeQuery;
                             let query = NodeQuery {
+                                graph_id: context.graph_id.clone(),
                                 labels: vec![label.clone()],
                                 filters: vec![],
                                 limit: None,
@@ -66,7 +67,7 @@ impl QueryExecutor {
                                 continuation_token: None,
                             };
                             self.graph_service
-                                .query_nodes(query)?
+                                .query_nodes(&context.graph_id, query).await?
                         } else {
                             Vec::new()
                         }
@@ -119,7 +120,7 @@ impl QueryExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::GraphService;
+    use crate::graph::GraphOperationsService;
     use crate::graph::query::planner::{
         CostEstimate, PlanStep, PlanStepType, QueryPlan, TraversalAlgorithm,
     };
@@ -128,7 +129,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_node_scan() {
-        let graph_service = Arc::new(GraphService::new());
+        let graph_service = Arc::new(GraphOperationsService::new());
         let executor = QueryExecutor::new(graph_service.clone());
 
         // Create a dummy node
@@ -140,7 +141,7 @@ mod tests {
             created_at_ms: chrono::Utc::now().timestamp_millis(),
             updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
-        graph_service.create_node(node).unwrap();
+        graph_service.create_node("test_graph", node).await.unwrap();
 
         // Create a simple NodeScan plan
         let plan = QueryPlan {
@@ -170,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_unimplemented_step() {
-        let graph_service = Arc::new(GraphService::new());
+        let graph_service = Arc::new(GraphOperationsService::new());
         let executor = QueryExecutor::new(graph_service.clone());
 
         // Create a plan with an unimplemented step type

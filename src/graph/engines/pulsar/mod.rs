@@ -395,7 +395,7 @@ impl GraphEngine for PulsarGraphEngine {
     fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         let rt = tokio::runtime::Handle::current();
         let id_cloned = id.clone();
-        let result = rt.block_on(self.execute_with_consistency(id, move |shard| shard.delete_node(&id_cloned)))?;
+        let result = rt.block_on(self.execute_with_consistency(id, move |shard| GraphEngine::delete_node(shard, &id_cloned)))?;
 
         // Update stats
         if result.is_some() {
@@ -477,7 +477,7 @@ impl GraphEngine for PulsarGraphEngine {
         rt.block_on(async {
             for shard_entry in self.shards.iter() {
                 let shard = shard_entry.value();
-                if let Ok(Some(edge)) = shard.delete_edge(id) {
+                if let Ok(Some(edge)) = GraphEngine::delete_edge(&**shard, id) {
                     // Update stats
                     let mut stats = self.stats.write().await;
                     stats.total_edges = stats.total_edges.saturating_sub(1);

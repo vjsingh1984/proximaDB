@@ -26,11 +26,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::{MetricsCollector, MetricsSample};
-use crate::graph::service::GraphService;
+use crate::graph::GraphOperationsService;
 
 /// Metrics collector for graph operations
 pub struct GraphMetricsCollector {
-    graph_service: Arc<GraphService>,
+    graph_service: Arc<GraphOperationsService>,
     name: &'static str,
     last_sample: Arc<tokio::sync::RwLock<Option<GraphMetricsSample>>>,
 }
@@ -68,7 +68,7 @@ struct GraphMetricsSample {
 
 impl GraphMetricsCollector {
     /// Create new graph metrics collector
-    pub fn new(graph_service: Arc<GraphService>) -> Self {
+    pub fn new(graph_service: Arc<GraphOperationsService>) -> Self {
         Self {
             graph_service,
             name: "graph_engine",
@@ -132,7 +132,7 @@ impl GraphMetricsCollector {
 
     async fn collect_query_metrics(&self) -> Result<(u64, u64, u64, f64, u64)> {
         // For MVP: Mock query metrics
-        // In production, these would come from the GraphService
+        // In production, these would come from the GraphOperationsService
         Ok((
             150,   // total queries
             145,   // successful
@@ -438,11 +438,11 @@ impl MetricsCollector for QuasarMetricsCollector {
 mod tests {
     use super::*;
     use crate::graph::OperationMode;
-    use crate::graph::service::GraphService;
+    use crate::graph::GraphOperationsService;
 
     #[tokio::test]
     async fn test_graph_metrics_collector() {
-        let graph_service = Arc::new(GraphService::new());
+        let graph_service = Arc::new(GraphOperationsService::new());
         let collector = GraphMetricsCollector::new(graph_service);
 
         let sample = collector.collect().await.unwrap();

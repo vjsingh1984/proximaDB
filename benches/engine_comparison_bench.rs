@@ -49,8 +49,8 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("engine_comparison_insertion");
 
-    // Test different vector counts
-    for count in [100, 1000].iter() {
+    // Test different vector counts - using 1000+ for meaningful stats
+    for count in [1000, 5000].iter() {
         let vectors = generate_vectors(*count, 768);
 
         // Engine order: SST, VIPER, HELIX, RAPTOR, SWIFT, NOVA, PRISM
@@ -77,10 +77,14 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
                                     "sst" => StorageEngineFactory::create_sst().unwrap(),
                                     "viper" => StorageEngineFactory::create_viper().unwrap(),
                                     "helix" => StorageEngineFactory::create_helix().unwrap(),
-                                    "raptor" => StorageEngineFactory::create_sst().unwrap(), // Fallback
+                                    "raptor" => StorageEngineFactory::create_raptor(
+                                        "bench_collection".to_string(),
+                                        "/tmp/proximadb_bench_raptor".to_string(),
+                                        None,
+                                    ).await.unwrap(),
                                     "swift" => StorageEngineFactory::create_swift().unwrap(),
                                     "nova" => StorageEngineFactory::create_nova().unwrap(),
-                                    "prism" => StorageEngineFactory::create_sst().unwrap(), // Fallback
+                                    "prism" => StorageEngineFactory::create_prism_async().await.unwrap(),
                                     _ => StorageEngineFactory::create_sst().unwrap(),
                                 }
                             })
@@ -142,10 +146,14 @@ fn bench_all_engines_search(c: &mut Criterion) {
                             "sst" => StorageEngineFactory::create_sst().unwrap(),
                             "viper" => StorageEngineFactory::create_viper().unwrap(),
                             "helix" => StorageEngineFactory::create_helix().unwrap(),
-                            "raptor" => StorageEngineFactory::create_sst().unwrap(), // Fallback
+                            "raptor" => StorageEngineFactory::create_raptor(
+                                "bench_collection".to_string(),
+                                "/tmp/proximadb_bench_raptor".to_string(),
+                                None,
+                            ).await.unwrap(),
                             "swift" => StorageEngineFactory::create_swift().unwrap(),
                             "nova" => StorageEngineFactory::create_nova().unwrap(),
-                            "prism" => StorageEngineFactory::create_sst().unwrap(), // Fallback
+                            "prism" => StorageEngineFactory::create_prism_async().await.unwrap(),
                             _ => StorageEngineFactory::create_sst().unwrap(),
                         };
 

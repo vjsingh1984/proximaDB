@@ -31,6 +31,9 @@ pub enum VectorDBError {
 
     #[error("Filesystem error: {0}")]
     Filesystem(String),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 }
 
 // Type alias for backward compatibility

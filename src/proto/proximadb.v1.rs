@@ -3640,7 +3640,6 @@ pub mod vector_service_server {
     }
 }
 /// Node represents a vertex in the graph with labels and properties
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Node {
@@ -3669,7 +3668,6 @@ pub struct Node {
     pub updated_at_ms: i64,
 }
 /// Edge represents a directed relationship between two nodes
-#[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Edge {
@@ -3759,32 +3757,35 @@ pub struct PropertyObject {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TraversalRequest {
-    /// Starting node ID
+    /// Graph ID
     #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Starting node ID
+    #[prost(string, tag = "2")]
     pub start_node_id: ::prost::alloc::string::String,
     /// Maximum depth to traverse
-    #[prost(uint32, tag = "2")]
+    #[prost(uint32, tag = "3")]
     pub max_depth: u32,
     /// Edge types to follow (empty = all types)
-    #[prost(string, repeated, tag = "3")]
+    #[prost(string, repeated, tag = "4")]
     pub edge_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Node label filter
-    #[prost(string, repeated, tag = "4")]
+    #[prost(string, repeated, tag = "5")]
     pub node_labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Property filters
-    #[prost(message, repeated, tag = "5")]
+    #[prost(message, repeated, tag = "6")]
     pub filters: ::prost::alloc::vec::Vec<PropertyFilter>,
     /// Traversal algorithm
-    #[prost(enumeration = "TraversalAlgorithm", tag = "6")]
+    #[prost(enumeration = "TraversalAlgorithm", tag = "7")]
     pub algorithm: i32,
     /// Maximum number of results
-    #[prost(uint32, optional, tag = "7")]
+    #[prost(uint32, optional, tag = "8")]
     pub limit: ::core::option::Option<u32>,
     /// Optional timeout in milliseconds for traversal
-    #[prost(uint32, optional, tag = "8")]
+    #[prost(uint32, optional, tag = "9")]
     pub timeout_ms: ::core::option::Option<u32>,
     /// Optional cap on frontier size to control memory usage
-    #[prost(uint32, optional, tag = "9")]
+    #[prost(uint32, optional, tag = "10")]
     pub max_frontier: ::core::option::Option<u32>,
 }
 /// Property filter for graph queries
@@ -3836,20 +3837,23 @@ pub struct TraversalStats {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NodeQuery {
+    /// Graph ID
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
     /// Node labels to match
-    #[prost(string, repeated, tag = "1")]
+    #[prost(string, repeated, tag = "2")]
     pub labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Property filters
-    #[prost(message, repeated, tag = "2")]
+    #[prost(message, repeated, tag = "3")]
     pub filters: ::prost::alloc::vec::Vec<PropertyFilter>,
     /// Limit results
-    #[prost(uint32, optional, tag = "3")]
+    #[prost(uint32, optional, tag = "4")]
     pub limit: ::core::option::Option<u32>,
     /// Skip/offset for pagination
-    #[prost(uint32, optional, tag = "4")]
+    #[prost(uint32, optional, tag = "5")]
     pub offset: ::core::option::Option<u32>,
     /// Continuation token for pagination
-    #[prost(string, optional, tag = "5")]
+    #[prost(string, optional, tag = "6")]
     pub continuation_token: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Edge query request
@@ -3857,39 +3861,46 @@ pub struct NodeQuery {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EdgeQuery {
+    /// Graph ID
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
     /// Source node ID filter
-    #[prost(string, optional, tag = "1")]
+    #[prost(string, optional, tag = "2")]
     pub from_node_id: ::core::option::Option<::prost::alloc::string::String>,
     /// Target node ID filter
-    #[prost(string, optional, tag = "2")]
+    #[prost(string, optional, tag = "3")]
     pub to_node_id: ::core::option::Option<::prost::alloc::string::String>,
     /// Edge types to match
-    #[prost(string, repeated, tag = "3")]
+    #[prost(string, repeated, tag = "4")]
     pub edge_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Property filters
-    #[prost(message, repeated, tag = "4")]
+    #[prost(message, repeated, tag = "5")]
     pub filters: ::prost::alloc::vec::Vec<PropertyFilter>,
     /// Limit results
-    #[prost(uint32, optional, tag = "5")]
+    #[prost(uint32, optional, tag = "6")]
     pub limit: ::core::option::Option<u32>,
     /// Skip/offset for pagination
-    #[prost(uint32, optional, tag = "6")]
+    #[prost(uint32, optional, tag = "7")]
     pub offset: ::core::option::Option<u32>,
     /// Continuation token for pagination
-    #[prost(string, optional, tag = "7")]
+    #[prost(string, optional, tag = "8")]
     pub continuation_token: ::core::option::Option<::prost::alloc::string::String>,
 }
 /// Batch operations for high-performance ingestion
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchNodeRequest {
-    #[prost(message, repeated, tag = "1")]
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
     pub nodes: ::prost::alloc::vec::Vec<Node>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct BatchEdgeRequest {
-    #[prost(message, repeated, tag = "1")]
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
     pub edges: ::prost::alloc::vec::Vec<Edge>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -4017,83 +4028,105 @@ pub struct EdgeTypeStats {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateNodeRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
     pub node: ::core::option::Option<Node>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetNodeRequest {
     #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub node_id: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateNodeRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
     pub node: ::core::option::Option<Node>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteNodeRequest {
     #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub node_id: ::prost::alloc::string::String,
 }
 #[derive(serde::Serialize, serde::Deserialize)]
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateEdgeRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
     pub edge: ::core::option::Option<Edge>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetEdgeRequest {
     #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub edge_id: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UpdateEdgeRequest {
-    #[prost(message, optional, tag = "1")]
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
     pub edge: ::core::option::Option<Edge>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteEdgeRequest {
     #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub edge_id: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetNeighborsRequest {
     #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub node_id: ::prost::alloc::string::String,
-    #[prost(string, optional, tag = "2")]
+    #[prost(string, optional, tag = "3")]
     pub edge_type: ::core::option::Option<::prost::alloc::string::String>,
 }
-/// Empty request for getting graph statistics
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct GetStatsRequest {}
+pub struct GetStatsRequest {
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+}
 /// Shortest path request/response
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ShortestPathRequest {
     #[prost(string, tag = "1")]
-    pub start_node_id: ::prost::alloc::string::String,
+    pub graph_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
+    pub start_node_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
     pub target_node_id: ::prost::alloc::string::String,
-    #[prost(uint32, optional, tag = "3")]
+    #[prost(uint32, optional, tag = "4")]
     pub max_depth: ::core::option::Option<u32>,
-    #[prost(string, repeated, tag = "4")]
+    #[prost(string, repeated, tag = "5")]
     pub edge_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     /// Algorithm selection
     ///
     /// default DIJKSTRA
-    #[prost(enumeration = "ShortestPathAlgorithm", optional, tag = "5")]
+    #[prost(enumeration = "ShortestPathAlgorithm", optional, tag = "6")]
     pub algorithm: ::core::option::Option<i32>,
     /// Number of paths for k-shortest (if > 1, Yen's algorithm is used)
-    #[prost(uint32, optional, tag = "6")]
+    #[prost(uint32, optional, tag = "7")]
     pub k: ::core::option::Option<u32>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -4127,8 +4160,10 @@ pub struct TraversalChunk {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct UniqueConstraintRequest {
     #[prost(string, tag = "1")]
-    pub label: ::prost::alloc::string::String,
+    pub graph_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
+    pub label: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
     pub property: ::prost::alloc::string::String,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -7345,5 +7380,539 @@ pub mod sql_service_server {
     }
     impl<T: SqlService> tonic::server::NamedService for SqlServiceServer<T> {
         const NAME: &'static str = "proximadb.v1.SqlService";
+    }
+}
+/// Graph collection metadata and configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphCollection {
+    /// Unique identifier
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Human-readable name
+    #[prost(string, tag = "2")]
+    pub name: ::prost::alloc::string::String,
+    /// Documentation
+    #[prost(string, tag = "3")]
+    pub description: ::prost::alloc::string::String,
+    /// Schema definitions
+    #[prost(message, optional, tag = "4")]
+    pub schema: ::core::option::Option<GraphSchema>,
+    /// Storage settings
+    #[prost(message, optional, tag = "5")]
+    pub storage_config: ::core::option::Option<GraphStorageConfig>,
+    /// Engine selection/config
+    #[prost(message, optional, tag = "6")]
+    pub engine_config: ::core::option::Option<GraphEngineConfig>,
+    /// Permissions
+    #[prost(message, optional, tag = "7")]
+    pub access_control: ::core::option::Option<AccessControl>,
+    /// Statistics
+    #[prost(message, optional, tag = "8")]
+    pub stats: ::core::option::Option<GraphStats>,
+    /// Creation timestamp
+    #[prost(int64, tag = "9")]
+    pub created_at: i64,
+    /// Last modification
+    #[prost(int64, tag = "10")]
+    pub updated_at: i64,
+}
+/// Schema definitions for graph structure validation
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphSchema {
+    /// Allowed node types
+    #[prost(message, repeated, tag = "1")]
+    pub node_labels: ::prost::alloc::vec::Vec<NodeLabelSchema>,
+    /// Allowed edge types
+    #[prost(message, repeated, tag = "2")]
+    pub edge_types: ::prost::alloc::vec::Vec<EdgeTypeSchema>,
+    /// Property definitions
+    #[prost(map = "string, message", tag = "3")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        PropertySchema,
+    >,
+    /// Uniqueness rules
+    #[prost(message, repeated, tag = "4")]
+    pub unique_constraints: ::prost::alloc::vec::Vec<UniqueConstraint>,
+    /// Enforce schema strictly
+    #[prost(bool, tag = "5")]
+    pub strict_mode: bool,
+}
+/// Schema for a specific node label
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NodeLabelSchema {
+    /// Label name (e.g., "Person")
+    #[prost(string, tag = "1")]
+    pub label: ::prost::alloc::string::String,
+    /// Must-have properties
+    #[prost(string, repeated, tag = "2")]
+    pub required_properties: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Optional properties
+    #[prost(string, repeated, tag = "3")]
+    pub optional_properties: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Schema flexibility
+    #[prost(bool, tag = "4")]
+    pub allow_additional_properties: bool,
+    /// Property rules
+    #[prost(map = "string, message", tag = "5")]
+    pub property_constraints: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        PropertyConstraint,
+    >,
+}
+/// Schema for a specific edge type
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EdgeTypeSchema {
+    /// Type name (e.g., "KNOWS")
+    #[prost(string, tag = "1")]
+    pub edge_type: ::prost::alloc::string::String,
+    /// Valid source node labels
+    #[prost(string, repeated, tag = "2")]
+    pub source_labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Valid target node labels
+    #[prost(string, repeated, tag = "3")]
+    pub target_labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Must-have properties
+    #[prost(string, repeated, tag = "4")]
+    pub required_properties: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Optional properties
+    #[prost(string, repeated, tag = "5")]
+    pub optional_properties: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Schema flexibility
+    #[prost(bool, tag = "6")]
+    pub allow_additional_properties: bool,
+    /// Relationship constraints
+    #[prost(enumeration = "Cardinality", tag = "7")]
+    pub cardinality: i32,
+    /// Property rules
+    #[prost(map = "string, message", tag = "8")]
+    pub property_constraints: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        PropertyConstraint,
+    >,
+}
+/// Property schema definition
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PropertySchema {
+    /// Property name
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Data type
+    #[prost(enumeration = "PropertyType", tag = "2")]
+    pub r#type: i32,
+    /// Required flag
+    #[prost(bool, tag = "3")]
+    pub required: bool,
+    /// Default value
+    #[prost(message, optional, tag = "4")]
+    pub default_value: ::core::option::Option<PropertyValue>,
+    /// Validation rules
+    #[prost(message, repeated, tag = "5")]
+    pub constraints: ::prost::alloc::vec::Vec<PropertyConstraint>,
+    /// Documentation
+    #[prost(string, tag = "6")]
+    pub description: ::prost::alloc::string::String,
+}
+/// Property constraints for validation
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PropertyConstraint {
+    #[prost(oneof = "property_constraint::Constraint", tags = "1, 2, 3, 4")]
+    pub constraint: ::core::option::Option<property_constraint::Constraint>,
+}
+/// Nested message and enum types in `PropertyConstraint`.
+pub mod property_constraint {
+    #[allow(clippy::derive_partial_eq_without_eq)]
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Constraint {
+        #[prost(message, tag = "1")]
+        StringConstraint(super::StringConstraint),
+        #[prost(message, tag = "2")]
+        NumericConstraint(super::NumericConstraint),
+        #[prost(message, tag = "3")]
+        ArrayConstraint(super::ArrayConstraint),
+        #[prost(message, tag = "4")]
+        RegexConstraint(super::RegexConstraint),
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct StringConstraint {
+    #[prost(int32, optional, tag = "1")]
+    pub min_length: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "2")]
+    pub max_length: ::core::option::Option<i32>,
+    /// Enumeration
+    #[prost(string, repeated, tag = "3")]
+    pub allowed_values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NumericConstraint {
+    #[prost(double, optional, tag = "1")]
+    pub min_value: ::core::option::Option<f64>,
+    #[prost(double, optional, tag = "2")]
+    pub max_value: ::core::option::Option<f64>,
+    /// Must be multiple of this value
+    #[prost(double, optional, tag = "3")]
+    pub multiple_of: ::core::option::Option<f64>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ArrayConstraint {
+    #[prost(int32, optional, tag = "1")]
+    pub min_items: ::core::option::Option<i32>,
+    #[prost(int32, optional, tag = "2")]
+    pub max_items: ::core::option::Option<i32>,
+    /// Type of array elements
+    #[prost(enumeration = "PropertyType", tag = "3")]
+    pub item_type: i32,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RegexConstraint {
+    /// Regular expression pattern
+    #[prost(string, tag = "1")]
+    pub pattern: ::prost::alloc::string::String,
+    /// Regex flags (i, m, s, etc.)
+    #[prost(string, tag = "2")]
+    pub flags: ::prost::alloc::string::String,
+}
+/// Unique constraint definition
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UniqueConstraint {
+    /// Constraint name
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    /// Apply to these labels
+    #[prost(string, repeated, tag = "2")]
+    pub node_labels: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Properties that must be unique together
+    #[prost(string, repeated, tag = "3")]
+    pub properties: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Documentation
+    #[prost(string, tag = "4")]
+    pub description: ::prost::alloc::string::String,
+}
+/// Storage configuration for the graph
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphStorageConfig {
+    /// ORION, PULSAR, QUASAR
+    #[prost(string, tag = "1")]
+    pub engine_type: ::prost::alloc::string::String,
+    /// Storage location
+    #[prost(string, tag = "2")]
+    pub base_url: ::prost::alloc::string::String,
+    /// Compression setting
+    #[prost(enumeration = "CompressionAlgorithm", tag = "3")]
+    pub compression: i32,
+    /// Write-ahead logging
+    #[prost(bool, tag = "4")]
+    pub enable_wal: bool,
+    /// Snapshot frequency
+    #[prost(int32, tag = "5")]
+    pub snapshot_interval_hours: i32,
+    /// Engine-specific settings
+    #[prost(map = "string, string", tag = "6")]
+    pub engine_specific_config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Engine configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GraphEngineConfig {
+    /// Engine selection
+    #[prost(string, tag = "1")]
+    pub engine_type: ::prost::alloc::string::String,
+    /// Memory allocation
+    #[prost(int32, tag = "2")]
+    pub memory_pool_size_mb: i32,
+    /// CSR cache size
+    #[prost(int32, tag = "3")]
+    pub csr_cache_size_mb: i32,
+    /// Parallel processing
+    #[prost(bool, tag = "4")]
+    pub enable_parallel_operations: bool,
+    /// Query depth limit
+    #[prost(int32, tag = "5")]
+    pub max_traversal_depth: i32,
+    /// Advanced settings
+    #[prost(map = "string, string", tag = "6")]
+    pub advanced_config: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Access control configuration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AccessControl {
+    /// Permission list
+    #[prost(message, repeated, tag = "1")]
+    pub permissions: ::prost::alloc::vec::Vec<Permission>,
+    /// Graph owner
+    #[prost(string, tag = "2")]
+    pub owner: ::prost::alloc::string::String,
+    /// Admin users
+    #[prost(string, repeated, tag = "3")]
+    pub admins: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Read-only users
+    #[prost(string, repeated, tag = "4")]
+    pub readers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// Read-write users
+    #[prost(string, repeated, tag = "5")]
+    pub writers: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Permission {
+    /// User ID or role name
+    #[prost(string, tag = "1")]
+    pub user_or_role: ::prost::alloc::string::String,
+    /// Permission type
+    #[prost(enumeration = "PermissionType", tag = "2")]
+    pub r#type: i32,
+    /// Specific scopes (labels, etc.)
+    #[prost(string, repeated, tag = "3")]
+    pub scopes: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Request to create a new graph collection
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateGraphRequest {
+    /// Required: unique identifier
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// Optional: human-readable name
+    #[prost(string, optional, tag = "2")]
+    pub name: ::core::option::Option<::prost::alloc::string::String>,
+    /// Optional: documentation
+    #[prost(string, optional, tag = "3")]
+    pub description: ::core::option::Option<::prost::alloc::string::String>,
+    /// Optional: schema definition
+    #[prost(message, optional, tag = "4")]
+    pub schema: ::core::option::Option<GraphSchema>,
+    /// Optional: storage settings
+    #[prost(message, optional, tag = "5")]
+    pub storage_config: ::core::option::Option<GraphStorageConfig>,
+    /// Optional: engine config
+    #[prost(message, optional, tag = "6")]
+    pub engine_config: ::core::option::Option<GraphEngineConfig>,
+    /// Optional: permissions
+    #[prost(message, optional, tag = "7")]
+    pub access_control: ::core::option::Option<AccessControl>,
+}
+/// Request to update graph schema
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateSchemaRequest {
+    /// Graph to update
+    #[prost(string, tag = "1")]
+    pub graph_id: ::prost::alloc::string::String,
+    /// New schema
+    #[prost(message, optional, tag = "2")]
+    pub schema: ::core::option::Option<GraphSchema>,
+    /// Check existing data against schema
+    #[prost(bool, tag = "3")]
+    pub validate_existing_data: bool,
+    /// Force migration even if validation fails
+    #[prost(bool, tag = "4")]
+    pub force_migration: bool,
+}
+/// Response for schema validation
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SchemaValidationResult {
+    /// Overall validation result
+    #[prost(bool, tag = "1")]
+    pub valid: bool,
+    /// Validation errors
+    #[prost(message, repeated, tag = "2")]
+    pub errors: ::prost::alloc::vec::Vec<ValidationError>,
+    /// Non-blocking warnings
+    #[prost(message, repeated, tag = "3")]
+    pub warnings: ::prost::alloc::vec::Vec<ValidationWarning>,
+    /// Nodes that would be affected
+    #[prost(int64, tag = "4")]
+    pub affected_nodes: i64,
+    /// Edges that would be affected
+    #[prost(int64, tag = "5")]
+    pub affected_edges: i64,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ValidationError {
+    /// Error description
+    #[prost(string, tag = "1")]
+    pub message: ::prost::alloc::string::String,
+    /// Location in schema
+    #[prost(string, tag = "2")]
+    pub path: ::prost::alloc::string::String,
+    /// ERROR, WARNING, INFO
+    #[prost(string, tag = "3")]
+    pub severity: ::prost::alloc::string::String,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ValidationWarning {
+    /// Warning description
+    #[prost(string, tag = "1")]
+    pub message: ::prost::alloc::string::String,
+    /// Location in schema
+    #[prost(string, tag = "2")]
+    pub path: ::prost::alloc::string::String,
+    /// Suggested fix
+    #[prost(string, tag = "3")]
+    pub suggestion: ::prost::alloc::string::String,
+}
+/// Property type enumeration
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PropertyType {
+    Unspecified = 0,
+    String = 1,
+    Integer = 2,
+    Float = 3,
+    Boolean = 4,
+    Datetime = 5,
+    Json = 6,
+    Array = 7,
+    /// For vector properties
+    Embedding = 8,
+}
+impl PropertyType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            PropertyType::Unspecified => "PROPERTY_TYPE_UNSPECIFIED",
+            PropertyType::String => "STRING",
+            PropertyType::Integer => "INTEGER",
+            PropertyType::Float => "FLOAT",
+            PropertyType::Boolean => "BOOLEAN",
+            PropertyType::Datetime => "DATETIME",
+            PropertyType::Json => "JSON",
+            PropertyType::Array => "ARRAY",
+            PropertyType::Embedding => "EMBEDDING",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PROPERTY_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "STRING" => Some(Self::String),
+            "INTEGER" => Some(Self::Integer),
+            "FLOAT" => Some(Self::Float),
+            "BOOLEAN" => Some(Self::Boolean),
+            "DATETIME" => Some(Self::Datetime),
+            "JSON" => Some(Self::Json),
+            "ARRAY" => Some(Self::Array),
+            "EMBEDDING" => Some(Self::Embedding),
+            _ => None,
+        }
+    }
+}
+/// Relationship cardinality constraints
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum Cardinality {
+    Unspecified = 0,
+    OneToOne = 1,
+    OneToMany = 2,
+    ManyToOne = 3,
+    ManyToMany = 4,
+}
+impl Cardinality {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Cardinality::Unspecified => "CARDINALITY_UNSPECIFIED",
+            Cardinality::OneToOne => "ONE_TO_ONE",
+            Cardinality::OneToMany => "ONE_TO_MANY",
+            Cardinality::ManyToOne => "MANY_TO_ONE",
+            Cardinality::ManyToMany => "MANY_TO_MANY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CARDINALITY_UNSPECIFIED" => Some(Self::Unspecified),
+            "ONE_TO_ONE" => Some(Self::OneToOne),
+            "ONE_TO_MANY" => Some(Self::OneToMany),
+            "MANY_TO_ONE" => Some(Self::ManyToOne),
+            "MANY_TO_MANY" => Some(Self::ManyToMany),
+            _ => None,
+        }
+    }
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PermissionType {
+    Unspecified = 0,
+    Read = 1,
+    Write = 2,
+    Admin = 3,
+    Delete = 4,
+}
+impl PermissionType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            PermissionType::Unspecified => "PERMISSION_TYPE_UNSPECIFIED",
+            PermissionType::Read => "READ",
+            PermissionType::Write => "WRITE",
+            PermissionType::Admin => "ADMIN",
+            PermissionType::Delete => "DELETE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PERMISSION_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "READ" => Some(Self::Read),
+            "WRITE" => Some(Self::Write),
+            "ADMIN" => Some(Self::Admin),
+            "DELETE" => Some(Self::Delete),
+            _ => None,
+        }
     }
 }

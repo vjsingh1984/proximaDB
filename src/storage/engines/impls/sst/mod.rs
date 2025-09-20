@@ -4785,7 +4785,7 @@ impl SstStorage {
         collection_id: &str,
         offset: usize,
         limit: Option<usize>,
-    ) -> Result<Vec<crate::core::service_types::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         let results = Vec::new();
         let storage_url = self.get_collection_storage_url(collection_id).await?;
         

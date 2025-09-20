@@ -460,7 +460,8 @@ impl GraphEngine for QuasarGraphEngine {
 
     fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
         // Try deleting from hot tier first
-        if let Ok(Some(node)) = self.hot_tier.delete_node(id) {
+        let rt = tokio::runtime::Handle::current();
+        if let Ok(Some(node)) = rt.block_on(self.hot_tier.delete_node(id)) {
             // Update stats
             tokio::spawn({
                 let stats = Arc::clone(&self.stats);
@@ -526,7 +527,8 @@ impl GraphEngine for QuasarGraphEngine {
 
     fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         // Try hot tier first
-        if let Ok(Some(edge)) = self.hot_tier.delete_edge(id) {
+        let rt = tokio::runtime::Handle::current();
+        if let Ok(Some(edge)) = rt.block_on(self.hot_tier.delete_edge(id)) {
             tokio::spawn({
                 let stats = Arc::clone(&self.stats);
                 async move {

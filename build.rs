@@ -37,9 +37,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("LshConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add serde to embedding types needed for graph serialization
         .type_attribute("EmbeddingVersion", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // Add serde to graph types needed for JSON serialization
-        .type_attribute("Node", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("Edge", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // IMPORTANT: Graph types (Node, Edge) have PropertyValue which uses custom serde
+        // These will be handled in serde_impls.rs, NOT here
+
+        // Graph collection message types - most can use auto-generated serde
+        // Only PropertyConstraint has oneof and needs custom impl
+        .type_attribute("GraphSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("NodeLabelSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("EdgeTypeSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("PropertySchema", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("StringConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("NumericConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ArrayConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("RegexConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("UniqueConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphStorageConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphEngineConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("AccessControl", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Permission", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("UpdateSchemaRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SchemaValidationResult", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ValidationError", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ValidationWarning", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphIndex", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphCollection", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CreateGraphRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+
+        // Enum types for graph collection
+        .type_attribute("PropertyType", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Cardinality", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("PermissionType", "#[derive(serde::Serialize, serde::Deserialize)]")
         // Add serde ONLY to simple request types (responses have custom implementations in serde_impls.rs)
         .type_attribute("VectorSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("VectorBatchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
@@ -122,6 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/proximadb/v1/collection_types.proto",
                 "proto/proximadb/v1/collection.proto",
                 "proto/proximadb/v1/sql.proto",
+                "proto/proximadb/v1/graph_collection.proto",
             ],
             &["proto"],
         )?;

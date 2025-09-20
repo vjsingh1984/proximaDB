@@ -75,7 +75,7 @@ fn bench_original_result_creation(c: &mut Criterion) {
 fn bench_batch_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_processing");
 
-    for batch_size in [10, 100, 1000].iter() {
+    for batch_size in [100, 1000, 10000].iter() {
         let dimension = 512;
         let vectors: Vec<Vec<f32>> = (0..*batch_size)
             .map(|i| vec![i as f32 / 100.0; dimension])
@@ -173,7 +173,7 @@ fn bench_memory_pressure(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_pressure");
 
     // Simulate a large result set
-    let num_results = 1000;
+    let num_results = 10000;
     let dimension = 512;
 
     group.bench_function("original_memory", |b| {

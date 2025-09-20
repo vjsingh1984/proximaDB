@@ -73,8 +73,10 @@ pub struct UnifiedHandlers {
     pub collection_service: Arc<CollectionService>,
     /// Optimized vector service with eliminated registry overhead
     pub vector_operations_service: Arc<VectorOperationsService>,
-    /// Native graph service for graph database operations
-    pub graph_service: Arc<crate::graph::GraphService>,
+    /// Graph collection service for metadata management
+    pub graph_collection_service: Arc<crate::services::GraphCollectionService>,
+    /// Graph operations service for graph database operations
+    pub graph_operations_service: Arc<crate::graph::GraphOperationsService>,
     /// Metrics query service for collection statistics and optimization hints
     pub metrics_query_service: Option<Arc<MetricsQueryService>>,
     /// Optional hybrid runtime configuration (weights, seeding). Thread-safe.
@@ -92,10 +94,16 @@ impl UnifiedHandlers {
         collection_service: Arc<CollectionService>,
         vector_operations_service: Arc<VectorOperationsService>,
     ) -> Self {
+        let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
+        let graph_operations_service = Arc::new(crate::graph::GraphOperationsService::new_with_collection_service(
+            graph_collection_service.clone()
+        ));
+
         Self {
             collection_service,
             vector_operations_service,
-            graph_service: Arc::new(crate::graph::GraphService::new()),
+            graph_collection_service,
+            graph_operations_service,
             metrics_query_service: None,
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
         }
@@ -107,10 +115,16 @@ impl UnifiedHandlers {
         vector_operations_service: Arc<VectorOperationsService>,
         metrics_query_service: Arc<MetricsQueryService>,
     ) -> Self {
+        let graph_collection_service = Arc::new(crate::services::GraphCollectionService::new());
+        let graph_operations_service = Arc::new(crate::graph::GraphOperationsService::new_with_collection_service(
+            graph_collection_service.clone()
+        ));
+
         Self {
             collection_service,
             vector_operations_service,
-            graph_service: Arc::new(crate::graph::GraphService::new()),
+            graph_collection_service,
+            graph_operations_service,
             metrics_query_service: Some(metrics_query_service),
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
         }
@@ -123,7 +137,7 @@ impl UnifiedHandlers {
         config: &crate::core::config::Config,
     ) -> Self {
         let mut s = Self::new(collection_service, vector_operations_service);
-        s.graph_service = Arc::new(crate::graph::service::GraphService::from_config(config));
+        s.graph_operations_service = Arc::new(crate::graph::GraphOperationsService::from_config(config));
         if let Some(h) = &config.hybrid {
             s.set_hybrid_runtime(h.clone());
         }
@@ -741,6 +755,7 @@ impl UnifiedHandlers {
                             .clone()
                             .unwrap_or_else(|| Default::default());
                         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
+                            graph_id: "default".to_string(), // TODO: Extract from request or pass as parameter
                             start_node_id: start_node_ids
                                 .first()
                                 .cloned()
@@ -755,14 +770,7 @@ impl UnifiedHandlers {
                             timeout_ms: None,
                         };
 
-                        // TODO: Implement traverse method on GraphService
-                        // let traversal_response = self.graph_service.traverse(traversal_request).await?;
-                        let traversal_response = crate::proto::proximadb_v1::TraversalResponse {
-                            nodes: vec![],
-                            edges: vec![],
-                            paths: vec![],
-                            stats: None,
-                        };
+                        let traversal_response = self.graph_operations_service.traverse("default", traversal_request).await?;
                         nodes.extend(traversal_response.nodes);
                         edges.extend(traversal_response.edges);
                         paths.extend(traversal_response.paths);
@@ -1335,7 +1343,7 @@ impl UnifiedHandlers {
         analyzer.analyze(&query_ast).await.map_err(|e| anyhow!("Semantic analysis failed: {}", e))?;
 
         // 4. Create unified query engine with vector and graph services
-        let graph_service = Arc::new(crate::graph::service::GraphService::new());
+        let graph_service = self.graph_operations_service.clone();
         // Resolve runtime hybrid config overrides (seeding + weights)
         let runtime = self.hybrid_runtime.read().ok().and_then(|g| g.clone());
         let (seeding, fusion_weights) = Self::resolve_hybrid_static(runtime, &sql);

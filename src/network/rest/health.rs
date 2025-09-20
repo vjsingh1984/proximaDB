@@ -330,7 +330,7 @@ async fn check_graph_health(state: &HealthState, timeout: Duration) -> Component
     
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Try to get basic graph statistics
-        match state.unified_handlers.graph_service.get_stats() {
+        match state.unified_handlers.graph_operations_service.get_stats("default").await {
             Ok(_stats) => (HealthStatus::Healthy, "Graph engine operational".to_string()),
             Err(e) => (HealthStatus::Degraded, format!("Graph engine warning: {}", e)),
         }

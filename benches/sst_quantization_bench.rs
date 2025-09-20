@@ -8,8 +8,18 @@
 //! - Distance table precomputation overhead
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use std::time::Duration;
+
+/// Global initialization for hardware capabilities
+static INIT: Once = Once::new();
+
+/// Initialize hardware capabilities once for all benchmarks
+fn init_hardware() {
+    INIT.call_once(|| {
+        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    });
+}
 
 use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb::compute::quantization::unified::{
@@ -51,7 +61,7 @@ fn generate_vectors(count: usize, dim: usize) -> Vec<Vec<f32>> {
 
 /// Benchmark quantization speed for different dimensions
 fn bench_quantization_speed(c: &mut Criterion) {
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    init_hardware();
 
     let mut group = c.benchmark_group("quantization_speed");
     group.measurement_time(Duration::from_secs(10));
@@ -61,8 +71,7 @@ fn bench_quantization_speed(c: &mut Criterion) {
         let vectors = generate_vectors(1000, *dim);
 
         // Create engine
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let engine = runtime.block_on(async {
+        let engine = futures::executor::block_on(async {
             let distance_compute = Arc::new(UnifiedDistanceCompute::default());
             let codebook_store = Arc::new(InMemoryCodebookStore::new());
             let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
@@ -81,7 +90,7 @@ fn bench_quantization_speed(c: &mut Criterion) {
         group.throughput(Throughput::Elements(vectors.len() as u64));
         group.bench_with_input(BenchmarkId::new("dimension", dim), dim, |b, _| {
             b.iter(|| {
-                runtime.block_on(async {
+                futures::executor::block_on(async {
                 let result = engine.quantize_batch(&vectors, None).await.unwrap();
                 black_box(result);
                 })
@@ -94,7 +103,7 @@ fn bench_quantization_speed(c: &mut Criterion) {
 
 /// Benchmark progressive search performance
 fn bench_progressive_search(c: &mut Criterion) {
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    init_hardware();
 
     let mut group = c.benchmark_group("progressive_search");
     group.measurement_time(Duration::from_secs(10));
@@ -103,10 +112,8 @@ fn bench_progressive_search(c: &mut Criterion) {
     for size in &[1000, 5000, 10000] {
         let vectors = generate_vectors(*size, 384);
 
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-
         // Setup: Create engine and quantize vectors
-        let (engine, quantized) = runtime.block_on(async {
+        let (engine, quantized) = futures::executor::block_on(async {
             let distance_compute = Arc::new(UnifiedDistanceCompute::default());
             let codebook_store = Arc::new(InMemoryCodebookStore::new());
             let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
@@ -130,7 +137,7 @@ fn bench_progressive_search(c: &mut Criterion) {
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(BenchmarkId::new("dataset_size", size), size, |b, _| {
             b.iter(|| {
-                runtime.block_on(async {
+                futures::executor::block_on(async {
                 let stages = engine
                     .progressive_search(&query, &quantized, 10, &DistanceMetric::Cosine)
                     .await
@@ -146,7 +153,7 @@ fn bench_progressive_search(c: &mut Criterion) {
 
 /// Benchmark memory pool efficiency
 fn bench_memory_pool(c: &mut Criterion) {
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    init_hardware();
 
     let mut group = c.benchmark_group("memory_pool");
     group.measurement_time(Duration::from_secs(5));
@@ -188,7 +195,7 @@ fn bench_memory_pool(c: &mut Criterion) {
 
 /// Benchmark PQ distance table precomputation
 fn bench_pq_distance_tables(c: &mut Criterion) {
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    init_hardware();
 
     let mut group = c.benchmark_group("pq_distance_tables");
     group.measurement_time(Duration::from_secs(10));
@@ -197,10 +204,8 @@ fn bench_pq_distance_tables(c: &mut Criterion) {
     for (subvectors, bits) in &[(8, 8), (16, 8), (32, 8), (16, 4)] {
         let vectors = generate_vectors(1000, 512);
 
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-
         // Setup: Create engine with PQ configuration
-        let (engine, quantized) = runtime.block_on(async {
+        let (engine, quantized) = futures::executor::block_on(async {
             let mut config = StorageQuantizationConfig::default();
             // Note: QuantizationLevelType not available, using default config
             // config.primary_level = Some(UnifiedQuantizationLevel {
@@ -237,7 +242,7 @@ fn bench_pq_distance_tables(c: &mut Criterion) {
             &config_name,
             |b, _| {
                 b.iter(|| {
-                runtime.block_on(async {
+                futures::executor::block_on(async {
                     let stages = engine
                         .progressive_search(&query, &quantized, 10, &DistanceMetric::Euclidean)
                         .await
@@ -258,18 +263,16 @@ fn bench_pq_distance_tables(c: &mut Criterion) {
 
 /// Benchmark compression ratios
 fn bench_compression_ratios(c: &mut Criterion) {
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    init_hardware();
 
     let mut group = c.benchmark_group("compression_ratios");
     group.measurement_time(Duration::from_secs(5));
-
-    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     for dim in &[256, 512, 768, 1536] {
         let vectors = generate_vectors(1000, *dim);
         let original_size = vectors.len() * *dim * 4; // f32 = 4 bytes
 
-        let engine = runtime.block_on(async {
+        let engine = futures::executor::block_on(async {
             let distance_compute = Arc::new(UnifiedDistanceCompute::default());
             let codebook_store = Arc::new(InMemoryCodebookStore::new());
             let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
@@ -287,7 +290,7 @@ fn bench_compression_ratios(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("dimension", dim), dim, |b, _| {
             b.iter(|| {
-                runtime.block_on(async {
+                futures::executor::block_on(async {
                 let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
                 let savings = engine.calculate_savings(original_size, &quantized);
                 black_box(savings);
@@ -301,17 +304,15 @@ fn bench_compression_ratios(c: &mut Criterion) {
 
 /// Benchmark binary filtering efficiency
 fn bench_binary_filtering(c: &mut Criterion) {
-    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    init_hardware();
 
     let mut group = c.benchmark_group("binary_filtering");
     group.measurement_time(Duration::from_secs(10));
 
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-
     for size in &[1000, 5000, 10000] {
         let vectors = generate_vectors(*size, 384);
 
-        let (engine, quantized) = runtime.block_on(async {
+        let (engine, quantized) = futures::executor::block_on(async {
             let distance_compute = Arc::new(UnifiedDistanceCompute::default());
             let codebook_store = Arc::new(InMemoryCodebookStore::new());
             let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
@@ -339,7 +340,7 @@ fn bench_binary_filtering(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::new("candidates", size), size, |b, _| {
             b.iter(|| {
-                runtime.block_on(async {
+                futures::executor::block_on(async {
                 let stages = engine
                     .progressive_search(&query, &quantized, 10, &DistanceMetric::Cosine)
                     .await

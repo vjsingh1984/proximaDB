@@ -352,10 +352,10 @@ impl ReplicationManager {
                 shard.update_edge(edge)?;
             }
             ReplicationOperation::DeleteNode(node_id) => {
-                shard.delete_node(&node_id)?;
+                GraphEngine::delete_node(shard, &node_id)?;
             }
             ReplicationOperation::DeleteEdge(edge_id) => {
-                shard.delete_edge(&edge_id)?;
+                GraphEngine::delete_edge(shard, &edge_id)?;
             }
         }
 

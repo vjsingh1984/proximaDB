@@ -4,7 +4,7 @@
 //! HashMap metadata filtering for optimal performance.
 
 use crate::core::search::FilterExpression;
-use crate::graph::service::GraphService;
+use crate::graph::GraphOperationsService;
 use crate::query::ast::{BinaryOp, Expr, Query, Select};
 use crate::query::execution::{
     ExecutionOperation, ExecutionPlan, ExecutionStrategy, FusionStrategy, ProjectionTransform,
@@ -28,7 +28,7 @@ struct CachedPlan {
 /// Cost-based execution planner for unified query optimization with unified caching
 pub struct ExecutionPlanner {
     vector_service: Arc<VectorOperationsService>,
-    graph_service: Arc<GraphService>,
+    graph_service: Arc<GraphOperationsService>,
     cost_model: CostModel,
     params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>, // for decoding $1 vectors when not substituted
     seeding_strategy: crate::query::execution::SeedingStrategy,
@@ -41,7 +41,7 @@ impl ExecutionPlanner {
     /// Create new execution planner with service integrations
     pub fn new(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
     ) -> Self {
         Self {
             vector_service,
@@ -57,7 +57,7 @@ impl ExecutionPlanner {
     /// Create new execution planner with unified cache orchestrator
     pub fn with_cache(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
         cache_orchestrator: Arc<CrossCacheOrchestrator>,
     ) -> Self {
         Self {
@@ -73,7 +73,7 @@ impl ExecutionPlanner {
 
     pub fn with_params(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
     ) -> Self {
         let mut p = Self::new(vector_service, graph_service);
@@ -306,6 +306,7 @@ impl ExecutionPlanner {
                 if let Some(fol) = self.find_sks_follow(select) {
                     self.validate_follow_edge(&fol)?;
                     operations.push(ExecutionOperation::GraphTraversal {
+                        graph_id: "default".to_string(), // TODO: Extract from context
                         start_nodes: self.expr_to_start_nodes(&fol.start),
                         edge_types: vec![fol.edge],
                         max_depth: fol.max_depth,
@@ -317,6 +318,7 @@ impl ExecutionPlanner {
                     });
                 } else {
                     operations.push(ExecutionOperation::GraphTraversal {
+                        graph_id: "default".to_string(), // TODO: Extract from context
                         start_nodes: self.extract_start_nodes(select)?,
                         edge_types: self.extract_edge_types(select)?,
                         max_depth: self.extract_max_depth(select).unwrap_or(3),
@@ -351,6 +353,7 @@ impl ExecutionPlanner {
                 if let Some(fol) = self.find_sks_follow(select) {
                     self.validate_follow_edge(&fol)?;
                     operations.push(ExecutionOperation::GraphTraversal {
+                        graph_id: "default".to_string(), // TODO: Extract from context
                         start_nodes: self.expr_to_start_nodes(&fol.start),
                         edge_types: vec![fol.edge],
                         max_depth: fol.max_depth,
@@ -471,9 +474,12 @@ impl ExecutionPlanner {
         if fol.edge.trim().is_empty() {
             return Err(anyhow!("FOLLOW: edge type cannot be empty"));
         }
-        // Use GraphService stats to validate edge types when available
+        // Use GraphOperationsService stats to validate edge types when available
         // (best-effort; if stats not accessible, skip)
-        if let Ok(stats) = self.graph_service.get_stats() {
+        // TODO: Add graph_id parameter when available from context
+        if let Ok(stats) = tokio::runtime::Handle::current().block_on(
+            self.graph_service.get_stats("default")
+        ) {
             let exists = stats
                 .edge_type_stats
                 .iter()
@@ -1234,33 +1240,33 @@ mod planner_tests {
 
     #[tokio::test]
     async fn test_query_plan_caching() {
-        use crate::graph::service::GraphService;
+        use crate::graph::GraphOperationsService;
         use crate::services::operations::vectors::VectorOperationsService;
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
         
         // Create mock services (simplified for testing)
-        let _graph_service = Arc::new(GraphService::new());
+        let _graph_service = Arc::new(GraphOperationsService::new());
         // Skip complex vector service setup for test
         // Note: Full test would create ExecutionPlanner and test query plan caching
     }
 
     #[tokio::test]
     async fn test_set_operation_planning() {
-        use crate::graph::service::GraphService;
+        use crate::graph::GraphOperationsService;
         use crate::services::operations::vectors::VectorOperationsService;
 
         // Create simple test planner
-        let _graph_service = Arc::new(GraphService::new());
+        let _graph_service = Arc::new(GraphOperationsService::new());
         // Skip test - requires complex VectorOperationsService setup
         // Note: Full test would create ExecutionPlanner and test set operation planning
     }
 
     #[tokio::test]
     async fn test_cache_key_generation() {
-        use crate::graph::service::GraphService;
+        use crate::graph::GraphOperationsService;
         use crate::services::operations::vectors::VectorOperationsService;
 
-        let _graph_service = Arc::new(GraphService::new());
+        let _graph_service = Arc::new(GraphOperationsService::new());
         // Skip test - requires complex VectorOperationsService setup
         // Note: Full test would create ExecutionPlanner and test cache key generation
     }

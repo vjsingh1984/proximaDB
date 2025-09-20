@@ -415,3 +415,183 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::FilterClause {
         })
     }
 }
+
+// ============================================================================
+// Graph Types - Custom Serde for Complex Types with PropertyValue
+// ============================================================================
+
+use crate::proto::proximadb_v1::{Node, Edge};
+
+// Node - has PropertyValue fields
+impl Serialize for Node {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Node", 6)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("labels", &self.labels)?;
+        state.serialize_field("properties", &self.properties)?;
+        state.serialize_field("embedding", &self.embedding)?;
+        state.serialize_field("created_at_ms", &self.created_at_ms)?;
+        state.serialize_field("updated_at_ms", &self.updated_at_ms)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Node {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct NodeHelper {
+            id: String,
+            labels: Vec<String>,
+            properties: std::collections::HashMap<String, PropertyValue>,
+            embedding: Option<crate::proto::proximadb_v1::EmbeddingVersion>,
+            created_at_ms: i64,
+            updated_at_ms: i64,
+        }
+
+        let helper = NodeHelper::deserialize(deserializer)?;
+        Ok(Node {
+            id: helper.id,
+            labels: helper.labels,
+            properties: helper.properties,
+            embedding: helper.embedding,
+            created_at_ms: helper.created_at_ms,
+            updated_at_ms: helper.updated_at_ms,
+        })
+    }
+}
+
+// Edge - has PropertyValue fields
+impl Serialize for Edge {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Edge", 8)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("from_node_id", &self.from_node_id)?;
+        state.serialize_field("to_node_id", &self.to_node_id)?;
+        state.serialize_field("edge_type", &self.edge_type)?;
+        state.serialize_field("properties", &self.properties)?;
+        state.serialize_field("weight", &self.weight)?;
+        state.serialize_field("created_at_ms", &self.created_at_ms)?;
+        state.serialize_field("updated_at_ms", &self.updated_at_ms)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Edge {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct EdgeHelper {
+            id: String,
+            from_node_id: String,
+            to_node_id: String,
+            edge_type: String,
+            properties: std::collections::HashMap<String, PropertyValue>,
+            weight: Option<f64>,
+            created_at_ms: i64,
+            updated_at_ms: i64,
+        }
+
+        let helper = EdgeHelper::deserialize(deserializer)?;
+        Ok(Edge {
+            id: helper.id,
+            from_node_id: helper.from_node_id,
+            to_node_id: helper.to_node_id,
+            edge_type: helper.edge_type,
+            properties: helper.properties,
+            weight: helper.weight,
+            created_at_ms: helper.created_at_ms,
+            updated_at_ms: helper.updated_at_ms,
+        })
+    }
+}
+
+// GraphCollection and CreateGraphRequest now use auto-generated serde
+// since all their nested types have serde derives in build.rs
+
+// PropertyConstraint - has oneof so needs custom serde
+use crate::proto::proximadb_v1::{PropertyConstraint, property_constraint::Constraint};
+
+impl Serialize for PropertyConstraint {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+
+        match &self.constraint {
+            Some(Constraint::StringConstraint(v)) => {
+                map.serialize_entry("string_constraint", v)?;
+            }
+            Some(Constraint::NumericConstraint(v)) => {
+                map.serialize_entry("numeric_constraint", v)?;
+            }
+            Some(Constraint::ArrayConstraint(v)) => {
+                map.serialize_entry("array_constraint", v)?;
+            }
+            Some(Constraint::RegexConstraint(v)) => {
+                map.serialize_entry("regex_constraint", v)?;
+            }
+            None => {
+                map.serialize_entry("null_constraint", &serde_json::Value::Null)?;
+            }
+        }
+
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for PropertyConstraint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if let Some(obj) = value.as_object() {
+            if let Some(v) = obj.get("string_constraint") {
+                let constraint = serde_json::from_value(v.clone())
+                    .map_err(serde::de::Error::custom)?;
+                return Ok(PropertyConstraint {
+                    constraint: Some(Constraint::StringConstraint(constraint)),
+                });
+            }
+            if let Some(v) = obj.get("numeric_constraint") {
+                let constraint = serde_json::from_value(v.clone())
+                    .map_err(serde::de::Error::custom)?;
+                return Ok(PropertyConstraint {
+                    constraint: Some(Constraint::NumericConstraint(constraint)),
+                });
+            }
+            if let Some(v) = obj.get("array_constraint") {
+                let constraint = serde_json::from_value(v.clone())
+                    .map_err(serde::de::Error::custom)?;
+                return Ok(PropertyConstraint {
+                    constraint: Some(Constraint::ArrayConstraint(constraint)),
+                });
+            }
+            if let Some(v) = obj.get("regex_constraint") {
+                let constraint = serde_json::from_value(v.clone())
+                    .map_err(serde::de::Error::custom)?;
+                return Ok(PropertyConstraint {
+                    constraint: Some(Constraint::RegexConstraint(constraint)),
+                });
+            }
+        }
+
+        Ok(PropertyConstraint { constraint: None })
+    }
+}

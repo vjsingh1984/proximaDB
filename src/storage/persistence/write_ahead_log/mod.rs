@@ -115,6 +115,7 @@ pub mod collection_path; // Slug codec for collection paths
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteAheadLogManager
 pub mod simple_atomic_sync;
+pub mod unified_operations; // Unified WAL operations for vector and graph
 // MARKED FOR REMOVAL: optimized_path_resolver uses assignment_service
 // pub mod optimized_path_resolver;
 // MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver

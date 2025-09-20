@@ -4,7 +4,7 @@
 //! improvement through O(1) HashMap metadata lookups instead of O(n) linear scans.
 
 use crate::core::search::FilterExpression;
-use crate::graph::service::GraphService;
+use crate::graph::GraphOperationsService;
 use crate::query::execution::{
     ExecutionOperation, ExecutionPlan, QueryPerformanceMetrics, QueryResult, QueryRow,
 };
@@ -80,7 +80,7 @@ impl VectorPool {
 /// High-performance query executor with multi-modal support
 pub struct QueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
-    graph_service: Arc<GraphService>,
+    graph_service: Arc<GraphOperationsService>,
     memory_pool: VectorPool,
 }
 
@@ -88,7 +88,7 @@ impl QueryExecutor {
     /// Create new query executor with memory pool optimization
     pub fn new(
         vector_service: Option<Arc<VectorOperationsService>>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
     ) -> Self {
         Self {
             vector_service,
@@ -150,7 +150,7 @@ impl QueryExecutor {
     /// Create new query executor with service integrations (non-optional vector service)
     pub fn with_services(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
     ) -> Self {
         Self {
             vector_service: Some(vector_service),
@@ -160,7 +160,7 @@ impl QueryExecutor {
     }
 
     #[cfg(test)]
-    pub fn new_for_tests(graph_service: Arc<GraphService>) -> Self {
+    pub fn new_for_tests(graph_service: Arc<GraphOperationsService>) -> Self {
         Self {
             vector_service: None,
             graph_service,
@@ -1123,10 +1123,10 @@ impl QueryExecutor {
         filters: Option<&FilterExpression>,
         metrics: &mut QueryPerformanceMetrics,
     ) -> Result<Vec<QueryRow>> {
-        // Minimal traversal: depth-1 neighbors via GraphService; track cache accesses
+        // Minimal traversal: depth-1 neighbors via GraphOperationsService; track cache accesses
         let mut rows = Vec::new();
         for start in start_nodes {
-            if let Ok(neighbors) = self.graph_service.get_neighbors(start) {
+            if let Ok(neighbors) = self.graph_service.get_neighbors("default", start).await {
                 for n in neighbors {
                     let mut fields = std::collections::HashMap::new();
                     fields.insert("id".to_string(), serde_json::Value::String(n.id.clone()));
@@ -1435,7 +1435,7 @@ mod executor_tests {
 
     #[test]
     fn test_join_rows_with_qualified_keys() {
-        let exec = QueryExecutor::new_for_tests(Arc::new(GraphService::new()));
+        let exec = QueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
 
         // left: a.id
         let mut lfields = std::collections::HashMap::new();
@@ -1476,7 +1476,7 @@ mod executor_tests {
 
     #[test]
     fn test_join_rows_composite_keys_and_left_join() {
-        let exec = QueryExecutor::new_for_tests(Arc::new(GraphService::new()));
+        let exec = QueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
         // left rows: (id, type)
         let mut l1 = std::collections::HashMap::new();
         l1.insert("id".to_string(), serde_json::Value::String("x1".to_string()));
@@ -1572,6 +1572,7 @@ mod executor_tests {
                     distance_metric: "cosine".to_string(),
                 },
                 ExecutionOperation::GraphTraversal {
+                    graph_id: "test_graph".to_string(),
                     start_nodes: vec!["node1".to_string()],
                     edge_types: vec!["related".to_string()],
                     max_depth: 2,
@@ -1694,7 +1695,7 @@ mod executor_tests {
     #[tokio::test]
     async fn test_vector_to_graph_seeding_integration() {
         // Prepare graph: n1 -> n2
-        let graph_service = Arc::new(crate::graph::service::GraphService::new());
+        let graph_service = Arc::new(crate::graph::service::GraphOperationsService::new());
         let n1 = crate::graph::Node {
             id: "n1".into(),
             labels: vec![],
@@ -1717,8 +1718,8 @@ mod executor_tests {
             created_at_ms: 0,
             updated_at_ms: 0
         };
-        graph_service.create_node(n1).unwrap();
-        graph_service.create_node(n2).unwrap();
+        graph_service.create_node("test_graph", n1).await.unwrap();
+        graph_service.create_node("test_graph", n2).await.unwrap();
         let e = crate::graph::Edge {
             id: "e1".into(),
             from_node_id: "n1".into(),
@@ -1729,7 +1730,7 @@ mod executor_tests {
             created_at_ms: 0,
             updated_at_ms: 0
         };
-        graph_service.create_edge(e).unwrap();
+        graph_service.create_edge("test_graph", e).await.unwrap();
 
         // Mock vector search to return id=n1
         let mut fields = std::collections::HashMap::new();
@@ -1764,6 +1765,7 @@ mod executor_tests {
                     distance_metric: "cosine".to_string(),
                 },
                 ExecutionOperation::GraphTraversal {
+                    graph_id: "test_graph".to_string(),
                     start_nodes: vec![],
                     edge_types: vec!["related".to_string()],
                     max_depth: 1,
@@ -1792,7 +1794,7 @@ mod executor_tests {
 
     fn create_test_executor() -> QueryExecutor {
         // Create mock services for testing
-        let graph_service = Arc::new(crate::graph::service::GraphService::new());
+        let graph_service = Arc::new(crate::graph::service::GraphOperationsService::new());
         let vector_service: Option<Arc<crate::services::operations::vectors::VectorOperationsService>> = None; // Mock for testing
         
         QueryExecutor::new(vector_service, graph_service)

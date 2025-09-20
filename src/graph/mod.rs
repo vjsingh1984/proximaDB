@@ -68,7 +68,9 @@ pub use engines::{EngineCapabilities, GraphEngineConfig, GraphEngineFactory, Gra
 pub use hybrid::HybridQueryEngine;
 pub use monitoring::GraphMonitor;
 pub use query::{PatternMatcher, QueryPlanner};
-pub use service::GraphService;
+pub use service::GraphOperationsService;
+// Backward compatibility alias
+pub use service::GraphOperationsService as GraphService;
 
 // Export proto types for convenience
 pub use crate::proto::proximadb_v1::{

@@ -379,7 +379,7 @@ async fn main() -> Result<()> {
     write_csv_report(&all_results, &report_file)?;
 
     // Print summary
-    println!("\n" + &"=".repeat(80));
+    println!("\n{}", "=".repeat(80));
     println!("📈 BENCHMARK SUMMARY");
     println!("   Total configurations tested: {}", all_results.len());
     println!("   Report saved to: {}", report_file);

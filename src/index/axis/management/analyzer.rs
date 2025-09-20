@@ -12,7 +12,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::core::{String, service_types::VectorRecord};
+use crate::core::String;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::index::axis::{
     AccessFrequencyMetrics, CollectionCharacteristics, MetadataComplexity, PerformanceMetrics,
     QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,

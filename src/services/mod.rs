@@ -169,6 +169,7 @@
 
 pub mod collection;
 pub mod events;
+pub mod graph_collection;
 pub mod operations;
 pub mod search;
 
@@ -179,6 +180,7 @@ pub mod tests;
 // Re-export main service types with cleaner names
 pub use collection::Collections;
 pub use events::EventLog;
+pub use graph_collection::GraphCollectionService;
 pub use operations::VectorOps;
 pub use search::StreamingSearch;
 

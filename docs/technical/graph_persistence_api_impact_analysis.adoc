@@ -1,0 +1,488 @@
+= Graph Persistence API Impact Analysis
+:toc: macro
+:toclevels: 4
+:icons: font
+:source-highlighter: highlight.js
+:revdate: 2025-09-19
+
+Critical impact assessment of multi-graph architecture migration on ProximaDB's API ecosystem, hybrid queries, and semantic knowledge store (SKS) implementation.
+
+toc::[]
+
+== Executive Summary
+
+The GraphService migration from singleton to multi-graph architecture represents a **fundamental architectural shift** that provides excellent scalability but introduces **breaking changes** across the entire graph API ecosystem. This analysis identifies critical issues, provides mitigation strategies, and outlines implementation priorities.
+
+[IMPORTANT]
+====
+**Critical Status**: The current REST and gRPC API handlers are **completely broken** following the GraphService migration. All 20+ endpoints require immediate graph_id parameter addition to restore functionality.
+====
+
+== Architectural Change Impact
+
+=== Core Service Migration
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb"}}}%%
+graph TB
+    subgraph "BEFORE: Singleton Pattern"
+        A1[GraphService]
+        A2[engine: Arc&lt;OrionGraphEngine&gt;]
+        A3[Single Graph Instance]
+        A1 --> A2
+        A2 --> A3
+    end
+
+    subgraph "AFTER: Multi-Graph Pattern ✅"
+        B1[GraphService]
+        B2[graphs: Arc&lt;DashMap&lt;String, Arc&lt;OrionGraphEngine&gt;&gt;&gt;]
+        B3[Graph: graph_001]
+        B4[Graph: graph_002]
+        B5[Graph: graph_003]
+        B1 --> B2
+        B2 --> B3
+        B2 --> B4
+        B2 --> B5
+    end
+
+    subgraph "BROKEN: API Handlers ❌"
+        C1[REST Handlers]
+        C2[gRPC Handlers]
+        C3[No graph_id parameter]
+        C1 --> C3
+        C2 --> C3
+    end
+
+    style A1 fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
+    style A2 fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
+    style A3 fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
+    style B1 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B2 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B3 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B4 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B5 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style C1 fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style C2 fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style C3 fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+----
+
+== Breaking Changes Analysis
+
+=== API Handler Impact
+
+**All graph endpoints are currently broken** due to signature mismatches:
+
+[cols="2,2,3"]
+|===
+|Handler Type |Current Status |Required Changes
+
+|**REST Endpoints**
+|❌ Completely Broken
+|Add graph_id to all 20+ endpoints
+
+|**gRPC Services**
+|❌ Completely Broken
+|Update all proto message handlers
+
+|**Hybrid Queries**
+|⚠️ Potentially Broken
+|Need graph_id context for SKS integration
+
+|**SKS Functions**
+|⚠️ Integration Issues
+|FOLLOW() function needs graph targeting
+|===
+
+=== Specific Broken API Calls
+
+[source,rust]
+----
+// BROKEN: Current REST handlers (src/network/rest/v1/graph.rs)
+❌ app_state.unified_handlers.graph_service.create_node(proto_node)
+❌ app_state.unified_handlers.graph_service.get_node(&node_id)
+❌ app_state.unified_handlers.graph_service.traverse(request)
+❌ app_state.unified_handlers.graph_service.shortest_path(...)
+
+// REQUIRED: New signatures needed
+✅ app_state.unified_handlers.graph_service.create_node(graph_id, proto_node).await
+✅ app_state.unified_handlers.graph_service.get_node(graph_id, &node_id).await
+✅ app_state.unified_handlers.graph_service.traverse(graph_id, request).await
+✅ app_state.unified_handlers.graph_service.shortest_path(graph_id, ...).await
+----
+
+== URL Structure Impact
+
+=== Current vs Required URL Patterns
+
+**Current (Broken) URLs:**
+```
+POST   /api/v1/graph/nodes           ❌ No graph targeting
+GET    /api/v1/graph/nodes/{id}      ❌ Ambiguous graph context
+POST   /api/v1/graph/traverse        ❌ Cannot specify graph
+```
+
+**Required Multi-Graph URLs:**
+```
+POST   /api/v1/graphs/{graph_id}/nodes           ✅ Graph-specific
+GET    /api/v1/graphs/{graph_id}/nodes/{id}      ✅ Clear context
+POST   /api/v1/graphs/{graph_id}/traverse        ✅ Targeted traversal
+```
+
+**Alternative: Header-Based Approach:**
+```
+POST   /api/v1/graph/nodes
+Header: X-Graph-ID: social_network     ✅ Backward compatible option
+```
+
+== Hybrid Query Impact
+
+=== SKS Integration Analysis
+
+The **Semantic Knowledge Store (SKS)** functions are impacted by the multi-graph architecture:
+
+[source,sql]
+----
+-- BROKEN: Current SKS SQL without graph context
+❌ SELECT * FROM documents WHERE FOLLOW(node_id, 'RELATES_TO', 2)
+
+-- REQUIRED: Graph-specific context needed
+✅ SELECT * FROM documents WHERE FOLLOW('knowledge_graph', node_id, 'RELATES_TO', 2)
+
+-- OR: Session-based graph context
+SET GRAPH = 'knowledge_graph';
+✅ SELECT * FROM documents WHERE FOLLOW(node_id, 'RELATES_TO', 2)
+----
+
+=== Hybrid Search Coordination
+
+**Current Challenge**: Vector collections and graph data need coordination:
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+graph LR
+    subgraph "VECTOR SIDE"
+        A[Collection: documents]
+        B[Collection: embeddings]
+    end
+
+    subgraph "GRAPH SIDE"
+        C[Graph: knowledge_graph]
+        D[Graph: taxonomy]
+    end
+
+    subgraph "HYBRID QUERIES"
+        E[SIMILAR + FOLLOW]
+        F[Cross-system coordination needed]
+    end
+
+    A -.-> E
+    B -.-> E
+    C -.-> E
+    D -.-> E
+    E --> F
+
+    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style F fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
+----
+
+== Implementation Priority Matrix
+
+[cols="3,1,1,2"]
+|===
+|Component |Priority |Effort |Impact
+
+|**REST API Graph ID Integration**
+|🔴 Critical
+|2-3 hours
+|Restore all graph functionality
+
+|**gRPC API Graph ID Integration**
+|🔴 Critical
+|2-3 hours
+|Restore gRPC graph services
+
+|**URL Structure Decision**
+|🟡 High
+|1 hour
+|User experience and compatibility
+
+|**SKS Graph Context Support**
+|🟡 High
+|3-4 hours
+|Hybrid query functionality
+
+|**Hybrid Search Coordination**
+|🟠 Medium
+|4-6 hours
+|Cross-system intelligence
+
+|**ORION Persistence WAL Integration**
+|🟠 Medium
+|2-3 hours
+|Durability features
+
+|**GraphEngine Trait dyn Compatibility**
+|🟢 Low
+|1-2 hours
+|Engine factory flexibility
+|===
+
+== Implementation Strategy
+
+=== Phase 1: Critical API Restoration (Immediate)
+
+**Goal**: Restore basic graph functionality
+
+1. **REST Handler Updates** (2-3 hours)
+   - Add graph_id path parameter to all endpoints
+   - Update handler signatures to pass graph_id
+   - Implement default graph fallback for compatibility
+
+2. **gRPC Handler Updates** (2-3 hours)
+   - Add graph_id field to proto messages
+   - Update all service method implementations
+   - Maintain backward compatibility where possible
+
+[source,rust]
+----
+// REST Handler Pattern
+pub async fn create_node(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,              // ← NEW: Extract graph_id
+    Json(request): Json<CreateNodeRequest>,
+) -> impl IntoResponse {
+    match app_state
+        .unified_handlers
+        .graph_service
+        .create_node(&graph_id, proto_node)    // ← NEW: Pass graph_id
+        .await
+    {
+        // ... rest unchanged
+    }
+}
+----
+
+=== Phase 2: SKS and Hybrid Integration (Follow-up)
+
+**Goal**: Restore semantic intelligence capabilities
+
+1. **SKS Graph Context** (3-4 hours)
+   - Update FOLLOW() function to accept graph_id
+   - Implement session-based graph context
+   - Coordinate with SQL execution engine
+
+2. **Hybrid Query Coordination** (4-6 hours)
+   - Design collection ↔ graph mapping strategy
+   - Implement cross-system query planning
+   - Ensure atomic operations across vector + graph
+
+=== Phase 3: Advanced Features (Future)
+
+**Goal**: Optimize and enhance multi-graph capabilities
+
+1. **Graph Discovery and Routing**
+2. **Cross-Graph Operations**
+3. **Performance Optimization**
+
+== API Design Recommendations
+
+=== URL Structure Choice
+
+**Recommended: Path-based approach** for clarity and RESTful design:
+
+```
+/api/v1/graphs/{graph_id}/nodes
+/api/v1/graphs/{graph_id}/edges
+/api/v1/graphs/{graph_id}/traverse
+```
+
+**Benefits:**
+- Clear graph targeting
+- RESTful resource hierarchy
+- Easy to understand and debug
+- Natural caching boundaries
+
+**Alternative: Header-based** for backward compatibility:
+
+```
+X-Graph-ID: {graph_id}
+```
+
+=== Graph ID Validation Strategy
+
+[source,rust]
+----
+// Recommended validation pattern
+async fn validate_graph_access(
+    graph_id: &str,
+    graph_service: &GraphService,
+) -> Result<(), ApiError> {
+    if graph_id.is_empty() {
+        return Err(ApiError::BadRequest("graph_id required".into()));
+    }
+
+    // Optional: Validate graph exists
+    match graph_service.graph_exists(graph_id).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(ApiError::NotFound(format!("Graph '{}' not found", graph_id))),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
+}
+----
+
+=== Backward Compatibility Strategy
+
+**Default Graph Support:**
+```
+// Support legacy endpoints with default graph
+POST /api/v1/graph/nodes  →  POST /api/v1/graphs/default/nodes
+```
+
+**Configuration-based defaults:**
+```toml
+[graph]
+default_graph_id = "main"
+enable_legacy_endpoints = true
+```
+
+== SKS Function Updates
+
+=== Required FOLLOW() Function Changes
+
+[source,sql]
+----
+-- CURRENT (Broken)
+FOLLOW(node_id, edge_type, depth)
+
+-- OPTION 1: Explicit graph parameter
+FOLLOW(graph_id, node_id, edge_type, depth)
+
+-- OPTION 2: Session context (Recommended)
+SET GRAPH = 'knowledge_graph';
+FOLLOW(node_id, edge_type, depth)
+
+-- OPTION 3: Qualified node references
+FOLLOW('knowledge_graph.node_123', edge_type, depth)
+----
+
+=== Hybrid Query Coordination
+
+[source,sql]
+----
+-- Enhanced hybrid queries with graph context
+SELECT d.*, similarity_score, graph_relevance
+FROM documents d
+WHERE SIMILAR(d.embedding, query_vector) > 0.8
+  AND FOLLOW('taxonomy', d.category_node, 'IS_A', 2)
+  AND ASSEMBLE(d.context, 0.1) > 0.5
+ORDER BY similarity_score * graph_relevance DESC
+----
+
+== Risk Assessment and Mitigation
+
+[cols="2,2,2,3"]
+|===
+|Risk |Probability |Impact |Mitigation Strategy
+
+|**API Downtime**
+|High
+|Critical
+|Implement all handlers simultaneously; thorough testing
+
+|**Backward Compatibility**
+|Medium
+|High
+|Provide default graph fallback; version API endpoints
+
+|**Performance Degradation**
+|Low
+|Medium
+|Use graph registry caching; monitor performance
+
+|**SKS Integration Complexity**
+|Medium
+|Medium
+|Implement session-based context; staged rollout
+|===
+
+== Testing Strategy
+
+=== API Handler Testing
+
+[source,rust]
+----
+#[tokio::test]
+async fn test_multi_graph_create_node() {
+    let app = test_app().await;
+
+    // Test graph-specific creation
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/graphs/test_graph/nodes")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"id": "node1", "labels": ["Person"]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Verify node exists in correct graph
+    let get_response = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/graphs/test_graph/nodes/node1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(get_response.status(), StatusCode::OK);
+}
+----
+
+=== SKS Integration Testing
+
+[source,rust]
+----
+#[tokio::test]
+async fn test_sks_follow_with_graph_context() {
+    let mut engine = test_sql_engine().await;
+
+    // Set graph context
+    engine.execute("SET GRAPH = 'knowledge_graph'").await.unwrap();
+
+    // Test FOLLOW function
+    let result = engine
+        .execute("SELECT * FROM entities WHERE FOLLOW(id, 'RELATES_TO', 2)")
+        .await
+        .unwrap();
+
+    assert!(!result.is_empty());
+}
+----
+
+== Conclusion
+
+The multi-graph architecture migration provides **excellent scalability benefits** but requires **immediate API restoration work**. The breaking changes are significant but manageable with a structured implementation approach.
+
+**Immediate Actions Required:**
+1. ✅ **Complete GraphService Migration** (Done)
+2. 🔴 **Update all REST handlers** (Critical - 2-3 hours)
+3. 🔴 **Update all gRPC handlers** (Critical - 2-3 hours)
+4. 🟡 **Restore SKS integration** (High priority - 3-4 hours)
+
+**Expected Benefits Upon Completion:**
+- ✅ **Multi-tenant graph isolation**
+- ✅ **Independent graph scaling**
+- ✅ **Persistent graph storage**
+- ✅ **Enhanced hybrid intelligence**
+
+The architecture foundation is **solid and correct**. The remaining work is primarily **API signature propagation** and **integration updates**.

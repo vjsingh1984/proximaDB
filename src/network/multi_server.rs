@@ -662,9 +662,9 @@ impl SharedServices {
             info!("📋 SharedServices: No collections found in WAL to restore");
         }
 
-        // Create GraphService for native graph database operations
-        debug!("🔧 SharedServices::new - Creating GraphService for graph database operations...");
-        let mut graph_service_inst = if let Some(cfg) = opt_config { crate::graph::GraphService::from_config(cfg) } else { crate::graph::GraphService::new() };
+        // Create GraphOperationsService for native graph database operations
+        debug!("🔧 SharedServices::new - Creating GraphOperationsService for graph database operations...");
+        let mut graph_service_inst = if let Some(cfg) = opt_config { crate::graph::GraphOperationsService::from_config(cfg) } else { crate::graph::GraphOperationsService::new() };
         // Create a simple file-backed metrics updater under data_root/metrics
         let filesystem_factory =
             Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
@@ -691,9 +691,9 @@ impl SharedServices {
             crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
         );
         graph_service_inst.set_metrics_updater(metrics_updater.clone());
-        debug!("📈 GraphService metrics updater wired");
+        debug!("📈 GraphOperationsService metrics updater wired");
         let graph_service = Arc::new(graph_service_inst);
-        debug!("✅ SharedServices::new - GraphService created successfully");
+        debug!("✅ SharedServices::new - GraphOperationsService created successfully");
 
         // Create unified handlers with VectorOperationsService and GraphService
         let mut unified_handlers_instance = if let Some(cfg) = opt_config {
@@ -708,8 +708,8 @@ impl SharedServices {
                 vector_operations_service.clone(),
             )
         };
-        // Replace the auto-created GraphService with our shared one
-        unified_handlers_instance.graph_service = graph_service.clone();
+        // Replace the auto-created GraphOperationsService with our shared one
+        unified_handlers_instance.graph_operations_service = graph_service.clone();
         // Apply hybrid runtime config if provided
         if let Some(cfg) = opt_config {
             if let Some(ref hybrid) = cfg.hybrid {

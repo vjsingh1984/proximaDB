@@ -20,7 +20,7 @@
 //! - FOLLOW(node, edge_type, depth): Graph traversal with ORION engine
 //! - ASSEMBLE(context, radius): Knowledge assembly with provenance
 
-use crate::graph::service::GraphService;
+use crate::graph::GraphOperationsService;
 use crate::query::ast::Expr;
 use crate::query::execution::{ExecutionOperation, QueryRow};
 use crate::services::operations::vectors::VectorOperationsService;
@@ -61,14 +61,14 @@ pub enum SksOperator {
 /// semantic intelligence capabilities through SQL interface.
 pub struct SksExecutor {
     vector_service: Arc<VectorOperationsService>,
-    graph_service: Arc<GraphService>,
+    graph_service: Arc<GraphOperationsService>,
 }
 
 impl SksExecutor {
     /// Create new SKS executor with service integrations
     pub fn new(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphService>,
+        graph_service: Arc<GraphOperationsService>,
     ) -> Self {
         Self {
             vector_service,
@@ -166,13 +166,15 @@ impl SksExecutor {
     /// Execute FOLLOW function with ORION graph engine integration
     ///
     /// Implements graph traversal with:
-    /// - Start node validation  
+    /// - Start node validation
     /// - Edge type filtering
     /// - Depth-limited BFS/DFS algorithms
     /// - Path tracking and provenance
+    /// - Multi-graph support with graph_id parameter
     pub async fn execute_follow(
         &self,
         follow: &FollowOperator,
+        graph_id: &str,
         start_node: &str,
     ) -> Result<Vec<QueryRow>> {
         info!("Executing FOLLOW traversal from node: {}", start_node);
@@ -195,9 +197,9 @@ impl SksExecutor {
             prefetch_budget: 8,
         };
 
-        // 3. Execute graph traversal
-        // TODO: Call graph service with traversal config
-        // let traversal_result = self.graph_service.traverse(start_node, traversal_config).await?;
+        // 3. Execute graph traversal with graph_id
+        // TODO: Call graph service with graph_id and traversal config
+        // let traversal_result = self.graph_service.traverse(graph_id, start_node, traversal_config).await?;
 
         // 4. Convert graph results to QueryRow format
         let rows = vec![]; // TODO: Convert traversal results
@@ -212,9 +214,11 @@ impl SksExecutor {
     /// - Relevance ranking and filtering
     /// - Provenance chain tracking
     /// - Coherent narrative building
+    /// - Multi-graph support with graph_id parameter
     pub async fn execute_assemble(
         &self,
         assemble: &AssembleOperator,
+        graph_id: &str,
         context_items: &[String],
     ) -> Result<Vec<QueryRow>> {
         info!(
@@ -278,14 +282,15 @@ impl SksExecutor {
 
     /// Helper: Parse FOLLOW function from SQL AST
     fn parse_follow_function(&self, name: &str, args: &[Expr]) -> Result<SksFunction> {
-        if args.len() < 2 {
+        if args.len() < 3 {
             return Err(anyhow!(
-                "FOLLOW function requires at least 2 arguments: start_node, edge_type"
+                "FOLLOW function requires at least 3 arguments: graph_id, start_node, edge_type"
             ));
         }
 
         // TODO: Extract arguments and options
         Ok(SksFunction::Follow {
+            graph_id: "default".to_string(),     // TODO: Extract from args
             start_node: "node1".to_string(),     // TODO: Extract from args
             edge_type: "related".to_string(),    // TODO: Extract from args
             max_depth: 3,                        // TODO: Extract from options
@@ -293,10 +298,11 @@ impl SksExecutor {
         })
     }
 
-    /// Helper: Parse ASSEMBLE function from SQL AST  
+    /// Helper: Parse ASSEMBLE function from SQL AST
     fn parse_assemble_function(&self, name: &str, args: &[Expr]) -> Result<SksFunction> {
         // TODO: Extract assembly parameters and options
         Ok(SksFunction::Assemble {
+            graph_id: "default".to_string(),     // TODO: Extract from args
             context_items: vec![], // TODO: Extract from args
             assembly_strategy: AssemblyStrategy::RelevanceRanking,
             max_context_size: Some(100), // TODO: Extract from options
@@ -358,16 +364,18 @@ pub enum SksFunction {
         threshold: Option<f32>,
     },
 
-    /// FOLLOW(node, edge_type, options) → graph traversal
+    /// FOLLOW(node, edge_type, options) → graph traversal with graph_id
     Follow {
+        graph_id: String,
         start_node: String,
         edge_type: String,
         max_depth: u32,
         direction: TraversalDirection,
     },
 
-    /// ASSEMBLE(items, strategy) → knowledge assembly
+    /// ASSEMBLE(items, strategy) → knowledge assembly with graph_id
     Assemble {
+        graph_id: String,
         context_items: Vec<String>,
         assembly_strategy: AssemblyStrategy,
         max_context_size: Option<usize>,
@@ -397,12 +405,14 @@ impl SksFunction {
             }
 
             SksFunction::Follow {
+                graph_id,
                 start_node,
                 edge_type,
                 max_depth,
                 direction: _,
             } => {
                 Ok(vec![ExecutionOperation::GraphTraversal {
+                    graph_id: graph_id.clone(),
                     start_nodes: vec![start_node.clone()],
                     edge_types: vec![edge_type.clone()],
                     max_depth: *max_depth,
@@ -412,6 +422,7 @@ impl SksFunction {
             }
 
             SksFunction::Assemble {
+                graph_id,
                 context_items,
                 assembly_strategy: _,
                 max_context_size: _,
@@ -421,6 +432,15 @@ impl SksFunction {
                 // to gather comprehensive context around the specified items
 
                 Ok(vec![
+                    // Context gathering from specific graph
+                    ExecutionOperation::GraphTraversal {
+                        graph_id: graph_id.clone(),
+                        start_nodes: context_items.clone(),
+                        edge_types: vec![], // All edge types
+                        max_depth: 2, // Context radius
+                        filters: None,
+                        vector_target_collection: None,
+                    },
                     // TODO: Add context gathering operations
                     ExecutionOperation::Fusion {
                         strategy: crate::query::execution::FusionStrategy::AdaptiveSemanticFusion {
@@ -924,8 +944,8 @@ mod sks_integration_tests {
         unimplemented!("Create mock VectorOperationsService")
     }
 
-    fn create_mock_graph_service() -> GraphService {
+    fn create_mock_graph_service() -> GraphOperationsService {
         // TODO: Implement mock graph service for testing
-        unimplemented!("Create mock GraphService")
+        unimplemented!("Create mock GraphOperationsService")
     }
 }
