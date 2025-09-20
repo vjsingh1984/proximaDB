@@ -117,6 +117,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | **3.63**
 | 0.72x
 | Excellent scaling
+| **Excellent**: Near-linear scaling from 64D
 
 | 128
 | Euclidean
@@ -124,6 +125,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 3.35
 | 0.66x
 | Linear scaling
+| **Excellent**: Only 8% overhead vs dot product
 
 | 128
 | Cosine
@@ -131,6 +133,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 1.79
 | 0.36x
 | 2x dot product time
+| **Expected**: Normalization cost for semantic search
 
 | **256**
 | Dot Product
@@ -138,6 +141,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | **3.32**
 | 0.66x
 | Sub-linear scaling
+| **Excellent**: Better than linear scaling
 
 | 256
 | Euclidean
@@ -145,6 +149,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 3.06
 | 0.61x
 | Consistent pattern
+| **Very Good**: Maintains efficiency
 
 | 256
 | Cosine
@@ -152,6 +157,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 1.65
 | 0.33x
 | Normalization penalty
+| **Acceptable**: Still >1 Gelem/s throughput
 
 | **512**
 | Dot Product
@@ -159,6 +165,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | **3.03**
 | 0.60x
 | Cache effects visible
+| **Good**: 3+ Gelem/s for standard embeddings
 
 | 512
 | Euclidean
@@ -166,6 +173,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 2.84
 | 0.56x
 | 7% slower than dot
+| **Good**: Minimal distance calculation overhead
 
 | 512
 | Cosine
@@ -173,6 +181,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 1.83
 | 0.36x
 | 65% overhead
+| **Acceptable**: Sub-300ns for semantic similarity
 
 | **1024**
 | Dot Product
@@ -180,6 +189,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | **2.44**
 | 0.48x
 | L2 cache pressure
+| **Good**: 2.4+ Gelem/s despite cache pressure
 
 | 1024
 | Euclidean
@@ -187,6 +197,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 2.36
 | 0.47x
 | Minimal overhead
+| **Good**: Only 3% slower than dot product
 
 | 1024
 | Cosine
@@ -194,6 +205,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 1.80
 | 0.36x
 | Stable ratio
+| **Acceptable**: Consistent 1.35x overhead
 
 | **2048**
 | Dot Product
@@ -201,6 +213,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | **2.23**
 | 0.44x
 | Memory bandwidth limited
+| **Good**: Still 2+ Gelem/s at scale
 
 | 2048
 | Euclidean
@@ -208,6 +221,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 2.19
 | 0.43x
 | 2% slower than dot
+| **Excellent**: Negligible overhead at scale
 
 | 2048
 | Cosine
@@ -215,6 +229,7 @@ The benchmarks evaluate three fundamental distance metrics across vector dimensi
 | 1.78
 | 0.35x
 | 25% overhead
+| **Good**: Sub-1.2µs for large embeddings
 |===
 
 === Scaling Analysis
