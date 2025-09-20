@@ -15,7 +15,7 @@ use proximadb::{
     },
     core::{search::SearchParams, hardware_capabilities},
     compute::distance_computation::DistanceMetric,
-    proto::proximadb_v1::{Collection, CollectionConfig, CollectionStats},
+    proto::proximadb_v1::{Collection, CollectionConfig, CollectionStats, StorageEngine},
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Once};
@@ -81,11 +81,29 @@ fn bench_viper_flush(c: &mut Criterion) {
                 futures::executor::block_on(async {
                     let engine = StorageEngineFactory::create_viper().unwrap();
 
+                    // Create collection config
+                    let collection = Collection {
+                        id: "bench_collection".to_string(),
+                        config: Some(CollectionConfig {
+                            name: "bench_collection".to_string(),
+                            dimension: 768,
+                            distance_metric: DistanceMetric::Euclidean as i32,
+                            storage_engine: StorageEngine::Viper as i32,
+                            ..Default::default()
+                        }),
+                        storage_path: "/tmp/bench".to_string(),
+                        created_at: 0,
+                        updated_at: 0,
+                        stats: None,
+                        maintenance_state: None,
+                    };
+
                     let params = FlushParameters {
                         collection_id: Some("bench_collection".to_string()),
                         vector_records: vectors.clone(),
                         force: true,
                         synchronous: true,
+                        collection_config: Some(collection),
                         ..Default::default()
                     };
 
@@ -111,11 +129,29 @@ fn bench_viper_search(c: &mut Criterion) {
     let engine = futures::executor::block_on(async {
         let engine = StorageEngineFactory::create_viper().unwrap();
 
+        // Create collection config
+        let collection = Collection {
+            id: "bench_collection".to_string(),
+            config: Some(CollectionConfig {
+                name: "bench_collection".to_string(),
+                dimension: 768,
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: StorageEngine::Viper as i32,
+                ..Default::default()
+            }),
+            storage_path: "/tmp/bench".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            stats: None,
+            maintenance_state: None,
+        };
+
         let params = FlushParameters {
             collection_id: Some("bench_collection".to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
+            collection_config: Some(collection),
             ..Default::default()
         };
 
@@ -185,11 +221,28 @@ fn bench_viper_compaction(c: &mut Criterion) {
                     let engine = StorageEngineFactory::create_viper().unwrap();
 
                     // First flush data
+                    let collection = Collection {
+                        id: "bench_collection".to_string(),
+                        config: Some(CollectionConfig {
+                            name: "bench_collection".to_string(),
+                            dimension: 768,
+                            distance_metric: DistanceMetric::Euclidean as i32,
+                            storage_engine: StorageEngine::Viper as i32,
+                            ..Default::default()
+                        }),
+                        storage_path: "/tmp/bench".to_string(),
+                        created_at: 0,
+                        updated_at: 0,
+                        stats: None,
+                        maintenance_state: None,
+                    };
+
                     let flush_params = FlushParameters {
                         collection_id: Some("bench_collection".to_string()),
                         vector_records: vectors.clone(),
                         force: true,
                         synchronous: true,
+                        collection_config: Some(collection),
                         ..Default::default()
                     };
 
@@ -227,11 +280,28 @@ fn bench_engine_comparison(c: &mut Criterion) {
             futures::executor::block_on(async {
                 let engine = StorageEngineFactory::create_viper().unwrap();
 
+                let collection = Collection {
+                    id: "bench_collection".to_string(),
+                    config: Some(CollectionConfig {
+                        name: "bench_collection".to_string(),
+                        dimension: 768,
+                        distance_metric: DistanceMetric::Euclidean as i32,
+                        storage_engine: StorageEngine::Viper as i32,
+                        ..Default::default()
+                    }),
+                    storage_path: "/tmp/bench".to_string(),
+                    created_at: 0,
+                    updated_at: 0,
+                    stats: None,
+                    maintenance_state: None,
+                };
+
                 let params = FlushParameters {
                     collection_id: Some("bench_collection".to_string()),
                     vector_records: (*viper_vectors).clone(),
                     force: true,
                     synchronous: true,
+                    collection_config: Some(collection),
                     ..Default::default()
                 };
 
@@ -247,11 +317,28 @@ fn bench_engine_comparison(c: &mut Criterion) {
             futures::executor::block_on(async {
                 let engine = StorageEngineFactory::create_sst().unwrap();
 
+                let collection = Collection {
+                    id: "bench_collection".to_string(),
+                    config: Some(CollectionConfig {
+                        name: "bench_collection".to_string(),
+                        dimension: 768,
+                        distance_metric: DistanceMetric::Euclidean as i32,
+                        storage_engine: StorageEngine::Sst as i32,
+                        ..Default::default()
+                    }),
+                    storage_path: "/tmp/bench".to_string(),
+                    created_at: 0,
+                    updated_at: 0,
+                    stats: None,
+                    maintenance_state: None,
+                };
+
                 let params = FlushParameters {
                     collection_id: Some("bench_collection".to_string()),
                     vector_records: (*sst_vectors).clone(),
                     force: true,
                     synchronous: true,
+                    collection_config: Some(collection),
                     ..Default::default()
                 };
 
