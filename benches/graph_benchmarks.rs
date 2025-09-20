@@ -22,7 +22,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::{
     graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
-    proto::proximadb_v1::{NodeQuery, TraversalAlgorithm, TraversalRequest, property_value::Value},
+    proto::proximadb_v1::{NodeQuery, TraversalAlgorithm, TraversalRequest, PropertyFilter, PropertyFilterOperator, property_value::Value},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -212,8 +212,11 @@ fn bench_traversal(c: &mut Criterion) {
                         algorithm: TraversalAlgorithm::Bfs as i32,
                         max_depth: depth,
                         edge_types: vec!["CONNECTS".to_string()],
-                        property_filters: HashMap::new(),
-                        limit: 100,
+                        filters: vec![],
+                        node_labels: vec![],
+                        timeout_ms: None,
+                        max_frontier: None,
+                        limit: Some(100),
                     };
                     black_box(service.traverse(DEFAULT_GRAPH_ID, request).await.unwrap());
                 });
@@ -230,8 +233,11 @@ fn bench_traversal(c: &mut Criterion) {
                         algorithm: TraversalAlgorithm::Dfs as i32,
                         max_depth: depth,
                         edge_types: vec!["CONNECTS".to_string()],
-                        property_filters: HashMap::new(),
-                        limit: 100,
+                        filters: vec![],
+                        node_labels: vec![],
+                        timeout_ms: None,
+                        max_frontier: None,
+                        limit: Some(100),
                     };
                     black_box(service.traverse(DEFAULT_GRAPH_ID, request).await.unwrap());
                 });
@@ -350,9 +356,10 @@ fn bench_node_query(c: &mut Criterion) {
                 let query = NodeQuery {
                     graph_id: DEFAULT_GRAPH_ID.to_string(),
                     labels: vec!["Label5".to_string()],
-                    property_filters: HashMap::new(),
-                    limit: 100,
-                    offset: 0,
+                    filters: vec![],
+                    limit: Some(100),
+                    offset: Some(0),
+                    continuation_token: None,
                 };
                 black_box(service.query_nodes(DEFAULT_GRAPH_ID, query).await.unwrap());
             });
@@ -366,14 +373,16 @@ fn bench_node_query(c: &mut Criterion) {
                 let query = NodeQuery {
                     graph_id: DEFAULT_GRAPH_ID.to_string(),
                     labels: vec![],
-                    property_filters: HashMap::from([(
-                        "category".to_string(),
-                        PropertyValue {
+                    filters: vec![PropertyFilter {
+                        key: "category".to_string(),
+                        operator: PropertyFilterOperator::Equals as i32,
+                        value: Some(PropertyValue {
                             value: Some(Value::StringValue("cat_3".to_string())),
-                        },
-                    )]),
-                    limit: 100,
-                    offset: 0,
+                        }),
+                    }],
+                    limit: Some(100),
+                    offset: Some(0),
+                    continuation_token: None,
                 };
                 black_box(service.query_nodes(DEFAULT_GRAPH_ID, query).await.unwrap());
             });

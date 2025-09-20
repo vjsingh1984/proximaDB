@@ -91,11 +91,10 @@ fn bench_viper_flush(c: &mut Criterion) {
                             storage_engine: StorageEngine::Viper as i32,
                             ..Default::default()
                         }),
-                        storage_path: "/tmp/bench".to_string(),
                         created_at: 0,
                         updated_at: 0,
                         stats: None,
-                        maintenance_state: None,
+                        storage_assignment: None,
                     };
 
                     let params = FlushParameters {
@@ -139,11 +138,10 @@ fn bench_viper_search(c: &mut Criterion) {
                 storage_engine: StorageEngine::Viper as i32,
                 ..Default::default()
             }),
-            storage_path: "/tmp/bench".to_string(),
             created_at: 0,
             updated_at: 0,
             stats: None,
-            maintenance_state: None,
+            storage_assignment: None,
         };
 
         let params = FlushParameters {
@@ -230,11 +228,10 @@ fn bench_viper_compaction(c: &mut Criterion) {
                             storage_engine: StorageEngine::Viper as i32,
                             ..Default::default()
                         }),
-                        storage_path: "/tmp/bench".to_string(),
                         created_at: 0,
                         updated_at: 0,
                         stats: None,
-                        maintenance_state: None,
+                        storage_assignment: None,
                     };
 
                     let flush_params = FlushParameters {
@@ -289,11 +286,10 @@ fn bench_engine_comparison(c: &mut Criterion) {
                         storage_engine: StorageEngine::Viper as i32,
                         ..Default::default()
                     }),
-                    storage_path: "/tmp/bench".to_string(),
                     created_at: 0,
                     updated_at: 0,
                     stats: None,
-                    maintenance_state: None,
+                    storage_assignment: None,
                 };
 
                 let params = FlushParameters {
@@ -326,11 +322,10 @@ fn bench_engine_comparison(c: &mut Criterion) {
                         storage_engine: StorageEngine::Sst as i32,
                         ..Default::default()
                     }),
-                    storage_path: "/tmp/bench".to_string(),
                     created_at: 0,
                     updated_at: 0,
                     stats: None,
-                    maintenance_state: None,
+                    storage_assignment: None,
                 };
 
                 let params = FlushParameters {
