@@ -70,7 +70,7 @@ fn bench_quantization_speed(c: &mut Criterion) {
     for dim in &[128, 256, 384, 512, 768, 1536] {
         let vectors = generate_vectors(1000, *dim);
 
-        // Create engine
+        // Create and train engine
         let engine = futures::executor::block_on(async {
             let distance_compute = Arc::new(UnifiedDistanceCompute::default());
             let codebook_store = Arc::new(InMemoryCodebookStore::new());
@@ -80,11 +80,16 @@ fn bench_quantization_speed(c: &mut Criterion) {
             ));
 
             let config = StorageQuantizationConfig::default();
-            Arc::new(StorageQuantizationEngine::new(
+            let mut engine = StorageQuantizationEngine::new(
                 unified_engine,
                 distance_compute,
                 config,
-            ))
+            );
+
+            // Train the quantization model with sample vectors
+            engine.train(&vectors).await.expect("Failed to train quantization model");
+
+            Arc::new(engine)
         });
 
         group.throughput(Throughput::Elements(vectors.len() as u64));
@@ -112,7 +117,7 @@ fn bench_progressive_search(c: &mut Criterion) {
     for size in &[1000, 5000, 10000] {
         let vectors = generate_vectors(*size, 384);
 
-        // Setup: Create engine and quantize vectors
+        // Setup: Create engine, train, and quantize vectors
         let (engine, quantized) = futures::executor::block_on(async {
             let distance_compute = Arc::new(UnifiedDistanceCompute::default());
             let codebook_store = Arc::new(InMemoryCodebookStore::new());
@@ -122,12 +127,16 @@ fn bench_progressive_search(c: &mut Criterion) {
             ));
 
             let config = StorageQuantizationConfig::default();
-            let engine = Arc::new(StorageQuantizationEngine::new(
+            let mut engine = StorageQuantizationEngine::new(
                 unified_engine,
                 distance_compute,
                 config,
-            ));
+            );
 
+            // Train the quantization model
+            engine.train(&vectors).await.expect("Failed to train quantization model");
+
+            let engine = Arc::new(engine);
             let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
             (engine, quantized)
         });
@@ -281,11 +290,16 @@ fn bench_compression_ratios(c: &mut Criterion) {
             ));
 
             let config = StorageQuantizationConfig::default();
-            Arc::new(StorageQuantizationEngine::new(
+            let mut engine = StorageQuantizationEngine::new(
                 unified_engine,
                 distance_compute,
                 config,
-            ))
+            );
+
+            // Train the quantization model
+            engine.train(&vectors).await.expect("Failed to train quantization model");
+
+            Arc::new(engine)
         });
 
         group.bench_with_input(BenchmarkId::new("dimension", dim), dim, |b, _| {
@@ -326,12 +340,16 @@ fn bench_binary_filtering(c: &mut Criterion) {
                 ..Default::default()
             };
 
-            let engine = Arc::new(StorageQuantizationEngine::new(
+            let mut engine = StorageQuantizationEngine::new(
                 unified_engine,
                 distance_compute,
                 config,
-            ));
+            );
 
+            // Train the quantization model
+            engine.train(&vectors).await.expect("Failed to train quantization model");
+
+            let engine = Arc::new(engine);
             let quantized = engine.quantize_batch(&vectors, None).await.unwrap();
             (engine, quantized)
         });

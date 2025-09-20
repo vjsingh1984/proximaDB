@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use proximadb::core::service_types::VectorRecord;
+use proximadb::VectorRecord;
+use proximadb::proto::proximadb_v1::SqlValue;
 use proximadb::core::search::SearchParams;
 
 /// Generate test vectors with basic metadata
@@ -22,19 +23,26 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
             .collect();
 
         let mut metadata = std::collections::HashMap::new();
-        metadata.insert("category".to_string(), json!(format!("cat_{}", i % 3)));
-        metadata.insert("score".to_string(), json!(i as f64 / count as f64));
-        metadata.insert("active".to_string(), json!(i % 2 == 0));
+        metadata.insert("category".to_string(), SqlValue {
+            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(format!("cat_{}", i % 3))),
+        });
+        metadata.insert("score".to_string(), SqlValue {
+            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(i as f64 / count as f64)),
+        });
+        metadata.insert("active".to_string(), SqlValue {
+            value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(i % 2 == 0)),
+        });
 
         vectors.push(VectorRecord {
             id: format!("vec_{}", i),
-            collection_id: "test_collection".to_string(),
             vector,
             metadata,
             timestamp: now as i64,
             updated_at: Some(now as i64),
             expires_at: None,
             version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         });
     }
 
@@ -150,24 +158,24 @@ async fn test_vector_record_structure() {
         assert_eq!(vector.metadata.len(), 3);
         assert!(vector.timestamp > 0);
 
-        // Test metadata content - metadata is now HashMap<String, serde_json::Value>
+        // Test metadata content - metadata is now HashMap<String, SqlValue>
         let category_value = vector.metadata.get("category").unwrap();
-        if let Some(s) = category_value.as_str() {
+        if let Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &category_value.value {
             assert!(s.starts_with("cat_"));
         } else {
             panic!("Expected string value for category");
         }
 
         let score_value = vector.metadata.get("score").unwrap();
-        if let Some(n) = score_value.as_f64() {
-            assert!(n >= 0.0 && n <= 1.0);
+        if let Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(n)) = &score_value.value {
+            assert!(*n >= 0.0 && *n <= 1.0);
         } else {
             panic!("Expected number value for score");
         }
 
         let active_value = vector.metadata.get("active").unwrap();
-        if let Some(b) = active_value.as_bool() {
-            assert_eq!(b, i % 2 == 0);
+        if let Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(b)) = &active_value.value {
+            assert_eq!(*b, i % 2 == 0);
         } else {
             panic!("Expected bool value for active");
         }

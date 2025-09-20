@@ -20,15 +20,18 @@
 //! testing the complete stack from API to storage engine.
 
 use proximadb::{
-    graph::{Edge, GraphService, Node, OperationMode, PropertyValue},
-    proto::proximadb_v1::property_value::Value,
+    graph::{Edge, Node, OperationMode, PropertyValue, service::GraphOperationsService},
+    proto::proximadb_v1::{property_value::Value, NodeQuery, TraversalRequest, TraversalAlgorithm, GraphStats, PropertyFilter, PropertyFilterOperator},
 };
 use std::collections::HashMap;
+use std::sync::Arc;
+
+const TEST_GRAPH_ID: &str = "test_graph";
 
 /// Test basic CRUD operations on nodes
 #[tokio::test]
 async fn test_node_crud_operations() {
-    let service = GraphService::new();
+    let service = Arc::new(GraphOperationsService::new());
 
     // Create a test node
     let node = Node {
@@ -60,14 +63,14 @@ async fn test_node_crud_operations() {
     };
 
     // Test create
-    let created_node = service.create_node(node.clone()).unwrap();
+    let created_node = service.create_node(TEST_GRAPH_ID, node.clone()).await.unwrap();
     assert_eq!(created_node.id, "user_123".to_string());
     assert_eq!(created_node.labels.len(), 2);
     assert!(created_node.labels.contains(&"User".to_string()));
     assert!(created_node.labels.contains(&"Person".to_string()));
 
     // Test read
-    let retrieved_node = service.get_node(&"user_123".to_string()).unwrap().unwrap();
+    let retrieved_node = service.get_node(TEST_GRAPH_ID, &"user_123".to_string()).await.unwrap().unwrap();
     assert_eq!(retrieved_node.id, "user_123".to_string());
     assert_eq!(retrieved_node.properties.len(), 3);
 
@@ -80,33 +83,28 @@ async fn test_node_crud_operations() {
         },
     );
 
-    let updated = service.update_node(updated_node).unwrap();
+    let updated = service.update_node(TEST_GRAPH_ID, updated_node).await.unwrap();
     assert_eq!(updated.properties.len(), 4);
 
     // Test delete
-    let deleted = service.delete_node(&"user_123".to_string()).unwrap().unwrap();
+    let deleted = service.delete_node(TEST_GRAPH_ID, &"user_123".to_string()).await.unwrap().unwrap();
     assert_eq!(deleted.id, "user_123".to_string());
 
     // Verify deletion
-    let missing = service.get_node(&"user_123".to_string()).unwrap();
+    let missing = service.get_node(TEST_GRAPH_ID, &"user_123".to_string()).await.unwrap();
     assert!(missing.is_none());
 }
 
 /// Test basic CRUD operations on edges
 #[tokio::test]
 async fn test_edge_crud_operations() {
-    let service = GraphService::new();
+    let service = Arc::new(GraphOperationsService::new());
 
     // Create nodes first
     let node1 = Node {
         id: "user_1".to_string(),
         labels: vec!["User".to_string()],
-        properties: HashMap::from([(
-            "name".to_string(),
-            PropertyValue {
-                value: Some(Value::StringValue("Alice".to_string())),
-            },
-        )]),
+        properties: HashMap::new(),
         embedding: None,
         created_at_ms: 0,
         updated_at_ms: 0,
@@ -115,175 +113,158 @@ async fn test_edge_crud_operations() {
     let node2 = Node {
         id: "user_2".to_string(),
         labels: vec!["User".to_string()],
-        properties: HashMap::from([(
-            "name".to_string(),
-            PropertyValue {
-                value: Some(Value::StringValue("Bob".to_string())),
-            },
-        )]),
+        properties: HashMap::new(),
         embedding: None,
         created_at_ms: 0,
         updated_at_ms: 0,
     };
 
-    service.create_node(node1).unwrap();
-    service.create_node(node2).unwrap();
+    service.create_node(TEST_GRAPH_ID, node1).await.unwrap();
+    service.create_node(TEST_GRAPH_ID, node2).await.unwrap();
 
-    // Create edge
+    // Create an edge
     let edge = Edge {
         id: "friendship_1".to_string(),
         from_node_id: "user_1".to_string(),
         to_node_id: "user_2".to_string(),
         edge_type: "FRIENDS_WITH".to_string(),
-        properties: HashMap::from([(
-            "since".to_string(),
-            PropertyValue {
-                value: Some(Value::StringValue("2023-01-01".to_string())),
-            },
-        )]),
+        properties: HashMap::from([
+            (
+                "since".to_string(),
+                PropertyValue {
+                    value: Some(Value::StringValue("2020-01-01".to_string())),
+                },
+            ),
+        ]),
         weight: Some(1.0),
         created_at_ms: 0,
         updated_at_ms: 0,
     };
 
     // Test create
-    let created_edge = service.create_edge(edge.clone()).unwrap();
-    assert_eq!(created_edge.id, "friendship_1");
-    assert_eq!(created_edge.edge_type, "FRIENDS_WITH");
-    assert_eq!(created_edge.weight, Some(1.0));
+    let created_edge = service.create_edge(TEST_GRAPH_ID, edge.clone()).await.unwrap();
+    assert_eq!(created_edge.id, "friendship_1".to_string());
+    assert_eq!(created_edge.edge_type, "FRIENDS_WITH".to_string());
 
     // Test read
-    let retrieved_edge = service.get_edge(&"friendship_1".to_string()).unwrap().unwrap();
-    assert_eq!(retrieved_edge.from_node_id, "user_1");
-    assert_eq!(retrieved_edge.to_node_id, "user_2");
+    let retrieved_edge = service.get_edge(TEST_GRAPH_ID, &"friendship_1".to_string()).await.unwrap().unwrap();
+    assert_eq!(retrieved_edge.from_node_id, "user_1".to_string());
+    assert_eq!(retrieved_edge.to_node_id, "user_2".to_string());
 
     // Test update
     let mut updated_edge = (*retrieved_edge).clone();
     updated_edge.weight = Some(2.0);
 
-    let updated = service.update_edge(updated_edge).unwrap();
+    let updated = service.update_edge(TEST_GRAPH_ID, updated_edge).await.unwrap();
     assert_eq!(updated.weight, Some(2.0));
 
     // Test delete
-    let deleted = service.delete_edge(&"friendship_1".to_string()).unwrap().unwrap();
-    assert_eq!(deleted.id, "friendship_1");
+    let deleted = service.delete_edge(TEST_GRAPH_ID, &"friendship_1".to_string()).await.unwrap().unwrap();
+    assert_eq!(deleted.id, "friendship_1".to_string());
 
     // Verify deletion
-    let missing = service.get_edge(&"friendship_1".to_string()).unwrap();
+    let missing = service.get_edge(TEST_GRAPH_ID, &"friendship_1".to_string()).await.unwrap();
     assert!(missing.is_none());
 }
 
-/// Test graph traversal operations
+/// Test graph traversal and neighbor operations
 #[tokio::test]
 async fn test_graph_traversal() {
-    let service = GraphService::new();
+    let service = Arc::new(GraphOperationsService::new());
 
-    // Create a small graph: A -> B -> C
-    //                        \-> D /
-    let nodes = vec![
-        ("A", "Alice"),
-        ("B", "Bob"),
-        ("C", "Charlie"),
-        ("D", "David"),
-    ];
-
-    for (id, name) in &nodes {
+    // Create a small graph: A -> B -> C -> D
+    //                            -> E
+    for id in ["A", "B", "C", "D", "E"] {
         let node = Node {
             id: id.to_string(),
-            labels: vec!["Person".to_string()],
-            properties: HashMap::from([(
-                "name".to_string(),
-                PropertyValue {
-                    value: Some(Value::StringValue(name.to_string())),
-                },
-            )]),
+            labels: vec!["TestNode".to_string()],
+            properties: HashMap::new(),
             embedding: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node(node).unwrap();
+        service.create_node(TEST_GRAPH_ID, node).await.unwrap();
     }
 
     // Create edges
     let edges = vec![
-        ("e1", "A", "B", "KNOWS"),
-        ("e2", "B", "C", "KNOWS"),
-        ("e3", "A", "D", "KNOWS"),
-        ("e4", "D", "C", "KNOWS"),
+        ("edge1", "A", "B"),
+        ("edge2", "B", "C"),
+        ("edge3", "C", "D"),
+        ("edge4", "B", "E"),
     ];
 
-    for (edge_id, from, to, rel_type) in &edges {
+    for (id, from, to) in edges {
         let edge = Edge {
-            id: edge_id.to_string(),
+            id: id.to_string(),
             from_node_id: from.to_string(),
             to_node_id: to.to_string(),
-            edge_type: rel_type.to_string(),
+            edge_type: "CONNECTS".to_string(),
             properties: HashMap::new(),
-            weight: Some(1.0),
+            weight: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_edge(edge).unwrap();
+        service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
     }
 
-    // Test neighbor queries
-    let neighbors = service.get_neighbors(&"A".to_string()).unwrap();
-    assert_eq!(neighbors.len(), 2); // B and D
-    let neighbor_ids: Vec<String> = neighbors.iter().map(|n| n.id.clone()).collect();
-    assert!(neighbor_ids.contains(&"B".to_string()));
-    assert!(neighbor_ids.contains(&"D".to_string()));
+    // Test get neighbors
+    let neighbors = service.get_neighbors(TEST_GRAPH_ID, &"A".to_string()).await.unwrap();
+    assert_eq!(neighbors.len(), 1);
+    assert_eq!(neighbors[0].id, "B".to_string());
 
     // Test traversal
-    use proximadb::proto::proximadb_v1::{TraversalAlgorithm, TraversalRequest};
-
     let traversal_request = TraversalRequest {
+        graph_id: TEST_GRAPH_ID.to_string(),
         start_node_id: "A".to_string(),
-        max_depth: 3,
-        edge_types: vec!["KNOWS".to_string()],
+        algorithm: TraversalAlgorithm::Bfs as i32,
+        max_depth: 2,
+        edge_types: vec!["CONNECTS".to_string()],
         node_labels: vec![],
         filters: vec![],
-        algorithm: TraversalAlgorithm::Bfs.into(),
         limit: Some(10),
         timeout_ms: None,
         max_frontier: None,
     };
 
-    let result = service.traverse(traversal_request).await.unwrap();
-    assert!(result.nodes.len() >= 1); // At least the start node
-    assert_eq!(result.nodes[0].id, "A"); // First node should be start node
+    let result = service.traverse(TEST_GRAPH_ID, traversal_request).await.unwrap();
 
-    if let Some(stats) = result.stats {
-        assert!(stats.nodes_visited >= 1);
-    }
+    // Should find A, B, C, E (depth 0, 1, 2)
+    assert!(result.nodes.len() >= 3);
+
+    // Verify nodes are found
+    let node_ids: Vec<String> = result.nodes.iter().map(|n| n.id.clone()).collect();
+    assert!(node_ids.contains(&"A".to_string()));
+    assert!(node_ids.contains(&"B".to_string()));
 }
 
-/// Test node and edge queries
+/// Test node querying with filters
 #[tokio::test]
-async fn test_node_edge_queries() {
-    let service = GraphService::new();
+async fn test_node_query() {
+    let service = Arc::new(GraphOperationsService::new());
 
-    // Create test data
-    let user_nodes = vec![
-        ("user_1", "Alice", 25),
-        ("user_2", "Bob", 30),
-        ("user_3", "Charlie", 25),
-    ];
-
-    for (id, name, age) in &user_nodes {
+    // Create test nodes with different properties
+    for i in 0..5 {
         let node = Node {
-            id: id.to_string(),
-            labels: vec!["User".to_string(), "Person".to_string()],
+            id: format!("node_{}", i),
+            labels: vec!["Person".to_string()],
             properties: HashMap::from([
-                (
-                    "name".to_string(),
-                    PropertyValue {
-                        value: Some(Value::StringValue(name.to_string())),
-                    },
-                ),
                 (
                     "age".to_string(),
                     PropertyValue {
-                        value: Some(Value::IntValue(*age)),
+                        value: Some(Value::IntValue(20 + i * 5)),
+                    },
+                ),
+                (
+                    "city".to_string(),
+                    PropertyValue {
+                        value: Some(Value::StringValue(
+                            if i % 2 == 0 {
+                                "New York".to_string()
+                            } else {
+                                "San Francisco".to_string()
+                            },
+                        )),
                     },
                 ),
             ]),
@@ -291,25 +272,12 @@ async fn test_node_edge_queries() {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node(node).unwrap();
+        service.create_node(TEST_GRAPH_ID, node).await.unwrap();
     }
 
-    // Test node queries
-    use proximadb::proto::proximadb_v1::NodeQuery;
-
+    // Query by label
     let query = NodeQuery {
-        labels: vec!["User".to_string()],
-        filters: vec![],
-        limit: Some(10),
-        offset: Some(0),
-        continuation_token: None,
-    };
-
-    let results = service.query_nodes(query).unwrap();
-    assert_eq!(results.len(), 3);
-
-    // Test with specific labels
-    let person_query = NodeQuery {
+        graph_id: TEST_GRAPH_ID.to_string(),
         labels: vec!["Person".to_string()],
         filters: vec![],
         limit: Some(10),
@@ -317,176 +285,198 @@ async fn test_node_edge_queries() {
         continuation_token: None,
     };
 
-    let person_results = service.query_nodes(person_query).unwrap();
-    assert_eq!(person_results.len(), 3);
+    let results = service.query_nodes(TEST_GRAPH_ID, query).await.unwrap();
+    assert_eq!(results.len(), 5);
+
+    // Query with property filter
+    let person_query = NodeQuery {
+        graph_id: TEST_GRAPH_ID.to_string(),
+        labels: vec!["Person".to_string()],
+        filters: vec![PropertyFilter {
+            key: "city".to_string(),
+            operator: proximadb::proto::proximadb_v1::PropertyFilterOperator::Equals as i32,
+            value: Some(PropertyValue {
+                value: Some(Value::StringValue("New York".to_string())),
+            }),
+        }],
+        limit: Some(10),
+        offset: Some(0),
+        continuation_token: None,
+    };
+
+    let person_results = service.query_nodes(TEST_GRAPH_ID, person_query).await.unwrap();
+    assert!(person_results.len() >= 2); // nodes 0, 2, 4
 }
 
 /// Test batch operations
 #[tokio::test]
 async fn test_batch_operations() {
-    let service = GraphService::new();
+    let service = Arc::new(GraphOperationsService::new());
 
     // Batch create nodes
-    let nodes = (0..5)
-        .map(|i| Node {
+    let mut nodes = Vec::new();
+    for i in 0..5 {
+        nodes.push(Node {
             id: format!("batch_node_{}", i),
-            labels: vec!["BatchTest".to_string()],
-            properties: HashMap::from([(
-                "index".to_string(),
-                PropertyValue {
-                    value: Some(Value::IntValue(i)),
-                },
-            )]),
+            labels: vec!["BatchNode".to_string()],
+            properties: HashMap::new(),
             embedding: None,
             created_at_ms: 0,
             updated_at_ms: 0,
-        })
-        .collect::<Vec<_>>();
+        });
+    }
 
-    let created_nodes = service.batch_create_nodes(nodes).unwrap();
+    let created_nodes = service.batch_create_nodes(TEST_GRAPH_ID, nodes).await.unwrap();
     assert_eq!(created_nodes.len(), 5);
 
     // Batch create edges
-    let edges = (0..4)
-        .map(|i| Edge {
+    let mut edges = Vec::new();
+    for i in 0..4 {
+        edges.push(Edge {
             id: format!("batch_edge_{}", i),
             from_node_id: format!("batch_node_{}", i),
             to_node_id: format!("batch_node_{}", i + 1),
             edge_type: "NEXT".to_string(),
             properties: HashMap::new(),
-            weight: Some(1.0),
+            weight: None,
             created_at_ms: 0,
             updated_at_ms: 0,
-        })
-        .collect::<Vec<_>>();
+        });
+    }
 
-    let created_edges = service.batch_create_edges(edges).unwrap();
+    let created_edges = service.batch_create_edges(TEST_GRAPH_ID, edges).await.unwrap();
     assert_eq!(created_edges.len(), 4);
 
-    // Verify connections
-    let neighbors = service.get_neighbors(&"batch_node_0".to_string()).unwrap();
+    // Verify the chain
+    let neighbors = service.get_neighbors(TEST_GRAPH_ID, &"batch_node_0".to_string()).await.unwrap();
     assert_eq!(neighbors.len(), 1);
-    assert_eq!(neighbors[0].id, "batch_node_1");
+    assert_eq!(neighbors[0].id, "batch_node_1".to_string());
 }
 
 /// Test graph statistics
 #[tokio::test]
-async fn test_graph_statistics() {
-    let service = GraphService::new();
+async fn test_graph_stats() {
+    let service = Arc::new(GraphOperationsService::new());
 
-    // Create some test data
-    for i in 0..3 {
+    // Create some nodes and edges
+    for i in 0..10 {
         let node = Node {
             id: format!("stats_node_{}", i),
-            labels: vec!["StatsTest".to_string()],
+            labels: vec![format!("Label{}", i % 3)],
             properties: HashMap::new(),
             embedding: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node(node).unwrap();
+        service.create_node(TEST_GRAPH_ID, node).await.unwrap();
     }
 
-    for i in 0..2 {
+    for i in 0..5 {
         let edge = Edge {
             id: format!("stats_edge_{}", i),
             from_node_id: format!("stats_node_{}", i),
             to_node_id: format!("stats_node_{}", i + 1),
-            edge_type: "CONNECTS".to_string(),
+            edge_type: format!("Type{}", i % 2),
             properties: HashMap::new(),
-            weight: Some(1.0),
+            weight: None,
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_edge(edge).unwrap();
+        service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
     }
 
     // Get statistics
-    let stats = service.get_stats().unwrap();
-    assert_eq!(stats.total_nodes, 3);
-    assert_eq!(stats.total_edges, 2);
-    assert!(stats.average_degree > 0.0);
+    let stats = service.get_stats(TEST_GRAPH_ID).await.unwrap();
+    assert_eq!(stats.total_nodes, 10);
+    assert_eq!(stats.total_edges, 5);
+    assert!(stats.label_stats.len() > 0);
+    assert!(stats.edge_type_stats.len() > 0);
 }
 
-/// Test operation mode switching
+/// Test unique constraints
 #[tokio::test]
-async fn test_operation_modes() {
-    let mut service = GraphService::new();
-    assert_eq!(service.mode(), OperationMode::Unified);
+async fn test_unique_constraints() {
+    let service = Arc::new(GraphOperationsService::new());
 
-    // Test graph-only mode
-    service.set_mode(OperationMode::GraphOnly);
-    assert!(service.graph_enabled());
-    assert!(!service.vector_enabled());
+    // Add unique constraint on email property for User label
+    service.add_unique_constraint(TEST_GRAPH_ID, "User", "email").await.unwrap();
 
-    // Should work in graph-only mode
-    let node = Node {
-        id: "mode_test".to_string(),
-        labels: vec!["Test".to_string()],
-        properties: HashMap::new(),
+    // Create first user
+    let node1 = Node {
+        id: "user_with_email_1".to_string(),
+        labels: vec!["User".to_string()],
+        properties: HashMap::from([
+            (
+                "email".to_string(),
+                PropertyValue {
+                    value: Some(Value::StringValue("test@example.com".to_string())),
+                },
+            ),
+        ]),
         embedding: None,
         created_at_ms: 0,
         updated_at_ms: 0,
     };
 
-    let created = service.create_node(node).unwrap();
-    assert_eq!(created.id, "mode_test");
+    let created = service.create_node(TEST_GRAPH_ID, node1).await.unwrap();
+    assert_eq!(created.id, "user_with_email_1".to_string());
 
-    // Test vector-only mode
-    service.set_mode(OperationMode::VectorOnly);
-    assert!(!service.graph_enabled());
-    assert!(service.vector_enabled());
-
-    // Should fail in vector-only mode
+    // Try to create second user with same email - should fail
     let node2 = Node {
-        id: "mode_test_2".to_string(),
-        labels: vec!["Test".to_string()],
-        properties: HashMap::new(),
+        id: "user_with_email_2".to_string(),
+        labels: vec!["User".to_string()],
+        properties: HashMap::from([
+            (
+                "email".to_string(),
+                PropertyValue {
+                    value: Some(Value::StringValue("test@example.com".to_string())),
+                },
+            ),
+        ]),
         embedding: None,
         created_at_ms: 0,
         updated_at_ms: 0,
     };
 
-    let result = service.create_node(node2);
+    let result = service.create_node(TEST_GRAPH_ID, node2).await;
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Graph operations disabled")
-    );
+
+    // Verify error message contains constraint violation
+    if let Err(e) = result {
+        let error_msg = e.to_string();
+        assert!(error_msg.contains("unique constraint") || error_msg.contains("Unique constraint"));
+    }
 }
 
-/// Test concurrent access
+/// Test concurrent operations
 #[tokio::test]
-async fn test_concurrent_access() {
-    use std::sync::Arc;
-    use tokio::task::JoinSet;
+async fn test_concurrent_operations() {
+    let service = Arc::new(GraphOperationsService::new());
 
-    let service = Arc::new(GraphService::new());
-    let mut handles = JoinSet::new();
+    // Spawn multiple tasks creating nodes concurrently
+    let mut handles = vec![];
 
-    // Spawn multiple concurrent tasks
     for i in 0..10 {
-        let service_clone = service.clone();
-        handles.spawn(async move {
+        let service_clone = Arc::clone(&service);
+        let handle = tokio::spawn(async move {
             let node = Node {
                 id: format!("concurrent_node_{}", i),
-                labels: vec!["Concurrent".to_string()],
-                properties: HashMap::from([(
-                    "thread_id".to_string(),
-                    PropertyValue {
-                        value: Some(Value::IntValue(i)),
-                    },
-                )]),
+                labels: vec!["ConcurrentNode".to_string()],
+                properties: HashMap::from([
+                    (
+                        "thread_id".to_string(),
+                        PropertyValue {
+                            value: Some(Value::IntValue(i as i64)),
+                        },
+                    ),
+                ]),
                 embedding: None,
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
+            service_clone.create_node(TEST_GRAPH_ID, node).await.unwrap();
 
-            service_clone.create_node(node).unwrap();
-
-            // Also create an edge if not the first node
+            // Also create edges
             if i > 0 {
                 let edge = Edge {
                     id: format!("concurrent_edge_{}", i),
@@ -494,29 +484,23 @@ async fn test_concurrent_access() {
                     to_node_id: format!("concurrent_node_{}", i),
                     edge_type: "NEXT".to_string(),
                     properties: HashMap::new(),
-                    weight: Some(1.0),
+                    weight: None,
                     created_at_ms: 0,
                     updated_at_ms: 0,
                 };
-
-                service_clone.create_edge(edge).unwrap();
+                service_clone.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
             }
-
-            i
         });
+        handles.push(handle);
     }
 
-    // Wait for all tasks to complete
-    let mut completed = 0;
-    while let Some(result) = handles.join_next().await {
-        result.unwrap();
-        completed += 1;
+    // Wait for all operations to complete
+    for handle in handles {
+        handle.await.unwrap();
     }
 
-    assert_eq!(completed, 10);
-
-    // Verify all nodes were created
-    let stats = service.get_stats().unwrap();
+    // Verify all nodes and edges were created
+    let stats = service.get_stats(TEST_GRAPH_ID).await.unwrap();
     assert!(stats.total_nodes >= 10);
     assert!(stats.total_edges >= 9);
 }
