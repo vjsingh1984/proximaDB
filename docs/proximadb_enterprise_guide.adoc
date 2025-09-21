@@ -1,93 +1,20 @@
-= ProximaDB Enterprise Guide (Consolidated)
-:toc: left
-:toclevels: 2
+= [DEPRECATED] ProximaDB Enterprise Guide
 :icons: font
-:source-highlighter: highlight.js
 
-[abstract]
-**Consolidated navigation** - This guide has been streamlined into focused, role-based documentation. Navigate to the appropriate section based on your needs.
+[WARNING]
+====
+This consolidated guide has been replaced with role-specific documentation:
 
-== 🎯 **Quick Navigation for Enterprise Users**
+**Business Users:**
+* link:business/executive_overview.adoc[Executive Overview]
+* link:business/competitive_advantages.adoc[Competitive Advantages]
 
-=== **💼 Business & Executive Information**
+**Technical Users:**
+* link:enterprise/production_deployment_guide.adoc[Production Deployment]
+* link:enterprise/enterprise_platform_overview.adoc[Enterprise Features]
 
-* **link:business/executive_overview.adoc[Executive Overview]** - Complete business case, ROI analysis, and competitive advantages
-* **link:business/competitive_advantages.adoc[Platform Comparison]** - Feature comparison without vendor bias
-* **link:enterprise/production_deployment_guide.adoc[Production Deployment]** - Enterprise-grade setup and configuration
+**All Users:**
+* link:README.adoc[Documentation Hub]
 
-=== **🔧 Technical & Implementation**
-
-* **link:technical/platform_architecture.adoc[Platform Architecture]** - Multi-level technical architecture with detailed diagrams
-* **link:technical/storage_engine_layouts.adoc[Storage Engine Layouts]** - Comprehensive engine selection and optimization
-* **link:operations/PRODUCTION_RUNBOOK.adoc[Production Operations]** - Day-to-day operational procedures
-
-=== **🚀 Getting Started**
-
-* **link:quickstart/getting_started.adoc[Quick Start Guide]** - 5-minute setup to production deployment
-* **link:README.adoc[Documentation Hub]** - Complete role-based navigation
-
-== 📊 **Enterprise Platform Overview**
-
-[source,mermaid]
-----
-%%{init: {"theme": "default"}}%%
-mindmap
-  root((ProximaDB Enterprise))
-    Business Value
-      90% cost reduction
-      18x faster deployment
-      20.6M ops/sec
-    Technical Excellence
-      7 storage engines
-      3 graph engines
-      Multi-tenant architecture
-    Enterprise Features
-      Production certified
-      Security compliance
-      24/7 support
-    Integration
-      8 LLM providers
-      Cloud native
-      API ecosystem
-----
-
-=== **Key Enterprise Capabilities**
-
-[cols="2,3,2", options="header"]
-|===
-| Category | Capability | Status
-
-| **Performance**
-| 20.6M operations/second
-| ✅ Production validated
-
-| **Cost Efficiency**
-| 90% infrastructure cost reduction
-| ✅ ROI analysis available
-
-| **Deployment Speed**
-| 1 week to production
-| ✅ Enterprise verified
-
-| **Multi-Engine**
-| 7 specialized storage engines
-| ✅ Workload optimized
-
-| **AI Integration**
-| 8 LLM providers supported
-| ✅ Native integration
-
-| **Enterprise Security**
-| Multi-tenant + RBAC + Audit
-| ✅ Compliance ready
-|===
-
-== **For Detailed Information**
-
-**This consolidated guide provides navigation to comprehensive documentation. For detailed technical, business, or operational information, please use the links above to access the specialized documentation.**
-
-**📋 Migration Notice**: This file consolidates content previously scattered across multiple enterprise guides. All detailed information has been moved to role-specific documentation for better user experience.
-
----
-
-**🏢 Enterprise Support**: For enterprise deployment assistance, contact our team through the production deployment guide.
+This file is maintained for backward compatibility only.
+====

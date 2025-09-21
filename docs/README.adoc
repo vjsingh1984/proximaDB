@@ -1,251 +1,138 @@
-= ProximaDB Documentation Hub
+= ProximaDB Documentation
 :toc: left
-:toclevels: 3
+:toclevels: 2
 :icons: font
-:source-highlighter: highlight.js
-:imagesdir: assets
 
 [.lead]
-**Complete documentation for the unified AI intelligence platform** +
-_Navigate by your role and use case for optimized learning paths_
+**Complete technical documentation for ProximaDB** +
+_Organized by use case and technical depth_
 
-== Documentation by Audience
+== Quick Navigation
 
-=== 🚀 **Developers & Engineers**
-
-==== Getting Started (5 minutes)
-* **link:quickstart/getting_started.adoc[Quick Start Guide]** - Docker to production in 5 minutes
-* **link:reference/graph_api_reference.adoc[Graph API Reference]** - Complete API documentation
-* **link:reference/sks_technical_reference.adoc[Technical Reference]** - Advanced technical specifications
-
-==== Technical Implementation
-* **link:technical/platform_architecture.adoc[System Architecture]** - Multi-engine, AI-native design
-* **link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide]** - Choose optimal storage engines
-* **link:technical/storage_engine_layouts.adoc[Storage Engine Layouts]** - Detailed engine specifications
-
-=== 💼 **Decision Makers & Executives**
-
-==== Business Value
-* **link:business/executive_overview.adoc[Executive Overview]** - 90% cost reduction, 18x faster deployment
-* **link:business/competitive_advantages.adoc[Competitive Advantages]** - Feature comparison without vendor bias
-* **link:PERFORMANCE.adoc[Performance Benchmarks]** - Validated performance with realistic embeddings (332.3K vec/s, 1.175M elem/s @ 1536D OpenAI Ada)
-
-==== Strategic Planning
-* **link:technical/ai_intelligence_platform.adoc[AI Intelligence Platform]** - LLM integration and natural language processing
-* **link:enterprise/production_deployment_guide.adoc[Production Deployment]** - Enterprise deployment strategy
-
-=== 🏢 **Platform & Operations Teams**
-
-==== Production Deployment
-* **link:enterprise/production_deployment_guide.adoc[Production Deployment Guide]** - Enterprise-grade setup
-* **link:operations/PRODUCTION_RUNBOOK.adoc[Production Operations]** - Day-to-day operational procedures
-* **link:security.adoc[Security Framework]** - Comprehensive security and compliance
-
-==== Day-to-Day Operations
-* **link:security/unified_authentication_flow.adoc[Authentication Flow]** - Unified authentication system
-* **link:enterprise/enterprise_platform_overview.adoc[Enterprise Platform]** - Enterprise features overview
-* **link:enterprise/enterprise_deployment.adoc[Enterprise Deployment]** - Automated deployment and scaling
-
-== Feature-Based Navigation
-
-=== 🔍 **Core Capabilities**
-
-[source,mermaid]
-----
-mindmap
-  root((ProximaDB))
-    Vector Intelligence
-      Multiple storage engines
-      Hardware acceleration
-    Graph Analytics
-      Relationship discovery
-      Pattern analysis
-      Knowledge graphs
-    AI Integration
-      Multiple LLM providers
-      Natural language queries
-      Business intelligence
-    Enterprise Features
-      Multi-tenant architecture
-      Security compliance
-      Monitoring analytics
-----
-
-=== 📊 **Platform Comparison**
-
-[cols="3,2,2,2,2", options="header"]
+[cols="2,3", width="100%"]
 |===
-| Capability | Traditional Approach | Vector-Only Solutions | Graph-Only Solutions | ProximaDB Unified
+|**Need** |**Start Here**
 
-| **Vector Operations**
-| ❌ Requires separate tools
-| ✅ Optimized
-| ❌ Limited support
-| ✅ **5.1M ops/sec @ 768D**
+|Quick setup
+|link:quickstart/getting_started.adoc[Getting Started Guide]
 
-| **Graph Analytics**
-| ❌ Separate platform needed
-| ❌ Not supported
-| ✅ Specialized
-| ✅ **Unified intelligence**
+|Performance metrics
+|link:benchmarks/README.adoc[Benchmark Suite]
 
-| **AI Integration**
-| ❌ Custom development
-| ⚠️ Basic embeddings
-| ❌ Manual integration
-| ✅ **8 LLM providers**
+|Storage engine selection
+|link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide]
 
-| **Enterprise Security**
-| ⚠️ Complex multi-vendor
-| ⚠️ Varies by vendor
-| ⚠️ Platform-specific
-| ✅ **Comprehensive framework**
+|Production deployment
+|link:enterprise/production_deployment_guide.adoc[Production Guide]
 
-| **Total Cost**
-| 💰 $400K+ annually
-| 💰 $100K+ annually
-| 💰 $150K+ annually
-| 💰 **$25K annually**
-
-| **Deployment Time**
-| ⏱️ 6-18 months
-| ⏱️ 2-6 months
-| ⏱️ 3-8 months
-| ⏱️ **1 week**
+|API reference
+|link:reference/graph_api_reference.adoc[API Documentation]
 |===
 
-== Performance Benchmarks
+== Documentation Structure
 
-=== **Validated Performance Leadership**
+=== 🚀 Getting Started
+* link:quickstart/getting_started.adoc[**Getting Started**] - Installation and first steps
+* link:../README.adoc[**Main README**] - Project overview and quick start
 
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e3a8a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e40af", "lineColor": "#1e40af", "sectionBkgColor": "#dbeafe", "altSectionBkgColor": "#bfdbfe", "gridColor": "#3b82f6", "tertiaryColor": "#f8fafc", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f1f5f9", "nodeTextColor": "#1e40af", "c0": "#1e3a8a", "c1": "#2563eb", "c2": "#3b82f6", "c3": "#60a5fa", "c4": "#93c5fd"}}}%%
-xychart-beta
-    title "Distance Computation Performance Comparison"
-    x-axis [128D, 256D, 512D, 1024D, 1536D]
-    y-axis "Operations per Second (millions)" 0 --> 25
-    bar [20.6, 8.4, 3.8, 2.1, 1.2]
-    bar [8.5, 4.2, 2.1, 1.1, 0.6]
-    bar [5.8, 2.9, 1.5, 0.8, 0.4]
-    bar [3.5, 1.8, 0.9, 0.5, 0.3]
-----
+=== 📊 Performance & Benchmarks
+* link:benchmarks/README.adoc[**Benchmark Overview**] - Performance test suite
+* link:benchmarks/BENCHMARK_ANALYSIS.adoc[**Detailed Analysis**] - XY charts and decision matrices
+* link:benchmarks/CORE_BENCHMARKS.adoc[**Core Benchmarks**] - Distance computation, SIMD
+* link:benchmarks/STORAGE_BENCHMARKS.adoc[**Storage Benchmarks**] - Engine comparisons
+* link:benchmarks/OPTIMIZATION_GUIDE.adoc[**Optimization Guide**] - Tuning strategies
 
-**Legend:** ProximaDB (Blue) | Enterprise Solution A (Green) | Enterprise Solution B (Orange) | Enterprise Solution C (Red)
+=== 🏗️ Technical Architecture
+* link:technical/platform_architecture.adoc[**Platform Architecture**] - System design
+* link:technical/storage_engine_layouts.adoc[**Storage Engine Layouts**] - Engine internals
+* link:technical/ai_intelligence_platform.adoc[**AI Integration**] - LLM and NLP capabilities
+* link:technical/graph_persistence_architecture.adoc[**Graph Architecture**] - Graph storage design
 
-=== **Performance by Storage Engine**
+=== 🔧 Implementation Guides
+* link:guides/engine_selection_optimization_guide.adoc[**Engine Selection**] - Choose optimal storage
+* link:unified_strategy_usage_guide.adoc[**Unified Strategy**] - Read access patterns
 
-[cols="2,2,2,3", options="header"]
+=== 🏢 Enterprise & Production
+* link:enterprise/production_deployment_guide.adoc[**Production Deployment**] - Enterprise setup
+* link:enterprise/enterprise_platform_overview.adoc[**Enterprise Features**] - Advanced capabilities
+* link:operations/PRODUCTION_RUNBOOK.adoc[**Operations Runbook**] - Day-to-day operations
+
+=== 🔒 Security
+* link:security.adoc[**Security Overview**] - Security framework
+* link:security/unified_authentication_flow.adoc[**Authentication**] - Auth flows
+
+=== 💼 Business Documentation
+* link:business/executive_overview.adoc[**Executive Overview**] - Business case
+* link:business/competitive_advantages.adoc[**Competitive Analysis**] - Market comparison
+
+=== 📖 API Reference
+* link:reference/graph_api_reference.adoc[**Graph API**] - Graph operations
+* link:reference/sks_technical_reference.adoc[**Technical Reference**] - Advanced specs
+
+== Key Technical Concepts
+
+=== Storage Engines
+[cols="1,2,1,1", width="100%"]
 |===
-| Storage Engine | Throughput | Memory Efficiency | Best Use Case
+|Engine |Use Case |Compression |Speed
 
-| **SST Engine**
-| 200K vec/sec
-| 1GB/1M vectors
-| Real-time applications, OLTP workloads
-
-| **VIPER Engine**
-| 80K vec/sec
-| 600MB/1M vectors
-| Analytics, business intelligence, compression
-
-| **NOVA Engine**
-| 120K vec/sec
-| 400MB/1M vectors
-| Advanced research, maximum compression
-
-| **SWIFT Engine**
-| 150K vec/sec
-| 1.2GB/1M vectors
-| Ultra-low latency, sub-millisecond queries
+|SST |High writes |4-8x |Fast
+|VIPER |Analytics |16-32x |Medium
+|NOVA |Mixed |8-16x |Balanced
+|SWIFT |Low latency |2-4x |Fastest
+|RAPTOR |Adaptive |4-16x |Dynamic
+|PRISM |Memory-limited |8-12x |Efficient
+|HELIX |Time-series |6-10x |Optimized
 |===
 
-== Learning Paths
+=== Performance Characteristics
+* **Throughput**: 332.3K vectors/sec @ 1536D
+* **Latency**: < 10ms @ 99th percentile
+* **Compression**: 4-32x with adaptive quantization
+* **Memory**: 0.5-3KB per vector
 
-=== **30-Day Learning Journey**
+=== API Endpoints
+* **REST API**: Port 5678
+* **gRPC API**: Port 5679
+* **Metrics**: Port 9090 (Prometheus)
 
-[source,mermaid]
+== Common Tasks
+
+=== Running Benchmarks
+[source,bash]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e3a8a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e40af", "lineColor": "#1e40af", "sectionBkgColor": "#dbeafe", "altSectionBkgColor": "#bfdbfe", "gridColor": "#3b82f6", "tertiaryColor": "#f8fafc", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f1f5f9", "nodeTextColor": "#1e40af"}}}%%
-flowchart LR
-    subgraph "Week 1: Foundation"
-        A1["🚀 Quick Start<br/>Setup & Deploy"]
-        A2["⚙️ Basic Operations<br/>CRUD & Search"]
-        A3["🎯 Engine Selection<br/>Optimize Performance"]
-    end
+# All benchmarks
+cargo bench
 
-    subgraph "Week 2: Integration"
-        B1["🔌 API Integration<br/>REST & gRPC"]
-        B2["⚡ Performance Tuning<br/>Hardware Acceleration"]
-        B3["🔒 Security Setup<br/>Authentication"]
-    end
+# Specific benchmark suite
+cargo bench --bench bench_04_storage_comparison
 
-    subgraph "Week 3: Advanced"
-        C1["📊 Graph Analytics<br/>Relationships"]
-        C2["🤖 AI Integration<br/>LLM Providers"]
-        C3["🏢 Multi-Tenant<br/>Architecture"]
-    end
-
-    subgraph "Week 4: Production"
-        D1["🚀 Production Deploy<br/>Enterprise Setup"]
-        D2["📈 Monitoring<br/>Observability"]
-        D3["🎓 Operations<br/>Training Complete"]
-    end
-
-    A1 --> A2 --> A3
-    A3 --> B1
-    B1 --> B2 --> B3
-    B3 --> C1
-    C1 --> C2 --> C3
-    C3 --> D1
-    D1 --> D2 --> D3
-
-    style A1 fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style A2 fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style A3 fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style B1 fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style B2 fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style B3 fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style C1 fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style C2 fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style C3 fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style D1 fill:#1e3a8a,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style D2 fill:#2563eb,stroke:#1e40af,stroke-width:2px,color:#ffffff
-    style D3 fill:#10b981,stroke:#059669,stroke-width:3px,color:#ffffff
+# With custom parameters
+cargo bench -- --warm-up-time 1 --measurement-time 5
 ----
 
-=== **Role-Based Quick Paths**
+=== Configuration
+See link:../config/config.toml[config.toml] for full configuration options.
 
-**🔧 Developer (Technical Focus)**
-1. **link:quickstart/getting_started.adoc[5-Minute Quick Start]** → **link:reference/graph_api_reference.adoc[API Reference]** → **link:technical/platform_architecture.adoc[Architecture]**
-2. Time investment: 2-4 hours
-3. Outcome: Production-ready integration
+=== Troubleshooting
+* Check link:operations/PRODUCTION_RUNBOOK.adoc[Operations Runbook]
+* Review link:benchmarks/OPTIMIZATION_GUIDE.adoc[Optimization Guide]
+* See GitHub Issues for known problems
 
-**💼 Business Stakeholder (Value Focus)**
-1. **link:business/executive_overview.adoc[Executive Overview]** → **link:business/competitive_advantages.adoc[Competitive Analysis]** → **link:PERFORMANCE.adoc[Performance Benchmarks]**
-2. Time investment: 30-60 minutes
-3. Outcome: Business case validation
+== Documentation Standards
 
-**🏢 Platform Engineer (Operations Focus)**
-1. **link:enterprise/production_deployment_guide.adoc[Production Deployment]** → **link:operations/PRODUCTION_RUNBOOK.adoc[Operations Guide]** → **link:security.adoc[Security Framework]**
-2. Time investment: 1-2 days
-3. Outcome: Enterprise-ready deployment
+All documentation follows these standards:
+* **Format**: AsciiDoc (`.adoc`)
+* **Diagrams**: Mermaid with ProximaDB theme
+* **Examples**: Tested, working code
+* **Benchmarks**: Real measurements on M4 Pro
 
-== Additional Resources
+== Contributing to Docs
 
-=== **Community & Support**
-- **GitHub Repository**: https://github.com/vjsingh1984/proximadb
-- **Documentation Issues**: Report documentation gaps and improvements
-- **Community Discussions**: Technical questions and use cases
-- **Enterprise Support**: Priority support for production deployments
+To contribute documentation:
+1. Follow AsciiDoc format
+2. Use Mermaid for diagrams
+3. Test all code examples
+4. Update this index if adding new docs
 
-=== **Latest Updates**
-- **Performance**: 20.6M ops/sec benchmarks validated (September 2025)
-- **Storage Engines**: 7 specialized engines with workload optimization
-- **AI Integration**: 8 LLM providers with natural language processing
-- **Enterprise Features**: Multi-tenant architecture with comprehensive security
-
----
-
-**Transform your AI infrastructure from fragmented tools to unified intelligence.** +
-**ProximaDB: 90% cost reduction • 18x faster deployment • 20M+ ops/sec performance**
+See link:../CONTRIBUTING.adoc[Contributing Guide] for details.

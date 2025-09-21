@@ -1,614 +1,278 @@
 = ProximaDB: Unified AI Intelligence Platform
-:toc: left
-:toclevels: 3
+:toc: macro
+:toclevels: 2
 :icons: font
-:source-highlighter: highlight.js
-:imagesdir: docs/assets
 
 [.lead]
-**The unified intelligence platform that replaces fragmented AI infrastructure** +
-_95% cost reduction • 18x faster deployment • 332.3K vectors/s @ 1536D • Realistic embedding benchmarks_
+**The unified intelligence platform combining vector search, graph analytics, and AI in a single system** +
+_95% cost reduction • 332.3K vectors/sec @ 1536D • 7 storage engines • 8 LLM providers_
 
 image:https://img.shields.io/badge/Status-Production%20Ready-brightgreen[Production Ready]
-image:https://img.shields.io/badge/Performance-332.3K%20vectors%2Fs%20%40%201536D-success[Performance]
+image:https://img.shields.io/badge/Performance-332.3K%20vectors%2Fs-success[Performance]
 image:https://img.shields.io/badge/Storage-7%20Engines-blue[Storage Engines]
 image:https://img.shields.io/badge/AI-8%20LLM%20Providers-orange[AI Providers]
-image:https://img.shields.io/badge/Deployment-1%20Week-green[Fast Deployment]
-image:https://img.shields.io/badge/Cost-95%25%20Reduction-purple[Cost Savings]
 
-== Platform Transformation
+toc::[]
 
-=== **Replace Fragmented Infrastructure with Unified Intelligence**
+== Quick Start
 
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
-graph TB
-    subgraph "TRADITIONAL: FRAGMENTED INFRASTRUCTURE"
-        A1[Vector Database<br/>$100K/year<br/>Single-purpose tool]
-        A2[Graph Database<br/>$150K/year<br/>Separate platform]
-        A3[AI/LLM Services<br/>$200K/year<br/>Custom development]
-        A4[Integration Costs<br/>$75K/year<br/>Multiple APIs]
-    end
-
-    subgraph "PROXIMADB: UNIFIED PLATFORM"
-        B1[Complete Intelligence Platform<br/>$25K/year total<br/>Vector + Graph + AI]
-        B2[7 Specialized Engines<br/>Workload optimization<br/>332.3K vectors/s @ 1536D]
-        B3[8 LLM Providers<br/>Native AI integration<br/>Natural language queries]
-        B4[Enterprise Security<br/>Multi-tenant architecture<br/>1-week deployment]
-    end
-
-    A1 -.->|95% Cost Reduction| B1
-    A2 -.->|18x Faster Setup| B2
-    A3 -.->|2-27x Performance| B3
-    A4 -.->|Single Platform| B4
-
-    style A1 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style A2 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style A3 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style A4 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style B1 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style B2 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style B3 fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style B4 fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
-----
-
-=== **Business Impact Analysis**
-
-[cols="3,2,2,2", options="header"]
-|===
-| Business Factor | Traditional Multi-Vendor | Single-Vendor Solutions | ProximaDB Unified
-
-| **Annual Platform Cost**
-| $525K (multiple systems)
-| $100-200K (single platform)
-| **$25K (all capabilities)**
-
-| **Deployment Timeline**
-| 6-18 months
-| 2-6 months
-| **1 week to production**
-
-| **Performance Operations**
-| Limited by integration
-| 0.5-2M operations/second
-| **332.3K vectors/s @ 1536D**
-
-| **Business Value**
-| **Baseline**
-| **50-75% cost reduction**
-| **95% cost reduction, 18x faster**
-|===
-
-== 🏗️ Unified Intelligence Architecture
-
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
-graph TB
-    subgraph "QUERY INTERFACE"
-        A[Natural Language<br/>Show me trending customers]
-        B[REST API<br/>Port 5678]
-        C[gRPC API<br/>Port 5679]
-    end
-
-    subgraph "AI INTELLIGENCE LAYER"
-        D[8 LLM Providers<br/>OpenAI Anthropic Azure]
-        E[Business Intelligence<br/>Automated insights]
-        F[Query Translation<br/>English to SQL]
-    end
-
-    subgraph "STORAGE ENGINES - WORKLOAD OPTIMIZED"
-        G[SST Engine<br/>365ps query<br/>724μs @ 90% sparse]
-        H[VIPER Engine<br/>100μs constant<br/>255.71ns compaction]
-        I[NOVA Engine<br/>372ps query<br/>824μs @ 90% sparse]
-        J[SWIFT Engine<br/>101μs flush<br/>FastLanes encoding]
-    end
-
-    subgraph "GRAPH INTELLIGENCE"
-        K[ORION Engine<br/>Relationship discovery]
-        L[PULSAR Engine<br/>Pattern analysis]
-        M[QUASAR Engine<br/>Knowledge graphs]
-    end
-
-    A --> D
-    B --> E
-    C --> F
-    D --> G
-    E --> H
-    F --> I
-    G --> K
-    H --> L
-    I --> M
-
-    style A fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
-    style B fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style F fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style H fill:#0ea5e9,stroke:#0284c7,stroke-width:2px,color:#ffffff
-    style I fill:#6366f1,stroke:#4f46e5,stroke-width:2px,color:#ffffff
-    style J fill:#0d9488,stroke:#0f766e,stroke-width:2px,color:#ffffff
-    style K fill:#e11d48,stroke:#be185d,stroke-width:2px,color:#ffffff
-    style L fill:#ca8a04,stroke:#a16207,stroke-width:2px,color:#000000
-    style M fill:#64748b,stroke:#475569,stroke-width:2px,color:#ffffff
-----
-
-== ⚡ Performance That Scales
-
-=== **Production-Ready Performance for Real AI Workloads**
-
-[NOTE]
-====
-**Performance Benchmark Context**
-
-**Test Environment**: Apple M4 Pro (14 cores - 10 performance, 4 efficiency), 48 GB memory, macOS 15.6.1
-
-**Realistic Embedding Generators**:
-- **BERT Model (768D)**: Normal distribution (μ=0, σ=1.5), range [-5, 5], mimics actual BERT embeddings
-- **OpenAI Ada Model (1536D)**: Positive-skewed distribution, mean ~0.3, <20% negative values, matches text-embedding-ada-002 characteristics
-- **Implementation**: Pure Rust using Box-Muller transform for accurate statistical distributions
-- **Dataset Sizes**: 1K, 5K, 10K vectors per benchmark
-- **Sparsity Levels**: 10%, 30%, 50%, 70%, 90% sparse vectors tested
-- **Realistic Distributions**: BERT (normal distribution μ=0, σ=1.5), OpenAI Ada (positive-skewed with slight negative tail)
-
-**Measurement Methodology**:
-- Criterion.rs statistical benchmarking framework
-- Minimum 10 iterations per measurement
-- Warm cache for search, cold start for flush/compaction
-- Results show median with confidence intervals
-====
-
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
-graph LR
-    subgraph "Performance Benchmarks (Realistic Embeddings)"
-        A[768D BERT<br/>5.1M ops/sec<br/>197ns latency]
-        B[1536D OpenAI Ada<br/>1.175M elem/s<br/>332.3K vectors/s]
-        C[Vector Creation<br/>312.3K-332.3K/s<br/>1K-10K batches]
-        D[Distance Compute<br/>1.167M elem/s<br/>@ 1536D]
-    end
-
-    style A fill:#16a34a,stroke:#15803d,stroke-width:3px,color:#ffffff
-    style B fill:#2563eb,stroke:#1d4ed8,stroke-width:3px,color:#ffffff
-    style C fill:#ea580c,stroke:#c2410c,stroke-width:3px,color:#ffffff
-    style D fill:#9333ea,stroke:#7c3aed,stroke-width:3px,color:#ffffff
-----
-
-=== **Memory Efficiency by Engine**
-
-[cols="2,2,2,3", options="header"]
-|===
-| Storage Engine | Memory Usage | Throughput | Best For
-
-| **SST Engine**
-| 1GB/1M vectors
-| 200K vec/sec
-| Real-time applications, OLTP
-
-| **VIPER Engine**
-| 600MB/1M vectors
-| 80K vec/sec
-| Analytics, business intelligence
-
-| **NOVA Engine**
-| 400MB/1M vectors
-| 120K vec/sec
-| Research, maximum compression
-
-| **SWIFT Engine**
-| 1.2GB/1M vectors
-| 150K vec/sec
-| Ultra-low latency applications
-|===
-
-== 🎯 Real-World Use Cases
-
-=== **Enterprise Knowledge Intelligence**
-
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
-flowchart LR
-    A[CEO asks:<br/>Who are our top customers<br/>by profitability this quarter?] --> B[ProximaDB AI<br/>Natural Language Processing]
-    B --> C[Query Translation<br/>English to Data Operations]
-    C --> D[Vector Search<br/>Customer similarity analysis]
-    D --> E[Graph Analysis<br/>Relationship discovery]
-    E --> F[Business Intelligence<br/>Automated insights]
-    F --> G[Answer:<br/>Based on analysis of 50K customers<br/>here are your top 10 by 40% profit margin<br/>with growth recommendations]
-
-    style A fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
-    style B fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style D fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style E fill:#e11d48,stroke:#be185d,stroke-width:2px,color:#ffffff
-    style F fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style G fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-----
-
-=== **AI-Powered Applications**
-
-- **📊 Intelligent Analytics**: "Show me sales trends that correlate with customer sentiment"
-- **🔍 Semantic Search**: Find documents by meaning, not just keywords
-- **🤖 Recommendation Systems**: Real-time personalization with graph relationships
-- **📈 Business Intelligence**: Natural language queries over complex datasets
-- **🔗 Knowledge Graphs**: Discover hidden relationships in enterprise data
-
-== 🚀 5-Minute Quick Start
-
-=== **Install and Run**
-
+=== Docker Installation (Recommended)
 [source,bash]
 ----
-# Clone and build
-git clone https://github.com/vjsingh1984/proximadb.git
-cd proximadb
-cargo build --release
+# Pull and run ProximaDB
+docker pull proximadb/proximadb:latest
+docker run -d -p 5678:5678 -p 5679:5679 -v proximadb_data:/data proximadb/proximadb:latest
 
-# Start server (ports 5678 REST, 5679 gRPC)
-./target/release/proximadb-server --config config/config.toml
-
-# Verify health
+# Verify installation
 curl http://localhost:5678/health
 ----
 
-=== **Your First AI Query**
+=== Build from Source
+[source,bash]
+----
+# Clone repository
+git clone https://github.com/vjsingh1984/proximaDB.git
+cd proximaDB
 
+# Build release version
+cargo build --release
+
+# Run server
+./target/release/proximadb-server
+----
+
+=== Python Client
 [source,python]
 ----
-import proximadb
+from proximadb import ProximaClient
 
 # Connect to ProximaDB
-client = proximadb.Client("localhost:5678")
+client = ProximaClient("localhost:5678")
 
-# Create a knowledge collection
-collection = client.create_collection("business_docs", dimension=1536)
+# Create collection with optimal engine selection
+collection = client.create_collection(
+    name="products",
+    dimension=1536,
+    engine="auto"  # Automatically selects best engine
+)
 
-# Add documents with embeddings
-documents = [
-    {"text": "Q3 sales increased 25% driven by enterprise customers",
-     "metadata": {"type": "sales_report", "quarter": "Q3"}},
-    {"text": "Customer satisfaction scores highest in premium tier",
-     "metadata": {"type": "survey", "category": "satisfaction"}}
-]
+# Insert vectors
+collection.insert(vectors=[...], metadata=[...])
 
-# ProximaDB automatically handles embeddings
-collection.insert_documents(documents)
-
-# Ask questions in natural language
-answer = client.ask("What drove our Q3 growth?")
-print(answer)
-# Result: "Q3 sales increased 25% driven by enterprise customers,
-#          based on analysis of your sales reports..."
-
-# Vector similarity search
-similar = collection.search("enterprise customer growth", top_k=5)
-
-# Graph relationships
-relationships = collection.find_related("sales_report", "satisfaction")
+# Search with natural language
+results = collection.search(
+    query="Show me trending products from last week",
+    top_k=10
+)
 ----
 
-=== **Enterprise Configuration**
+== Key Features
+
+=== 🚀 Unified Intelligence Platform
+* **Vector Search**: 332.3K vectors/sec @ 1536D with SIMD acceleration
+* **Graph Analytics**: Real-time relationship discovery and pattern analysis
+* **AI Integration**: 8 LLM providers with natural language queries
+* **Multi-Engine**: 7 specialized storage engines for different workloads
+
+=== 📊 Performance Highlights
+[cols="2,3,2"]
+|===
+|Metric |Performance |Benchmark
+
+|**Throughput**
+|332.3K vectors/sec
+|OpenAI Ada 1536D
+
+|**Latency**
+|< 10ms @ 99th percentile
+|1M vectors
+
+|**Compression**
+|4-32x reduction
+|Adaptive quantization
+
+|**Memory**
+|0.5-3KB per vector
+|With optimization
+|===
+
+=== 🏢 Enterprise Ready
+* **Security**: SSO, RBAC, encryption at rest/transit
+* **Multi-tenancy**: Isolated tenant resources
+* **Deployment**: Docker, Kubernetes, cloud-native
+* **Monitoring**: Prometheus, Grafana, OpenTelemetry
+
+== Architecture Overview
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
+graph TB
+    subgraph "API Layer"
+        REST[REST API :5678]
+        GRPC[gRPC API :5679]
+        SQL[SQL Interface]
+    end
+
+    subgraph "Intelligence Layer"
+        AI[AI/LLM Integration]
+        NLP[Natural Language]
+        BI[Business Intelligence]
+    end
+
+    subgraph "Storage Engines"
+        SST[SST - Write-optimized]
+        VIPER[VIPER - Columnar]
+        NOVA[NOVA - Progressive]
+        SWIFT[SWIFT - Low-latency]
+    end
+
+    REST --> AI
+    GRPC --> AI
+    SQL --> NLP
+    AI --> SST
+    AI --> VIPER
+    AI --> NOVA
+    AI --> SWIFT
+----
+
+== Storage Engine Selection
+
+[cols="1,2,2,2"]
+|===
+|Engine |Best For |Compression |Latency
+
+|**SST**
+|High-velocity updates
+|4-8x
+|0.5-2ms
+
+|**VIPER**
+|Analytics, cold storage
+|16-32x
+|3-8ms
+
+|**NOVA**
+|Mixed workloads
+|8-16x
+|1-4ms
+
+|**SWIFT**
+|Real-time queries
+|2-4x
+|0.4-1ms
+
+|**RAPTOR**
+|Dynamic workloads
+|4-16x adaptive
+|1-5ms
+
+|**PRISM**
+|Memory-constrained
+|8-12x
+|2-6ms
+
+|**HELIX**
+|Time-series data
+|6-10x
+|1-3ms
+|===
+
+== Configuration
+
+Basic configuration in `config/config.toml`:
 
 [source,toml]
 ----
-# config/production.toml
 [server]
-host = "0.0.0.0"
-rest_port = 5678
+http_port = 5678
 grpc_port = 5679
+data_dir = "/data"
 
 [storage]
-# Choose your optimization
-engine = "sst"         # Real-time: SST, Analytics: VIPER
-data_path = "/data/proximadb"
-max_memory = "32GB"
+default_engine = "auto"  # Automatic engine selection
+metadata_backend = "rocksdb"
+
+[compute]
+enable_simd = true
+quantization = "adaptive"
 
 [ai]
-# Configure your LLM providers
-default_provider = "openai"
-providers = ["openai", "anthropic", "azure_openai"]
-
-[performance]
-# Hardware acceleration
-enable_simd = true
-threads = 16
-cache_size = "8GB"
+providers = ["openai", "anthropic", "azure"]
+default_model = "gpt-4"
 ----
 
-== 💼 Enterprise Value Proposition
+== Documentation
 
-=== **Total Cost of Ownership**
+* 📚 **link:docs/README.adoc[Documentation Hub]** - Complete documentation
+* 🚀 **link:docs/quickstart/getting_started.adoc[Getting Started]** - Detailed setup guide
+* 📊 **link:docs/benchmarks/README.adoc[Performance Benchmarks]** - Comprehensive benchmarks
+* 🏢 **link:docs/enterprise/production_deployment_guide.adoc[Production Deployment]** - Enterprise setup
+* 🔧 **link:docs/guides/engine_selection_optimization_guide.adoc[Optimization Guide]** - Performance tuning
 
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
-pie title "Annual Enterprise Costs Comparison"
-    "Traditional Fragmented Solution" : 425
-    "ProximaDB Unified Platform" : 25
-    "Annual Savings Achieved" : 400
-----
+== Development
 
-=== **Why Enterprises Choose ProximaDB**
-
-[cols="3,2,3", options="header"]
-|===
-| Business Impact | Traditional Approach | ProximaDB Advantage
-
-| **Time to Value**
-| 6-18 months
-| 1 week deployment
-
-| **Annual Cost**
-| $425K+ (multiple vendors)
-| $25K unified platform
-
-| **Team Productivity**
-| Multiple specialists needed
-| Single platform expertise
-
-| **Integration Complexity**
-| Complex multi-vendor setup
-| Unified API and interface
-
-| **AI Capabilities**
-| Custom development required
-| Built-in intelligence platform
-
-| **Performance**
-| Limited by weakest component
-| 20M+ ops/sec across platform
-|===
-
-== 🛠️ Advanced Capabilities
-
-=== **Multi-Engine Architecture**
-
-**Choose the right engine for each workload:**
-
-- **SST Engine**: 200K+ vec/sec for real-time applications
-- **VIPER Engine**: Columnar analytics with 90% compression
-- **NOVA Engine**: Advanced research with multi-resolution
-- **SWIFT Engine**: Sub-1ms latency for ultra-fast queries
-- **RAPTOR Engine**: Adaptive optimization for dynamic workloads
-- **PRISM Engine**: 60% memory reduction for resource-constrained environments
-- **HELIX Engine**: Time-series optimization for temporal data
-
-=== **AI Integration Platform**
-
-**Native support for 8 LLM providers:**
-- OpenAI (GPT-4, GPT-3.5)
-- Anthropic (Claude)
-- Azure OpenAI Service
-- AWS Bedrock
-- Cohere
-- Ollama (self-hosted)
-- vLLM (high-performance)
-- HuggingFace (open models)
-
-=== **Graph Intelligence**
-
-**3 specialized graph engines:**
-- **ORION**: High-performance relationship discovery
-- **PULSAR**: Advanced pattern analysis and traversal
-- **QUASAR**: Knowledge graph construction and reasoning
-
-== 📈 Performance Benchmarks
-
-=== **Hardware-Accelerated Operations**
-
-[cols="2,2,2", options="header"]
-|===
-| Vector Dimension | Throughput | Latency
-
-| **128D DotProduct**
-| 20.6M ops/sec
-| 0.049μs
-
-| **256D Euclidean**
-| 7.9M ops/sec
-| 0.126μs
-
-| **512D Cosine**
-| 3.7M ops/sec
-| 0.271μs
-
-| **1536D Manhattan**
-| 1.2M ops/sec
-| 0.833μs
-|===
-
-=== **Deployment Flexibility**
-
-- **Cloud Native**: AWS, Azure, GCP with native integrations
-- **On-Premises**: Complete self-hosted deployment
-- **Hybrid**: Mix cloud and on-premises as needed
-- **Edge**: Optimized for resource-constrained environments
-
-== 🔧 Developer Experience
-
-=== **Multiple API Options**
-
+=== Building and Testing
 [source,bash]
 ----
-# REST API (Port 5678)
-curl -X POST http://localhost:5678/v1/collections \
-  -H "Content-Type: application/json" \
-  -d '{"name": "docs", "dimension": 1536}'
+# Run tests
+cargo test --all
 
-# gRPC API (Port 5679) - High performance
-grpc-client --endpoint localhost:5679 create_collection
+# Run benchmarks
+cargo bench
 
-# Natural Language Interface
-curl -X POST http://localhost:5678/v1/ai/ask \
-  -d '{"question": "What are our top customers?"}'
+# Check code
+cargo clippy -- -D warnings
+
+# Format code
+cargo fmt
 ----
 
-=== **SDK Support**
-
-- **Python**: Full-featured client with pandas integration
-- **Rust**: Native high-performance client
-- **JavaScript/TypeScript**: Web and Node.js support
-- **Go**: Enterprise backend integration
-- **Java**: JVM ecosystem support
-
-== 📚 Documentation Hub
-
-=== **🚀 Get Started (5 Minutes)**
-
-[cols="2,3,1", options="header"]
-|===
-| Resource | Description | Time
-
-| **link:docs/quickstart/getting_started.adoc[Quick Start Guide]**
-| Docker to production in 5 minutes
-| **5 min**
-
-| **link:docs/README.adoc[Documentation Hub]**
-| Role-based navigation for all users
-| **2 min**
-
-| **link:docs/business/executive_overview.adoc[Executive Overview]**
-| Business value and ROI analysis
-| **10 min**
-|===
-
-=== **👨‍💼 Business Stakeholders**
-
-[cols="2,3,1", options="header"]
-|===
-| Resource | Description | Audience
-
-| **link:docs/business/executive_overview.adoc[Executive Overview]**
-| 95% cost reduction, competitive advantages
-| **C-level, VPs**
-
-| **link:docs/business/competitive_advantages.adoc[Platform Comparison]**
-| Feature comparison without vendor bias
-| **Decision makers**
-
-| **link:docs/business/executive_overview.adoc[ROI Analysis]**
-| Calculate savings and performance gains
-| **Finance, Procurement**
-|===
-
-=== **👨‍💻 Developers & Engineers**
-
-[cols="2,3,1", options="header"]
-|===
-| Resource | Description | Audience
-
-| **link:docs/quickstart/getting_started.adoc[Quick Start]**
-| Production deployment in 5 minutes
-| **All developers**
-
-| **link:docs/technical/platform_architecture.adoc[Technical Architecture]**
-| Multi-engine, AI-native system design
-| **Architects, Senior devs**
-
-| **link:docs/reference/graph_api_reference.adoc[API Reference]**
-| REST, gRPC, SDK documentation
-| **Integration teams**
-|===
-
-=== **🏢 Platform & Operations**
-
-[cols="2,3,1", options="header"]
-|===
-| Resource | Description | Audience
-
-| **link:docs/enterprise/production_deployment_guide.adoc[Production Guide]**
-| Enterprise-grade deployment setup
-| **Platform teams**
-
-| **link:docs/operations/PRODUCTION_RUNBOOK.adoc[Monitoring Setup]**
-| Comprehensive observability framework
-| **SRE, DevOps**
-
-| **link:docs/security.adoc[Security Framework]**
-| Enterprise security and compliance
-| **Security teams**
-|===
-
-== 🌟 Getting Started Paths
-
-[source,mermaid]
+=== Project Structure
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
-flowchart TD
-    A[What is your goal?] --> B{Technical Evaluation?}
-    A --> C{Business Assessment?}
-    A --> D{Production Deployment?}
-
-    B --> E[Quick Start Guide<br/>5-minute setup<br/>Basic operations]
-    C --> F[Value Proposition<br/>ROI analysis<br/>Competitive advantages]
-    D --> G[Production Guide<br/>Enterprise setup<br/>Performance optimization]
-
-    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style F fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
-    style G fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+proximaDB/
+├── src/
+│   ├── bin/              # Server binaries
+│   ├── storage/          # Storage engines
+│   ├── compute/          # Vector operations
+│   ├── ai/               # AI/LLM integration
+│   ├── graph/            # Graph operations
+│   └── api_handlers/     # REST/gRPC handlers
+├── benches/              # Performance benchmarks
+├── docs/                 # Documentation
+├── config/               # Configuration files
+└── clients/              # Client SDKs (Python, etc.)
 ----
 
-== 🚀 Start Your Transformation
+== Contributing
 
-=== **Choose Your Path**
+We welcome contributions! Please see our link:CONTRIBUTING.adoc[Contributing Guide] for details.
 
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
-flowchart LR
-    A[What's your priority?] --> B{Technical Evaluation?}
-    A --> C{Business Assessment?}
-    A --> D{Production Planning?}
+=== Development Setup
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes with tests
+4. Run `cargo test --all`
+5. Submit a pull request
 
-    B --> E[5-Minute Quick Start<br/>Docker deployment<br/>Performance testing]
-    C --> F[Executive Overview<br/>ROI calculator<br/>Competitive analysis]
-    D --> G[Production Guide<br/>Enterprise setup<br/>Security framework]
+== Support
 
-    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style F fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
-    style G fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-----
+* **GitHub Issues**: https://github.com/vjsingh1984/proximaDB/issues
+* **Documentation**: link:docs/README.adoc[Full Documentation]
+* **Enterprise Support**: Contact for enterprise licensing
 
-=== **Immediate Next Steps**
+== License
 
-[cols="2,3,2", options="header"]
-|===
-| Goal | Action | Time Investment
+ProximaDB is available under dual licensing:
+* **Open Source**: Apache 2.0 for community use
+* **Enterprise**: Commercial license with support
 
-| **Technical Evaluation**
-| **link:docs/quickstart/getting_started.adoc[Quick Start Guide]** - Docker to production
-| **5 minutes**
+See link:LICENSE[LICENSE] for details.
 
-| **Business Case**
-| **link:docs/business/executive_overview.adoc[Executive Overview]** - ROI and value
-| **10 minutes**
+== Acknowledgments
 
-| **Production Planning**
-| **link:docs/enterprise/production_deployment_guide.adoc[Production Guide]** - Enterprise setup
-| **2-4 hours**
-|===
-
-=== **Community & Support**
-
-- **📖 Documentation**: Complete guides for all roles and use cases
-- **🐛 GitHub Issues**: Report bugs and request features
-- **💬 Community Forum**: Technical discussions and best practices
-- **🏢 Enterprise Support**: Priority support for production deployments
-
----
-
-[.text-center]
-**ProximaDB: Unified Intelligence Platform** +
-**95% cost reduction • 18x faster deployment • 332.3K vectors/s @ 1536D OpenAI Ada** +
-_Transform from fragmented AI tools to unified intelligence in 1 week_
-
-[.text-center]
-image:https://img.shields.io/badge/Get%20Started-5%20Minutes-brightgreen[link="docs/quickstart/getting_started.adoc"]
-image:https://img.shields.io/badge/Business%20Case-ROI%20Analysis-blue[link="docs/business/executive_overview.adoc"]
-image:https://img.shields.io/badge/Production-Enterprise%20Guide-orange[link="docs/operations/production_deployment.adoc"]
+ProximaDB leverages best-in-class open source technologies:
+* Apache Arrow for columnar operations
+* Apache Parquet for storage
+* tokio for async runtime
+* SIMD libraries for hardware acceleration

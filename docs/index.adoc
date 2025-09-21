@@ -1,23 +1,24 @@
-= ProximaDB Documentation Index
-:toc: left
-:sectnums:
-:source-highlighter: rouge
+= ProximaDB Documentation
 :icons: font
-:docdate: {localdatetime}
-:imagesdir: assets
 
-[abstract]
-**Navigation redirector** - For the complete documentation experience, visit **link:README.adoc[ProximaDB Documentation Hub]** with role-based navigation.
+[.lead]
+**Welcome to ProximaDB Documentation**
 
-== Quick Navigation
+→ **link:README.adoc[Go to Documentation Hub]**
 
-**📚 Main Documentation Hub**: **link:README.adoc[Complete Documentation Hub]**
+This is the entry point for ProximaDB documentation. The main documentation hub provides:
 
-**🚀 Get Started**: **link:quickstart/getting_started.adoc[5-Minute Quick Start]**
+* Complete documentation index organized by topic
+* Quick navigation for common tasks
+* Role-based documentation paths
+* Technical and business documentation
 
-**💼 Business Overview**: **link:business/executive_overview.adoc[Executive Overview]**
+== Quick Links
 
-**👨‍💻 Technical Details**: **link:technical/platform_architecture.adoc[Platform Architecture]**
+* **link:../README.adoc[Project README]** - Installation and overview
+* **link:quickstart/getting_started.adoc[Getting Started]** - 5-minute setup
+* **link:benchmarks/README.adoc[Benchmarks]** - Performance analysis
+* **link:enterprise/production_deployment_guide.adoc[Production Guide]** - Enterprise deployment
 
 == Legacy Navigation (Use Main Hub Above)
 
