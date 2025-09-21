@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn test_sst_datablock_encoding() {
         use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
-        use crate::core::VectorRecord;
+        use crate::proto::proximadb_v1::VectorRecord;
         
         // Create sample vectors
         let mut records = Vec::new();

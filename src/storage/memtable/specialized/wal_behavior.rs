@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::strategies::composite::CompositeBloomFilter;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
 use crate::storage::memtable::core::MemtableConfig;
@@ -303,7 +303,7 @@ impl WALBehaviorWrapper {
             }
             "bincode" => {
                 // Use Bincode deserializer
-                bincode::deserialize::<Vec<crate::core::VectorRecord>>(&operation.payload_data)
+                bincode::deserialize::<Vec<crate::proto::proximadb_v1::VectorRecord>>(&operation.payload_data)
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize Bincode payload: {}", e))?
             }
             format => {

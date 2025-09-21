@@ -7,7 +7,7 @@
 //! - Cost-based query optimization
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     ColumnarConfig, MetadataFilter, RowGroupStats, SearchCandidate,
 };

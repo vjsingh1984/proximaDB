@@ -109,7 +109,7 @@ impl Default for PerformanceTier {
 /// Choose storage strategy based on workload characteristics:
 ///
 /// ### OLTP Workloads (Real-time):
-/// - **Lsm (SST)**: Best for frequent updates, point queries
+/// - **Sst**: Best for frequent updates, point queries
 /// - **Swift**: Optimized for low-latency traversal
 /// - **Prism**: Memory-first for ultra-low latency
 ///
@@ -127,7 +127,7 @@ impl Default for PerformanceTier {
 /// | Strategy | Write | Read  | Compression | Memory |
 /// |----------|-------|-------|-------------|--------|
 /// | Viper    | 500K  | 50ms  | 5-10x       | Low    |
-/// | Lsm      | 200K  | 5ms   | 3-5x        | Medium |
+/// | Sst      | 200K  | 5ms   | 3-5x        | Medium |
 /// | Swift    | 300K  | 2ms   | 2-3x        | High   |
 /// | Raptor   | 250K  | 3ms   | 4-6x        | Medium |
 /// ```
@@ -137,9 +137,9 @@ pub enum StorageEngineStrategy {
     /// Best for: Analytics, batch operations, maximum compression
     Viper,
 
-    /// LSM: Log-Structured Merge Tree (Alternative for comparison)
-    /// Best for: OLTP, real-time updates, point queries
-    Lsm,
+    /// SST: Sorted String Table storage engine
+    /// Best for: OLTP, real-time updates, point queries, row-based access
+    Sst,
 
     /// PRISM: Progressive Retrieval through Indexed Storage Management (Memory-optimized)
     /// Best for: Ultra-low latency, small working sets
@@ -533,7 +533,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<crate::core::VectorRecord>>;
+    ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>>;
 
     /// Engine-specific unified search with optimization capabilities (required)
     /// Each engine implements its own optimizations:
@@ -595,7 +595,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         use crate::storage::unified_scan_strategy::ScanCapabilities;
 
         match self.strategy() {
-            StorageEngineStrategy::Lsm => ScanCapabilities {
+            StorageEngineStrategy::Sst => ScanCapabilities {
                 // SST capabilities
                 supports_predicate_pushdown: false,
                 supports_column_projection: false,
@@ -726,7 +726,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn supports_collection_level_operations(&self) -> bool {
         match self.strategy() {
             StorageEngineStrategy::Viper => true, // VIPER supports collection-level ops
-            StorageEngineStrategy::Lsm => false,  // LSM operates on entire tree
+            StorageEngineStrategy::Sst => false,  // SST operates on entire tree
             StorageEngineStrategy::Hybrid => true, // Hybrid supports collection-level ops
             StorageEngineStrategy::Prism => true, // Prism supports collection-level ops
             StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
@@ -743,7 +743,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn supports_atomic_operations(&self) -> bool {
         match self.strategy() {
             StorageEngineStrategy::Viper => true, // VIPER has atomic staging operations
-            StorageEngineStrategy::Lsm => false,  // LSM has eventual consistency
+            StorageEngineStrategy::Sst => false,  // SST has eventual consistency
             StorageEngineStrategy::Hybrid => true, // Hybrid provides atomic guarantees
             StorageEngineStrategy::Prism => true, // Prism provides atomic guarantees
             StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
@@ -1037,7 +1037,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 100 * 1024 * 1024) // 100MB default
             }
-            StorageEngineStrategy::Lsm => {
+            StorageEngineStrategy::Sst => {
                 // LSM default: flush when memtable size exceeds threshold
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
@@ -1089,7 +1089,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .unwrap_or(0)
                     > 10)
             }
-            StorageEngineStrategy::Lsm => {
+            StorageEngineStrategy::Sst => {
                 // LSM default: compact when level ratios are unbalanced
                 let stats = self.get_engine_stats().await?;
                 Ok(stats
@@ -1633,11 +1633,11 @@ impl StorageQueryContext {
             storage_strategy: config
                 .map(|c| match c.storage_engine {
                     0 => StorageEngineStrategy::Viper, // VIPER
-                    1 => StorageEngineStrategy::Lsm,   // SST
+                    1 => StorageEngineStrategy::Sst,   // SST
                     2 => StorageEngineStrategy::Prism, // PRISM
-                    3 => StorageEngineStrategy::Lsm,   // NOVA (use LSM)
-                    4 => StorageEngineStrategy::Lsm,   // SWIFT (use LSM)
-                    5 => StorageEngineStrategy::Lsm,   // RAPTOR (use LSM)
+                    3 => StorageEngineStrategy::Nova,   // NOVA
+                    4 => StorageEngineStrategy::Swift,   // SWIFT
+                    5 => StorageEngineStrategy::Raptor,   // RAPTOR
                     _ => StorageEngineStrategy::Viper,
                 })
                 .unwrap_or(StorageEngineStrategy::Viper),

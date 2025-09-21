@@ -66,7 +66,7 @@ pub enum FlushDataSource {
     /// Flush from disk WAL files (disk durability mode)
     DiskWalFiles(Vec<String>),
     /// Flush from pre-extracted vector records (optimized path)
-    VectorRecords(Vec<crate::core::VectorRecord>),
+    VectorRecords(Vec<crate::proto::proximadb_v1::VectorRecord>),
 }
 
 /// Common flush coordination logic shared between WAL strategies
@@ -666,7 +666,7 @@ impl WALFlushCoordinator {
     async fn extract_vectors_from_disk_files(
         &self,
         wal_files: &[String],
-    ) -> Result<Vec<crate::core::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         debug!(
             "📋 Coordinator: Extracting vectors from {} disk WAL files",
             wal_files.len()
@@ -725,7 +725,7 @@ impl WALFlushCoordinator {
         &self,
         file_path: &str,
         format: crate::storage::persistence::write_ahead_log::serialization::SerializationFormat,
-    ) -> Result<Vec<crate::core::VectorRecord>> {
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         use crate::storage::persistence::write_ahead_log::serialization::SerializerFactory;
         
         // Create filesystem interface to read the file

@@ -12,7 +12,7 @@ use super::common::{
 use super::config::RaptorConfig;
 use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesEncoder;
 
 // RowGroup removed - consolidated into common::RowGroup

@@ -12,7 +12,7 @@ mod tests {
     use tokio::sync::{Mutex, RwLock};
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::proto::proximadb_v1::{Collection, MetadataItem};
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
@@ -121,7 +121,7 @@ mod tests {
             &self,
             _collection_id: &str,
             _vector_id: &str,
-        ) -> Result<Option<crate::core::VectorRecord>> {
+        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
             Ok(None)
         }
 

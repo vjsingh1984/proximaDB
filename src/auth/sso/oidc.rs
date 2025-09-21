@@ -3,12 +3,12 @@
 //! Provides SSO authentication using OpenID Connect standard
 //! Compatible with providers like Auth0, Keycloak, Okta, and custom OIDC implementations.
 
-use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext, SecurityClearance, ProviderUserContext};
+use super::types::{EnterpriseUserContext, SecurityClearance, ProviderUserContext};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc, Duration};
-use tracing::{info, warn, debug};
+use chrono::Utc;
+use tracing::debug;
 use uuid::Uuid;
 
 /// OpenID Connect provider configuration

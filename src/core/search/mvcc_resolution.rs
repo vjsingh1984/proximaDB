@@ -8,7 +8,7 @@
 //! 5. Versions start from 1; None/null/empty version is treated as version 1
 //! 6. For same version, earliest timestamp wins
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use std::collections::HashMap;
 use tracing::debug;
 

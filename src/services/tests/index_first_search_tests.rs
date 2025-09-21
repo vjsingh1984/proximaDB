@@ -237,7 +237,7 @@ mod tests {
         // This test verifies that metadata filters are properly
         // converted to HybridQuery metadata_filters and pushed to indexes
 
-        let search_params = SearchParams {
+        let _search_params = SearchParams {
             filter_expression: Some(FilterExpression::Comparison {
                 field: "category".to_string(),
                 operator: ComparisonOperator::Equals,

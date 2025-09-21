@@ -10,7 +10,7 @@ use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     FilterCondition, MetadataFilter, UnifiedParquetReader,
 };

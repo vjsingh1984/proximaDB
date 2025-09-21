@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::persistence::filesystem::FileSystem;
 

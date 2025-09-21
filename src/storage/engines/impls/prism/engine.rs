@@ -83,7 +83,7 @@ use tracing::{debug, info, warn};
 // Performance optimization handled internally
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::CandidateVector;
 use crate::storage::engines::universal::{
     DistanceComputationRequest, EngineType, StorageFormat, UniversalDistanceAdapter,
@@ -143,9 +143,11 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        // Note: These are placeholder values
+        // Production values MUST come from collection storage_assignment
         Self {
-            base_dir: "/tmp/prism".to_string(),
-            storage_url: "s3://prism-bucket".to_string(),
+            base_dir: String::new(), // Should be set from collection config
+            storage_url: String::new(), // Should be set from collection config
             memory_cache_size_mb: 3072,
             compression: true,
             enable_progressive_quantization: true,
@@ -1103,19 +1105,26 @@ impl UnifiedStorageEngine for PrismEngine {
         let bytes_written = serialized.len();
 
         // In production, would store in actual memory cache structures
-        // For now, just track the serialization
+        // When PRISM does write to disk (after memory pressure), it should use FilenameCodec
         debug!(
             "PRISM flush: Serialized {} vectors into {} bytes using FastLanes progressive encoding",
             params.vector_records.len(),
             bytes_written
         );
 
+        // Generate filename for future disk persistence (even though PRISM is memory-first)
+        // This ensures consistency when PRISM eventually writes to disk
+        use crate::storage::common::compaction_orchestrator::FilenameCodec;
+        let codec = FilenameCodec::new();
+        let prism_filename = codec.generate(0, &crate::storage::engines::constants::PRISM_FILE_EXT[1..]); // Remove leading dot
+        debug!("PRISM: Future disk file would be: {}", prism_filename);
+
         Ok(FlushResult {
             success: true,
             collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
             entries_flushed: Some(params.vector_records.len() as u64),
             bytes_written: Some(bytes_written as u64),
-            files_created: Some(0), // Memory-first, no files created
+            files_created: Some(0), // Memory-first, no files created immediately
             duration_ms: Some(start_time.elapsed().as_millis() as u64),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(), // TODO: Add PRISM-specific metrics
@@ -1177,7 +1186,7 @@ impl UnifiedStorageEngine for PrismEngine {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<crate::core::VectorRecord>> {
+    ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
         debug!(
             "PRISM get vector: collection={}, id={}",
             collection_id, vector_id

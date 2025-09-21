@@ -11,18 +11,15 @@
 //! - Workload-based configuration presets
 
 use std::fmt;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use dashmap::DashMap;
-use tokio::sync::RwLock;
-use tracing::{debug, trace, warn};
+use tracing::debug;
 
 use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::{
-    DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemError, FilesystemFile, FsResult,
+    DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemFile, FsResult,
 };
 
 use super::unified_cache::{UnifiedMetadataCache, CachedMetadata};

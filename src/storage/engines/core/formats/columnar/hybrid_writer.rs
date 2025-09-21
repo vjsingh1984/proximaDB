@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, trace, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     BatchParquetWriter, ParquetWriterConfig, StreamingParquetWriter,
 };

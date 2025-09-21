@@ -6,7 +6,7 @@
 //! Tests for the SST storage engine.
 
 use super::*;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 use tempfile::tempdir;

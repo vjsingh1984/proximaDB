@@ -55,7 +55,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::io::zero_copy::traits::CacheTemperature;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // INTEGRATION: Use SharedSstFormatReader for file operations (SWIFT extends SST format)

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::traits::UnifiedStorageEngine;
     use anyhow::Result;
     use std::collections::HashMap;

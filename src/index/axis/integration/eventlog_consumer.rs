@@ -706,7 +706,7 @@ impl AxisEventLogConsumer {
                     storage_engine
                 );
 
-                use crate::core::VectorRecord;
+                use crate::proto::proximadb_v1::VectorRecord;
 
                 // Create appropriate reader based on storage engine type
                 // All readers should leverage the zero-copy IO system for optimization

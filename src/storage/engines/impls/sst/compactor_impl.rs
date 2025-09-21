@@ -11,7 +11,7 @@
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::readers::sst_query_engine::{BlockIterator, SstDirectReader};
-use crate::core::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module

@@ -506,7 +506,7 @@ mod integration_tests {
             &self,
             _collection_id: &str,
             _vector_id: &str,
-        ) -> Result<Option<crate::core::VectorRecord>> {
+        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
             Ok(None)
         }
 

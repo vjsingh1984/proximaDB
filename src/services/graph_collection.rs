@@ -23,7 +23,7 @@ use crate::core::error::ProximaDBError;
 use crate::proto::proximadb_v1::{GraphCollection, GraphSchema, CreateGraphRequest};
 use dashmap::DashMap;
 use std::sync::Arc;
-use tracing::{info, debug, warn};
+use tracing::info;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 

@@ -613,7 +613,7 @@ impl MetadataWriteAheadLog {
     fn metadata_to_vector_record(
         &self,
         metadata: &VersionedCollectionMetadata,
-    ) -> Result<crate::core::VectorRecord> {
+    ) -> Result<crate::proto::proximadb_v1::VectorRecord> {
         // Serialize metadata to JSON, then to bytes as a "vector"
         let json = serde_json::to_vec(metadata)?;
         let vector = json.iter().map(|&b| b as f32).collect();
@@ -635,7 +635,7 @@ impl MetadataWriteAheadLog {
     /// Convert vector record back to metadata
     fn vector_record_to_metadata(
         &self,
-        record: &crate::core::VectorRecord,
+        record: &crate::proto::proximadb_v1::VectorRecord,
     ) -> Result<VersionedCollectionMetadata> {
         // Convert float vector back to bytes
         let bytes: Vec<u8> = record.vector.iter().map(|&f| f as u8).collect();

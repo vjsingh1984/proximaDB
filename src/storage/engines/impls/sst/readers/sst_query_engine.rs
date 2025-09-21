@@ -45,7 +45,7 @@ use std::ptr;
 
 use super::block_filter::{BlockFilter, IntelligentBlockFilter};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::compression::CompressionAlgorithm;
@@ -1846,7 +1846,7 @@ impl UnifiedSstableReader {
 
         // CACHE-FIRST PATTERN: Check zero-copy metadata cache for each file
         // Cache key format: filename:collection_id:engine (filename-first for optimal sequential matching)
-        let mut cached_metadata = Vec::<String>::new();
+        let cached_metadata = Vec::<String>::new();
         let mut files_needing_load = Vec::new();
 
         for file_path in &collection_context.sstable_files {

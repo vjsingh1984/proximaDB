@@ -1,5 +1,9 @@
 //! Common benchmark utilities and initialization
 
+pub mod embedding_generator;
+
+pub use embedding_generator::{EmbeddingGenerator, EmbeddingModel, generate_sparse_embeddings};
+
 use std::sync::Once;
 
 static INIT: Once = Once::new();

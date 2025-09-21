@@ -9,7 +9,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Hilbert key type
 pub type HilbertKey = u64;

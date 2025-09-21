@@ -15,41 +15,15 @@ pub mod orchestrator;
 pub mod traits;
 
 // Re-export main components
-pub use access_tracker::{
-    AccessEvent, AccessPatternTracker, AccessPrediction as PatternPrediction, AccessStats,
-    CollectionAccessPattern, LearningParameters, PatternAnalysis, TimingPattern,
-};
-pub use bandwidth_optimizer::{
-    AccessPattern, AccessPrediction, BandwidthOptimizer, DecisionFactors, DecisionRationale,
-    DownloadStrategy, OptimizedRange,
-};
+pub use bandwidth_optimizer::BandwidthOptimizer;
 pub use config::{
-    AccessPredictionConfig, BackgroundTaskConfig, CollectionIsolation, CostOptimizationConfig,
-    DownloadOptimizerConfig, EvictionPolicy, IntegrationConfig, MetadataCacheConfig,
-    NetworkAdjustments, PerformanceConfig, RangeOptimizationConfig, SizeBasedThresholds,
-    WorkloadType, ZeroCopyIOConfig, ZeroCopyIOSystemBuilder,
+    WorkloadType, ZeroCopyIOSystemBuilder,
 };
-pub use metadata_cache::{
-    CacheFileHeader, CacheStatistics, MmappedMetadata, ZeroCopyMetadataCache,
-};
-pub use metrics::{
-    AccessPatternMetrics, AlertCondition, AlertEvent, AlertSeverity, CostAnalysisMetrics,
-    DownloadOptimizerMetrics, ImplementationEffort, MetadataCacheMetrics, MetricsCollector,
-    OptimizationRecommendation, RecommendationCategory, RecommendationPriority,
-    ResourceUtilizationMetrics, SystemPerformanceMetrics, SystemWideMetrics, TrendAnalysis,
-    TrendDirection,
-};
-pub use orchestrator::{
-    BatchOptimizationResult, CrossFileOptimization, CrossFileOptimizationType, ExecutionOperation,
-    ExecutionPlan, IOSavings, IOStrategy, OperationType, OptimizedIOResult, ResourceRequirements,
-    ZeroCopyIOSystem,
-};
+pub use orchestrator::ZeroCopyIOSystem;
 
 // Common traits and types
 pub use traits::{
-    AccessFrequency, CacheTemperature, CollectionContext, DataRange, EngineMetadata,
-    FileAccessRequest, MetadataAnalysisResult, MetadataSerializer, QueryContext, QueryType,
-    RequestPriority,
+    DataRange, EngineMetadata, MetadataSerializer, QueryContext,
 };
 
 use crate::core::error::ProximaDBError;

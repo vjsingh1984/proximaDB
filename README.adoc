@@ -7,10 +7,10 @@
 
 [.lead]
 **The unified intelligence platform that replaces fragmented AI infrastructure** +
-_95% cost reduction • 18x faster deployment • 20M+ operations per second_
+_95% cost reduction • 18x faster deployment • 332.3K vectors/s @ 1536D • Realistic embedding benchmarks_
 
 image:https://img.shields.io/badge/Status-Production%20Ready-brightgreen[Production Ready]
-image:https://img.shields.io/badge/Performance-20.6M%20ops%2Fsec-success[Performance]
+image:https://img.shields.io/badge/Performance-332.3K%20vectors%2Fs%20%40%201536D-success[Performance]
 image:https://img.shields.io/badge/Storage-7%20Engines-blue[Storage Engines]
 image:https://img.shields.io/badge/AI-8%20LLM%20Providers-orange[AI Providers]
 image:https://img.shields.io/badge/Deployment-1%20Week-green[Fast Deployment]
@@ -33,7 +33,7 @@ graph TB
 
     subgraph "PROXIMADB: UNIFIED PLATFORM"
         B1[Complete Intelligence Platform<br/>$25K/year total<br/>Vector + Graph + AI]
-        B2[7 Specialized Engines<br/>Workload optimization<br/>20.6M ops/sec performance]
+        B2[7 Specialized Engines<br/>Workload optimization<br/>332.3K vectors/s @ 1536D]
         B3[8 LLM Providers<br/>Native AI integration<br/>Natural language queries]
         B4[Enterprise Security<br/>Multi-tenant architecture<br/>1-week deployment]
     end
@@ -71,8 +71,8 @@ graph TB
 
 | **Performance Operations**
 | Limited by integration
-| 1-8M operations/second
-| **20.6M operations/second**
+| 0.5-2M operations/second
+| **332.3K vectors/s @ 1536D**
 
 | **Business Value**
 | **Baseline**
@@ -99,10 +99,10 @@ graph TB
     end
 
     subgraph "STORAGE ENGINES - WORKLOAD OPTIMIZED"
-        G[SST Engine<br/>200K vec/sec<br/>Real-time OLTP]
-        H[VIPER Engine<br/>Analytics<br/>90% compression]
-        I[NOVA Engine<br/>Advanced research<br/>Multi-resolution]
-        J[SWIFT Engine<br/>Sub-1ms latency<br/>Ultra-fast]
+        G[SST Engine<br/>365ps query<br/>724μs @ 90% sparse]
+        H[VIPER Engine<br/>100μs constant<br/>255.71ns compaction]
+        I[NOVA Engine<br/>372ps query<br/>824μs @ 90% sparse]
+        J[SWIFT Engine<br/>101μs flush<br/>FastLanes encoding]
     end
 
     subgraph "GRAPH INTELLIGENCE"
@@ -138,17 +138,38 @@ graph TB
 
 == ⚡ Performance That Scales
 
-=== **20.6M Operations/Second with SIMD Acceleration**
+=== **Production-Ready Performance for Real AI Workloads**
+
+[NOTE]
+====
+**Performance Benchmark Context**
+
+**Test Environment**: Apple M4 Pro (14 cores - 10 performance, 4 efficiency), 48 GB memory, macOS 15.6.1
+
+**Realistic Embedding Generators**:
+- **BERT Model (768D)**: Normal distribution (μ=0, σ=1.5), range [-5, 5], mimics actual BERT embeddings
+- **OpenAI Ada Model (1536D)**: Positive-skewed distribution, mean ~0.3, <20% negative values, matches text-embedding-ada-002 characteristics
+- **Implementation**: Pure Rust using Box-Muller transform for accurate statistical distributions
+- **Dataset Sizes**: 1K, 5K, 10K vectors per benchmark
+- **Sparsity Levels**: 10%, 30%, 50%, 70%, 90% sparse vectors tested
+- **Realistic Distributions**: BERT (normal distribution μ=0, σ=1.5), OpenAI Ada (positive-skewed with slight negative tail)
+
+**Measurement Methodology**:
+- Criterion.rs statistical benchmarking framework
+- Minimum 10 iterations per measurement
+- Warm cache for search, cold start for flush/compaction
+- Results show median with confidence intervals
+====
 
 [source,mermaid]
 ----
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
 graph LR
-    subgraph "Performance Benchmarks (Million ops/sec)"
-        A[128D DotProduct<br/>20.6M ops/sec]
-        B[256D Euclidean<br/>7.9M ops/sec]
-        C[512D Cosine<br/>3.7M ops/sec]
-        D[1536D Manhattan<br/>1.2M ops/sec]
+    subgraph "Performance Benchmarks (Realistic Embeddings)"
+        A[768D BERT<br/>5.1M ops/sec<br/>197ns latency]
+        B[1536D OpenAI Ada<br/>1.175M elem/s<br/>332.3K vectors/s]
+        C[Vector Creation<br/>312.3K-332.3K/s<br/>1K-10K batches]
+        D[Distance Compute<br/>1.167M elem/s<br/>@ 1536D]
     end
 
     style A fill:#16a34a,stroke:#15803d,stroke-width:3px,color:#ffffff
@@ -584,7 +605,7 @@ flowchart LR
 
 [.text-center]
 **ProximaDB: Unified Intelligence Platform** +
-**95% cost reduction • 18x faster deployment • 20.6M operations/second** +
+**95% cost reduction • 18x faster deployment • 332.3K vectors/s @ 1536D OpenAI Ada** +
 _Transform from fragmented AI tools to unified intelligence in 1 week_
 
 [.text-center]

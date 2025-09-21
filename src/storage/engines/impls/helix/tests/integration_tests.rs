@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::engines::impls::helix::*;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};

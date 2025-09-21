@@ -7,7 +7,6 @@ use std::cmp;
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
 /// Range optimizer for intelligent partial file reads

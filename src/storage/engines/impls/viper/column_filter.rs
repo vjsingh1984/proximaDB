@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 
 /// Column-oriented filter evaluator with predicate pushdown

@@ -8,7 +8,6 @@ use anyhow::Result;
 use bytes::Bytes;
 use std::any::Any;
 use std::fmt::Debug;
-use std::collections::HashMap;
 
 use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 use serde::{Deserialize, Serialize};

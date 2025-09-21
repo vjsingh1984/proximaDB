@@ -332,18 +332,21 @@ impl SQLValidator {
         // Look for LIMIT clause
         if let Some(limit_pos) = sql_upper.find("LIMIT") {
             // Extract the limit value (simplified parsing)
-            let after_limit = &sql[limit_pos + 5..].trim();
-            if let Some(space_pos) = after_limit.find(' ') {
-                let limit_str = &after_limit[..space_pos];
-                if let Ok(limit_value) = limit_str.parse::<u32>() {
-                    if limit_value > self.config.max_result_limit {
-                        return Some(SecurityIssue {
-                            issue_type: SecurityIssueType::ExcessiveResultSize,
-                            description: format!("LIMIT {} exceeds maximum allowed {}", limit_value, self.config.max_result_limit),
-                            severity: SecuritySeverity::Medium,
-                            location: Some(format!("LIMIT {}", limit_value)),
-                        });
-                    }
+            let after_limit = sql[limit_pos + 5..].trim();
+            // Get the number part - either until space or end of string
+            let limit_str = if let Some(space_pos) = after_limit.find(' ') {
+                &after_limit[..space_pos]
+            } else {
+                after_limit
+            };
+            if let Ok(limit_value) = limit_str.parse::<u32>() {
+                if limit_value > self.config.max_result_limit {
+                    return Some(SecurityIssue {
+                        issue_type: SecurityIssueType::ExcessiveResultSize,
+                        description: format!("LIMIT {} exceeds maximum allowed {}", limit_value, self.config.max_result_limit),
+                        severity: SecuritySeverity::Medium,
+                        location: Some(format!("LIMIT {}", limit_value)),
+                    });
                 }
             }
         }
@@ -394,8 +397,10 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_malicious_sql_rejection() {
+    #[test]
+    fn test_malicious_sql_rejection() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
         let validator = SQLValidator::new().await.unwrap();
         let user_context = UserContext::default();
 
@@ -411,6 +416,7 @@ mod tests {
             let result = validator.validate_and_sanitize(malicious_sql, &user_context).await;
             assert!(result.is_err(), "Malicious SQL should be rejected: {}", malicious_sql);
         }
+        });
     }
 
     #[test]

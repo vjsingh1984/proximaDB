@@ -41,6 +41,7 @@ struct BenchmarkConfig {
 
 /// Benchmark results
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BenchmarkResult {
     engine: String,
     sparsity: usize,

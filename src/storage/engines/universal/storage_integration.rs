@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 use super::{AdapterError, AdapterResult, config::StorageEngineConfig, conversion::StorageFormat};
 

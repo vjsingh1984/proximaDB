@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 
 use super::*;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::proto::proximadb_v1::SqlValue;

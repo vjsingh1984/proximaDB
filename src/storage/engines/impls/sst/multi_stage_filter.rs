@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
@@ -588,7 +588,7 @@ mod tests {
             encoding_metadata: None,
             block_id: 0,
             records: vec![
-                crate::core::VectorRecord {
+                crate::proto::proximadb_v1::VectorRecord {
                     id: "vec1".to_string(),
                     vector: vec![0.1; 128],
                     metadata: {
@@ -610,7 +610,7 @@ mod tests {
                     quantized_vector: vec![],
                     source: None,
                 },
-                crate::core::VectorRecord {
+                crate::proto::proximadb_v1::VectorRecord {
                     id: "vec2".to_string(),
                     vector: vec![0.2; 128],
                     metadata: {
@@ -632,7 +632,7 @@ mod tests {
                     quantized_vector: vec![],
                     source: None,
                 },
-                crate::core::VectorRecord {
+                crate::proto::proximadb_v1::VectorRecord {
                     id: "vec3".to_string(),
                     vector: vec![0.3; 128],
                     metadata: {

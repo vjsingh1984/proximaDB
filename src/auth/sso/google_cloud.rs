@@ -3,12 +3,12 @@
 //! Provides SSO authentication using Google Cloud Platform Identity and Access Management (IAM)
 //! and Google Workspace identity federation.
 
-use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext, SecurityClearance, ProviderUserContext};
+use super::types::{EnterpriseUserContext, SecurityClearance, ProviderUserContext};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc, Duration};
-use tracing::{info, warn, debug};
+use chrono::Utc;
+use tracing::debug;
 
 /// Google Cloud Platform IAM integration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

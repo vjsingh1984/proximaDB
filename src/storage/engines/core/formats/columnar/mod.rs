@@ -98,6 +98,7 @@ pub mod nova_metadata;
 pub mod parquet_io_layer; // Low-level I/O operations (formerly shared_parquet_reader)
 pub mod parquet_metadata; // NEW: Zero-copy metadata serialization for Parquet
 pub mod utilities; // NEW: Zero-copy metadata serialization for NOVA
+pub mod metadata_collector; // NEW: Trait for engine-specific metadata collection during writes
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure
@@ -178,7 +179,7 @@ pub use parquet_metadata::{
 
 // New unified infrastructure exports
 pub use schema::{
-    ColumnarSchemaBuilder, ColumnarSchemaConfig, CompressionMetadata, FilterableColumnSpec,
+    ColumnarSchemaBuilder, ColumnarSchemaConfig, CompressionMetadata, ColumnarFilterableSpec,
     FilterableData, create_schema_from_collection, validate_schema_compatibility,
 };
 pub use serialization::{
@@ -200,7 +201,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Common configuration for columnar operations
 ///

@@ -8,7 +8,7 @@ use super::streaming_processor::{
 };
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 use std::collections::BinaryHeap;
 use std::sync::Arc;

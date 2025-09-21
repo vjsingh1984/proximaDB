@@ -9,6 +9,11 @@
 
 ProximaDB's Unified Strategy Pattern provides a consistent, intelligent way to optimize read operations across all storage engines. This guide demonstrates how to use the strategy pattern effectively for different workloads.
 
+[NOTE]
+====
+**Performance Baseline**: All performance metrics in this guide are based on benchmarks conducted on **Apple M4 Pro** (14 cores, 48 GB memory) running macOS 15.6.1. Actual performance varies by hardware.
+====
+
 == Architecture Benefits
 
 [cols="1,3"]
@@ -22,7 +27,7 @@ ProximaDB's Unified Strategy Pattern provides a consistent, intelligent way to o
 |Automatic selection between cached and direct reads based on access patterns
 
 |**Performance Optimization**
-|60-80% reduction in cloud API calls for selective operations
+|**98.2% faster compaction** (VIPER: 255.71ns), **5.1M ops/sec** on 768D BERT
 
 |**Cache Pollution Avoidance**
 |Direct reads for full scans prevent cache pollution

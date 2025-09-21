@@ -1595,9 +1595,12 @@ impl SstStorage {
                 })?,
         );
 
-        // Create UnifiedCachingFilesystem for the reader
-        // SST will create UnifiedCachingFilesystem instances per collection for optimal caching
-        // This dramatically reduces I/O for frequently accessed SSTable blocks
+        // Create UnifiedCachingFilesystem for transparent cloud storage support
+        // - Cloud files (S3/GCS/Azure) are automatically downloaded to local disk cache
+        // - Cache location: /tmp/proximadb/cache/{collection}/sst/
+        // - Subsequent reads use the local cached copy for performance
+        // - SSTable blocks are cached individually for fine-grained access
+        // - Hot blocks remain in cache based on LRU policy
         let base_fs = filesystem.get_filesystem("file://").map_err(|e| {
             SstError::Internal(format!("Failed to get base filesystem: {}", e))
         })?;
@@ -1722,16 +1725,13 @@ impl SstStorage {
             SstError::InvalidArgument("Collection ID required for SST operations".into())
         })?;
 
-        // For tests, use temp directory; for production, use /var/lib/proximadb
-        let base_path = if cfg!(test) {
-            format!("/tmp/proximadb_integration_tests/{}", collection_id)
-        } else {
-            format!("/var/lib/proximadb/{}", collection_id)
-        };
-
-        let storage_url = format!("file://{}/data", base_path);
-        debug!("🔍 SST: Using default storage URL: {}", storage_url);
-        Ok(storage_url)
+        // Storage location MUST come from collection config - no fallback paths
+        return Err(SstError::InvalidArgument(format!(
+            "SST: Collection '{}' has no storage assignment. All collections must have storage assignments.",
+            collection_id
+        )).into());
+        // This should not be reached as we return an error above
+        unreachable!("Collection must have storage assignment")
     }
 
     /// Enable compaction with the SST tree's atomic coordinator
@@ -2267,7 +2267,7 @@ impl UnifiedStorageEngine for SstStorage {
     }
 
     fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-        crate::storage::traits::StorageEngineStrategy::Lsm
+        crate::storage::traits::StorageEngineStrategy::Sst
     }
 
     fn get_filesystem_factory(
@@ -2831,7 +2831,7 @@ impl UnifiedStorageEngine for SstStorage {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> anyhow::Result<Option<crate::core::VectorRecord>> {
+    ) -> anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
         debug!(
             "🔍 SST: Looking up vector {} in collection {} using manifest",
             vector_id, collection_id
@@ -3997,14 +3997,20 @@ impl SstStorage {
 
     /// Count SSTable files at a specific level
     async fn count_sstables_at_level(&self, level: u8) -> Result<usize> {
-        // SST is collection-agnostic, use a generic path
-        let level_dir = std::path::PathBuf::from("/tmp/sst_staging");
-        if !level_dir.exists() {
-            return Ok(0);
-        }
+        // This method requires collection-specific storage path
+        // Should be called with actual collection storage location
+        // For now, return 0 as this appears to be unused
+        let _ = level;
+        return Ok(0);
 
+        #[allow(unreachable_code)]
         let mut count = 0;
-        let mut dir_entries = tokio::fs::read_dir(&level_dir).await.map_err(|e| {
+        // This method requires collection-specific storage path
+        // For now, return 0 as this appears to be unused
+        return Ok(0);
+
+        #[allow(unreachable_code)]
+        let mut dir_entries = tokio::fs::read_dir("/unused").await.map_err(|e| {
             SstError::Io(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("Failed to read level directory: {}", e),

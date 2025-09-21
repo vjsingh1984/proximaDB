@@ -3,14 +3,14 @@
 //! This module provides efficient reading and searching of HELIX SSTables
 //! with Hilbert-based pruning and FastLanes decoding.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::future::join_all;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 

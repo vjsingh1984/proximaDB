@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use anyhow::Result;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::engines::impls::viper::ViperEngine;
 use crate::storage::traits::{UnifiedStorageEngine, FlushParameters, CompactionParameters};

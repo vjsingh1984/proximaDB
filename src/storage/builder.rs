@@ -681,7 +681,7 @@ impl StorageSystemBuilder {
             StorageLayoutStrategy::Regular => {
                 // Initialize SST engine for traditional LSM-tree storage
                 if let Ok(sst_engine) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
-                    crate::storage::traits::StorageEngineStrategy::Lsm
+                    crate::storage::traits::StorageEngineStrategy::Sst
                 ) {
                     engines.push(sst_engine);
                 }
@@ -719,7 +719,7 @@ impl StorageSystemBuilder {
         
         // Add SST for high-throughput writes
         if let Ok(sst) = crate::storage::engines::factory::StorageEngineFactory::create_from_strategy(
-            crate::storage::traits::StorageEngineStrategy::Lsm
+            crate::storage::traits::StorageEngineStrategy::Sst
         ) {
             engines.push(sst);
         }

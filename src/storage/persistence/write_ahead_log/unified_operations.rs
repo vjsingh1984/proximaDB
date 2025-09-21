@@ -20,7 +20,7 @@
 //! enabling atomic hybrid transactions across both data types.
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::memtable::implementations::graph_memtable::{GraphOperation, NodeUpdate, EdgeUpdate};
+use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
@@ -272,7 +272,7 @@ impl UnifiedWALWriter {
     /// Sync all pending writes
     pub fn sync(&mut self) -> anyhow::Result<()> {
         if let Some(ref mut file) = self.current_file {
-            use std::io::Write;
+            
             file.sync_all()?;
         }
         Ok(())

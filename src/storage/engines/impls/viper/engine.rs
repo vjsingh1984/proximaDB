@@ -20,7 +20,7 @@
 //! - VIPER provides baseline search that works for ALL collections
 //! - AXIS can optionally add ML clustering as an optimization layer
 //! - Clean separation: VIPER = storage, AXIS = indexing
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -186,7 +186,11 @@ impl ViperEngine {
         // Get the base filesystem from factory
         let base_fs = filesystem.get_filesystem("file://")?;
 
-        // Create UnifiedCachingFilesystem with VIPER serializer
+        // Create UnifiedCachingFilesystem for transparent cloud storage support
+        // - Cloud files (S3/GCS/Azure) are automatically downloaded to local disk cache
+        // - Cache location: /tmp/proximadb/cache/{collection}/viper/
+        // - Parquet metadata/footers cached separately for fast columnar access
+        // - Hot files remain in cache based on LRU policy
         let unified_fs = Arc::new(
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
                 base_fs,
@@ -756,7 +760,7 @@ impl ViperEngine {
     pub async fn flush_vectors_direct(
         &self,
         collection_id: &str,
-        vector_records: Vec<crate::core::VectorRecord>,
+        vector_records: Vec<crate::proto::proximadb_v1::VectorRecord>,
     ) -> Result<()> {
         let num_records = vector_records.len();
         info!(

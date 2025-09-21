@@ -1,6 +1,6 @@
 //! Test for SSTable format fix - verifies bloom filter read/write
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::config::SstConfig;
 use crate::storage::engines::impls::sst::SstableWriter;
 use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;

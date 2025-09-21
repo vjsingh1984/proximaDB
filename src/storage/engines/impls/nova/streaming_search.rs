@@ -18,7 +18,7 @@ use super::zone_maps::{
     ZoneMapConfig,
 };
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Unified streaming search engine for NOVA
 pub struct StreamingSearchEngine {

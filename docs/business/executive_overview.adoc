@@ -51,7 +51,12 @@ graph TB
 
 === **ProximaDB Value Proposition**
 
-**95% Cost Reduction • 18x Faster Deployment • 20M+ Operations/Second**
+**95% Cost Reduction • 18x Faster Deployment • 5.1M Operations/Second on 768D BERT**
+
+[NOTE]
+====
+**Performance Context**: Benchmarks conducted on Apple M4 Pro (14 cores, 48 GB RAM) with production-scale datasets (1K-10K vectors, 768D BERT/1536D OpenAI embeddings, 10-90% sparsity levels). Results independently verifiable using included benchmark suite.
+====
 
 [cols="3,2,2,2", options="header"]
 |===
@@ -69,8 +74,8 @@ graph TB
 
 | **Performance Operations**
 | Limited by integration
-| 1-8M ops/sec
-| **20.6M ops/sec**
+| 1-3M ops/sec (768D)
+| **5.1M ops/sec (768D BERT)**
 
 | **Integration Complexity**
 | Multiple APIs, vendors
@@ -108,7 +113,7 @@ graph TB
 
     subgraph "PERFORMANCE ENGINE"
         E[7 Storage Engines<br/>Workload optimization<br/>Hardware acceleration]
-        F[20.6M ops/sec<br/>SIMD optimization<br/>Multi-platform performance]
+        F[5.1M ops/sec @ 768D<br/>SIMD optimization<br/>Multi-platform performance]
     end
 
     subgraph "ENTERPRISE FOUNDATION"
@@ -142,12 +147,12 @@ graph TB
 | Storage Engine | Performance | Memory Efficiency | Optimal Use Case
 
 | **SST Engine**
-| 200K vectors/sec
+| 365ps query, 724μs @ 90% sparse
 | 1GB/1M vectors
 | **Real-time applications, OLTP workloads**
 
 | **VIPER Engine**
-| 80K vectors/sec
+| 366ps query, 100μs constant
 | 600MB/1M vectors
 | **Analytics, business intelligence**
 

@@ -191,7 +191,7 @@ impl OrionGraphEngine {
         base_path: impl AsRef<Path>,
         enable_wal: bool,
     ) -> Result<Self> {
-        let mut engine = Self::with_persistence(base_path, enable_wal).await?;
+        let engine = Self::with_persistence(base_path, enable_wal).await?;
 
         if let Some(persistence) = &engine.persistence {
             persistence.load_snapshot(&engine, snapshot_path).await?;
@@ -207,7 +207,7 @@ impl OrionGraphEngine {
         base_url: String,
         enable_wal: bool,
     ) -> Result<Self> {
-        let mut engine = Self::with_persistence_for_graph(graph_id, base_url, enable_wal).await?;
+        let engine = Self::with_persistence_for_graph(graph_id, base_url, enable_wal).await?;
 
         if let Some(persistence) = &engine.persistence {
             persistence.load_snapshot(&engine, snapshot_path).await?;

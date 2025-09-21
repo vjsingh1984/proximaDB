@@ -111,7 +111,7 @@ pub enum ComplianceFramework {
     HIPAA,
     FedRAMP,
     ISO27001,
-    PCI_DSS,
+    PciDss,
 }
 
 /// Encryption requirements

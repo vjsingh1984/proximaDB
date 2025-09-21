@@ -1,0 +1,576 @@
+= Performance Optimization Guide
+:doctype: article
+:toc: macro
+:toclevels: 2
+
+[abstract]
+.Complete Optimization and Tuning Reference
+--
+Practical guide for optimizing ProximaDB performance across all dimensions: speed, memory, accuracy, and scale. Benchmarked with **realistic embedding generators** that simulate:
+
+* **BERT embeddings** (768D): Normal distribution, μ=0, σ=1.5, range [-5, 5]
+* **OpenAI Ada** (1536D): Positive-skewed, mean ~0.3, transformer characteristics
+* **Sparse patterns**: 0-95% sparsity for real-world optimization
+
+Includes decision trees, configuration templates, and troubleshooting.
+--
+
+toc::[]
+
+== Quick Decision Guide
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+flowchart TD
+    A[Performance Goal] --> B{Primary Concern?}
+    B -->|Speed| C[Low Latency Path]
+    B -->|Scale| D[High Throughput Path]
+    B -->|Memory| E[Memory Optimization]
+    B -->|Accuracy| F[High Recall Path]
+
+    C --> G[SWIFT/NOVA + Cache + SIMD]
+    D --> H[SST + Batching + Parallel]
+    E --> I[PRISM + PQ4/8 + Sparsity]
+    F --> J[NOVA + Minimal Quant + All Stages]
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
+    style B fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style H fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+----
+
+== 5-Minute Optimization Paths
+
+=== Path 1: Optimize for Speed (< 1ms)
+
+[cols="1,3,2"]
+|===
+|Step |Action |Command
+
+|1
+|Baseline measurement
+|`cargo bench --bench core_distance_computation`
+
+|2
+|Configure for speed
+|Edit config.toml (see below)
+
+|3
+|Validate improvement
+|`cargo bench --bench query_progressive_search`
+|===
+
+**Configuration**:
+[source,toml]
+----
+[storage]
+engine = "swift"
+cache_size = "8GB"
+prefetch_enabled = true
+
+[compute]
+simd_enabled = true
+batch_size = 1
+
+[search]
+progressive_enabled = false
+----
+
+**Expected Results**: 5-10x latency reduction, < 1ms P99
+
+=== Path 2: Optimize for Scale (1M+ vectors)
+
+[cols="1,3,2"]
+|===
+|Step |Action |Command
+
+|1
+|Memory baseline
+|`cargo bench --bench memory_vector_optimization`
+
+|2
+|Configure for scale
+|Edit config.toml (see below)
+
+|3
+|Validate capacity
+|`cargo bench --bench storage_sparsity_compression`
+|===
+
+**Configuration**:
+[source,toml]
+----
+[storage]
+engine = "viper"
+compression = "zstd"
+
+[compute.quantization]
+level = "pq8"
+sparse_threshold = 0.1
+
+[memory]
+pool_size = "500MB"
+----
+
+**Expected Results**: 4-8x memory reduction, 10x data capacity
+
+=== Path 3: Optimize for Accuracy (> 98% recall)
+
+[cols="1,3,2"]
+|===
+|Step |Action |Command
+
+|1
+|Accuracy baseline
+|`cargo bench --bench query_progressive_search`
+
+|2
+|Configure for recall
+|Edit config.toml (see below)
+
+|3
+|Validate accuracy
+|`cargo bench --bench query_progressive_search -- high_recall`
+|===
+
+**Configuration**:
+[source,toml]
+----
+[storage]
+engine = "nova"
+
+[compute.quantization]
+level = "fp32"  # No quantization
+
+[search.progressive]
+binary_recall = 0.95
+int8_recall = 0.98
+pq_recall = 0.99
+max_candidates = 2000
+----
+
+**Expected Results**: 98-99% recall, 2-5x slower than baseline
+
+== Common Scenarios
+
+=== "My queries are too slow"
+
+**Diagnosis**:
+```bash
+cargo bench --bench core_distance_computation
+cargo bench --bench query_progressive_search
+```
+
+**Solutions**:
+[cols="2,3,2"]
+|===
+|Cause |Solution |Impact
+
+|No SIMD
+|Enable hardware acceleration
+|10x speedup
+
+|Wrong engine
+|Switch to SWIFT/NOVA
+|2-5x speedup
+
+|No caching
+|Enable cache + prefetch
+|3x speedup
+
+|Too many stages
+|Reduce progressive stages
+|2x speedup
+|===
+
+=== "I'm running out of memory"
+
+**Diagnosis**:
+```bash
+cargo bench --bench memory_vector_optimization
+cargo bench --bench storage_sparsity_compression
+```
+
+**Solutions**:
+[cols="2,3,2"]
+|===
+|Cause |Solution |Impact
+
+|No quantization
+|Enable PQ8/PQ16
+|4x reduction
+
+|Wrong engine
+|Switch to PRISM/VIPER
+|2-5x reduction
+
+|Dense storage
+|Enable sparsity compression
+|10x for sparse
+
+|Large cache
+|Reduce cache size
+|Direct savings
+|===
+
+=== "Search results aren't accurate"
+
+**Diagnosis**:
+```bash
+cargo bench --bench query_progressive_search -- high_recall
+```
+
+**Solutions**:
+[cols="2,3,2"]
+|===
+|Cause |Solution |Impact
+
+|Over-quantization
+|Reduce to INT8 or FP32
+|+5-10% recall
+
+|Aggressive filtering
+|Increase candidates
+|+3-5% recall
+
+|Wrong metric
+|Verify distance metric
+|Varies
+
+|Data quality
+|Check normalization
+|Varies
+|===
+
+=== "Ingestion is too slow"
+
+**Diagnosis**:
+```bash
+cargo bench --bench storage_flush_optimization
+cargo bench --bench storage_engine_comparison
+```
+
+**Solutions**:
+[cols="2,3,2"]
+|===
+|Cause |Solution |Impact
+
+|Synchronous writes
+|Enable async flush
+|10x speedup
+
+|Wrong engine
+|Switch to SST
+|2-3x speedup
+
+|Small batches
+|Increase batch size
+|5x speedup
+
+|No WAL tuning
+|Configure WAL properly
+|2x speedup
+|===
+
+== Configuration Templates
+
+=== Real-Time Search Service
+[source,toml]
+----
+# Optimized for < 10ms latency, 95% recall
+[server]
+workers = 16
+
+[storage]
+engine = "nova"
+cache_size = "4GB"
+
+[compute]
+simd_enabled = true
+batch_size = 10
+
+[search.progressive]
+binary_recall = 0.85
+int8_recall = 0.95
+adaptive_recall = true
+
+[memory]
+pool_size = "2GB"
+----
+
+=== Analytics Platform
+[source,toml]
+----
+# Optimized for batch processing, compression
+[storage]
+engine = "viper"
+compression = "zstd"
+columnar_batch = 10000
+
+[compute.quantization]
+level = "pq8"
+codebook_size = 256
+
+[search]
+progressive_enabled = true
+max_candidates = 5000
+
+[storage.parquet]
+enable_statistics = true
+row_group_size = 100000
+----
+
+=== Edge Deployment
+[source,toml]
+----
+# Optimized for minimal resources
+[storage]
+engine = "prism"
+compression = "aggressive"
+
+[compute.quantization]
+level = "pq4"
+sparse_optimization = true
+
+[memory]
+pool_size = "100MB"
+cache_size = "50MB"
+max_allocation = "10MB"
+
+[search]
+max_candidates = 100
+timeout_ms = 100
+----
+
+=== High-Volume Ingestion
+[source,toml]
+----
+# Optimized for 1M+ vectors/sec
+[storage]
+engine = "sst"
+write_buffer_size = "4GB"
+flush_threshold = 100000
+
+[storage.wal]
+enabled = true
+sync_interval = "5s"
+max_size = "50GB"
+
+[compute]
+parallel_threads = 32
+batch_size = 1000
+----
+
+== Performance Tuning Matrix
+
+[cols="2,2,2,2,2"]
+|===
+|Optimization |Speed Impact |Memory Impact |Accuracy Impact |When to Use
+
+|**SIMD**
+|+10x
+|None
+|None
+|Always
+
+|**Batching**
+|+5x throughput
+|+2x usage
+|None
+|High volume
+
+|**Caching**
+|+3x reads
+|+Cache size
+|None
+|Repeated queries
+
+|**Quantization**
+|Varies
+|-4-32x
+|-5-25%
+|Memory constrained
+
+|**Progressive Search**
+|+10-100x
+|+Stages
+|-1-5%
+|Large datasets
+
+|**Compression**
+|None
+|-2-10x
+|None
+|Storage constrained
+
+|**Parallelism**
+|+N cores
+|+N × memory
+|None
+|Multi-core systems
+
+|**Prefetching**
+|+2x reads
+|+Buffer
+|None
+|Sequential access
+|===
+
+== Troubleshooting Guide
+
+=== Performance Diagnostics
+
+[cols="3,4"]
+|===
+|Check |Command
+
+|SIMD status
+|`cargo bench --bench hardware_simd_acceleration`
+
+|Memory usage
+|`cargo bench --bench memory_vector_optimization`
+
+|Engine performance
+|`cargo bench --bench storage_engine_comparison`
+
+|Query pipeline
+|`cargo bench --bench query_progressive_search`
+
+|System bottlenecks
+|`cargo bench --bench system_optimization_suite`
+|===
+
+=== Common Issues
+
+[cols="2,3,3"]
+|===
+|Symptom |Cause |Solution
+
+|Latency spikes
+|GC pauses, cold cache
+|Tune GC, pre-warm cache
+
+|Memory leaks
+|Unbounded pools
+|Set pool limits, enable GC
+
+|Poor recall
+|Over-optimization
+|Reduce compression, increase candidates
+
+|Slow startup
+|Large index loading
+|Enable lazy loading, use mmap
+
+|High CPU usage
+|Inefficient batching
+|Optimize batch size, enable SIMD
+
+|Disk I/O bottleneck
+|Small writes
+|Increase buffer, batch operations
+|===
+
+== Optimization Checklist
+
+=== Pre-Deployment
+- [ ] Run complete benchmark suite
+- [ ] Select appropriate storage engine
+- [ ] Configure quantization level
+- [ ] Size memory pools
+- [ ] Enable SIMD
+- [ ] Configure caching
+- [ ] Set batch sizes
+- [ ] Tune WAL
+
+=== Post-Deployment
+- [ ] Monitor latency percentiles
+- [ ] Track memory usage
+- [ ] Measure recall rates
+- [ ] Check CPU utilization
+- [ ] Monitor I/O patterns
+- [ ] Review GC metrics
+- [ ] Validate compression ratios
+- [ ] Track space amplification
+
+== Performance Targets
+
+[cols="3,2,2,2"]
+|===
+|Metric |Minimum |Target |Excellent
+
+|Query latency P50
+|< 50ms
+|< 10ms
+|< 2ms
+
+|Query latency P99
+|< 200ms
+|< 50ms
+|< 10ms
+
+|Write throughput
+|10K/s
+|100K/s
+|> 1M/s
+
+|Memory per vector
+|< 10KB
+|< 3KB
+|< 1KB
+
+|Search recall
+|> 85%
+|> 95%
+|> 99%
+
+|CPU utilization
+|< 90%
+|< 70%
+|< 50%
+
+|Compression ratio
+|> 2x
+|> 5x
+|> 10x
+|===
+
+== Emergency Optimization
+
+When performance suddenly degrades:
+
+1. **Quick Check** (30 seconds):
+```bash
+cargo bench --bench hardware_simd_acceleration | grep "Throughput"
+```
+
+2. **Identify Bottleneck** (2 minutes):
+```bash
+cargo bench --bench complete_benchmark_suite -- --warm-up-time 1 --measurement-time 2
+```
+
+3. **Apply Quick Fix**:
+[cols="2,3"]
+|===
+|Issue |Quick Fix
+
+|High latency
+|`echo 'cache_size = "8GB"' >> config.toml && restart`
+
+|Memory pressure
+|`echo 'level = "pq8"' >> config.toml && restart`
+
+|Low throughput
+|`echo 'batch_size = 1000' >> config.toml && restart`
+
+|Poor accuracy
+|`echo 'progressive_enabled = false' >> config.toml && restart`
+|===
+
+4. **Validate** (1 minute):
+```bash
+cargo bench --bench query_progressive_search -- --warm-up-time 0.5 --measurement-time 1
+```

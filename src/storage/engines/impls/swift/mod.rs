@@ -61,7 +61,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
 use crate::core::bloom::SstableBloomFilter;
@@ -593,6 +593,230 @@ impl SwiftFile {
         filter: Option<MetadataFilter>,
     ) -> Result<Vec<VectorRecord>> {
         progressive_search::search_progressive(self, query, top_k, filter).await
+    }
+
+    /// Serialize SwiftFile to bytes for disk persistence
+    /// Uses FastLanes block serialization similar to SST for optimal performance
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        use bytes::BytesMut;
+        use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig;
+        use crate::core::compression::CompressionAlgorithm;
+
+        let mut buffer = BytesMut::new();
+
+        // Write header with magic and version
+        buffer.extend_from_slice(&self.header.magic);
+        buffer.extend_from_slice(&self.header.version.to_le_bytes());
+        buffer.extend_from_slice(&(self.header.collection_id.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(self.header.collection_id.as_bytes());
+        buffer.extend_from_slice(&self.header.timestamp.to_le_bytes());
+        buffer.extend_from_slice(&self.header.dimension.to_le_bytes());
+        buffer.extend_from_slice(&self.header.total_records.to_le_bytes());
+        buffer.extend_from_slice(&(self.superblocks.len() as u32).to_le_bytes());
+
+        // Write superblocks with FastLanes optimization
+        for superblock in &self.superblocks {
+            // Write superblock metadata
+            buffer.extend_from_slice(&(superblock.superblock_id as u32).to_le_bytes());
+            buffer.extend_from_slice(&superblock.record_count.to_le_bytes());
+            buffer.extend_from_slice(&(superblock.blocks.len() as u32).to_le_bytes());
+
+            // Serialize each FastLanes block efficiently
+            for block in &superblock.blocks {
+                // FastLanes blocks already have built-in serialization
+                // This provides compression and SIMD-optimized layout
+                let block_bytes = block.serialize()?;
+
+                // Write block size then data
+                buffer.extend_from_slice(&(block_bytes.len() as u32).to_le_bytes());
+                buffer.extend_from_slice(&block_bytes);
+            }
+
+            // Write bloom filter if present (for fast negative lookups like SST)
+            if let Some(ref bloom) = superblock.bloom_filter {
+                buffer.extend_from_slice(&1u8.to_le_bytes()); // Has bloom filter
+                let bloom_bytes = bloom.serialize()?;
+                buffer.extend_from_slice(&(bloom_bytes.len() as u32).to_le_bytes());
+                buffer.extend_from_slice(&bloom_bytes);
+            } else {
+                buffer.extend_from_slice(&0u8.to_le_bytes()); // No bloom filter
+            }
+        }
+
+        Ok(buffer.to_vec())
+    }
+
+    /// Write SwiftFile to disk using filesystem abstraction (follows SST pattern)
+    pub async fn write_to_disk(
+        &self,
+        filesystem_factory: &crate::storage::persistence::filesystem::FilesystemFactory,
+        path: &str,
+    ) -> Result<u64> {
+        use crate::storage::persistence::filesystem::atomic_strategy::AtomicWriteExecutorFactory;
+
+        let data = self.serialize()?;
+        let bytes_written = data.len() as u64;
+
+        // Get filesystem based on path (same as SST writer.rs:351)
+        let path_str = path;
+        let (_scheme, fs_url) = if path_str.contains("://") {
+            let parts: Vec<&str> = path_str.splitn(2, "://").collect();
+            (parts[0], path_str.to_string())
+        } else {
+            ("file", format!("file://{}", path_str))
+        };
+        let fs = filesystem_factory.get_filesystem(&fs_url)?;
+
+        // Use atomic writer for safe persistence (same as SST writer.rs:584)
+        let atomic_writer = AtomicWriteExecutorFactory::create_production_executor();
+        atomic_writer
+            .write_atomic(&*fs, path, &data, None)
+            .await?;
+
+        Ok(bytes_written)
+    }
+
+    /// Deserialize SwiftFile from bytes
+    pub fn deserialize(data: &[u8]) -> Result<Self> {
+        use std::io::{Cursor, Read};
+        use bytes::Buf;
+
+        let mut cursor = Cursor::new(data);
+
+        // Read header
+        let mut magic = [0u8; 4];
+        cursor.read_exact(&mut magic)?;
+
+        if magic != SWIFT_MAGIC {
+            return Err(anyhow!("Invalid SWIFT file magic"));
+        }
+
+        let version = cursor.get_u32_le();
+        let collection_id_len = cursor.get_u32_le() as usize;
+        let mut collection_id = vec![0u8; collection_id_len];
+        cursor.read_exact(&mut collection_id)?;
+        let collection_id = String::from_utf8(collection_id)?;
+
+        let timestamp = cursor.get_i64_le();
+        let dimension = cursor.get_u64_le() as usize;
+        let total_records = cursor.get_u64_le();
+        let superblock_count = cursor.get_u32_le() as usize;
+
+        // Create header
+        let header = SwiftHeader {
+            magic,
+            version,
+            collection_id: collection_id.clone(),
+            timestamp,
+            dimension,
+            total_records,
+            superblock_count: superblock_count as u32,
+            compaction_level: 0,
+            distance_metric: "euclidean".to_string(),
+            quantization: QuantizationConfig::default(),
+            deleted_records: 0,
+            blocks_per_superblock: 64,
+            records_per_block: 2000,
+            superblock_offset: 0,
+            id_index_offset: 0,
+            quantized_index_offset: 0,
+            metadata_index_offset: 0,
+            header_checksum: 0,
+            file_checksum: 0,
+        };
+
+        // Read superblocks
+        let mut superblocks = Vec::with_capacity(superblock_count);
+
+        for _ in 0..superblock_count {
+            let superblock_id = cursor.get_u32_le() as usize;
+            let record_count = cursor.get_u32_le();
+            let block_count = cursor.get_u32_le() as usize;
+
+            let mut superblock = SuperBlock::new(superblock_id, format!("sb_{}", superblock_id));
+            superblock.record_count = record_count;
+
+            // Read FastLanes blocks
+            for _ in 0..block_count {
+                let block_size = cursor.get_u32_le() as usize;
+                let mut block_data = vec![0u8; block_size];
+                cursor.read_exact(&mut block_data)?;
+
+                // Deserialize FastLanes block
+                let block = FastLanesDataBlock::deserialize(&block_data)?;
+                superblock.blocks.push(block);
+            }
+
+            // Read bloom filter flag
+            let has_bloom = cursor.get_u8() == 1;
+            if has_bloom {
+                let bloom_size = cursor.get_u32_le() as usize;
+                let mut bloom_data = vec![0u8; bloom_size];
+                cursor.read_exact(&mut bloom_data)?;
+                superblock.bloom_filter = Some(SstableBloomFilter::deserialize(&bloom_data)?);
+            }
+
+            superblocks.push(superblock);
+        }
+
+        Ok(SwiftFile {
+            header,
+            superblocks,
+            id_index: id_index::IdIndex::new(),
+            quantized_index: QuantizedIndex::new(dimension),
+            metadata_index: hierarchical_blocks::MetadataIndex::new(),
+            memory_manager: Arc::new(MemoryManager {
+                max_memory_bytes: 4 * 1024 * 1024 * 1024,
+                current_usage: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        })
+    }
+
+    /// Read SwiftFile from disk using filesystem (follows SST pattern)
+    pub async fn read_from_disk(
+        filesystem_factory: &crate::storage::persistence::filesystem::FilesystemFactory,
+        path: &str,
+    ) -> Result<Self> {
+        // Get filesystem based on path (same pattern as SST reader)
+        let path_str = path;
+        let (_scheme, fs_url) = if path_str.contains("://") {
+            let parts: Vec<&str> = path_str.splitn(2, "://").collect();
+            (parts[0], path_str.to_string())
+        } else {
+            ("file", format!("file://{}", path_str))
+        };
+
+        let fs = filesystem_factory.get_filesystem(&fs_url)?;
+        let data = fs.read(path).await?;
+
+        // Deserialize from data
+        Self::deserialize(&data)
+    }
+
+    /// Read SwiftFile using unified caching filesystem (for optimized queries)
+    pub async fn read_from_disk_with_cache(
+        filesystem_factory: &crate::storage::persistence::filesystem::FilesystemFactory,
+        path: &str,
+        collection_id: &str,
+    ) -> Result<Self> {
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // Create UnifiedCachingFilesystem (same as SST unified_reader.rs:47)
+        let base_fs = filesystem_factory.get_filesystem("file://")?;
+        let unified_fs = std::sync::Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                collection_id.to_string(),
+                "swift".to_string(),
+            )
+        );
+
+        // Read with caching (unified_fs implements FileSystem trait)
+        let data = unified_fs.read(path).await
+            .map_err(|e| anyhow!("Failed to read file: {}", e))?;
+
+        // Deserialize from cached data
+        Self::deserialize(&data)
     }
 
     /// FASTLANES: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression

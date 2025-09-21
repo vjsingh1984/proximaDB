@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use tokio::sync::RwLock;
-use tracing::{debug, trace};
+use tracing::trace;
 
 use crate::storage::persistence::filesystem::unified::CacheType;
 

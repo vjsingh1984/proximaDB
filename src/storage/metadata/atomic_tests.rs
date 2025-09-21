@@ -92,7 +92,7 @@ mod tests {
             id: collection.id.clone(),
             name: config.name.clone(),
             dimension: config.dimension as usize,
-            distance_metric: format!("{:?}", proximadb_v1::DistanceMetric::from_i32(config.distance_metric).unwrap_or_default()),
+            distance_metric: format!("{:?}", proximadb_v1::DistanceMetric::try_from(config.distance_metric).unwrap_or_default()),
             indexing_algorithm: "hnsw".to_string(),
             timestamp: collection.created_at as u32,
             version: Some(1),

@@ -92,7 +92,7 @@ pub type ParquetCompression = crate::core::compression::CompressionAlgorithm;
 /// Processed vector record with separated filterable and extra metadata
 #[derive(Debug, Clone)]
 pub struct ProcessedVectorRecord {
-    pub original_record: crate::core::VectorRecord,
+    pub original_record: crate::proto::proximadb_v1::VectorRecord,
     pub filterable_data: HashMap<String, serde_json::Value>,
     pub extra_meta: HashMap<String, serde_json::Value>,
 }

@@ -113,7 +113,7 @@ impl StorageEngineFactory {
     ) -> Result<Arc<dyn UnifiedStorageEngine>> {
         match strategy {
             StorageEngineStrategy::Viper => Self::create_viper(),
-            StorageEngineStrategy::Lsm => Self::create_sst(),
+            StorageEngineStrategy::Sst => Self::create_sst(),
             StorageEngineStrategy::Prism => Self::create_prism(),
             StorageEngineStrategy::Hybrid => {
                 // RAPTOR uses hybrid strategy (row-aligned with columnar benefits)

@@ -33,7 +33,7 @@ use tracing::info;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 // VectorRecord eliminated - using ZeroOverheadVector for 75-96% memory savings
 use crate::index::axis::eventlog::{ExtractionMode, IndexEvent};
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};

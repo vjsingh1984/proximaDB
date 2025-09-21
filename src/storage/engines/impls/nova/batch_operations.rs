@@ -2,7 +2,7 @@
 // Clean implementation leveraging Parquet's row group structure
 
 use super::NovaFile;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::ParquetLocation;
 use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;

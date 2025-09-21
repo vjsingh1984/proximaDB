@@ -8,7 +8,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::index_based_filter::{
     IndexBasedDataReader, MetadataSource, ReadStrategy, ColumnMetadata, ColumnData
 };

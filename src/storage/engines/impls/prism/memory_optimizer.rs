@@ -13,8 +13,7 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Memory tier configuration for PRISM's hierarchical caching
 /// Aligned with PRISM's progressive quantization levels

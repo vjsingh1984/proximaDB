@@ -28,7 +28,7 @@ _Navigate by your role and use case for optimized learning paths_
 ==== Business Value
 * **link:business/executive_overview.adoc[Executive Overview]** - 90% cost reduction, 18x faster deployment
 * **link:business/competitive_advantages.adoc[Competitive Advantages]** - Feature comparison without vendor bias
-* **link:PERFORMANCE.adoc[Performance Benchmarks]** - Validated performance specifications
+* **link:PERFORMANCE.adoc[Performance Benchmarks]** - Validated performance with realistic embeddings (332.3K vec/s, 1.175M elem/s @ 1536D OpenAI Ada)
 
 ==== Strategic Planning
 * **link:technical/ai_intelligence_platform.adoc[AI Intelligence Platform]** - LLM integration and natural language processing
@@ -81,7 +81,7 @@ mindmap
 | ❌ Requires separate tools
 | ✅ Optimized
 | ❌ Limited support
-| ✅ **20.6M ops/sec**
+| ✅ **5.1M ops/sec @ 768D**
 
 | **Graph Analytics**
 | ❌ Separate platform needed

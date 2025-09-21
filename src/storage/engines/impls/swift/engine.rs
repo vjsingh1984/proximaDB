@@ -19,7 +19,7 @@ use tracing::{debug, info};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
@@ -476,29 +476,49 @@ impl UnifiedStorageEngine for SwiftEngine {
             .unwrap_or(384);
 
         // Create new SWIFT file from flush parameters
-        let swift_file = SwiftFile::new(
+        let mut swift_file = SwiftFile::new(
             collection_id.to_string(),
             dimension as usize,
             "euclidean".to_string(),
         );
 
-        // Build blocks from vectors (would come from memtable in production)
-        // For now, simulate with empty records
-        let records: Vec<crate::core::VectorRecord> = Vec::new();
+        // Build blocks from vectors passed in flush parameters
+        // This is the actual data that needs to be persisted
+        let records = params.vector_records.clone();
 
-        // Use universal adapters for quantization - simplified implementation
-        // TODO: Implement proper quantization integration when SstFile API is stabilized
-        // For now, just add records without quantization
-        // sst.build_blocks_from_records(records)?;
+        // Add records to the SwiftFile structure
+        swift_file.build_blocks_from_records(records.clone())?;
 
-        // Write SWIFT file to storage with embedded statistics
-        // TODO: Implement actual SST file writing to storage_path
-        // Statistics will be embedded in SST file header for atomicity:
-        // - File creation time, vector count, dimension, compression ratio
-        // - Min/max values per dimension for pruning
-        // - Bloom filter parameters and false positive rate
-        // Also update {storage_path}/{collection_id}/global.stats
-        self.update_global_stats(collection_id, "/tmp").await?;
+        // Get storage path from collection config (always present)
+        // UnifiedCachingFilesystem will handle cloud storage transparently
+        let storage_path = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .map(|s| format!("{}/{}/data", s.base_location, collection_id))
+            .ok_or_else(|| anyhow!("SWIFT: Collection '{}' has no storage assignment", collection_id))?;
+
+        // Storage path already includes collection ID
+        let collection_path = storage_path.clone();
+        let fs = self.filesystem.get_filesystem("file://")?;
+        fs.create_dir_all(&collection_path).await?;
+
+        // Generate filename using FilenameCodec for consistency with compaction framework
+        use crate::storage::common::compaction_orchestrator::FilenameCodec;
+        let codec = FilenameCodec::new();
+        let swift_filename = codec.generate(0, "swift"); // Level 0 for flush
+        let filename = format!("{}/{}", collection_path, swift_filename);
+
+        // Actually write the SWIFT file to disk using filesystem factory (SST pattern)
+        let bytes_written = swift_file.write_to_disk(
+            &self.filesystem,
+            &filename,
+        ).await?;
+
+        info!("SWIFT flush complete: wrote {} bytes to {}", bytes_written, filename);
+
+        // Update global statistics file
+        self.update_global_stats(collection_id, &collection_path).await?;
 
         // Notify EventLog service about the flush
         // This allows AXIS to asynchronously index the flushed data
@@ -511,12 +531,8 @@ impl UnifiedStorageEngine for SwiftEngine {
                 .map(|q| q.enabled)
                 .unwrap_or(false);
 
-            // Create flushed file paths (simulated for now)
-            let flushed_files = vec![format!(
-                "{}/swift_flush_{}.dat",
-                "/tmp",
-                chrono::Utc::now().timestamp()
-            )];
+            // Use the actual file that was written
+            let flushed_files = vec![filename.clone()];
 
             if let Err(e) = event_log
                 .notify_flush(
@@ -534,19 +550,19 @@ impl UnifiedStorageEngine for SwiftEngine {
             }
         }
 
-        // Update statistics
+        // Update statistics with actual bytes written
         let mut stats = self.statistics.write().await;
         stats.pending_flushes = stats.pending_flushes.saturating_sub(1);
         stats.last_flush = Some(chrono::Utc::now());
-        stats.total_storage_bytes += params.estimated_size as u64;
+        stats.total_storage_bytes += bytes_written;
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(FlushResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_flushed: Some(params.vector_records.len() as u64),
-            bytes_written: Some(params.estimated_size as u64),
+            entries_flushed: Some(records.len() as u64),
+            bytes_written: Some(bytes_written),
             files_created: Some(1),
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
@@ -593,10 +609,17 @@ impl UnifiedStorageEngine for SwiftEngine {
 
         // Notify EventLog about compaction (fire-and-forget)
         if let Some(event_log) = crate::services::events::log::event_log_service() {
-            // Create compacted file paths (simulated for now)
+            // Create compacted file paths using collection's storage path
+            let storage_path = params
+                .collection_config
+                .as_ref()
+                .and_then(|c| c.storage_assignment.as_ref())
+                .map(|s| format!("{}/{}/data", s.base_location, collection_id))
+                .ok_or_else(|| anyhow!("No storage assignment for collection {}", collection_id))?;
+
             let output_files_paths = vec![format!(
                 "{}/swift_compacted_{}.dat",
-                "/tmp",
+                storage_path,
                 chrono::Utc::now().timestamp()
             )];
 

@@ -3,15 +3,13 @@
 //! Intelligently prefetches files based on access patterns to improve
 //! read performance and reduce latency.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
-use tracing::{debug, trace, warn};
+use tracing::debug;
 
 use super::access_tracker::{AccessPatternTracker, AccessPrediction};
 

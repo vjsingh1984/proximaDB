@@ -7,7 +7,7 @@ use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Zone map for a block of vectors
 #[derive(Debug, Clone)]

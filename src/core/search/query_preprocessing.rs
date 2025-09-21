@@ -6,12 +6,9 @@
 //! Expected Performance Improvement: 15-25% reduction in repeated computation
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::storage_engine::{
-    StorageQuantizationConfig, StorageQuantizationEngine,
-};
+use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::QuantizationLevel;
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
 use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::utils::cache::LruCache;

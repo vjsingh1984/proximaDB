@@ -379,7 +379,7 @@ impl GraphMemtable {
     fn rebuild_csr(&self) -> Result<()> {
         let mut new_offsets = vec![0];
         let mut new_targets = Vec::new();
-        let mut new_node_to_index = DashMap::new();
+        let new_node_to_index = DashMap::new();
 
         // Collect all nodes
         let mut nodes: Vec<_> = self.nodes.iter()

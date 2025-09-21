@@ -6,11 +6,3 @@
 pub(crate) mod zero_copy;
 
 // These types are now internal - access through UnifiedCachingFilesystem instead
-pub(crate) use zero_copy::{
-    ZeroCopyIOSystem,
-    access_tracker::AccessPatternTracker,
-    bandwidth_optimizer::BandwidthOptimizer,
-    config::ZeroCopyIOConfig,
-    metrics::SystemPerformanceMetrics,
-    traits::{FileAccessRequest, MetadataSerializer, QueryContext},
-};

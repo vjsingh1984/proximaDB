@@ -3,13 +3,14 @@
 
 use anyhow::Result;
 use parquet::file::metadata::RowGroupMetaData;
+use serde::{Serialize, Deserialize};
 use std::ops::Range;
 
 // Note: Using string representation instead of proto enum for consistency
 pub type DistanceMetric = String;
 
 /// SuperBlock: Aggregate of multiple row groups for coarse-grained pruning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SuperBlock {
     /// SuperBlock identifier
     pub id: u32,
@@ -37,12 +38,13 @@ pub struct SuperBlock {
 }
 
 /// Enhanced row group statistics with vector-specific optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnhancedRowGroupStats {
     /// Row group index
     pub row_group_id: u32,
 
-    /// Native Parquet metadata
+    /// Native Parquet metadata (not serialized, reconstructed on read)
+    #[serde(skip)]
     pub parquet_metadata: Option<RowGroupMetaData>,
 
     /// Vector-specific zone map
@@ -62,7 +64,7 @@ pub struct EnhancedRowGroupStats {
 }
 
 /// Zone map for efficient dimensional pruning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ZoneMap {
     /// Minimum values per dimension
     pub min_values: Vec<f32>,
@@ -84,7 +86,7 @@ pub struct ZoneMap {
 }
 
 /// Quantization statistics for progressive search optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizationStats {
     /// Binary quantization effectiveness
     pub binary_selectivity: f32,
@@ -103,7 +105,7 @@ pub struct QuantizationStats {
 }
 
 /// Selectivity hints for cost-based optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectivityHints {
     /// Expected candidate reduction at binary stage
     pub binary_reduction_factor: f32,
@@ -122,7 +124,7 @@ pub struct SelectivityHints {
 }
 
 /// Storage-level statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageStats {
     /// Total compressed size
     pub compressed_size: u64,
@@ -141,7 +143,7 @@ pub struct StorageStats {
 }
 
 /// Quantized column selectivity metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizedSelectivity {
     /// Binary column filtering effectiveness (0.0-1.0)
     pub binary_effectiveness: f32,
@@ -157,7 +159,7 @@ pub struct QuantizedSelectivity {
 }
 
 /// Search cost estimation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchCostEstimate {
     /// I/O cost (relative units)
     pub io_cost: f32,
@@ -176,7 +178,7 @@ pub struct SearchCostEstimate {
 }
 
 /// Access patterns and usage statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessStats {
     /// Number of times accessed
     pub access_count: u64,
@@ -564,7 +566,7 @@ impl Default for SelectivityHints {
 }
 
 /// Basic zone maps for simplified NOVA design (optimized version)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BasicZoneMaps {
     /// Per-dimension range statistics  
     pub dimension_ranges: Vec<DimensionRange>,
@@ -577,7 +579,7 @@ pub struct BasicZoneMaps {
 }
 
 /// Range information for a single dimension
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DimensionRange {
     /// Dimension index
     pub dimension_index: usize,

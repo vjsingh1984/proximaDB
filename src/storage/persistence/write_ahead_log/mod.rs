@@ -1583,7 +1583,7 @@ impl WriteAheadLogManager {
     pub async fn write_vector_batch_native_arc(
         &self,
         collection_id: &str,
-        native_vectors: Arc<Vec<crate::core::VectorRecord>>,
+        native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
     ) -> Result<Vec<u64>> {
         tracing::info!(
             "🚀 WAL NATIVE ZERO-COPY: Writing {} vectors to collection {}",

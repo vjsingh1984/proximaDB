@@ -17,7 +17,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashSet;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::Collection;
 

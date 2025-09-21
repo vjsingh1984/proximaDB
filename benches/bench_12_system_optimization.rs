@@ -271,10 +271,16 @@ fn bench_result_aggregation(c: &mut Criterion) {
                     b.iter(|| {
                         let mut sorted = results.clone();
                         let len = sorted.len();
-                        sorted.select_nth_unstable_by(*top_k.min(&len), |a, b| {
-                            b.score.partial_cmp(&a.score).unwrap()
-                        });
-                        sorted.truncate(*top_k);
+                        // select_nth_unstable_by requires index < len
+                        if *top_k < len {
+                            sorted.select_nth_unstable_by(*top_k, |a, b| {
+                                b.score.partial_cmp(&a.score).unwrap()
+                            });
+                            sorted.truncate(*top_k);
+                        } else {
+                            // If k >= len, just sort the whole array
+                            sorted.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+                        }
                         black_box(sorted)
                     });
                 },

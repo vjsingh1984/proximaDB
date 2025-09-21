@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::FilterExpression;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 

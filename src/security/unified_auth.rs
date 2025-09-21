@@ -7,7 +7,7 @@
 
 use super::unified_rbac::{UnifiedUserContext, AuthMethod, UnifiedPermission};
 use crate::auth::{EnterpriseAuthManager, SSOToken, EnterpriseUserContext};
-use crate::network::auth::{AuthResult, JwtService, TokenPair};
+use crate::network::auth::{JwtService, TokenPair};
 use crate::audit::logger::AuditLogger;
 use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
@@ -16,9 +16,8 @@ use std::sync::Arc;
 use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, debug};
+use tracing::warn;
 use dashmap::DashMap;
-use uuid::Uuid;
 
 /// Unified authentication service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

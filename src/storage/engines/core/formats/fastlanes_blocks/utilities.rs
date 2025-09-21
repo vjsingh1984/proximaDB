@@ -4,12 +4,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{FastLanesDataBlock, RowBasedConfig};
-use super::block_structures::{FastLanesBlockMetadata, BlockStatistics, BlockCompressionConfig};
+use super::{FastLanesDataBlock, RowBasedConfig, FastLanesBlockMetadata, BlockCompressionConfig};
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::compression::CompressionAlgorithm;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
-use crate::core::VectorRecord;
-use crate::core::hardware_capabilities::HardwareCapabilities;
+use super::block_structures::BlockStatistics;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -588,7 +588,7 @@ pub struct PerformanceProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
 
     #[test]
     fn test_memory_usage_calculation() {
@@ -623,7 +623,16 @@ mod tests {
             block_bloom_filter: None,
             id_range: (String::new(), String::new()),
             timestamp_range: (0, 0),
-            statistics: BlockStatistics::default(),
+            statistics: BlockStatistics {
+                read_count: 0,
+                write_count: 0,
+                search_count: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+                avg_read_time_ms: 0.0,
+                avg_search_time_ms: 0.0,
+                last_accessed_at: 0,
+            },
             metadata_stats: None,
             has_deletes: false,
         }];
@@ -668,15 +677,16 @@ mod tests {
 
     #[test]
     fn test_filename_generation() {
-        let sst_filename = FilenameCodec::new().generate(3, "sst");
+        let codec = FilenameCodec::new();
+        let sst_filename = codec.generate(3, "sst");
         assert!(sst_filename.contains("L3_"));
         assert!(sst_filename.ends_with(".sstable"));
 
-        let swift_filename = FilenameCodec::new().generate(2, "swift");
+        let swift_filename = codec.generate(2, "swift");
         assert!(swift_filename.contains("L2_"));
         assert!(swift_filename.ends_with(".swift"));
 
-        let level = FilenameCodec::new().parse_level(&sst_filename);
+        let level = codec.parse_level(&sst_filename);
         assert_eq!(level, 3);
     }
 

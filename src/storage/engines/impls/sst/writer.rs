@@ -61,7 +61,7 @@ use crate::storage::persistence::filesystem::{
 };
 
 use super::IndexEntry;
-use crate::core::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::bloom::factory::BloomFilterFactory;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, HashAlgorithm};
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;

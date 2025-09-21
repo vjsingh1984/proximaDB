@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::MetadataItem;
 
 /// High-performance concurrent vector storage

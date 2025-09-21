@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::index::axis::{AxisVectorIndex, IndexAlgorithm, IndexStats};
     use crate::storage::traits::CompactionResult;
     use chrono::Utc;

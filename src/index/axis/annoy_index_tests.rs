@@ -17,7 +17,7 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::index::axis::index_factory::AxisVectorIndex;
     use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
     use crate::proto::proximadb_v1::MetadataItem;

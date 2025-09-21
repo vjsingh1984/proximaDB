@@ -20,7 +20,7 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::CompressionConfig;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::impls::sst::writer::SstableWriter;

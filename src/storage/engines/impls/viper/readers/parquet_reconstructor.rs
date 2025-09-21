@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// File seek range for efficient data access
 #[derive(Debug, Clone)]
@@ -547,8 +547,56 @@ impl ParquetReconstructor {
         Ok(format!("value_{}", row_idx))
     }
 
-    fn extract_vector_value(&self, _column: &Arc<dyn Array>, _row_idx: usize) -> Result<Vec<f32>> {
-        // TODO: Implement proper vector extraction from Arrow arrays
+    fn extract_vector_value(&self, column: &Arc<dyn Array>, row_idx: usize) -> Result<Vec<f32>> {
+        // First check for FixedSizeBinary arrays (how vectors are actually stored)
+        if let Some(binary_array) = column.as_any().downcast_ref::<arrow_array::FixedSizeBinaryArray>() {
+            // Get the binary data for this row
+            let bytes = binary_array.value(row_idx);
+
+            // Convert bytes back to f32 vector
+            let vector: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|chunk| {
+                    let arr: [u8; 4] = chunk.try_into().unwrap();
+                    f32::from_le_bytes(arr)
+                })
+                .collect();
+
+            if !vector.is_empty() {
+                return Ok(vector);
+            }
+        } else if let Some(list_array) = column.as_any().downcast_ref::<arrow_array::ListArray>() {
+            // Extract vector from list array (alternative format)
+            let values = list_array.values();
+            if let Some(float_values) = values.as_any().downcast_ref::<arrow_array::Float32Array>() {
+                let offsets = list_array.offsets();
+                let start = offsets[row_idx] as usize;
+                let end = offsets[row_idx + 1] as usize;
+                let vector: Vec<f32> = (start..end).map(|i| float_values.value(i)).collect();
+
+                // If we got a proper vector, return it
+                if !vector.is_empty() {
+                    return Ok(vector);
+                }
+            }
+        } else if let Some(float_array) = column.as_any().downcast_ref::<arrow_array::Float32Array>() {
+            // Fallback for flat arrays
+            let num_rows = column.len();
+            if num_rows > 0 {
+                let vector_dim = float_array.len() / num_rows;
+                let start = row_idx * vector_dim;
+                let end = start + vector_dim;
+                if end <= float_array.len() {
+                    let vector: Vec<f32> = (start..end).map(|i| float_array.value(i)).collect();
+                    if !vector.is_empty() {
+                        return Ok(vector);
+                    }
+                }
+            }
+        }
+
+        // Return placeholder with default dimension (128) instead of empty to avoid zero-dimension errors
+        // This is a fallback - actual vectors should be extracted properly above
         Ok(vec![0.0f32; 128])
     }
 

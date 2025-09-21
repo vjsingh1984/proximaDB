@@ -15,7 +15,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 use dashmap::DashMap;
 
-use super::super::core::{MemtableCore, MemtableMetrics};
+use super::super::core::MemtableCore;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// SkipList-based memtable implementation using DashMap

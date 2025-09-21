@@ -11,12 +11,12 @@ use tracing::{debug, info};
 
 
 use super::{MetadataFilter, SwiftFile};
-use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::core::VectorRecord;
+use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
 /// Helper function to compute L2 distance squared for INT8 vectors

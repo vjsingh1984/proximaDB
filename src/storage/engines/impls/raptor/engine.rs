@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use super::consolidated_compactor::RaptorCompactor;
 use super::{RaptorConfig, RaptorWriter, RowGroups, consolidated_reader::RaptorReader};
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::{
@@ -236,7 +236,7 @@ impl RaptorEngine {
 
         // Initialize UnifiedCachingFilesystem with RAPTOR metadata serializer
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use super::unified_metadata_serializer::RaptorUnifiedMetadataSerializer;
+        
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -1507,14 +1507,20 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
     }
 
     /// Determine storage tier from base path
+    /// Note: /tmp paths should not be used for production storage
+    /// UnifiedCachingFilesystem will handle caching transparently:
+    /// - Cloud storage (S3/Azure/GCS) files cached at /tmp/proximadb/cache/
+    /// - Cache is managed by LRU policy, not a primary storage location
     pub fn determine_storage_tier(base_path: &str) -> crate::storage::persistence::filesystem::FileStorageTier {
         use crate::storage::persistence::filesystem::FileStorageTier;
 
         if base_path.contains("s3://") || base_path.contains("azure://") || base_path.contains("gcs://") {
             FileStorageTier::S3Standard
-        } else if base_path.contains("/tmp") || base_path.contains("memory") {
+        } else if base_path.contains("memory") {
+            // Only treat explicit memory:// paths as memory tier
             FileStorageTier::Memory
         } else {
+            // Local filesystem paths use SSD tier
             FileStorageTier::SSD
         }
     }
@@ -1757,7 +1763,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         let storage_path = ctx.storage_path();
         let query_vector = ctx
             .query_vector()
-            .ok_or_else(|| anyhow::anyhow!("No query vector in search context"))?;
+            .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
         let k = ctx.top_k();
         let dimension = ctx.dimension();
         let distance_metric = ctx.distance_metric();

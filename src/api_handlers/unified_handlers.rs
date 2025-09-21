@@ -336,7 +336,7 @@ impl UnifiedHandlers {
         };
 
         // Convert v1 vectors to core VectorRecord (expected by vector service)
-        let legacy_vectors: Vec<crate::core::VectorRecord> = request
+        let legacy_vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = request
             .vectors
             .into_iter()
             .map(|v| crate::proto::proximadb_v1::VectorRecord {

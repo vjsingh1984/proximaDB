@@ -11,7 +11,7 @@ use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::FilterExpression;
 
 /// Qualifying row indices with metadata about the filtering process

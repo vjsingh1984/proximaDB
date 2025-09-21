@@ -152,9 +152,9 @@ impl LLMMetrics {
         let metrics = provider_metrics.entry(provider.clone()).or_default();
 
         metrics.total_tokens_used.fetch_add(tokens, Ordering::Relaxed);
-        // Store cost in cents for atomic operations
-        let cost_cents = (cost_usd * 100.0) as u64;
-        metrics.total_cost_usd.fetch_add(cost_cents, Ordering::Relaxed);
+        // Store cost in millicents (0.001 cents) for atomic operations to preserve precision
+        let cost_millicents = (cost_usd * 100000.0) as u64;
+        metrics.total_cost_usd.fetch_add(cost_millicents, Ordering::Relaxed);
     }
 
     /// Record rate limit exceeded
@@ -214,8 +214,8 @@ impl LLMMetrics {
                 0.0
             };
 
-            let cost_cents = metrics.total_cost_usd.load(Ordering::Relaxed);
-            let estimated_cost_usd = (cost_cents as f64) / 100.0;
+            let cost_millicents = metrics.total_cost_usd.load(Ordering::Relaxed);
+            let estimated_cost_usd = (cost_millicents as f64) / 100000.0;
 
             let last_success = *metrics.last_success.read().await;
             let last_failure = *metrics.last_failure.read().await;
@@ -460,31 +460,37 @@ impl Default for ProviderMetrics {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_metrics_recording() {
-        let metrics = LLMMetrics::new();
+    #[test]
+    fn test_metrics_recording() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let metrics = LLMMetrics::new();
 
-        // Record some successful operations
-        metrics.record_success(&LLMProvider::OpenAI, 1500).await;
-        metrics.record_success(&LLMProvider::OpenAI, 2000).await;
-        metrics.record_token_usage(&LLMProvider::OpenAI, 100, 0.002).await;
+            // Record some successful operations
+            metrics.record_success(&LLMProvider::OpenAI, 1500).await;
+            metrics.record_success(&LLMProvider::OpenAI, 2000).await;
+            metrics.record_token_usage(&LLMProvider::OpenAI, 100, 0.002).await;
 
-        // Record a failure
-        let error = LLMError::RateLimitExceeded {
-            provider: LLMProvider::OpenAI,
-            retry_after_seconds: 60,
-        };
-        metrics.record_failure(&LLMProvider::OpenAI, &error).await;
+            // Record a failure
+            let error = LLMError::RateLimitExceeded {
+                provider: LLMProvider::OpenAI,
+                retry_after_seconds: 60,
+            };
+            metrics.record_failure(&LLMProvider::OpenAI, &error).await;
 
-        // Get snapshot and verify metrics
-        let snapshot = metrics.get_snapshot().await;
-        let openai_stats = snapshot.provider_stats.get(&LLMProvider::OpenAI).unwrap();
+            // Get snapshot and verify metrics
+            let snapshot = metrics.get_snapshot().await;
+            let openai_stats = snapshot.provider_stats.get(&LLMProvider::OpenAI).unwrap();
 
-        assert_eq!(openai_stats.total_requests, 3);
-        assert_eq!((openai_stats.success_rate * 10.0).round() / 10.0, 66.7); // 2/3 success rate
-        assert_eq!(openai_stats.average_response_time_ms, 1750.0); // (1500 + 2000) / 2
-        assert_eq!(openai_stats.total_tokens_used, 100);
-        assert_eq!(openai_stats.estimated_cost_usd, 0.002);
+            assert_eq!(openai_stats.total_requests, 3);
+            // Success rate should be ~66.7% (2/3)
+            let expected_rate = 2.0 / 3.0 * 100.0;
+            assert!((openai_stats.success_rate - expected_rate).abs() < 0.1);
+            assert_eq!(openai_stats.average_response_time_ms, 1750.0); // (1500 + 2000) / 2
+            assert_eq!(openai_stats.total_tokens_used, 100);
+            // Check estimated cost with floating point tolerance
+            assert!((openai_stats.estimated_cost_usd - 0.002).abs() < 0.0001);
+        });
     }
 
     #[tokio::test]

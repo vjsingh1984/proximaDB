@@ -11,7 +11,7 @@ mod tests {
         },
     };
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,

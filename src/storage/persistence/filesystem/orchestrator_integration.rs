@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use tracing::{debug, trace};
 
 use crate::storage::cache::orchestrator::{
-    CacheAccessEvent, CacheType as OrchestratorCacheType, CrossCacheOrchestrator,
+    CacheType as OrchestratorCacheType, CrossCacheOrchestrator,
 };
 use crate::storage::cache::backend::CacheTier;
 use crate::storage::persistence::filesystem::unified::{

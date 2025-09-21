@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 
 /// Configuration for the universal search pipeline

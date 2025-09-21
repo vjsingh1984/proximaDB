@@ -14,7 +14,7 @@ use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
 use crate::storage::engines::core::formats::columnar::{
-    ParquetWriterConfig, QuantizationConfig as ColumnarQuantizationConfig, StreamingParquetWriter,
+    ParquetWriterConfig, StreamingParquetWriter,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1162,11 +1162,11 @@ impl Flush {
 
         debug!("   ✅ VIPER Parquet written using StreamingParquetWriter:");
         debug!("      File: {:?}", temp_file_path);
-        debug!("      Records: {}", stats.total_records);
-        debug!("      Row groups: {}", stats.total_row_groups);
-        debug!("      File size: {} bytes", stats.file_size);
-        debug!("      Compression ratio: {:.2}", stats.compression_ratio);
-        debug!("      Bloom filters: {}", stats.bloom_filter_count);
+        debug!("      Records: {}", stats.0.total_records);
+        debug!("      Row groups: {}", stats.0.total_row_groups);
+        debug!("      File size: {} bytes", stats.0.file_size);
+        debug!("      Compression ratio: {:.2}", stats.0.compression_ratio);
+        debug!("      Bloom filters: {}", stats.0.bloom_filter_count);
 
         info!(
             "📝 VIPER FLUSH: Created Parquet file with bloom filters at {:?}",

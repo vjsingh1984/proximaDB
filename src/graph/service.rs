@@ -256,6 +256,12 @@ impl GraphOperationsService {
         Ok(collections.iter().map(|c| c.graph_id.clone()).collect())
     }
 
+    /// Create a new graph collection (delegates to collection service)
+    pub async fn create_graph_collection(&self, request: crate::proto::proximadb_v1::CreateGraphRequest) -> Result<()> {
+        self.collection_service.create_graph(request).await?;
+        Ok(())
+    }
+
     /// Remove a graph engine (for cleanup/deletion)
     pub fn remove_graph(&self, graph_id: &str) -> Option<Arc<OrionGraphEngine>> {
         self.graphs.remove(graph_id).map(|(_, engine)| engine)

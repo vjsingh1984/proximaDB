@@ -40,7 +40,7 @@ use crate::compute::quantization::types::{
     BinaryQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
     UnifiedQuantizationLevel,
 };
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::Collection;
 use crate::query::unified_query_optimizer::{
@@ -254,10 +254,10 @@ impl VectorOperationsService {
         let collection_id = req.collection_id.clone();
 
         // Convert v1 vectors to native core::VectorRecord
-        let native_vectors: Vec<crate::core::VectorRecord> = req
+        let native_vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = req
             .vectors
             .into_iter()
-            .map(|v| crate::core::VectorRecord {
+            .map(|v| crate::proto::proximadb_v1::VectorRecord {
                 id: v.id,
                 vector: v.vector,
                 metadata: v.metadata,

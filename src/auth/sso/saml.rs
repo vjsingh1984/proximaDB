@@ -3,12 +3,12 @@
 //! Provides SSO authentication using any SAML 2.0 compatible identity provider
 //! including Okta, Auth0, Ping Identity, ADFS, and custom SAML implementations.
 
-use super::types::{SSOProvider, SSOValidationResult, EnterpriseUserContext, SecurityClearance, ProviderUserContext};
+use super::types::{EnterpriseUserContext, SecurityClearance, ProviderUserContext};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc, Duration};
-use tracing::{info, warn, debug};
+use chrono::{DateTime, Utc};
+use tracing::debug;
 
 /// SAML 2.0 provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

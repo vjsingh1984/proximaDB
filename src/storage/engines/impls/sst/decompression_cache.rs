@@ -413,7 +413,7 @@ impl DecompressionCache {
             .records
             .iter()
             .map(|r| {
-                std::mem::size_of::<crate::core::VectorRecord>()
+                std::mem::size_of::<crate::proto::proximadb_v1::VectorRecord>()
                     + r.id.len()
                     + r.vector.len() * std::mem::size_of::<f32>()
                     + r.metadata.iter().map(|(k, _)| k.len() + 8).sum::<usize>() // Rough metadata size
@@ -657,7 +657,7 @@ mod tests {
             // This should be approximately 500 * (256 * 4 + overhead) = ~512KB per block
             let mut records = vec![];
             for j in 0..500 {
-                records.push(crate::core::VectorRecord {
+                records.push(crate::proto::proximadb_v1::VectorRecord {
                     id: format!("id_long_name_for_testing_{}", j),
                     vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
                     metadata: {

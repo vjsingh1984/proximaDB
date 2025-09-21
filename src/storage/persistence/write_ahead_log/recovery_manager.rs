@@ -453,7 +453,7 @@ impl RecoveryManager {
     /// Flush recovered vectors to storage engine
     async fn flush_recovered_vectors(
         file_info: &WriteBufferFileInfo,
-        vectors: Vec<crate::core::VectorRecord>,
+        vectors: Vec<crate::proto::proximadb_v1::VectorRecord>,
         _disk_manager: &Arc<WriteBufferDiskManager>,
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
         _recovery_mode: RecoveryMode,
@@ -713,7 +713,7 @@ impl ParallelRecoveryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::persistence::write_ahead_log::{BatchId, SerializationFormat};
@@ -873,7 +873,7 @@ mod tests {
             }
 
             fn strategy(&self) -> StorageEngineStrategy {
-                StorageEngineStrategy::Lsm
+                StorageEngineStrategy::Sst
             }
 
             async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {

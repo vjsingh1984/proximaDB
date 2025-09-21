@@ -13,7 +13,7 @@ mod tests {
     use super::super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats};
     use super::super::{DataBlock, DataBlockMetadata};
     use super::super::{SstRecord, SstStorage};
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::core::search::mvcc_resolution::MvccResolver;
     use crate::core::{BloomFilterConfig, SstConfig};
     use crate::proto::proximadb_v1::MetadataItem;

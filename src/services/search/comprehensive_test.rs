@@ -67,7 +67,7 @@ mod tests {
     /// Storage engine type for testing
     #[derive(Debug, Clone, Copy, PartialEq)]
     enum TestEngineType {
-        Lsm,
+        Sst,
         Viper,
     }
 
@@ -253,7 +253,7 @@ mod tests {
     /// Create mock search context for testing
     fn create_test_context(collection_id: &str, engine_type: TestEngineType) -> SearchPlan {
         let storage_type = match engine_type {
-            TestEngineType::Lsm => "LSM",
+            TestEngineType::Sst => "SST",
             TestEngineType::Viper => "VIPER",
         };
 
@@ -531,7 +531,7 @@ mod tests {
         for test_case in test_cases.iter().take(6) {
             // Test subset due to mock limitations
             debug!("🧪 Testing LSM case: {}", test_case.name);
-            let context = create_test_context("test_lsm_collection", TestEngineType::Lsm);
+            let context = create_test_context("test_sst_collection", TestEngineType::Sst);
 
             let search_params = SearchParams {
                 query_vectors: Some(vec![test_case.query_vector.clone()]),
@@ -1305,7 +1305,7 @@ mod tests {
         debug!("🚀 Integration test using backend: {}", backend);
 
         // Test matrix: 2 engines × 4 metrics × 3 operators = 24 combinations
-        let engines = vec![TestEngineType::Lsm, TestEngineType::Viper];
+        let engines = vec![TestEngineType::Sst, TestEngineType::Viper];
         let metrics = vec![
             DistanceMetric::Cosine,
             DistanceMetric::Euclidean,

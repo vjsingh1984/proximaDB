@@ -4,14 +4,14 @@
 //! authentication, authorization, audit, and security policy enforcement.
 
 use super::unified_rbac::{ConsolidatedRBACManager, UnifiedUserContext, UnifiedPermission, RBACConfig};
-use super::unified_auth::{UnifiedAuthService, AuthenticationConfig, AuthenticationResult, AuthenticationData, AuthenticationMethod, JwtConfig, SSOConfig};
+use super::unified_auth::{UnifiedAuthService, AuthenticationConfig, AuthenticationData, AuthenticationMethod, JwtConfig, SSOConfig};
 use crate::audit::logger::{AuditLogger, AuditConfig};
 
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, error, debug};
 use chrono::Utc;
+use tracing::{info, warn, debug};
 
 /// Security coordinator configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

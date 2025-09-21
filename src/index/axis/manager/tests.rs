@@ -8,7 +8,7 @@ use anyhow::Result;
 use chrono::Utc;
 
 use super::*;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1 as proximadb;
 use crate::index::axis::types::{IndexSelectionStrategy, IndexSpecification, Data, IndexAlgorithm};
 

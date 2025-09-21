@@ -21,7 +21,7 @@
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::compactor_impl::{SstCompactor, ZeroCopyCompactionStats};
-use crate::core::VectorRecord; // OPTIMIZED: Added VectorRecord import
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Added VectorRecord import
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::core::{SstConfig, String}; // OPTIMIZED: VectorRecord imported above
 use crate::storage::Result;

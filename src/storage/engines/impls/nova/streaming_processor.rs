@@ -2,7 +2,7 @@
 // Implements async streaming with bounded memory and backpressure control
 
 use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::{Result, anyhow};
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::sync::Arc;

@@ -83,8 +83,18 @@ pub mod unified_columnar_integration;
 pub mod unified_metadata_serializer;
 pub mod unified_strategy_reader;
 
+// Reader modules (re-exports UnifiedParquetReader from columnar module)
+pub mod readers;
+
+// NOVA metadata collector for sidecar files
+pub mod nova_meta_collector;
+
+// NOVA metadata reader for sidecar files
+pub mod nova_meta_reader;
+
 // Re-export main engine type and optimized components
 pub use engine::NovaEngine;
+pub use nova_meta_reader::{NovaMetaReader, QueryOptimizationHints};
 
 // Re-export unified strategy readers
 pub use unified_strategy_reader::{
@@ -110,7 +120,7 @@ use arrow_schema::{DataType, Field, Schema};
 use parquet::file::metadata::RowGroupMetaData;
 use std::sync::Arc;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::FilterCondition;
 
 // Import shared columnar infrastructure

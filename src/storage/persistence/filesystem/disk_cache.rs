@@ -3,11 +3,10 @@
 //! Manages local disk caching of frequently accessed files to reduce
 //! cloud storage API calls and bandwidth costs.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, Instant};
 
-use async_trait::async_trait;
 use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, trace, warn};

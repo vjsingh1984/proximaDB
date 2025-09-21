@@ -15,7 +15,6 @@ use tracing::info;
 // Block structures handled internally
 // Bloom filter handled internally
 
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// SWIFT-specific superblock cache optimized for tree navigation and instant traversal
 pub struct SwiftSuperBlockCache {

@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use super::clustering::{HilbertKey, LiquidClusteringConfig, QueryPatternTracker};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Liquid clustering coordinator
 pub struct LiquidClusteringCoordinator {

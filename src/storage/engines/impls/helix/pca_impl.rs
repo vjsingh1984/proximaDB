@@ -7,7 +7,7 @@ use anyhow::Result;
 use nalgebra::{DMatrix, DVector, SymmetricEigen};
 use std::collections::HashMap;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Enhanced PCA model with proper eigendecomposition
 #[derive(Debug, Clone)]

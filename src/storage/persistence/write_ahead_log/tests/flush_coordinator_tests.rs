@@ -32,7 +32,7 @@ impl UnifiedStorageEngine for MockStorageEngine {
     }
 
     fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-        crate::storage::traits::StorageEngineStrategy::Lsm
+        crate::storage::traits::StorageEngineStrategy::Sst
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {

@@ -5,22 +5,22 @@
  * you may not use this file except in compliance with the License.
  */
 
-//! Benchmarks for SIMD-accelerated distance computation
+//! Benchmarks for SIMD-accelerated distance computation with realistic embeddings
+
+mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::{
     DistanceMetric, DistanceMode, UnifiedDistanceCompute,
 };
 use proximadb::core::hardware_capabilities;
-use rand::prelude::*;
+use common::{EmbeddingGenerator, EmbeddingModel};
 use tracing::debug;
 
-/// Generate random vectors for benchmarking
-fn generate_random_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
-    let mut rng = rand::thread_rng();
-    (0..count)
-        .map(|_| (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect())
-        .collect()
+/// Generate realistic embedding vectors for benchmarking
+fn generate_embedding_vectors(count: usize, dimension: usize, model: EmbeddingModel) -> Vec<Vec<f32>> {
+    let mut generator = EmbeddingGenerator::new(model);
+    generator.generate_batch(count, dimension)
 }
 
 /// Benchmark different vector dimensions
@@ -29,15 +29,24 @@ fn benchmark_dimensions(c: &mut Criterion) {
     let _ = hardware_capabilities::initialize_hardware_capabilities_default();
     let mut group = c.benchmark_group("simd_distance_dimensions");
 
-    // Test different dimensions (powers of 2 for optimal SIMD)
-    for dimension in [64, 128, 256, 512, 1024, 2048].iter() {
-        let vec_a = generate_random_vectors(1, *dimension)[0].clone();
-        let vec_b = generate_random_vectors(1, *dimension)[0].clone();
+    // Test different dimensions with appropriate embedding models
+    let test_configs = vec![
+        (64, EmbeddingModel::Normalized),
+        (128, EmbeddingModel::Normalized),
+        (256, EmbeddingModel::Normalized),
+        (512, EmbeddingModel::Normalized),
+        (768, EmbeddingModel::Bert),      // BERT embeddings
+        (1536, EmbeddingModel::OpenAIAda), // OpenAI embeddings
+    ];
 
-        group.throughput(Throughput::Elements(*dimension as u64));
+    for (dimension, model) in test_configs {
+        let vec_a = generate_embedding_vectors(1, dimension, model)[0].clone();
+        let vec_b = generate_embedding_vectors(1, dimension, model)[0].clone();
+
+        group.throughput(Throughput::Elements(dimension as u64));
 
         // Cosine distance
-        group.bench_with_input(BenchmarkId::new("cosine", dimension), dimension, |b, _| {
+        group.bench_with_input(BenchmarkId::new("cosine", dimension), &dimension, |b, _| {
             let calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
             b.iter(|| {
                 let result = calculator.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
@@ -48,7 +57,7 @@ fn benchmark_dimensions(c: &mut Criterion) {
         // Euclidean distance
         group.bench_with_input(
             BenchmarkId::new("euclidean", dimension),
-            dimension,
+            &dimension,
             |b, _| {
                 let calculator = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
                 b.iter(|| {
@@ -62,7 +71,7 @@ fn benchmark_dimensions(c: &mut Criterion) {
         // Dot product
         group.bench_with_input(
             BenchmarkId::new("dot_product", dimension),
-            dimension,
+            &dimension,
             |b, _| {
                 let calculator = UnifiedDistanceCompute::new(DistanceMetric::DotProduct);
                 b.iter(|| {
@@ -77,16 +86,18 @@ fn benchmark_dimensions(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark batch processing
+/// Benchmark batch processing with realistic embeddings
 fn benchmark_batch_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_distance_batch");
 
-    let dimension = 128;
-    let query = generate_random_vectors(1, dimension)[0].clone();
+    // Use BERT embeddings for batch processing
+    let dimension = 768;
+    let model = EmbeddingModel::Bert;
+    let query = generate_embedding_vectors(1, dimension, model)[0].clone();
 
     // Test different batch sizes
     for batch_size in [100, 500, 1000, 5000, 10000].iter() {
-        let vectors = generate_random_vectors(*batch_size, dimension);
+        let vectors = generate_embedding_vectors(*batch_size, dimension, model);
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
         group.throughput(Throughput::Elements(*batch_size as u64));
@@ -143,8 +154,8 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
     let mut group = c.benchmark_group("hardware_backends");
 
     let dimension = 1024; // Large dimension to show SIMD benefits
-    let vec_a = generate_random_vectors(1, dimension)[0].clone();
-    let vec_b = generate_random_vectors(1, dimension)[0].clone();
+    let vec_a = generate_embedding_vectors(1, dimension, EmbeddingModel::Normalized)[0].clone();
+    let vec_b = generate_embedding_vectors(1, dimension, EmbeddingModel::Normalized)[0].clone();
 
     group.throughput(Throughput::Elements(dimension as u64));
 

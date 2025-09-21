@@ -18,7 +18,7 @@ use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
 use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Use unified distance compute directly instead of obsolete QuantizedDistanceCalculator
 use crate::core::compression::CompressionAlgorithm;
@@ -562,7 +562,7 @@ impl CommonColumnarOperations {
         collection_id: &str,
         dimension: usize,
         quantization: Option<&QuantizationConfig>,
-        filterable_columns: &[super::schema::FilterableColumnSpec],
+        filterable_columns: &[crate::proto::proximadb_v1::FilterableColumnSpec],
     ) -> Result<(Arc<Schema>, CompressionMetadata)> {
         let start_time = std::time::Instant::now();
 
@@ -574,7 +574,7 @@ impl CommonColumnarOperations {
         let schema_config = ColumnarSchemaConfig {
             dimension,
             quantization: quantization.cloned(),
-            filterable_columns: filterable_columns.to_vec(),
+            filterable_columns: crate::storage::engines::core::formats::columnar::schema::ColumnarFilterableSpec::from_proto_vec(filterable_columns),
             optimization: self.config.schema_config.to_schema_optimization(),
             compression_strategy: self
                 .config

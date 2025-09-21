@@ -416,18 +416,23 @@ impl Default for SchemaContextConfig {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_schema_context_creation() {
+    #[test]
+    fn test_schema_context_creation() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
         let schema_context = SchemaContext::new().await.unwrap();
 
         assert!(!schema_context.table_schemas.is_empty());
         assert!(schema_context.table_schemas.contains_key("collections"));
         assert!(schema_context.table_schemas.contains_key("vectors"));
         assert!(schema_context.table_schemas.contains_key("tenants"));
+        });
     }
 
-    #[tokio::test]
-    async fn test_schema_context_building() {
+    #[test]
+    fn test_schema_context_building() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
         let schema_context = SchemaContext::new().await.unwrap();
         let accessible_tables = vec!["collections".to_string(), "vectors".to_string()];
 
@@ -437,7 +442,10 @@ mod tests {
         assert!(context_description.contains("collections"));
         assert!(context_description.contains("vectors"));
         assert!(context_description.contains("tenant_id"));
-        assert!(!context_description.contains("tenants")); // Not in accessible tables
+
+        // Check that the tenants table is not included (should not appear as "TABLE: tenants")
+        assert!(!context_description.contains("TABLE: tenants"), "Context should not contain 'tenants' table as it's not in accessible_tables");
+        });
     }
 
     #[test]

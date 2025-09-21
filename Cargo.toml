@@ -273,28 +273,77 @@ opt-level = 1
 debug = true
 incremental = true
 
-# Benchmark configuration
-[[bench]]
-name = "simd_distance_bench"
-harness = false
-path = "benches/simd_distance_bench.rs"
+# Benchmark configuration - Organized by functional categories
 
-# Arrow dependencies downgraded to avoid compilation conflicts
-
+# 1. COMPUTE & DISTANCE BENCHMARKS (01-03)
 [[bench]]
-name = "flush_optimization_bench"
+name = "bench_01_core_distance"
 harness = false
-path = "benches/flush_optimization_bench.rs"
+path = "benches/bench_01_core_distance.rs"
 
 [[bench]]
-name = "vector_optimization_bench"
+name = "bench_02_hardware_simd"
 harness = false
-path = "benches/vector_optimization_bench.rs"
+path = "benches/bench_02_hardware_simd.rs"
 
 [[bench]]
-name = "engine_comparison_bench"
+name = "bench_03_memory_vector"
 harness = false
-path = "benches/engine_comparison_bench.rs"
+path = "benches/bench_03_memory_vector.rs"
+
+# 2. STORAGE ENGINE BENCHMARKS (04-09)
+[[bench]]
+name = "bench_04_storage_comparison"
+harness = false
+path = "benches/bench_04_storage_comparison.rs"
+
+[[bench]]
+name = "bench_05_storage_lifecycle"
+harness = false
+path = "benches/bench_05_storage_lifecycle.rs"
+
+[[bench]]
+name = "bench_06_storage_sparsity"
+harness = false
+path = "benches/bench_06_storage_sparsity.rs"
+
+[[bench]]
+name = "bench_07_storage_flush"
+harness = false
+path = "benches/bench_07_storage_flush.rs"
+
+[[bench]]
+name = "bench_08_quantization_sst"
+harness = false
+path = "benches/bench_08_quantization_sst.rs"
+
+[[bench]]
+name = "bench_09_columnar_viper"
+harness = false
+path = "benches/bench_09_columnar_viper.rs"
+
+# 3. SEARCH & QUERY BENCHMARKS (10)
+[[bench]]
+name = "bench_10_query_progressive"
+harness = false
+path = "benches/bench_10_query_progressive.rs"
+
+# 4. UNIFIED & CROSS-ENGINE BENCHMARKS (11)
+[[bench]]
+name = "bench_11_cross_engine"
+harness = false
+path = "benches/bench_11_cross_engine.rs"
+
+# 5. SYSTEM & COMPREHENSIVE BENCHMARKS (12-13)
+[[bench]]
+name = "bench_12_system_optimization"
+harness = false
+path = "benches/bench_12_system_optimization.rs"
+
+[[bench]]
+name = "bench_13_complete_suite"
+harness = false
+path = "benches/bench_13_complete_suite.rs"
 
 # Temporarily disabled benchmarks
 # [[bench]]
@@ -307,32 +356,9 @@ path = "benches/engine_comparison_bench.rs"
 # harness = false
 # path = "benches/metadata_lifecycle.rs"
 
+# 6. GRAPH OPERATIONS BENCHMARKS (14 - Last)
 [[bench]]
-name = "unified_strategy_bench"
+name = "bench_14_graph_operations"
 harness = false
-path = "benches/unified_strategy_bench.rs"
+path = "benches/bench_14_graph_operations.rs"
 
-[[bench]]
-name = "graph_benchmarks"
-harness = false
-
-
-[[bench]]
-name = "parquet_optimizations_bench_async"
-harness = false
-
-[[bench]]
-name = "sst_quantization_bench"
-harness = false
-
-[[bench]]
-name = "engine_sparsity_compression_bench"
-harness = false
-
-[[bench]]
-name = "progressive_search_bench"
-harness = false
-
-[[bench]]
-name = "optimization_benchmarks"
-harness = false

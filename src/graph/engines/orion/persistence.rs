@@ -25,7 +25,7 @@ use crate::core::error::ProximaDBError;
 use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::{Edge, Node, NodeId};
 use crate::graph::engines::orion::OrionGraphEngine;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
 use serde::{Deserialize, Serialize};
@@ -117,10 +117,11 @@ impl OrionPersistence {
         base_url: String,
         enable_wal: bool,
     ) -> Result<Self> {
-        // Create filesystem factory
-        let filesystem_factory = Arc::new(FilesystemFactory::default());
+        // Create filesystem factory with default configuration and initialize filesystems
+        let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?);
 
-        // Get the underlying filesystem from the factory based on URL
+        // Get the underlying filesystem from the factory
         let underlying_fs = filesystem_factory.get_filesystem(&base_url)
             .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
 

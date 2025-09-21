@@ -1,7 +1,7 @@
 // Progressive refinement search for VIPER dual-mode
 // Implements multi-stage search with increasing precision
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 
 /// Progressive refinement configuration

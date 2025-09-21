@@ -9,7 +9,7 @@ use tracing::{debug, info, warn};
 
 use super::SwiftFile;
 use super::id_index::BlockLocation;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
 /// Configuration for batch operations

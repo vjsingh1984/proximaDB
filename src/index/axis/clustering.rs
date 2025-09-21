@@ -12,7 +12,7 @@ use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 // Export ClusterManager
 pub use super::cluster_manager::ClusterManager;

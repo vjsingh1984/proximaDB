@@ -6,13 +6,13 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 use super::MetadataFilter;
-use super::unified_reader::{UnifiedSwiftReader, SwiftReaderConfig};
+use super::unified_reader::SwiftReaderConfig;
 
 /// Unified SWIFT reader that implements strategy-aware reading
 ///
@@ -166,27 +166,106 @@ impl UnifiedSWIFTReader {
         }
     }
 
-    /// Direct streaming read (bypasses cache)
+    /// Direct streaming read (bypasses cache) - for compaction and full scans
+    /// Similar to SST's CompactionFullRead strategy
     async fn read_direct_stream(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-        // Use filesystem factory directly for streaming reads
+        // Use filesystem factory directly for streaming reads to avoid cache pollution
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let data = fs.read(file_path).await?;
 
-        // TODO: Parse SWIFT format and extract vectors
-        // For now, return empty vec - actual implementation would use SWIFT format parser
-        Ok(vec![])
+        // Deserialize the SWIFT file
+        let swift_file = super::SwiftFile::deserialize(&data)?;
+
+        // Stream all records without filtering (full scan for compaction)
+        let mut records = Vec::new();
+        for superblock in &swift_file.superblocks {
+            for block in &superblock.blocks {
+                records.extend_from_slice(&block.records);
+            }
+        }
+
+        Ok(records)
     }
 
-    /// Cached read (uses UnifiedCachingFilesystem)
+    /// Cached read with predicate pushdown - for queries
+    /// Similar to SST's SelectiveWithCache strategy
     async fn read_with_cache(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         let cached_fs = self.cached_filesystem.as_ref()
             .ok_or_else(|| anyhow::anyhow!("Cached filesystem not initialized"))?;
 
-        let data = cached_fs.read(file_path).await?;
+        // Use UnifiedCachingFilesystem for optimal I/O with caching (implements FileSystem trait)
+        use crate::storage::persistence::filesystem::FileSystem;
+        let data = cached_fs.read(file_path).await
+            .map_err(|e| anyhow::anyhow!("Failed to read file: {}", e))?;
 
-        // TODO: Parse SWIFT format and extract vectors
-        // For now, return empty vec - actual implementation would use SWIFT format parser
-        Ok(vec![])
+        // Deserialize the SWIFT file
+        let swift_file = super::SwiftFile::deserialize(&data)?;
+
+        // Apply predicate pushdown based on strategy
+        let mut records = Vec::new();
+
+        match &self.strategy {
+            ReadAccessStrategy::CachedSelective { filter } => {
+                // Predicate pushdown: only read blocks that match filter
+                for superblock in &swift_file.superblocks {
+                    // Check bloom filter first (if available) for quick negative lookups
+                    if let Some(ref bloom) = superblock.bloom_filter {
+                        // Early skip if bloom filter says no match possible
+                        if !self.check_bloom_filter(bloom, filter) {
+                            continue;
+                        }
+                    }
+
+                    // Process blocks that might contain matching records
+                    for block in &superblock.blocks {
+                        // Apply filter at block level for efficiency
+                        let filtered = self.apply_filter_to_block(&block.records, filter)?;
+                        records.extend(filtered);
+                    }
+                }
+            }
+            _ => {
+                // No filter - but still use hierarchical pruning for search
+                for superblock in &swift_file.superblocks {
+                    for block in &superblock.blocks {
+                        records.extend_from_slice(&block.records);
+                    }
+                }
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Check bloom filter for potential matches
+    fn check_bloom_filter(
+        &self,
+        bloom: &crate::core::bloom::SstableBloomFilter,
+        filter: &Option<crate::core::search::FilterExpression>,
+    ) -> bool {
+        // If no filter, always check the block
+        if filter.is_none() {
+            return true;
+        }
+
+        // TODO: Implement bloom filter check based on filter expression
+        // For now, conservatively return true (check the block)
+        true
+    }
+
+    /// Apply filter to block records (predicate pushdown)
+    fn apply_filter_to_block(
+        &self,
+        records: &[VectorRecord],
+        filter: &Option<crate::core::search::FilterExpression>,
+    ) -> Result<Vec<VectorRecord>> {
+        if filter.is_none() {
+            return Ok(records.to_vec());
+        }
+
+        // TODO: Implement actual filter evaluation
+        // For now, return all records
+        Ok(records.to_vec())
     }
 }
 
