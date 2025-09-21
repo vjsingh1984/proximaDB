@@ -111,7 +111,7 @@ pub async fn viper_optimization_example() -> Result<()> {
             writer.write_record(record).await?;
         }
 
-        let stats = writer.finalize().await?;
+        let (stats, _collector) = writer.finalize().await?;
 
         println!("✅ VIPER Write Complete:");
         println!("  - File size: {} bytes", stats.file_size);
@@ -306,7 +306,7 @@ pub async fn nova_optimization_example() -> Result<()> {
             writer.write_record(record).await?;
         }
 
-        let stats = writer.finalize().await?;
+        let (stats, _collector) = writer.finalize().await?;
 
         println!("✅ NOVA Write Complete:");
         println!(

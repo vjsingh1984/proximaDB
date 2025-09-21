@@ -747,11 +747,11 @@ mod tests {
         let config = ColumnarSchemaConfig {
             dimension: 768,
             quantization: None,
-            filterable_columns: vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+            filterable_columns: vec![ColumnarFilterableSpec {
                 name: "category".to_string(),
-                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                data_type: FilterableData::String,
+                nullable: true,
                 indexed: false,
-                supports_range: false,
                 estimated_cardinality: Some(100),
             }],
             optimization: SchemaOptimization::default(),

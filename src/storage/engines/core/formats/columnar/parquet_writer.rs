@@ -1458,7 +1458,7 @@ mod tests {
             writer.write_record(record).await.unwrap();
         }
 
-        let stats = writer.finalize().await.unwrap();
+        let (stats, _collector) = writer.finalize().await.unwrap();
 
         assert_eq!(stats.total_records, 25);
         assert!(stats.file_size > 0);
@@ -1542,7 +1542,7 @@ mod tests {
             writer.write_record(record).await.unwrap();
         }
 
-        let stats = writer.finalize().await.unwrap();
+        let (stats, _collector) = writer.finalize().await.unwrap();
 
         assert_eq!(stats.total_records, 100);
         assert!(stats.file_size > 0);

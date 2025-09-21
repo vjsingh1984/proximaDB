@@ -34,7 +34,7 @@ async fn test_id_column_always_preserved() {
     // Write test records with IDs
     let test_records = create_test_records(100);
     writer.write_batch(&test_records).await.unwrap();
-    let stats = writer.finalize().await.unwrap();
+    let (stats, _collector) = writer.finalize().await.unwrap();
 
     assert_eq!(stats.total_records, 100);
     assert!(stats.file_size > 0);
@@ -72,7 +72,7 @@ async fn test_id_less_storage_warning() {
 
     let test_records = create_test_records(50);
     writer.write_batch(&test_records).await.unwrap();
-    let _stats = writer.finalize().await.unwrap();
+    let (_stats, _collector) = writer.finalize().await.unwrap();
 
     // Even with id_less_storage = true, ID column should still be present
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
@@ -118,7 +118,7 @@ async fn test_id_bloom_filters() {
         writer.write_batch(chunk).await.unwrap();
     }
 
-    let stats = writer.finalize().await.unwrap();
+    let (stats, _collector) = writer.finalize().await.unwrap();
     assert_eq!(stats.total_records, 2500);
     assert!(
         stats.bloom_filter_count > 0,
@@ -200,7 +200,7 @@ async fn test_fast_id_lookup_performance() {
 
     let start_write = std::time::Instant::now();
     writer.write_batch(&test_records).await.unwrap();
-    let stats = writer.finalize().await.unwrap();
+    let (stats, _collector) = writer.finalize().await.unwrap();
     let write_duration = start_write.elapsed();
 
     println!(
@@ -282,7 +282,7 @@ async fn test_dictionary_encoding_optimization() {
         .collect();
 
     writer.write_batch(&test_records).await.unwrap();
-    let stats = writer.finalize().await.unwrap();
+    let (stats, _collector) = writer.finalize().await.unwrap();
 
     assert_eq!(stats.total_records, 1000);
 
@@ -382,7 +382,7 @@ async fn test_customer_api_compatibility() {
     ];
 
     writer.write_batch(&test_records).await.unwrap();
-    let _stats = writer.finalize().await.unwrap();
+    let (_stats, _collector) = writer.finalize().await.unwrap();
 
     // Test get_by_id equivalent
     let filesystem_config = FilesystemConfig::default();
@@ -449,7 +449,7 @@ async fn test_row_group_offset_optimization() {
 
     let test_records = create_test_records(250); // Multiple row groups
     writer.write_batch(&test_records).await.unwrap();
-    let _stats = writer.finalize().await.unwrap();
+    let (_stats, _collector) = writer.finalize().await.unwrap();
 
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
 

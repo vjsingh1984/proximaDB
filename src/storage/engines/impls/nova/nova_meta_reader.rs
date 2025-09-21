@@ -287,11 +287,11 @@ impl NovaMetaReader {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_vector_bounds_check() {
+    #[tokio::test]
+    async fn test_vector_bounds_check() {
         let reader = NovaMetaReader::new(Arc::new(FilesystemFactory::new(
             Default::default()
-        ).unwrap()));
+        ).await.unwrap()));
 
         let vector = vec![1.0, 2.0, 3.0];
         let min_values = vec![0.0, 1.0, 2.0];
@@ -303,11 +303,11 @@ mod tests {
         assert!(!reader.vector_in_bounds(&out_of_bounds, &min_values, &max_values));
     }
 
-    #[test]
-    fn test_euclidean_distance() {
+    #[tokio::test]
+    async fn test_euclidean_distance() {
         let reader = NovaMetaReader::new(Arc::new(FilesystemFactory::new(
             Default::default()
-        ).unwrap()));
+        ).await.unwrap()));
 
         let v1 = vec![1.0, 2.0, 3.0];
         let v2 = vec![4.0, 5.0, 6.0];
