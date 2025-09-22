@@ -340,9 +340,6 @@ mod performance_comparison_tests {
             let config = HelixConfig::default();
             Arc::new(
                 HelixEngine::new(
-                    "test_collection".to_string(),
-                    config,
-                    base_path.join("helix"),
                     None,
                 )
                 .await
@@ -360,7 +357,7 @@ mod performance_comparison_tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstEngine::new(sst_config, filesystem.clone(), distance_compute.clone())
+            SstEngine::new()
                 .await
                 .unwrap(),
         ) as Arc<dyn UnifiedStorageEngine>;
@@ -369,12 +366,7 @@ mod performance_comparison_tests {
         let viper_config = ViperConfig::default();
 
         let viper_engine = Arc::new(
-            ViperEngine::new(
-                "test_collection".to_string(),
-                viper_config,
-                filesystem.clone(),
-                distance_compute.clone(),
-            )
+            ViperEngine::new()
             .await
             .unwrap(),
         ) as Arc<dyn UnifiedStorageEngine>;
@@ -428,9 +420,6 @@ mod performance_comparison_tests {
             let config = HelixConfig::default();
             Arc::new(
                 HelixEngine::new(
-                    "test_collection".to_string(),
-                    config,
-                    base_path.join("helix"),
                     None,
                 )
                 .await
@@ -448,7 +437,7 @@ mod performance_comparison_tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstEngine::new(sst_config, filesystem.clone(), distance_compute.clone())
+            SstEngine::new()
                 .await
                 .unwrap(),
         ) as Arc<dyn UnifiedStorageEngine>;
@@ -499,9 +488,6 @@ mod performance_comparison_tests {
                 let config = HelixConfig::default();
                 let engine = Arc::new(
                     HelixEngine::new(
-                        "test_collection".to_string(),
-                        config,
-                        temp_dir.path().to_path_buf(),
                         None,
                     )
                     .await
@@ -530,7 +516,7 @@ mod performance_comparison_tests {
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 let engine = Arc::new(
-                    SstEngine::new(sst_config, filesystem, distance_compute)
+                    SstEngine::new()
                         .await
                         .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>;
@@ -728,9 +714,6 @@ mod performance_comparison_tests {
                 let config = HelixConfig::default();
                 Arc::new(
                     HelixEngine::new(
-                        "test_collection".to_string(),
-                        config,
-                        temp_dir.path().to_path_buf(),
                         None,
                     )
                     .await
@@ -752,7 +735,7 @@ mod performance_comparison_tests {
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 Arc::new(
-                    SstEngine::new(sst_config, filesystem.clone(), distance_compute.clone())
+                    SstEngine::new()
                         .await
                         .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>
@@ -772,12 +755,7 @@ mod performance_comparison_tests {
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 Arc::new(
-                    ViperEngine::new(
-                        "test_collection".to_string(),
-                        viper_config,
-                        filesystem,
-                        distance_compute,
-                    )
+                    ViperEngine::new()
                     .await
                     .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>

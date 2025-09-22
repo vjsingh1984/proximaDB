@@ -55,12 +55,7 @@ mod helix_integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
 
-        let engine = HelixEngine::new(
-            "test_collection".to_string(),
-            config,
-            temp_dir.path().to_path_buf(),
-            None,
-        )
+        let engine = HelixEngine::new()
         .await
         .unwrap();
 
@@ -138,12 +133,7 @@ mod helix_integration_tests {
         let mut config = HelixConfig::default();
         config.level0_file_num_compaction_trigger = 2;
 
-        let engine = HelixEngine::new(
-            "test_collection".to_string(),
-            config,
-            temp_dir.path().to_path_buf(),
-            None,
-        )
+        let engine = HelixEngine::new()
         .await
         .unwrap();
 
@@ -226,12 +216,7 @@ mod helix_integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
 
-        let engine = HelixEngine::new(
-            "test_collection".to_string(),
-            config,
-            temp_dir.path().to_path_buf(),
-            None,
-        )
+        let engine = HelixEngine::new()
         .await
         .unwrap();
 
@@ -355,12 +340,7 @@ mod helix_integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
 
-        let engine = HelixEngine::new(
-            "test_collection".to_string(),
-            config,
-            temp_dir.path().to_path_buf(),
-            None,
-        )
+        let engine = HelixEngine::new()
         .await
         .unwrap();
 

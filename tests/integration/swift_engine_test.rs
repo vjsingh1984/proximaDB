@@ -42,10 +42,7 @@ async fn create_test_setup() -> (Arc<SwiftEngine>, Arc<CollectionService>, TempD
     );
 
     let swift_engine = Arc::new(
-        SwiftEngine::new(
-            distance_engine,
-            None, // axis_manager
-        )
+        SwiftEngine::new()
         .await
         .unwrap(),
     );
@@ -121,7 +118,7 @@ async fn test_swift_engine_creation_and_insertion() {
     assert_eq!(flush_result.entries_flushed, Some(100));
 
     let vector = swift_engine
-        .vector_by_id("swift_test_collection", "vec_10")
+        .vector_by_id("swift_test_collection", "/tmp/proximadb-test/", "vec_10")
         .await
         .unwrap();
     assert!(vector.is_some());

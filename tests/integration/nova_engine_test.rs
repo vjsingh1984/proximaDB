@@ -112,7 +112,7 @@ async fn test_nova_engine_creation_and_insertion() {
     assert_eq!(flush_result.entries_flushed, Some(100));
 
     let vector = nova_engine
-        .vector_by_id("nova_test_collection", "vec_10")
+        .vector_by_id("nova_test_collection", "/tmp/proximadb-test/", "vec_10")
         .await
         .unwrap();
     assert!(vector.is_some());

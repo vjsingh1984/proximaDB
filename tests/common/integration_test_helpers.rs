@@ -135,11 +135,7 @@ impl UnifiedTestEnvironment {
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
 
-        SstEngine::new(
-            self.sst_config.clone(),
-            self.filesystem.clone(),
-            distance_compute,
-        )
+        SstEngine::new()
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create SST storage: {}", e))
     }
@@ -151,12 +147,7 @@ impl UnifiedTestEnvironment {
             self.collection_id
         );
 
-        ViperEngine::new(
-            self.collection_id.clone(),
-            self.viper_config.clone(),
-            self.filesystem.clone(),
-            Arc::new(UnifiedDistanceCompute::default()),
-        )
+        ViperEngine::new()
         .await
     }
 
@@ -975,7 +966,7 @@ pub async fn flush_sst_with_block_stats(
         proximadb::compute::distance_computation::DistanceMetric::Euclidean,
     ));
 
-    let sst_storage = SstEngine::new(sst_config.clone(), filesystem, distance_compute).await?;
+    let sst_storage = SstEngine::new().await?;
 
     // Create collection config with compression
     let compression_config = CompressionConfig {

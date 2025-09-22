@@ -77,7 +77,7 @@ impl StorageTestFixture {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstEngine::new(sst_config, filesystem.clone(), distance_compute.clone()).await?,
+            SstEngine::new().await?,
         );
 
         // Create VIPER engine
@@ -86,13 +86,7 @@ impl StorageTestFixture {
         let viper_config = ViperConfig::default();
 
         let viper_engine = Arc::new(
-            ViperEngine::new(
-                "test_collection".to_string(),
-                viper_config,
-                filesystem.clone(),
-                distance_compute.clone(),
-            )
-            .await?,
+            ViperEngine::new().await?,
         );
 
         Ok(Self {

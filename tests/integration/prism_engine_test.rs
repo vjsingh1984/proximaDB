@@ -35,9 +35,7 @@ async fn create_test_setup() -> (Arc<PrismEngine>, Arc<CollectionService>, TempD
     );
 
     let prism_engine = Arc::new(
-        PrismEngine::new(
-            proximadb::storage::engines::impls::prism::engine::Config::default(),
-        )
+        PrismEngine::new()
         .await
         .unwrap(),
     );
@@ -113,7 +111,7 @@ async fn test_prism_engine_creation_and_insertion() {
     assert_eq!(flush_result.entries_flushed, Some(100));
 
     let vector = prism_engine
-        .vector_by_id("prism_test_collection", "vec_10")
+        .vector_by_id("prism_test_collection", "/tmp/proximadb-test/", "vec_10")
         .await
         .unwrap();
     assert!(vector.is_some());

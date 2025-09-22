@@ -1,6 +1,7 @@
 //! Phase 1: Foundation - Shared Infrastructure Tests
 
 use super::super::*;
+use crate::storage::traits::UnifiedMetricsCollector;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +33,7 @@ async fn test_base_cache_trait_template_method() {
     struct TestCache {
         l1_store: Arc<RwLock<HashMap<TestKey, TestValue>>>,
         l2_store: Arc<RwLock<HashMap<TestKey, TestValue>>>,
-        metrics: CacheMetrics,
+        metrics: UnifiedMetricsCollector,
     }
 
     #[async_trait::async_trait]
@@ -98,7 +99,7 @@ async fn test_base_cache_trait_template_method() {
     let cache = TestCache {
         l1_store: Arc::new(RwLock::new(HashMap::new())),
         l2_store: Arc::new(RwLock::new(HashMap::new())),
-        metrics: CacheMetrics::new(),
+        metrics: UnifiedMetricsCollector::new(),
     };
 
     // Test template method flow
@@ -117,7 +118,8 @@ async fn test_base_cache_trait_template_method() {
     assert_eq!(retrieved.unwrap().size, 100);
 
     // Check metrics were updated
-    assert_eq!(cache.metrics.total_gets(), 1);
+    let snapshot = cache.metrics.get_snapshot().await;
+    assert_eq!(snapshot.total_operations, 1);
 }
 
 /// Test eviction policies
@@ -214,32 +216,32 @@ async fn test_metrics_collection() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let metrics = CacheMetrics::new();
+    let metrics = UnifiedMetricsCollector::new();
 
     // Record some operations
-    metrics.record_hit(CacheTier::L1);
-    metrics.record_hit(CacheTier::L1);
-    metrics.record_hit(CacheTier::L2);
-    metrics.record_miss();
-    metrics.record_miss();
+    use crate::storage::traits::MetricsOperationType;
+    metrics.record(MetricsOperationType::CacheHit, true, None);
+    metrics.record(MetricsOperationType::CacheHit, true, None);
+    metrics.record(MetricsOperationType::CacheHit, true, None);
+    metrics.record(MetricsOperationType::CacheMiss, false, None);
+    metrics.record(MetricsOperationType::CacheMiss, false, None);
 
     // Check hit rate
-    assert_eq!(metrics.total_gets(), 5);
-    assert_eq!(metrics.hit_rate(), 0.6); // 3 hits, 2 misses
+    let snapshot = metrics.get_snapshot().await;
+    assert_eq!(snapshot.total_operations, 5);
+    let hit_rate = snapshot.cache_hits as f64 / (snapshot.cache_hits + snapshot.cache_misses) as f64;
+    assert!((hit_rate - 0.6).abs() < 0.01); // 3 hits, 2 misses
 
-    // Check tier-specific metrics
-    assert_eq!(metrics.tier_hits(CacheTier::L1), 2);
-    assert_eq!(metrics.tier_hits(CacheTier::L2), 1);
+    // Check cache hits/misses
+    assert_eq!(snapshot.cache_hits, 3);
+    assert_eq!(snapshot.cache_misses, 2);
 
-    // Record eviction
-    metrics.record_eviction();
-    assert_eq!(metrics.total_evictions(), 1);
-
-    // Record latency
-    metrics.record_get_latency(Duration::from_millis(1));
-    metrics.record_put_latency(Duration::from_millis(3));
+    // Record additional operations to test latency
+    metrics.record(MetricsOperationType::Read, true, Some(1));
+    metrics.record(MetricsOperationType::Write, true, Some(3));
     // Check that we have recorded some latency
-    assert!(metrics.total_gets() > 0 || metrics.total_puts() > 0);
+    let snapshot = metrics.get_snapshot().await;
+    assert!(snapshot.total_operations > 0);
 }
 
 /// Test cache entry metadata

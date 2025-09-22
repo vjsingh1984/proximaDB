@@ -217,8 +217,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let sst_engine =
-        SstEngine::new((*sst_config).clone(), filesystem.clone(), distance_compute).await?;
+    let sst_engine = SstEngine::new().await?;
 
     // Create VIPER engine
     let viper_engine = ViperEngine::from_core_config(viper_config, filesystem.clone()).await?;

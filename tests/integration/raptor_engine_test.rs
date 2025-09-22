@@ -29,12 +29,7 @@ async fn create_test_setup() -> (Arc<RaptorEngine>, TempDir) {
     );
 
     let raptor_engine = Arc::new(
-        RaptorEngine::new(
-            "raptor_test_collection".to_string(),
-            temp_dir.path().to_string_lossy().to_string(), // base_path
-            proximadb::storage::engines::impls::raptor::config::RaptorConfig::default(),
-            cache_orchestrator,
-        )
+        RaptorEngine::new()
         .await
         .unwrap(),
     );

@@ -30,7 +30,7 @@ async fn test_viper_engine_initialization() {
     );
     
     let config = ViperConfig::default();
-    let engine = ViperEngine::new(config, filesystem)
+    let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
     
@@ -49,7 +49,7 @@ async fn test_collection_metadata_management() {
     );
     
     let config = ViperConfig::default();
-    let engine = ViperEngine::new(config, filesystem)
+    let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
     
@@ -101,7 +101,7 @@ async fn test_parquet_file_discovery() {
     );
     
     let config = ViperConfig::default();
-    let engine = ViperEngine::new(config, filesystem)
+    let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
     
@@ -130,7 +130,7 @@ async fn test_cluster_prediction() {
     );
     
     let config = ViperConfig::default();
-    let engine = ViperEngine::new(config, filesystem)
+    let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
     
@@ -156,7 +156,7 @@ async fn test_search_vectors_basic() {
     );
     
     let config = ViperConfig::default();
-    let engine = ViperEngine::new(config, filesystem)
+    let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
     
@@ -183,7 +183,7 @@ async fn test_search_vectors_in_cluster() {
     );
     
     let config = ViperConfig::default();
-    let engine = ViperEngine::new(config, filesystem)
+    let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
     
@@ -220,7 +220,7 @@ async fn test_engine_configuration_access() {
     config.enable_quantization = false;
     config.initial_cluster_count = 5;
     
-    let engine = ViperEngine::new(config, filesystem)
+    let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
     
@@ -253,7 +253,7 @@ async fn test_multiple_collections() {
     );
     
     let config = ViperConfig::default();
-    let engine = ViperEngine::new(config, filesystem)
+    let engine = ViperEngine::new()
         .await
         .expect("Failed to create VIPER engine");
     

@@ -178,7 +178,7 @@ async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let engine = SstEngine::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+    let engine = SstEngine::new().await?;
 
     // Create test vectors
     let vectors = env.create_test_vectors_with_dimension(1000, 256);
@@ -233,7 +233,7 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let engine = SstEngine::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+    let engine = SstEngine::new().await?;
 
     info!("🚀 Testing SST compaction with compression integrity");
 
@@ -332,7 +332,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let engine = SstEngine::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+    let engine = SstEngine::new().await?;
 
     // Create diverse test data - sparse and dense vectors
     let mut all_vectors = Vec::new();
@@ -612,7 +612,7 @@ async fn test_all_compression_algorithms_sst() -> anyhow::Result<()> {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
-        let engine = SstEngine::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+        let engine = SstEngine::new().await?;
 
         // Create test vectors with good compression patterns
         let vectors = create_compressible_test_vectors(&env, 100, 256, algo);
@@ -704,7 +704,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
         let engine =
-            SstEngine::new(config, env.filesystem.clone(), distance_compute.clone()).await?;
+            SstEngine::new()).await?;
 
         let start = std::time::Instant::now();
 
