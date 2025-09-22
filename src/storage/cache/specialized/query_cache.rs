@@ -180,7 +180,7 @@ impl QueryCache {
     }
 
     /// Get cache metrics
-    pub fn metrics(&self) -> &crate::storage::cache::metrics::CacheMetrics {
+    pub fn metrics(&self) -> &crate::storage::traits::UnifiedMetricsCollector {
         self.base.metrics()
     }
 
@@ -195,6 +195,18 @@ impl QueryCache {
     pub async fn remove(&self, key: &QueryKey) -> Option<CachedQueryResult> {
         // Remove and return the cached entry if it exists
         self.base.remove(key).await
+    }
+
+    /// Remove entry by string key (for eviction system compatibility)
+    /// The string should be a serialized QueryKey
+    pub async fn remove_by_string(&self, key_str: &str) -> Option<CachedQueryResult> {
+        // Try to deserialize the string to QueryKey
+        if let Ok(key) = serde_json::from_str::<QueryKey>(key_str) {
+            self.base.remove(&key).await
+        } else {
+            // If deserialization fails, can't remove
+            None
+        }
     }
 
     /// Get cache statistics

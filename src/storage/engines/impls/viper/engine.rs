@@ -1572,7 +1572,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let mut flush_result = self
             .flush_manager
             .flush_vectors(
-                collection_id,
+                &collection_id,
                 &params.vector_records,
                 &batch_id_strings,
                 params.force,
@@ -1672,7 +1672,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let compaction_result = self
             .compaction
             .compact_parquet_files(
-                collection_id,
+                &collection_id,
                 input_files.clone().unwrap_or_default(),
                 params.collection_config.as_ref(),
             )

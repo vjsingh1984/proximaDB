@@ -522,7 +522,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         info!("SWIFT flush complete: wrote {} bytes to {}", bytes_written, filename);
 
         // Update global statistics file
-        self.update_global_stats(collection_id, &collection_path).await?;
+        self.update_global_stats(&collection_id, collection_path.as_str()).await?;
 
         // Notify EventLog service about the flush
         // This allows AXIS to asynchronously index the flushed data
@@ -540,7 +540,7 @@ impl UnifiedStorageEngine for SwiftEngine {
 
             if let Err(e) = event_log
                 .notify_flush(
-                    collection_id,
+                    &collection_id,
                     flushed_files.clone(),
                     params.vector_records.len(),
                     has_quantized,
@@ -626,7 +626,7 @@ impl UnifiedStorageEngine for SwiftEngine {
 
             // Fire-and-forget notification - compaction is already complete
             event_log.notify_compaction(
-                collection_id,
+                &collection_id,
                 output_files_paths,
                 0, // TODO: actual vector count
                 crate::index::axis::eventlog::StorageEngineType::SWIFT,

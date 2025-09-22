@@ -83,7 +83,7 @@ where
 
     /// Remove a specific entry from the cache
     pub async fn remove(&self, key: &K) -> Option<V> {
-        if let Some(entry) = self.l1_backend.remove(key).await {
+        if let Some(entry) = self.l1_backend.remove_and_get(key).await {
             // Record eviction in unified metrics
             let metrics = self.metrics.clone();
             tokio::spawn(async move {
@@ -159,7 +159,7 @@ where
         }
     }
 
-    async fn put_l1(&self, key: Self::Key, value: Self::Value) {
+    async fn put_l1(&self, key: Self::Key, value: Self::Value) -> () {
         let entry = CacheEntry::new(value);
 
         // Try to insert
@@ -199,12 +199,14 @@ where
                         }
                         Err(_) => {
                             // Still fails after eviction - cache is critically full
-                            return Err(anyhow::anyhow!("Cache capacity exceeded even after eviction attempt"));
+                            tracing::error!("Cache capacity exceeded even after eviction attempt");
+                            return;
                         }
                     }
                 } else {
                     // No global orchestrator available
-                    return Err(anyhow::anyhow!("Cache capacity exceeded and no orchestrator available for eviction"));
+                    tracing::error!("Cache capacity exceeded and no orchestrator available for eviction");
+                    return;
                 }
             }
             Err(_) => {
@@ -255,6 +257,7 @@ where
     }
 
     async fn invalidate_l1(&self, key: &Self::Key) -> bool {
+        // Use the trait remove method that returns bool
         self.l1_backend.remove(key).await
     }
 

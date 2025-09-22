@@ -57,8 +57,8 @@ where
         self.storage.len()
     }
 
-    /// Remove a specific entry from the cache
-    pub async fn remove(&self, key: &K) -> Option<V> {
+    /// Remove a specific entry from the cache and return the value
+    pub async fn remove_and_get(&self, key: &K) -> Option<V> {
         if let Some((_, value)) = self.storage.remove(key) {
             // Update size tracking
             let entry_size = estimate_size(&value);

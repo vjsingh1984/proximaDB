@@ -193,9 +193,9 @@ impl CacheWarmer {
         for (cache_key, access_count) in access_patterns {
             // Parse cache key: "vector:collection_id:vector_id" (consistent format across all engines)
             if let Some((collection_id, vector_id)) = self.parse_vector_cache_key(&cache_key) {
-                // Check if already cached
-                if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
-                    if query_cache.get(&cache_key).await.is_ok() {
+                // Check if already cached in VectorCache (not QueryCache)
+                if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
+                    if vector_cache.get(&cache_key).await.is_some() {
                         continue; // Already cached
                     }
                 }
@@ -204,8 +204,8 @@ impl CacheWarmer {
                 if let Some(engine) = self.get_best_engine_for_collection(&collection_id) {
                     // We need base_path for storage engines - get from collection metadata
                     if let Ok(Some(vector)) = self.load_vector_with_base_path(&engine, &collection_id, &vector_id).await {
-                        if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
-                            let _ = query_cache.put(cache_key.clone(), vector).await;
+                        if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
+                            let _ = vector_cache.put(cache_key.clone(), vector).await;
                             warmed_count += 1;
 
                             // Track warming success

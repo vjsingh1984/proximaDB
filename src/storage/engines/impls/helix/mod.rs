@@ -1037,8 +1037,20 @@ impl UnifiedStorageEngine for HelixEngine {
             if entry.name.ends_with(".helix") || entry.name.ends_with(".sstable") {
                 let file_path = format!("{}/{}", data_dir, entry.name);
 
+                // Load SSTable metadata
+                let metadata = SStableMetadata {
+                    path: std::path::PathBuf::from(&file_path),
+                    level: 0,
+                    hilbert_range: None,
+                    num_vectors: 0,
+                    size_bytes: 0,
+                    created_at: chrono::Utc::now(),
+                    blocks: Vec::new(),
+                    bloom_filter: None,
+                };
+
                 if let Some(vector) =
-                    readers::find_vector_by_id(&fs, &std::path::PathBuf::from(&file_path), vector_id).await?
+                    readers::find_vector_by_id(&fs, &metadata, vector_id).await?
                 {
                     // Update global cache with found vector
                     if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {

@@ -156,11 +156,11 @@ impl AccessTracker {
     pub async fn get_lfu_items(&self, count: usize, min_access_count: u64) -> Vec<String> {
         let access_counts = self.access_counts.read().await;
         let mut items: Vec<_> = access_counts.iter()
-            .filter(|(_, &count)| count < min_access_count)
+            .filter(|(_, count)| **count < min_access_count)
             .collect();
 
         // Sort by access count (lowest first)
-        items.sort_by_key(|(_, &count)| count);
+        items.sort_by_key(|(_, count)| **count);
 
         items.into_iter()
             .take(count)
@@ -333,7 +333,7 @@ impl CacheEvictor {
                 let lru_items = self.access_tracker.get_lru_items(to_evict).await;
 
                 for item in &lru_items {
-                    let _ = query_cache.remove(item).await;
+                    let _ = query_cache.remove_by_string(item).await;
                 }
 
                 self.access_tracker.remove_tracking(&lru_items).await;
@@ -356,7 +356,7 @@ impl CacheEvictor {
                 let lfu_items = self.access_tracker.get_lfu_items(to_evict, min_access_count).await;
 
                 for item in &lfu_items {
-                    let _ = query_cache.remove(item).await;
+                    let _ = query_cache.remove_by_string(item).await;
                 }
 
                 self.access_tracker.remove_tracking(&lfu_items).await;
@@ -384,7 +384,7 @@ impl CacheEvictor {
         if !expired_items.is_empty() {
             if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
                 for item in &expired_items {
-                    let _ = query_cache.remove(item).await;
+                    let _ = query_cache.remove_by_string(item).await;
                 }
             }
 

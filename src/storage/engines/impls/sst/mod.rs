@@ -2642,7 +2642,7 @@ impl UnifiedStorageEngine for SstEngine {
 
             // Check if compaction is needed
             let check_result = compaction_manager
-                .check_compaction_needed(collection_id, &collection_dir)
+                .check_compaction_needed(&collection_id, &collection_dir)
                 .await?;
 
             // Log what we found
@@ -2797,7 +2797,7 @@ impl UnifiedStorageEngine for SstEngine {
                 );
 
                 flush_handler.notify_compaction_complete(
-                    collection_id,
+                    &collection_id,
                     vec![output_file.clone()],
                     enhanced_stats.merged_vectors.len(),
                 );
@@ -2810,7 +2810,7 @@ impl UnifiedStorageEngine for SstEngine {
                 );
 
                 if let Err(e) = flush_handler
-                    .cleanup_compacted_files(collection_id, input_file_paths.clone())
+                    .cleanup_compacted_files(&collection_id, input_file_paths.clone())
                     .await
                 {
                     warn!("Failed to cleanup compacted files from EventLog: {}", e);
@@ -2875,7 +2875,8 @@ impl UnifiedStorageEngine for SstEngine {
         let data_dir = format!("{}/{}/data", base_path, collection_id);
 
         // Get SSTable files from the data directory
-        let overlapping_files = self.get_overlapping_sstables(&data_dir, vector_id).await?;
+        // TODO: Implement proper overlapping file search using manifest
+        let overlapping_files = self.list_sstable_files_for_search(&data_dir).await?;
 
         if overlapping_files.is_empty() {
             debug!("📂 SST: No SSTable files overlap with key {}", vector_id);
@@ -3230,35 +3231,53 @@ impl UnifiedStorageEngine for SstEngine {
                 estimated_size_mb: 100.0, // Will be discovered by unified search engine
                 file_count: sstable_files.len(),
                 supports_range_requests: true,
-                file_paths: Some(sstable_files), // Pass pre-discovered files
+                file_paths: Some(sstable_files.clone()), // Pass pre-discovered files
             },
         };
 
-        // TODO: Use IntegratedSearchOptimizer instead of deleted SstUnifiedSearchEngine
-        // For now, create a basic result set
-        let result_set = crate::core::search::SearchResultSet {
-            results: vec![].into(),
-            total_count: 0,
-            query_id: None,
-            processing_time_us: 0,
-            algorithm: "SST".to_string(),
-            metadata: HashMap::new(),
-        };
+        // Use the SSTable reader for actual search implementation
+        let mut all_candidates = Vec::new();
 
-        // Old code commented out - needs integration with IntegratedSearchOptimizer
-        // let search_engine = unified_search_engine::SstUnifiedSearchEngine::new(
-        //     self.sst_reader.clone(),
-        //     self.distance_compute.clone(),
-        //     self.quantization_engine.clone(),
-        //     storage_url.to_string(),
-        //     self.filesystem.clone(),
-        // );
-        // let result_set = search_engine.search_unified(...).await?;
+        // Process each SSTable file with bloom filter optimization
+        for sstable_path in &sstable_files {
+            debug!("🔍 SST: Searching SSTable: {}", sstable_path);
 
-        // Use OptimizedSearchRecord directly - no conversion needed
-        // Search engine now returns OptimizedSearchRecord for better performance
+            // Use unified filesystem for cached metadata access
+            let cached_results = self.sstable_reader.search_with_filter(
+                sstable_path,
+                query_vector,
+                filter_expression.cloned(),
+                k * 2, // Get more candidates for better accuracy
+                distance_metric,
+            ).await;
+
+            match cached_results {
+                Ok(results) => {
+                    debug!("Found {} candidates in {}", results.len(), sstable_path);
+                    all_candidates.extend(results);
+                }
+                Err(e) => {
+                    warn!("Failed to search SSTable {}: {}", sstable_path, e);
+                    // Continue with other files
+                }
+            }
+        }
+
+        // Sort candidates by score and take top-k
+        all_candidates.sort_by(|a, b| {
+            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_candidates.truncate(k);
+
+        debug!(
+            "🎯 SST: Search found {} total candidates, returning top {}",
+            all_candidates.len().min(k),
+            k
+        );
+
+        // Convert to OptimizedSearchRecord format
         let mut optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
-            result_set.results.iter().cloned().collect();
+            all_candidates;
 
         // Filter results based on include_vectors and include_metadata
         if !include_vectors {
@@ -4030,6 +4049,25 @@ impl SstEngine {
         }
 
         Ok(compaction_needed)
+    }
+
+    /// List SSTable files for search
+    async fn list_sstable_files_for_search(&self, data_dir: &str) -> Result<Vec<String>> {
+        let mut files = Vec::new();
+
+        // List SSTable files using tokio directly for now
+        // TODO: Use proper filesystem abstraction when list_directory is available
+        if let Ok(mut entries) = tokio::fs::read_dir(data_dir).await {
+            while let Some(entry) = entries.next_entry().await? {
+                if let Some(name) = entry.file_name().to_str() {
+                    if name.ends_with(".sst") {
+                        files.push(format!("{}/{}", data_dir, name));
+                    }
+                }
+            }
+        }
+
+        Ok(files)
     }
 
     /// Count SSTable files at a specific level

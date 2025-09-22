@@ -168,7 +168,7 @@ impl BitmapFilterCache {
     }
 
     /// Access metrics from base cache
-    pub fn metrics(&self) -> &CacheMetrics {
+    pub fn metrics(&self) -> &crate::storage::traits::UnifiedMetricsCollector {
         self.base.metrics()
     }
 

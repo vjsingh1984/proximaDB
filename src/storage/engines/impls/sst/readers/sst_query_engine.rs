@@ -49,7 +49,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::search::{FilterExpression, SearchParams};
+use crate::core::search::{FilterExpression, SearchParams, ComparisonOperator};
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
@@ -1455,6 +1455,97 @@ impl SstDirectReader {
 }
 
 impl UnifiedSstableReader {
+    /// Search SSTable using SharedSstFormatReader for optimized I/O
+    /// Delegates to shared infrastructure like SWIFT does
+    pub async fn search_with_filter(
+        &self,
+        file_path: &str,
+        query_vector: &[f32],
+        filter: Option<FilterExpression>,
+        k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        // REFACTORED: Use SharedSstFormatReader like SWIFT does
+        // No more duplicate I/O logic!
+
+        // Step 1: Determine strategy
+        let strategy = if filter.is_some() {
+            SstableReadingStrategy::SelectiveWithCache {
+                use_range_reads: true,
+                enable_bloom_filters: true,
+                enable_cache_lookup: true,
+                enable_metadata_cache: true,
+            }
+        } else {
+            SstableReadingStrategy::FullScan {
+                use_block_cache: true
+            }
+        };
+
+        // Step 2: Create search context with correct fields
+        let context = CollectionContext {
+            file_path: file_path.to_string(),
+            sstable_files: vec![file_path.to_string()],
+            total_vectors: 0, // Will be determined during search
+            metadata_columns: Vec::new(),
+            level: 0,
+            creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
+        };
+
+        let params = SearchParams {
+            vector: Some(query_vector.to_vec()),
+            filter_expression: filter,
+            top_k: Some(k),
+            ..Default::default()
+        };
+
+        // Step 3: Use apply_strategy to leverage SharedSstFormatReader
+        // This delegates all I/O to the shared infrastructure
+        let blocks = self.apply_strategy(&strategy, &params, &context).await?;
+
+        // Step 4: Process blocks and compute distances
+        let mut results = Vec::new();
+        let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+            distance_metric
+        );
+
+        for block in blocks {
+            for record in block.records {
+                // SharedSstFormatReader already handles filtering at block level
+                // No need for record-level filtering here
+
+                // Compute distance
+                let distance = distance_compute.calculate_distance(
+                    query_vector,
+                    &record.vector,
+                    &distance_metric,
+                );
+
+                // Create result
+                let result = crate::core::search::results::OptimizedSearchRecord::new(
+                    record.id.clone(),
+                    distance.rank_value,
+                )
+                .with_similarity(distance.normalized_score)
+                .add_vector(record.vector.clone())
+                .with_metadata(record.metadata.clone());
+
+                results.push(result);
+            }
+        }
+
+        // Step 5: Sort and return top-k
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(k);
+
+        debug!("✅ SST: Search complete, found {} results", results.len());
+        Ok(results)
+    }
+
+
+
+
     /// Ultra-fast metadata comparison using optimized string comparison
     #[inline(always)]
     fn fast_metadata_match(
@@ -2390,7 +2481,7 @@ impl UnifiedSstableReader {
         Ok(scored_results)
     }
 
-    /// Full scan strategy implementation with parallel file processing
+    /// Full scan strategy implementation with disk cache optimization
     async fn full_scan_strategy(
         &self,
         context: &CollectionContext,
@@ -2415,6 +2506,19 @@ impl UnifiedSstableReader {
                 context.sstable_files.len(),
                 file_path
             );
+
+            // For remote files, check if already in disk cache
+            let is_remote = !file_path.starts_with("file://") &&
+                           !file_path.starts_with("/") &&
+                           file_path.contains("://");
+            if is_remote {
+                let cache_status = self.unified_filesystem.metadata(file_path).await;
+                if cache_status.is_ok() {
+                    debug!("💾 SST: File {} found in disk cache, using cached copy", file_path);
+                } else {
+                    debug!("☁️ SST: File {} will be downloaded to disk cache", file_path);
+                }
+            }
 
             // Validate SST1 magic marker before attempting to read the file
             match self.validate_sst_file(file_path).await {
@@ -4609,5 +4713,16 @@ impl Default for ReaderConfig {
             enable_read_ahead: true,
             read_ahead_blocks: 5,
         }
+    }
+}
+
+// Helper function to convert JSON value to string for comparison
+fn json_value_to_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        _ => value.to_string(),
     }
 }

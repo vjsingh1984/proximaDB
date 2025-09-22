@@ -112,12 +112,30 @@ pub trait BaseCache: Send + Sync {
     async fn select_tier(&self, key: &Self::Key, value: &Self::Value) -> CacheTier;
 
     // Metrics operations
-    fn record_hit(&self, tier: CacheTier) {
-        self.metrics().record_hit(tier);
+    fn record_hit(&self, _tier: CacheTier) {
+        // Record cache hit using unified metrics
+        let metrics = self.metrics().clone();
+        tokio::spawn(async move {
+            metrics.record_operation(
+                crate::storage::traits::MetricsOperationType::Read,
+                true,  // success
+                0,     // bytes
+                std::time::Duration::from_millis(0),
+            ).await;
+        });
     }
 
     fn record_miss(&self) {
-        self.metrics().record_miss();
+        // Record cache miss using unified metrics
+        let metrics = self.metrics().clone();
+        tokio::spawn(async move {
+            metrics.record_operation(
+                crate::storage::traits::MetricsOperationType::Read,
+                false, // failure indicates miss
+                0,     // bytes
+                std::time::Duration::from_millis(0),
+            ).await;
+        });
     }
 
     fn metrics(&self) -> &UnifiedMetricsCollector;

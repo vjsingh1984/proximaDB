@@ -79,7 +79,7 @@ impl MetadataStore {
     }
 
     /// Get cache metrics
-    pub fn metrics(&self) -> &crate::storage::cache::metrics::CacheMetrics {
+    pub fn metrics(&self) -> &crate::storage::traits::UnifiedMetricsCollector {
         self.base.metrics()
     }
 
@@ -331,7 +331,7 @@ impl BaseCache for MetadataStore {
         self.base.select_tier(key, value).await
     }
 
-    fn metrics(&self) -> &crate::storage::cache::metrics::CacheMetrics {
+    fn metrics(&self) -> &crate::storage::traits::UnifiedMetricsCollector {
         self.base.metrics()
     }
 }

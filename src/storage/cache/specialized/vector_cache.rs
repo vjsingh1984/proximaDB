@@ -44,7 +44,7 @@ impl CacheValue for CachedVector {
 
         // Add vector data size
         size += self.vector.id.len();
-        size += self.vector.values.len() * std::mem::size_of::<f32>();
+        size += self.vector.vector.len() * std::mem::size_of::<f32>();
 
         // Add metadata size
         for (key, _value) in &self.vector.metadata {

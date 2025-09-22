@@ -160,6 +160,7 @@ pub mod version;
 pub use core::{Config, VectorRecord, error::ProximaDBError as Error};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::info;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -208,13 +209,13 @@ impl ProximaDB {
             info!("Cache warming disabled (default)");
         }
 
+        let orchestrator = Arc::new(orchestrator);
+
         // Start periodic memory rebalancing service if enabled
         if cache_config.rebalancing.enabled {
             info!("Starting cache memory rebalancing service (interval: {}s)", cache_config.rebalancing.interval_seconds);
-            orchestrator.start_rebalancing_service();
+            orchestrator.clone().start_rebalancing_service();
         }
-
-        let orchestrator = Arc::new(orchestrator);
         CrossCacheOrchestrator::register_global(orchestrator.clone());
 
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(

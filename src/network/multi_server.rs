@@ -524,8 +524,8 @@ impl SharedServices {
             // Create a default orchestrator if none provided (backward compatibility)
             let mut default_orchestrator = CrossCacheOrchestrator::new((storage_config.cache_size_mb * 1024 * 1024) as usize);
             default_orchestrator.start_eviction_service(None);
-            default_orchestrator.start_rebalancing_service();
             let orch = Arc::new(default_orchestrator);
+            orch.clone().start_rebalancing_service();
             CrossCacheOrchestrator::register_global(orch.clone());
             orch
         };

@@ -424,6 +424,26 @@ impl AccessPatternTracker {
         history.iter().filter(|r| r.key == key).count() >= threshold
     }
 
+    /// Get the most popular keys based on access count
+    pub fn get_popular_keys(&self, top_count: usize, min_access_count: u64) -> Vec<(String, u64)> {
+        let mut key_counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+
+        // Count accesses for each key from correlation matrix (which tracks all accesses)
+        for entry in self.correlation_matrix.iter() {
+            let key = entry.key().clone();
+            // Use correlation matrix size as proxy for access count
+            let access_count = entry.value().len() as u64;
+            if access_count >= min_access_count {
+                key_counts.insert(key, access_count);
+            }
+        }
+
+        // Sort by access count and take top N
+        let mut sorted: Vec<_> = key_counts.into_iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.into_iter().take(top_count).collect()
+    }
+
     /// Get the metrics collector for registration with unified framework
     pub fn metrics_collector(&self) -> Option<Arc<AccessPatternMetricsCollector>> {
         self.metrics_collector.clone()
@@ -1001,8 +1021,8 @@ impl CrossCacheOrchestrator {
 
     /// Start periodic memory rebalancing task
     /// This task runs every 5 minutes to rebalance cache memory based on usage patterns
-    pub fn start_rebalancing_service(&self) {
-        let orchestrator_weak = Arc::downgrade(&Arc::new(self.clone()));
+    pub fn start_rebalancing_service(self: Arc<Self>) {
+        let orchestrator_weak = Arc::downgrade(&self);
 
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
@@ -1275,64 +1295,64 @@ impl CrossCacheOrchestrator {
         // Add cache-specific metrics
         if let Some(cache) = &self.query_cache {
             let cache_metrics = cache.metrics();
-            let snapshot = cache_metrics.snapshot();
+            let snapshot = cache_metrics.get_snapshot().await;
             let value = serde_json::json!({
-                "l1_hits": snapshot.l1_hits,
-                "l2_hits": snapshot.l2_hits,
-                "l3_hits": snapshot.l3_hits,
-                "misses": snapshot.misses,
-                "total_gets": snapshot.total_gets,
-                "total_puts": snapshot.total_puts,
-                "hit_rate": snapshot.hit_rate,
-                "total_entries": snapshot.total_entries
+                "cache_hits": snapshot.cache_hits,
+                "cache_misses": snapshot.cache_misses,
+                "total_operations": snapshot.total_operations,
+                "successful_operations": snapshot.successful_operations,
+                "failed_operations": snapshot.failed_operations,
+                "hit_rate": if snapshot.cache_hits + snapshot.cache_misses > 0 {
+                    snapshot.cache_hits as f64 / (snapshot.cache_hits + snapshot.cache_misses) as f64
+                } else { 0.0 }
             });
             metrics.insert("query_cache".to_string(), value);
         }
 
         if let Some(cache) = &self.filter_cache {
             let cache_metrics = cache.metrics();
-            let snapshot = cache_metrics.snapshot();
+            let snapshot = cache_metrics.get_snapshot().await;
             let value = serde_json::json!({
-                "l1_hits": snapshot.l1_hits,
-                "l2_hits": snapshot.l2_hits,
-                "l3_hits": snapshot.l3_hits,
-                "misses": snapshot.misses,
-                "total_gets": snapshot.total_gets,
-                "total_puts": snapshot.total_puts,
-                "hit_rate": snapshot.hit_rate,
-                "total_entries": snapshot.total_entries
+                "cache_hits": snapshot.cache_hits,
+                "cache_misses": snapshot.cache_misses,
+                "total_operations": snapshot.total_operations,
+                "successful_operations": snapshot.successful_operations,
+                "failed_operations": snapshot.failed_operations,
+                "hit_rate": if snapshot.cache_hits + snapshot.cache_misses > 0 {
+                    snapshot.cache_hits as f64 / (snapshot.cache_hits + snapshot.cache_misses) as f64
+                } else { 0.0 }
             });
             metrics.insert("filter_cache".to_string(), value);
         }
 
         if let Some(cache) = &self.index_cache {
             let cache_metrics = cache.metrics();
-            let snapshot = cache_metrics.snapshot();
+            let snapshot = cache_metrics.get_snapshot().await;
             let value = serde_json::json!({
-                "l1_hits": snapshot.l1_hits,
-                "l2_hits": snapshot.l2_hits,
-                "l3_hits": snapshot.l3_hits,
-                "misses": snapshot.misses,
-                "total_gets": snapshot.total_gets,
-                "total_puts": snapshot.total_puts,
-                "hit_rate": snapshot.hit_rate,
-                "total_entries": snapshot.total_entries
+                "cache_hits": snapshot.cache_hits,
+                "cache_misses": snapshot.cache_misses,
+                "total_operations": snapshot.total_operations,
+                "successful_operations": snapshot.successful_operations,
+                "failed_operations": snapshot.failed_operations,
+                "hit_rate": if snapshot.cache_hits + snapshot.cache_misses > 0 {
+                    snapshot.cache_hits as f64 / (snapshot.cache_hits + snapshot.cache_misses) as f64
+                } else { 0.0 }
             });
             metrics.insert("index_cache".to_string(), value);
         }
 
         if let Some(cache) = &self.metadata_cache {
             let cache_metrics = cache.metrics();
-            let snapshot = cache_metrics.snapshot();
+            let snapshot = cache_metrics.get_snapshot().await;
             let value = serde_json::json!({
-                "l1_hits": snapshot.l1_hits,
-                "l2_hits": snapshot.l2_hits,
-                "l3_hits": snapshot.l3_hits,
-                "misses": snapshot.misses,
-                "total_gets": snapshot.total_gets,
-                "total_puts": snapshot.total_puts,
-                "hit_rate": snapshot.hit_rate,
-                "total_entries": snapshot.total_entries
+                "cache_hits": snapshot.cache_hits,
+                "cache_misses": snapshot.cache_misses,
+                "total_operations": snapshot.total_operations,
+                "successful_operations": snapshot.successful_operations,
+                "failed_operations": snapshot.failed_operations,
+                "hit_rate": if snapshot.cache_hits + snapshot.cache_misses > 0 {
+                    snapshot.cache_hits as f64 / (snapshot.cache_hits + snapshot.cache_misses) as f64
+                } else { 0.0 }
             });
             metrics.insert("metadata_cache".to_string(), value);
         }
@@ -1406,17 +1426,16 @@ impl CrossCacheOrchestrator {
         let metrics_collector = Arc::new(UnifiedMetricsCollector::new());
         let warmer = Arc::new(CacheWarmer::new(orchestrator_ref, metrics_collector));
 
-        // Start the background warming task with configured strategy
+        // Start the background warming task with configured strategies
         let warmer_clone = warmer.clone();
-        let strategy = warming_config.strategy;
         tokio::spawn(async move {
-            if let Err(e) = warmer_clone.start_warming(strategy).await {
+            if let Err(e) = warmer_clone.start_warming().await {
                 tracing::error!("Cache warming service failed: {:?}", e);
             }
         });
 
         self.cache_warmer = Some(warmer);
-        tracing::info!("Cache warming service started with strategy: {:?}", warming_config.strategy);
+        tracing::info!("Cache warming service started with {} strategies", warming_config.strategies.len());
     }
 
     /// Trigger immediate cache eviction if capacity exceeded

@@ -827,11 +827,11 @@ impl UnifiedStorageEngine for NovaEngine {
                 &nova_file,
                 &file_path,
                 params,
-                collection_id,
+                &collection_id,
             )
             .await?;
         // Update global stats
-        self.update_global_stats(collection_id, &storage_path).await?;
+        self.update_global_stats(&collection_id, storage_path.as_str()).await?;
         // Update statistics
         let mut stats = self.statistics.write().await;
         stats.pending_flushes = stats.pending_flushes.saturating_sub(1);

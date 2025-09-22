@@ -41,7 +41,7 @@ pub struct CacheMetricsCollector {
 }
 
 /// Snapshot of cache metrics for delta calculations
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct CacheMetricsSnapshot {
     /// Cache hit count
     pub total_hits: u64,
@@ -57,6 +57,20 @@ pub struct CacheMetricsSnapshot {
     pub total_warming_operations: u64,
     /// Timestamp of snapshot
     pub timestamp: Instant,
+}
+
+impl Default for CacheMetricsSnapshot {
+    fn default() -> Self {
+        Self {
+            total_hits: 0,
+            total_misses: 0,
+            cache_size: 0,
+            memory_usage_bytes: 0,
+            total_evictions: 0,
+            total_warming_operations: 0,
+            timestamp: Instant::now(),
+        }
+    }
 }
 
 /// Cache performance metrics for dashboard display
@@ -116,10 +130,10 @@ impl CacheMetricsCollector {
 
         // Report cache hit rate (dashboard-ready metric)
         if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
-            if let Ok(stats) = query_cache.statistics().await {
-                let total_requests = stats.hits + stats.misses;
+            let stats = query_cache.statistics().await;
+                let total_requests = stats.hit_count + stats.miss_count;
                 let hit_rate = if total_requests > 0 {
-                    stats.hits as f64 / total_requests as f64
+                    stats.hit_count as f64 / total_requests as f64
                 } else {
                     0.0
                 };
@@ -129,12 +143,11 @@ impl CacheMetricsCollector {
                     MetricsOperationType::Read,
                     0,
                     true,
-                    Some(stats.hits as usize),
+                    Some(stats.hit_count as usize),
                 );
 
                 // Report per-engine cache performance
                 self.report_engine_cache_metrics().await?;
-            }
         }
 
         // Report collection performance
@@ -178,10 +191,10 @@ impl CacheMetricsCollector {
     /// Get dashboard-ready cache performance summary
     pub async fn get_dashboard_metrics(&self) -> Result<CachePerformanceMetrics> {
         if let Some(query_cache) = self.cache_orchestrator.get_query_cache() {
-            if let Ok(stats) = query_cache.statistics().await {
-                let total_requests = stats.hits + stats.misses;
+            let stats = query_cache.statistics().await;
+                let total_requests = stats.hit_count + stats.miss_count;
                 let hit_rate = if total_requests > 0 {
-                    stats.hits as f64 / total_requests as f64
+                    stats.hit_count as f64 / total_requests as f64
                 } else {
                     0.0
                 };
@@ -202,7 +215,6 @@ impl CacheMetricsCollector {
                     memory_efficiency,
                     warmness_score: hit_rate * 0.8 + (memory_efficiency / 1000.0).min(1.0) * 0.2,
                 });
-            }
         }
 
         // Fallback metrics if cache not available
