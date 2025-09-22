@@ -12,7 +12,7 @@
 **Performance Benchmarks Hardware**: All performance numbers in this guide are based on benchmarks run on **Apple M4 Pro** (14 cores - 10 performance, 4 efficiency) with **48 GB memory** running **macOS 15.6.1**. Your results may vary based on hardware configuration.
 ====
 
-== image:icons/bullseye.svg[Bullseye,16,16] **Engine Selection Decision Tree**
+== **Engine Selection Decision Tree**
 
 === Quick Selection Guide
 
@@ -104,7 +104,7 @@ flowchart TD
 | Hilbert curve locality, temporal patterns
 |===
 
-== image:icons/wrench.svg[Wrench,16,16] **Engine-Specific Optimization**
+== **Engine-Specific Optimization**
 
 === SST Engine (Real-time OLTP)
 
@@ -661,7 +661,7 @@ RUST_LOG=helix::hilbert=debug proximadb-server 2>&1 | grep "locality_preserved"
 - **Locality preservation**: 90%+ for temporal data
 - **Space efficiency**: Natural temporal grouping reduces storage
 
-== image:icons/rocket.svg[Rocket,16,16] **Multi-Engine Strategies**
+== **Multi-Engine Strategies**
 
 === Hybrid Engine Deployments
 
@@ -797,7 +797,7 @@ curl localhost:5678/metrics | grep helix_
 # - helix_cluster_adaptation_frequency
 ```
 
-== image:icons/bar-chart.svg[Bar Chart,16,16] **Benchmarking and Testing**
+== **Benchmarking and Testing**
 
 === Engine-Specific Benchmarks
 
@@ -897,39 +897,39 @@ if __name__ == "__main__":
         benchmark_engine(engine, vector_count=1000)  # Smaller dataset for testing
 ```
 
-== image:icons/bullseye.svg[Bullseye,16,16] **Best Practices Summary**
+== **Best Practices Summary**
 
 === Engine Selection Checklist
 
 **For Real-time Applications:**
-- image:icons/check.svg[Check,16,16] Use **SST** for high-throughput OLTP (200K+ vec/sec)
-- image:icons/check.svg[Check,16,16] Use **SWIFT** for ultra-low latency (<1ms)
-- image:icons/check.svg[Check,16,16] Configure adequate memory buffers
-- image:icons/check.svg[Check,16,16] Enable write-ahead logging for ACID compliance
+- Use **SST** for high-throughput OLTP (200K+ vec/sec)
+- Use **SWIFT** for ultra-low latency (<1ms)
+- Configure adequate memory buffers
+- Enable write-ahead logging for ACID compliance
 
 **For Analytics Workloads:**
-- image:icons/check.svg[Check,16,16] Use **VIPER** for standard analytics (5K vec/sec)
-- image:icons/check.svg[Check,16,16] Use **NOVA** for advanced research (4K vec/sec, 90% compression)
-- image:icons/check.svg[Check,16,16] Optimize row group sizes for query patterns
-- image:icons/check.svg[Check,16,16] Enable column-level compression
+- Use **VIPER** for standard analytics (5K vec/sec)
+- Use **NOVA** for advanced research (4K vec/sec, 90% compression)
+- Optimize row group sizes for query patterns
+- Enable column-level compression
 
 **For Resource-Constrained Environments:**
-- image:icons/check.svg[Check,16,16] Use **PRISM** for 60% memory reduction
-- image:icons/check.svg[Check,16,16] Configure aggressive quantization
-- image:icons/check.svg[Check,16,16] Enable memory pooling and pressure monitoring
-- image:icons/check.svg[Check,16,16] Monitor memory metrics continuously
+- Use **PRISM** for 60% memory reduction
+- Configure aggressive quantization
+- Enable memory pooling and pressure monitoring
+- Monitor memory metrics continuously
 
 **For Variable/Unknown Workloads:**
-- image:icons/check.svg[Check,16,16] Use **RAPTOR** for adaptive optimization
-- image:icons/check.svg[Check,16,16] Enable P×K optimization and workload learning
-- image:icons/check.svg[Check,16,16] Configure reasonable adaptation intervals
-- image:icons/check.svg[Check,16,16] Monitor adaptation metrics
+- Use **RAPTOR** for adaptive optimization
+- Enable P×K optimization and workload learning
+- Configure reasonable adaptation intervals
+- Monitor adaptation metrics
 
 **For Time-Series Data:**
-- image:icons/check.svg[Check,16,16] Use **HELIX** for temporal optimization
-- image:icons/check.svg[Check,16,16] Configure appropriate temporal grouping windows
-- image:icons/check.svg[Check,16,16] Enable liquid clustering for query patterns
-- image:icons/check.svg[Check,16,16] Optimize Hilbert curve order for data dimensionality
+- Use **HELIX** for temporal optimization
+- Configure appropriate temporal grouping windows
+- Enable liquid clustering for query patterns
+- Optimize Hilbert curve order for data dimensionality
 
 === Performance Optimization Principles
 

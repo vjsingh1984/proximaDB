@@ -54,49 +54,49 @@ let vectors = generator.generate_batch(count, dimension);
 |Metric |SST |VIPER |NOVA |SWIFT |RAPTOR |PRISM |HELIX
 
 |**Write Speed**
-|⭐⭐⭐⭐⭐
-|⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐
-|⭐⭐⭐
-|⭐⭐⭐
+|Excellent
+|Fair
+|Very Good
+|Very Good
+|Good
+|Good
+|Good
 
 |**Read Speed**
-|⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐⭐⭐
-|⭐⭐⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐
+|Good
+|Very Good
+|Excellent
+|Excellent
+|Very Good
+|Very Good
+|Good
 
 |**Memory**
-|⭐⭐⭐
-|⭐⭐
-|⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐⭐⭐
-|⭐⭐⭐
+|Good
+|Fair
+|Good
+|Very Good
+|Very Good
+|Excellent
+|Good
 
 |**Compression**
-|⭐⭐⭐
-|⭐⭐⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐
-|⭐⭐⭐
-|⭐⭐⭐⭐⭐
-|⭐⭐⭐⭐
+|Good
+|Excellent
+|Very Good
+|Fair
+|Good
+|Excellent
+|Very Good
 
 |**Sparsity**
-|⭐⭐⭐
-|⭐⭐⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐
-|⭐⭐⭐
-|⭐⭐⭐⭐
-|⭐⭐⭐
+|Good
+|Excellent
+|Very Good
+|Good
+|Good
+|Very Good
+|Good
 |===
 
 === Detailed Performance Metrics

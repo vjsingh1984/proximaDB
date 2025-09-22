@@ -7,7 +7,7 @@
 [.lead]
 **Complete production deployment guide** for ProximaDB's 7 storage engines with performance optimization and enterprise configuration.
 
-== image:icons/rocket.svg[Rocket,16,16] **Production Architecture Overview**
+== **Production Architecture Overview**
 
 === Storage Engine Portfolio
 
@@ -86,7 +86,7 @@ graph TB
 | Hilbert curve locality, temporal patterns
 |===
 
-== image:icons/clipboard.svg[Clipboard,16,16] **Engine Selection Guide**
+== **Engine Selection Guide**
 
 === Workload-Based Engine Selection
 
@@ -171,7 +171,7 @@ flowchart TD
 | <1ms queries
 |===
 
-== image:icons/wrench.svg[Wrench,16,16] **Production Configuration**
+== **Production Configuration**
 
 === Basic Production Setup
 
@@ -319,7 +319,7 @@ background_thread_count = 4
 io_thread_pool_size = 8
 ```
 
-== image:icons/wrench.svg[Wrench,16,16] **Production Deployment Steps**
+== **Production Deployment Steps**
 
 === Step 1: Environment Preparation
 
@@ -452,7 +452,7 @@ curl -X POST http://localhost:5678/v1/collections/production_test/search \
   }'
 ```
 
-== image:icons/bar-chart.svg[Bar Chart,16,16] **Monitoring and Operations**
+== **Monitoring and Operations**
 
 === Production Monitoring
 
@@ -505,7 +505,7 @@ RUST_LOG=proximadb::storage=info ./proximadb-server 2>&1 | grep throughput
 cargo run --release --bin proximadb-bench -- --engine SST --vectors 100000
 ```
 
-== image:icons/refresh.svg[Refresh,16,16] **Backup and Recovery**
+== **Backup and Recovery**
 
 === Backup Strategy
 
@@ -554,7 +554,7 @@ sudo systemctl start proximadb
 curl http://localhost:5678/health
 ```
 
-== image:icons/rocket.svg[Rocket,16,16] **Production Checklist**
+== **Production Checklist**
 
 === Pre-Deployment Checklist
 
@@ -575,7 +575,7 @@ curl http://localhost:5678/health
 - [ ] **Backup Testing**: Recovery procedures verified
 - [ ] **Load Testing**: Production workload simulation successful
 
-== image:icons/book.svg[Book,16,16] **Troubleshooting Guide**
+== **Troubleshooting Guide**
 
 === Common Issues
 
