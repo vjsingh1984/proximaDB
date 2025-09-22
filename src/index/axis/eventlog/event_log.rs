@@ -216,15 +216,15 @@ impl EventLogQueue {
     }
 
     /// Mark event as processed by an index
-    pub fn mark_processed(&self, event_id: &str, index_name: &str) {
+    pub async fn mark_processed(&self, event_id: &str, index_name: &str) {
         // Update processed offset
-        if let Some(offset) = self.find_event_offset(event_id) {
+        if let Some(offset) = self.find_event_offset(event_id).await {
             self.processed_offsets
                 .insert(index_name.to_string(), offset);
         }
 
         // Update file status for all files in the event
-        if let Some(event) = self.find_event(event_id) {
+        if let Some(event) = self.find_event(event_id).await {
             for file_path in &event.file_paths {
                 if let Some(mut status) = self.file_status.get_mut(file_path) {
                     // Move from pending to completed
@@ -535,10 +535,10 @@ mod tests {
         assert!(!queue.can_compact("file1.sstable"));
 
         // Mark as processed by indexes
-        queue.mark_processed(&event.event_id, "hnsw");
+        queue.mark_processed(&event.event_id, "hnsw").await;
         assert!(!queue.can_compact("file1.sstable")); // Still one pending
 
-        queue.mark_processed(&event.event_id, "ivf");
+        queue.mark_processed(&event.event_id, "ivf").await;
         assert!(queue.can_compact("file1.sstable")); // Now ready
     }
 
@@ -609,7 +609,7 @@ mod tests {
             );
 
             queue.add_event(event.clone());
-            queue.mark_processed(&event.event_id, "hnsw");
+            queue.mark_processed(&event.event_id, "hnsw").await;
 
             // Force persist
             queue.persist_state().await.unwrap();

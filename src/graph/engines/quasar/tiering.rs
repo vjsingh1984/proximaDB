@@ -22,7 +22,7 @@
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::{QuasarConfig, cache::AccessPatternCache, storage_backend::ColdStorageBackend};
-use crate::graph::engines::orion::OrionGraphEngine;
+use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use crate::graph::{EdgeId, Node, NodeId};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -331,8 +331,8 @@ impl TieringManager {
 
     /// Update hot tier utilization statistics
     async fn update_hot_tier_utilization(&self) -> Result<()> {
-        // Get current node count from hot tier storage
-        let current_nodes = self.hot_tier.node_count().await.unwrap_or(0) as f64;
+        // Get current node count from hot tier storage (synchronous call)
+        let current_nodes = self.hot_tier.node_count().unwrap_or(0) as f64;
         let max_nodes = self.config.hot_tier_max_nodes as f64;
         let utilization = if max_nodes > 0.0 {
             current_nodes / max_nodes

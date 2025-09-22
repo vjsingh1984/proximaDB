@@ -248,7 +248,7 @@ impl EventLogCommand for EventLogServiceAdapter {
         for entry in self.manager.event_logs.iter() {
             let events = entry.value().get_pending_events().await;
             if events.iter().any(|e| e.event_id == event_id) {
-                entry.value().mark_processed(event_id, index_name);
+                entry.value().mark_processed(event_id, index_name).await;
                 return Ok(());
             }
         }
@@ -298,8 +298,8 @@ impl EventLogCommand for EventLogServiceAdapter {
         for entry in self.manager.event_logs.iter() {
             let queue = entry.value();
             // Mark the event as processed (no specific index name for general acknowledgment)
-            queue.mark_processed(&event_id, "axis_consumer");
-            // Note: mark_processed is synchronous, so we can't tell if the event existed
+            queue.mark_processed(&event_id, "axis_consumer").await;
+            // Note: mark_processed is now async, so we can't tell if the event existed
             // But that's okay - if it didn't exist in this queue, it might be in another
         }
 
