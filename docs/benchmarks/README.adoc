@@ -56,7 +56,15 @@ Complete performance validation showing:
 * Perfect linear scaling with **2.46M vectors/sec** sustained throughput
 * Minimal compression overhead (< 5%) across all algorithms
 
-**Analysis**: link:BENCHMARK_ANALYSIS.adoc[📈 Complete Benchmark Analysis with Visual Charts]
+**Comprehensive Analysis**: link:COMPREHENSIVE_BENCHMARK_RESULTS.adoc[📈 All 318 Benchmarks Analyzed]
+
+Complete analysis of all benchmark categories including:
+* Distance computation, batch operations, memory management
+* Progressive search optimization (5.8x speedup)
+* Quantization performance and compression ratios
+* Hardware acceleration and engine lifecycle
+
+**Visual Analysis**: link:BENCHMARK_ANALYSIS.adoc[📊 Charts and Decision Matrices]
 
 Includes XY charts showing dimensional scaling, batch size impact, and detailed decision matrices for storage engine selection and optimization strategies.
 ====
@@ -92,7 +100,7 @@ link:OPTIMIZATION_GUIDE.adoc[View Details]
 * **Troubleshooting**: Common issues and fixes
 * **Emergency Optimization**: Quick recovery steps
 
-== Key Performance Metrics
+== Key Performance Metrics (December 2024)
 
 [cols="2,2,2,2"]
 |===
@@ -100,28 +108,38 @@ link:OPTIMIZATION_GUIDE.adoc[View Details]
 
 |**Speed**
 |Query latency
-|365-372ps
-|core_distance_computation
+|7.68-8.25μs
+|storage_engine_search
 
 |**Throughput**
 |Operations/sec
-|5.1M @ 768D
-|hardware_simd_acceleration
+|8.5M @ 384D
+|distance_computation
+
+|**Batch Processing**
+|Vectors/sec
+|2.46M sustained
+|batch_operations
 
 |**Memory**
-|Per vector
-|0.5-3KB
-|memory_vector_optimization
+|Zero-copy ops/sec
+|90.1M
+|memory_sharing
 
 |**Compression**
-|Ratio
-|4-32x
-|quantization_sst_engine
+|Best ratio (ZSTD)
+|4.5x @ 1536D
+|compression_ratios
+
+|**Progressive Search**
+|Speedup
+|5.8x faster
+|progressive_search
 
 |**Accuracy**
 |Recall
-|95-99%
-|query_progressive_search
+|96-99.5%
+|binary_filtering
 
 |**Scale**
 |Vectors
