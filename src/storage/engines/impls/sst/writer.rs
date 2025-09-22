@@ -216,21 +216,14 @@ impl SstableWriter {
         let encoded_data_block = self.encode_block_with_fastlanes(data_block)?;
         let serialized = encoded_data_block.serialize()?;
 
-        // Select algorithm based on data size for optimal performance
-        let algorithm = if serialized.len() < 1024 {
-            CompressionAlgorithm::Lz4 // Fast for small blocks
-        } else if serialized.len() < 64 * 1024 {
-            CompressionAlgorithm::Snappy // Balanced
-        } else {
-            CompressionAlgorithm::Zstd // High compression for large blocks
-        };
-
+        // Use the provided algorithm, don't override it
         let context = CompressionContext::Block;
         let compressed =
             self.compression_provider
                 .compress(&serialized, algorithm, level as i32, context)?;
         debug!(
-            "✅ Direct compression: {} -> {} bytes",
+            "✅ Direct compression with {:?}: {} -> {} bytes",
+            algorithm,
             serialized.len(),
             compressed.len()
         );

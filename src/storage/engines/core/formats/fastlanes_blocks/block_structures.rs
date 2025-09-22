@@ -632,7 +632,7 @@ impl FastLanesDataBlock {
     /// Uses optimized columnar compression with dimension grouping and sparse metadata
     pub fn serialize_with_config(
         &self,
-        _config: &BlockCompressionConfig,
+        config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
         use crate::core::compression::CompressionAlgorithm;
         use crate::core::compression::{CompressionContext, compress};
@@ -829,13 +829,47 @@ impl FastLanesDataBlock {
         result.write_all(&(metadata_bytes.len() as u32).to_le_bytes())?;
         result.write_all(&metadata_bytes)?;
 
+        // ============ STEP 6: Apply compression if configured ============
+        if config.algorithm != CompressionAlgorithm::None {
+            let compressed = compress(
+                &result,
+                config.algorithm,
+                config.level,
+                CompressionContext::Block,
+            )?;
+
+            // If compression is actually beneficial
+            if compressed.len() < result.len() {
+                // Write compressed format: marker + original size + compressed data
+                let mut final_result = Vec::new();
+
+                // Write compression marker (0x80 + algorithm ID)
+                let compression_marker = match config.algorithm {
+                    CompressionAlgorithm::Lz4 => 0x80,
+                    CompressionAlgorithm::Zstd => 0x81,
+                    CompressionAlgorithm::Snappy => 0x82,
+                    CompressionAlgorithm::Gzip => 0x83,
+                    _ => 0x80,
+                };
+                final_result.push(compression_marker);
+
+                // Write original size for decompression
+                final_result.extend(&(result.len() as u32).to_le_bytes());
+
+                // Write compressed data
+                final_result.extend(compressed);
+
+                return Ok(final_result);
+            }
+        }
+
         Ok(result)
     }
 
     /// Deserialize a block
     /// Delegates decoding to the fastlanes module
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
-        use crate::core::compression::CompressionContext;
+        use crate::core::compression::{CompressionContext, CompressionAlgorithm, decompress};
         use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, markers};
         use std::io::Read;
 
@@ -845,37 +879,43 @@ impl FastLanesDataBlock {
             ));
         }
 
-        let marker = data[0];
-        let data = &data[1..];
+        let first_byte = data[0];
 
-        // Check for compression
-        let decompressed_data = if marker >= 0x80 && marker < 0xA0 {
-            // Compressed data
-            let mut cursor = std::io::Cursor::new(data);
-            let mut size_bytes = [0u8; 4];
-            cursor.read_exact(&mut size_bytes)?;
-            let original_size = u32::from_le_bytes(size_bytes) as usize;
-
-            let compressed_data = &data[4..];
-            // Map marker to compression algorithm
-            let algorithm = match marker {
-                0x10 => CompressionAlgorithm::Lz4,
-                0x11 => CompressionAlgorithm::Zstd,
-                0x12 => CompressionAlgorithm::Snappy,
-                0x13 => CompressionAlgorithm::Gzip,
+        // Check if this is compressed data (0x80-0x8F range)
+        let (decompressed_data, encoding_marker) = if first_byte >= 0x80 && first_byte < 0x90 {
+            // This is compressed data
+            let algorithm = match first_byte {
+                0x80 => CompressionAlgorithm::Lz4,
+                0x81 => CompressionAlgorithm::Zstd,
+                0x82 => CompressionAlgorithm::Snappy,
+                0x83 => CompressionAlgorithm::Gzip,
                 _ => CompressionAlgorithm::None,
             };
 
-            crate::core::compression::decompress(
+            // Read original size
+            let original_size = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+
+            // Decompress the rest of the data
+            let compressed_data = &data[5..];
+            let decompressed = decompress(
                 compressed_data,
                 algorithm,
                 CompressionContext::Block,
-            )?
+            )?;
+
+            // The decompressed data starts with the actual encoding marker
+            let actual_marker = decompressed[0];
+            (decompressed, actual_marker)
         } else {
-            data.to_vec()
+            // Not compressed, first byte is the encoding marker
+            (data.to_vec(), first_byte)
         };
 
-        let mut cursor = std::io::Cursor::new(&decompressed_data);
+        // Now process the decompressed data, skipping the first byte (encoding marker)
+        let data = &decompressed_data[1..];
+
+        // Data is already decompressed at this point
+        let mut cursor = std::io::Cursor::new(data);
 
         // Read metadata length and deserialize
         let mut len_bytes = [0u8; 4];
@@ -887,10 +927,10 @@ impl FastLanesDataBlock {
         let metadata: FastLanesBlockMetadata = bincode::deserialize(&metadata_bytes)?;
 
         // Decode vectors based on marker
-        let records = if marker != 0x00 && marker < 0x80 {
+        let records = if encoding_marker != 0x00 && encoding_marker < 0x80 {
             // FastLanes encoded
             let decoder = FastLanesDecoder::new(
-                markers::to_scheme(marker).unwrap_or(
+                markers::to_scheme(encoding_marker).unwrap_or(
                     crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::BitPacked { bits: 16 }
                 )
             );

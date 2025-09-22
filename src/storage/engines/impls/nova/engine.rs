@@ -650,12 +650,24 @@ impl NovaEngine {
         schema: &Arc<arrow_schema::Schema>,
     ) -> Result<arrow_array::RecordBatch> {
         use arrow_array::{Float32Array, StringArray, Int64Array, Float64Array, BooleanArray, builder::*};
-        use arrow_array::builder::{FixedSizeBinaryBuilder, Int8Builder};
+        use arrow_array::builder::{FixedSizeBinaryBuilder, Int8Builder, FixedSizeListBuilder};
         use std::sync::Arc;
 
         // Build arrays for each field
         let mut id_builder = StringBuilder::new();
-        let mut vector_builder = Float32Builder::new();
+
+        // Get dimension from schema for the vector field
+        let dimension = if let arrow_schema::DataType::FixedSizeList(_, dim) = schema.fields()[1].data_type() {
+            *dim as usize
+        } else {
+            // Fallback: use first record's vector dimension
+            records.first().map(|r| r.vector.len()).unwrap_or(0)
+        };
+
+        // Build vector column as FixedSizeList
+        let values_builder = Float32Builder::new();
+        let mut vector_builder = FixedSizeListBuilder::new(values_builder, dimension as i32);
+
         let mut timestamp_builder = Int64Builder::new();
         let mut version_builder = Int64Builder::new();
 
@@ -687,10 +699,12 @@ impl NovaEngine {
             // ID column
             id_builder.append_value(&record.id);
 
-            // Vector column (flattened)
+            // Vector column as FixedSizeList
+            let values_builder = vector_builder.values();
             for val in &record.vector {
-                vector_builder.append_value(*val);
+                values_builder.append_value(*val);
             }
+            vector_builder.append(true);
 
             // Timestamp column
             timestamp_builder.append_value(record.timestamp);

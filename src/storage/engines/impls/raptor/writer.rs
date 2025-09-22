@@ -3851,7 +3851,10 @@ impl RaptorWriter {
             || (self.config.enable_simd && self.config.rowgroup_size >= 500)
     }
 
-    pub async fn flush(&mut self) -> Result<()> {
+    pub async fn flush(&mut self) -> Result<usize> {
+        // Track total vectors flushed
+        let mut total_flushed = 0;
+
         // Build IVF clusters before flushing (if we have enough vectors)
         if self.ivf_builder.nodes.len() >= 1000 {
             // Minimum vectors needed for effective clustering
@@ -3859,7 +3862,15 @@ impl RaptorWriter {
         }
 
         // Flush any pending row page
+        if let Some(ref page) = self.current_row_page {
+            total_flushed += page.rows.len();
+        }
         self.flush_row_page().await?;
+
+        // Count vectors in existing row groups
+        for rg in &self.rowgroups {
+            total_flushed += rg.vector_count;
+        }
 
         // Build bloom filter for the final row group
         if !self.bloom_builder.is_empty() {
@@ -3995,7 +4006,7 @@ impl RaptorWriter {
         // Clear vectors after flush to save memory
         self.ivf_builder.vectors.clear();
 
-        Ok(())
+        Ok(total_flushed)
     }
 
     /// Compute centroid for a rowgroup

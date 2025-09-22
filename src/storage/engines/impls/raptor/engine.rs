@@ -1545,8 +1545,8 @@ impl UnifiedStorageEngine for RaptorEngine {
 
         let mut writer = self.writer.write().await;
 
-        // First flush any pending row pages
-        let bytes_written = writer.flush().await?;
+        // First flush any pending row pages and get count
+        let vectors_flushed = writer.flush().await?;
 
         // Then finalize the file to write footer and metadata
         writer.finalize().await?;
@@ -1555,8 +1555,9 @@ impl UnifiedStorageEngine for RaptorEngine {
         self.metrics
             .flush_operations
             .fetch_add(1, Ordering::Relaxed);
-        // bytes_written is () from writer.flush(), so we'll skip this metric update
-        // self.metrics.bytes_written.fetch_add(bytes_written as u64, Ordering::Relaxed);
+        self.metrics
+            .total_vectors
+            .fetch_add(vectors_flushed, Ordering::Relaxed);
 
         // HNSW is integrated within RAPTOR row groups, no separate flush needed
         if self.config.enable_clustering {
@@ -1566,10 +1567,10 @@ impl UnifiedStorageEngine for RaptorEngine {
         Ok(FlushResult {
             success: true,
             files_created: Some(1),
-            bytes_written: Some(0), // bytes_written is not available from flush()
+            bytes_written: Some(0), // TODO: Track actual bytes written
             duration_ms: Some(start_time.elapsed().as_millis() as u64),
-            collections_affected: vec![],
-            entries_flushed: Some(0),
+            collections_affected: vec![collection_id.to_string()],
+            entries_flushed: Some(vectors_flushed as u64),
             flushed_batch_ids: vec![],
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),

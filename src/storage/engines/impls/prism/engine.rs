@@ -1108,27 +1108,39 @@ impl UnifiedStorageEngine for PrismEngine {
             .await?;
         let bytes_written = serialized.len();
 
-        // In production, would store in actual memory cache structures
-        // When PRISM does write to disk (after memory pressure), it should use FilenameCodec
-        debug!(
-            "PRISM flush: Serialized {} vectors into {} bytes using FastLanes progressive encoding",
-            params.vector_records.len(),
-            bytes_written
-        );
-
-        // Generate filename for future disk persistence (even though PRISM is memory-first)
-        // This ensures consistency when PRISM eventually writes to disk
+        // Write to disk for persistence (even though PRISM is memory-first)
+        // This ensures data durability and allows benchmarking
         use crate::storage::common::compaction_orchestrator::FilenameCodec;
         let codec = FilenameCodec::new();
         let prism_filename = codec.generate(0, &crate::storage::engines::constants::PRISM_FILE_EXT[1..]); // Remove leading dot
-        debug!("PRISM: Future disk file would be: {}", prism_filename);
+
+        // Get data directory from params
+        let data_dir = params.base_path
+            .as_ref()
+            .map(|p| format!("{}/{}/data", p, collection_id))
+            .ok_or_else(|| anyhow::anyhow!("Base path not provided in flush parameters"))?;
+
+        // Ensure directory exists
+        let filesystem = self.filesystem.get_filesystem(&format!("file://{}", data_dir))?;
+        filesystem.create_dir_all(&data_dir).await?;
+
+        // Write file to disk
+        let file_path = format!("{}/{}", data_dir, prism_filename);
+        filesystem.write(&file_path, &serialized, None).await?;
+
+        debug!(
+            "PRISM flush: Written {} vectors ({} bytes) to {}",
+            params.vector_records.len(),
+            bytes_written,
+            file_path
+        );
 
         Ok(FlushResult {
             success: true,
             collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
             entries_flushed: Some(params.vector_records.len() as u64),
             bytes_written: Some(bytes_written as u64),
-            files_created: Some(0), // Memory-first, no files created immediately
+            files_created: Some(1), // Written to disk for persistence
             duration_ms: Some(start_time.elapsed().as_millis() as u64),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(), // TODO: Add PRISM-specific metrics
