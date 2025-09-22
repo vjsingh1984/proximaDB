@@ -43,28 +43,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 #### Diagram and Visual Standards
 - **Mermaid Diagrams Only**: Use Mermaid for all technical diagrams (architecture, flow, sequence, etc.)
 - **Professional Styling**: All diagrams must follow the ProximaDB visual identity and logo style
+- **Theme Compatibility**: Use colors that work in both light and dark browser themes
 - **AsciiDoc Integration**: Mermaid diagrams must be embedded using `[source,mermaid]` blocks:
+
+##### Theme Compatibility Guidelines
+1. **Use Neutral Theme**: Set `%%{init: {"theme": "neutral"}}%%` for best compatibility
+2. **Avoid Pure White/Black**: Use `#000` for text on colored backgrounds, not `#ffffff`
+3. **Medium Contrast Borders**: Use borders like `#2e5c8a`, `#5a5a5a` that show on both themes
+4. **Readable Fill Colors**: Use fills like `#4a90e2`, `#5ba3f5` with sufficient opacity
+5. **Test Both Themes**: Always preview diagrams in both light and dark mode
+6. **Fallback to Simple**: When in doubt, use `theme: "neutral"` without custom variables
 
 ```asciidoc
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "sectionBkgColor": "#f0f4f8", "altSectionBkgColor": "#d6e4f0", "gridColor": "#b8b8b8", "tertiaryColor": "#fafafa"}}}%%
 graph TB
     A[Component A] --> B[Component B]
     B --> C[Component C]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000000
 ----
 ```
 
 #### Visual Style Guide
-- **Primary Color**: `#1e88e5` (ProximaDB Blue)
-- **Secondary Colors**: `#2196f3`, `#42a5f5`, `#64b5f6`
-- **Accent Colors**: `#0d47a1`, `#1565c0`, `#1976d2`
-- **Background Colors**: `#e3f2fd`, `#bbdefb`, `#f5f5f5`
-- **Text Colors**: `#ffffff` (on colored backgrounds), `#333333` (on light backgrounds)
+- **Primary Color**: `#4a90e2` (ProximaDB Blue - works in light/dark)
+- **Secondary Colors**: `#5ba3f5`, `#7db8f7`, `#8fc4f9`
+- **Accent Colors**: `#2e5c8a`, `#3d7ab8`, `#5090d3`
+- **Background Colors**: `#f0f4f8`, `#d6e4f0`, `#fafafa`
+- **Text Colors**: `#000000` (on colored fills for visibility), `#333333` (on light backgrounds)
+- **Border Colors**: Use medium tones that contrast with both light and dark backgrounds
 - **Professional Appearance**: Clean lines, consistent spacing, clear hierarchy
 - **Icon Standards**: Use minimal, professional icons and geometric shapes
 - **Typography**: Clear, readable labels without excessive decorative elements
@@ -94,20 +104,20 @@ graph TB
 ```asciidoc
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
-    subgraph "CLIENT LAYER"
+    subgraph CLIENT["CLIENT LAYER"]
         A[REST API<br/>Port 5678]
         B[gRPC API<br/>Port 5679]
     end
 
-    subgraph "SERVICE LAYER"
+    subgraph SERVICE["SERVICE LAYER"]
         C[Collection Service]
         D[Vector Operations]
         E[Search Service]
     end
 
-    subgraph "STORAGE LAYER"
+    subgraph STORAGE["STORAGE LAYER"]
         F[SST Engine]
         G[VIPER Engine]
         H[NOVA Engine]
@@ -119,14 +129,18 @@ graph TB
     D --> G
     E --> H
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style C fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style D fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style F fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style G fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+
+    style CLIENT fill:#f0f4f8,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style SERVICE fill:#e8f0fa,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style STORAGE fill:#dde9f5,stroke:#5a5a5a,stroke-width:1px,color:#000
 ----
 ```
 
@@ -134,7 +148,7 @@ graph TB
 ```asciidoc
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     A[Input] --> B{Validation}
     B -->|Valid| C[Process]
@@ -142,12 +156,12 @@ flowchart LR
     C --> E[Storage]
     E --> F[Response]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#ffd966,stroke:#cc9900,stroke-width:2px,color:#000
+    style C fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style E fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style F fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style D fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
 ----
 ```
 
@@ -155,7 +169,7 @@ flowchart LR
 ```asciidoc
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant Client
     participant API
