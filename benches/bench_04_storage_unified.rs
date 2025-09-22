@@ -210,6 +210,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             // Step 1: Flush data with compression
             eprintln!("  Flushing {} vectors (dim={}) with {} compression to {}...",
                      count, dimension, compress_name, base_path);
+            eprintln!("    📁 Data directory: {}", base_path);
 
             // Calculate expected size
             let expected_bytes = count * dimension * std::mem::size_of::<f32>();
@@ -369,8 +370,8 @@ fn bench_compression_with_search(c: &mut Criterion) {
             // Step 2: Pure vector search benchmark
             let mut pure_group = c.benchmark_group(format!("pure_{}_{}", engine_name, compress_name));
             pure_group.measurement_time(Duration::from_secs(5));
-            pure_group.sample_size(30);
-            pure_group.warm_up_time(Duration::from_millis(500));
+            pure_group.sample_size(40);
+            pure_group.warm_up_time(Duration::from_secs(1));
 
             let mut pure_time_ms = 0u128;
             let query_clone = query_vector.clone();
@@ -483,8 +484,8 @@ fn bench_compression_with_search(c: &mut Criterion) {
             // Step 3: Metadata-filtered search benchmark
             let mut filtered_group = c.benchmark_group(format!("filter_{}_{}", engine_name, compress_name));
             filtered_group.measurement_time(Duration::from_secs(5));
-            filtered_group.sample_size(30);
-            filtered_group.warm_up_time(Duration::from_millis(500));
+            filtered_group.sample_size(40);
+            filtered_group.warm_up_time(Duration::from_secs(1));
 
             let mut filter_time_ms = 0u128;
             let query_clone = query_vector.clone();
@@ -663,8 +664,8 @@ fn bench_engine_lifecycle(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("engine_lifecycle");
     group.measurement_time(Duration::from_secs(5));
-    group.sample_size(30);
-    group.warm_up_time(Duration::from_millis(500));
+    group.sample_size(40);
+    group.warm_up_time(Duration::from_secs(1));
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
@@ -831,8 +832,8 @@ fn bench_large_scale_search(c: &mut Criterion) {
                 // Benchmark search
                 let mut group = c.benchmark_group(format!("search_{}_{}_{}",engine_name, compress_name, batch_size_name));
                 group.measurement_time(Duration::from_secs(5));
-                group.sample_size(30);
-                group.warm_up_time(Duration::from_millis(500));
+                group.sample_size(40);
+                group.warm_up_time(Duration::from_secs(1));
 
                 let query_clone = query.clone();
                 group.bench_function("top10", |b| {
@@ -918,8 +919,8 @@ fn bench_insertion_performance(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("insertion_performance");
     group.measurement_time(Duration::from_secs(5));
-    group.sample_size(30);
-    group.warm_up_time(Duration::from_millis(500));
+    group.sample_size(40);
+    group.warm_up_time(Duration::from_secs(1));
 
     let dimension = 768;
     let count = 1000;
@@ -1003,9 +1004,9 @@ fn bench_insertion_performance(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(30)
+        .sample_size(40)
         .measurement_time(Duration::from_secs(5))
-        .warm_up_time(Duration::from_millis(500));
+        .warm_up_time(Duration::from_secs(1));
     targets = bench_compression_with_search,
               bench_engine_lifecycle,
               bench_large_scale_search,

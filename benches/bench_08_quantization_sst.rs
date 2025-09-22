@@ -379,9 +379,9 @@ fn bench_binary_filtering(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(30)
+        .sample_size(40)
         .measurement_time(std::time::Duration::from_secs(5))
-        .warm_up_time(std::time::Duration::from_millis(500));
+        .warm_up_time(std::time::Duration::from_secs(1));
     targets = bench_quantization_speed,
               bench_progressive_search,
               bench_memory_pool,

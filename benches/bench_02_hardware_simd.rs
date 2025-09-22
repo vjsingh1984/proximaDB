@@ -188,9 +188,9 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default()
-        .sample_size(30)
+        .sample_size(40)
         .measurement_time(std::time::Duration::from_secs(5))
-        .warm_up_time(std::time::Duration::from_millis(500));
+        .warm_up_time(std::time::Duration::from_secs(1));
     targets = benchmark_dimensions,
               benchmark_batch_processing,
               benchmark_hardware_backends

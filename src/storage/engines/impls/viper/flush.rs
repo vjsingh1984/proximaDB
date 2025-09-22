@@ -559,26 +559,6 @@ impl Flush {
                 Vec::new()
             };
 
-        // Add quantized vector fields if quantization is enabled
-        let has_quantization = quantization.as_ref().map(|q| q.enabled).unwrap_or(false);
-        if has_quantization {
-            schema_fields.push(Field::new(
-                "vector_int8",
-                DataType::List(Arc::new(Field::new("item", DataType::Int8, true))),
-                true,
-            ));
-            schema_fields.push(Field::new(
-                "vector_pq8",
-                DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
-                true,
-            ));
-            schema_fields.push(Field::new(
-                "vector_pq4",
-                DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
-                true,
-            ));
-        }
-
         // Add filterable metadata columns based on collection configuration using proto types
         for filterable_column in &filterable_metadata {
             // Convert FilterableDataType to Arrow DataType
