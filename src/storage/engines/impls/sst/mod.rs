@@ -3007,14 +3007,45 @@ impl UnifiedStorageEngine for SstEngine {
         // ========================================================================
 
         // ========================================================================
-        // INTELLIGENT SEARCH ORCHESTRATION
+        // INTELLIGENT SEARCH ORCHESTRATION - FUTURE ENHANCEMENT
         // ========================================================================
-
+        // TODO: Integrate with AdvancedSearchOptimizer for intelligent search routing
+        //
+        // The AdvancedSearchOptimizer provides significant value for SST engine:
+        // 1. **Cost-based optimization**: Chooses between bloom filter scan vs direct search
+        // 2. **HNSW index integration**: Routes to AXIS indexes when selectivity is low
+        // 3. **Progressive quantization**: Uses SST's multi-level quantization efficiently
+        // 4. **Filter pushdown**: Leverages SST's bloom filters optimally
+        // 5. **Hybrid strategies**: Combines SST's block-based reading with index hints
+        //
+        // Implementation pattern (from VIPER engine):
+        // ```rust
+        // let axis_manager = self.get_axis_manager().await?;
+        // let cost_estimator = self.get_cost_estimator().await?;
+        //
+        // let mut orchestrator = AdvancedSearchOptimizer::new(
+        //     ctx.clone(),
+        //     axis_manager,
+        //     cost_estimator,
+        // ).await?;
+        //
+        // let strategy = orchestrator.select_optimal_strategy().await?;
+        // match strategy {
+        //     ExecutionStrategy::IndexFirst { .. } => // Use HNSW for low selectivity
+        //     ExecutionStrategy::ProgressiveQuantization { .. } => // SST's quantized blocks
+        //     ExecutionStrategy::DirectFP32 { .. } => // Full precision scan
+        // }
+        // ```
+        //
+        // Current blocker: AXIS manager and cost estimator services need to be
+        // accessible from storage engine context. Once available, SST can achieve
+        // 2-10x performance improvement on filtered queries through intelligent routing.
+        //
         // Check if orchestration should be used based on context metadata
         let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
 
         if use_orchestration {
-            info!("🎯 SST: Using intelligent search orchestration");
+            info!("🎯 SST: Orchestration requested but using fallback until AdvancedSearchOptimizer integration complete");
 
             // Create mock services for orchestration (in real implementation, these would come from context)
             // For now, we'll create minimal implementations to enable orchestration functionality

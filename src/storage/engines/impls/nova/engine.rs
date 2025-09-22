@@ -1191,8 +1191,38 @@ impl UnifiedStorageEngine for NovaEngine {
                 }
             };
 
-            // Direct search implementation - IntegratedSearchOptimizer requires cache infrastructure
-            // that isn't available in this context
+            // TODO: Integrate with AdvancedSearchOptimizer for intelligent search routing
+            //
+            // The AdvancedSearchOptimizer provides significant value for NOVA engine:
+            // 1. **Progressive quantization**: NOVA's multi-level approach perfectly suited
+            // 2. **Adaptive refinement**: Dynamically adjusts search precision
+            // 3. **Mixed workload optimization**: Balances between OLAP and OLTP patterns
+            // 4. **Smart caching**: Leverages NOVA's tiered storage effectively
+            // 5. **Cost-aware routing**: Chooses optimal quantization level per query
+            //
+            // NOVA-specific benefits when integrated:
+            // - Use coarse quantization for initial candidate selection
+            // - Progressively refine with higher precision levels
+            // - Early termination when confidence threshold met
+            // - Adaptive batch sizing based on intermediate results
+            //
+            // Implementation pattern:
+            // ```rust
+            // let orchestrator = AdvancedSearchOptimizer::new(
+            //     ctx.clone(), axis_manager, cost_estimator
+            // ).await?;
+            //
+            // match orchestrator.select_optimal_strategy().await? {
+            //     ExecutionStrategy::ProgressiveQuantization { levels, .. } => {
+            //         // NOVA's sweet spot - multi-stage refinement
+            //         self.progressive_search(levels).await
+            //     }
+            //     _ => self.fallback_to_direct_search(...).await
+            // }
+            // ```
+            //
+            // Current blocker: Cache infrastructure and service availability
+            // Expected gains: 3-15x speedup on large datasets through progressive refinement
             return self
                 .fallback_to_direct_search(
                     ctx,

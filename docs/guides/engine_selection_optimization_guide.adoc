@@ -18,7 +18,7 @@
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 flowchart TD
     A[What's your primary requirement?] --> B{Query Latency}
     A --> C{Throughput}
@@ -39,13 +39,13 @@ flowchart TD
     E -->|Mixed patterns| K
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style I fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style J fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style K fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
-    style L fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
+    style J fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+    style K fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style L fill:#0d47a1,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
 === Detailed Engine Comparison
@@ -692,6 +692,69 @@ high_memory_engine = "NOVA"           # When memory is abundant
 low_memory_engine = "PRISM"           # When memory is constrained
 adaptive_engine = "RAPTOR"            # Let RAPTOR decide
 ```
+
+=== Engine Optimization Workflow
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+flowchart TD
+    A[Start: Workload Analysis] --> B{Identify Workload Type}
+
+    B -->|Real-time| C[SST/SWIFT Analysis]
+    B -->|Analytics| D[VIPER/NOVA Analysis]
+    B -->|Variable| E[RAPTOR Analysis]
+    B -->|Memory-constrained| F[PRISM Analysis]
+    B -->|Time-series| G[HELIX Analysis]
+
+    C --> H{Latency Requirement}
+    H -->|<1ms| I[SWIFT Engine<br/>Configure CPU affinity]
+    H -->|<5ms| J[SST Engine<br/>Optimize memtable]
+
+    D --> K{Query Complexity}
+    K -->|Standard| L[VIPER Engine<br/>Row group optimization]
+    K -->|Advanced| M[NOVA Engine<br/>Progressive search]
+
+    E --> N[RAPTOR Engine<br/>Enable P×K optimization]
+    F --> O[PRISM Engine<br/>Memory pressure tuning]
+    G --> P[HELIX Engine<br/>Temporal clustering]
+
+    I --> Q[Performance Testing]
+    J --> Q
+    L --> Q
+    M --> Q
+    N --> Q
+    O --> Q
+    P --> Q
+
+    Q --> R{Performance Meets SLA}
+    R -->|Yes| S[Deploy to Production]
+    R -->|No| T[Analyze Bottlenecks]
+
+    T --> U{Bottleneck Type}
+    U -->|CPU| V[Optimize Compute Settings]
+    U -->|Memory| W[Optimize Memory Settings]
+    U -->|I/O| X[Optimize Storage Settings]
+    U -->|Network| Y[Optimize Network Settings]
+
+    V --> Q
+    W --> Q
+    X --> Q
+    Y --> Q
+
+    S --> Z[Monitor & Alert]
+    Z --> AA{Performance Degradation}
+    AA -->|Yes| T
+    AA -->|No| BB[Continuous Operation]
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style Q fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style R fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style S fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
+    style T fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+    style BB fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#000000
+----
 
 === Performance Monitoring
 

@@ -19,30 +19,30 @@ ProximaDB implements multiple layers of security to protect data and ensure secu
 %%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
 graph TB
     subgraph "CLIENT LAYER"
-        A[REST Client<br/>🔐 TLS 1.3]
-        B[gRPC Client<br/>🔐 TLS 1.3]
-        C[Web Dashboard<br/>🔐 HTTPS]
+        A[REST Client<br/>TLS 1.3]
+        B[gRPC Client<br/>TLS 1.3]
+        C[Web Dashboard<br/>HTTPS]
     end
 
     subgraph "AUTHENTICATION LAYER"
-        D[API Gateway<br/>🔑 Auth Validation]
-        E[JWT Validator<br/>📋 Token Verification]
-        F[API Key Manager<br/>🗝️ Key Validation]
-        G[RBAC Engine<br/>👥 Role Authorization]
+        D[API Gateway<br/>Auth Validation]
+        E[JWT Validator<br/>Token Verification]
+        F[API Key Manager<br/>Key Validation]
+        G[RBAC Engine<br/>Role Authorization]
     end
 
     subgraph "APPLICATION LAYER"
         H[REST API Server<br/>Port 5678]
         I[gRPC API Server<br/>Port 5679]
-        J[Collection Service<br/>🏢 Multi-tenant]
-        K[Vector Operations<br/>🔒 Resource ACL]
+        J[Collection Service<br/>Multi-tenant]
+        K[Vector Operations<br/>Resource ACL]
     end
 
     subgraph "DATA LAYER"
-        L[Encrypted Storage<br/>🔐 AES-256]
-        M[WAL Encryption<br/>📝 Transaction Log]
-        N[Metadata Store<br/>🗄️ Secured Keys]
-        O[Backup Storage<br/>💾 Encrypted Backup]
+        L[Encrypted Storage<br/>AES-256]
+        M[WAL Encryption<br/>Transaction Log]
+        N[Metadata Store<br/>Secured Keys]
+        O[Backup Storage<br/>Encrypted Backup]
     end
 
     A --> D
@@ -65,18 +65,18 @@ graph TB
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
     style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
     style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style M fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style N fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style O fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style K fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style N fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style O fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
 ----
 
 == Current Security Features
@@ -170,4 +170,419 @@ curl -H "Authorization: Bearer your-api-key" \
      http://localhost:8080/v1/collections
 ----
 
-=== JW
+=== JWT Token Authentication
+
+==== JWT Authentication Flow
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+sequenceDiagram
+    participant Client
+    participant AuthService
+    participant JWTValidator
+    participant APIGateway
+    participant ProximaDBAPI
+    participant DataLayer
+
+    Client->>AuthService: Login Request<br/>username/password
+    AuthService->>AuthService: Validate Credentials
+    AuthService-->>Client: JWT Token<br/>expires in 24h
+
+    Note over Client: Store JWT securely
+
+    Client->>APIGateway: API Request<br/>Authorization: Bearer <token>
+    APIGateway->>JWTValidator: Validate Token
+    JWTValidator->>JWTValidator: Check signature<br/>Check expiration<br/>Extract claims
+
+    alt Valid Token
+        JWTValidator-->>APIGateway: Valid + User Claims
+        APIGateway->>ProximaDBAPI: Authorized Request
+        ProximaDBAPI->>DataLayer: Execute Operation
+        DataLayer-->>ProximaDBAPI: Response
+        ProximaDBAPI-->>Client: Success Response
+    else Invalid/Expired Token
+        JWTValidator-->>APIGateway: Invalid Token
+        APIGateway-->>Client: 401 Unauthorized
+    end
+
+    Note over Client,DataLayer: All communications use TLS 1.3
+----
+
+==== Multi-Tenant Authorization Flow
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+flowchart TD
+    A[Incoming Request] --> B[Extract JWT/API Key]
+    B --> C{Valid Credentials?}
+
+    C -->|No| D[Return 401 Unauthorized]
+    C -->|Yes| E[Extract Tenant ID]
+
+    E --> F{Tenant Validation}
+    F -->|Invalid| G[Return 403 Forbidden]
+    F -->|Valid| H[Extract User Roles]
+
+    H --> I{Resource Permission Check}
+    I -->|Denied| J[Return 403 Forbidden]
+    I -->|Granted| K[Route to Collection Service]
+
+    K --> L{Resource Exists in Tenant?}
+    L -->|No| M[Return 404 Not Found]
+    L -->|Yes| N[Execute Operation]
+
+    N --> O{Operation Success?}
+    O -->|Yes| P[Log Audit Event]
+    O -->|No| Q[Log Error Event]
+
+    P --> R[Return Success Response]
+    Q --> S[Return Error Response]
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style L fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style O fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#ffcdd2,stroke:#d32f2f,stroke-width:2px,color:#000000
+    style G fill:#ffcdd2,stroke:#d32f2f,stroke-width:2px,color:#000000
+    style J fill:#ffcdd2,stroke:#d32f2f,stroke-width:2px,color:#000000
+    style M fill:#ffcdd2,stroke:#d32f2f,stroke-width:2px,color:#000000
+    style S fill:#ffcdd2,stroke:#d32f2f,stroke-width:2px,color:#000000
+    style R fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#000000
+----
+
+==== Enterprise SSO Integration Flow
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+sequenceDiagram
+    participant User
+    participant ProximaDB
+    participant EnterpriseIDP
+    participant RBAC
+
+    User->>ProximaDB: Access ProximaDB
+    ProximaDB->>EnterpriseIDP: Redirect to SSO<br/>(SAML/OIDC)
+
+    EnterpriseIDP->>User: Present Login Form
+    User->>EnterpriseIDP: Enter Credentials
+
+    EnterpriseIDP->>EnterpriseIDP: Authenticate User
+
+    alt Successful Authentication
+        EnterpriseIDP->>ProximaDB: SAML Assertion/<br/>OIDC Token
+        ProximaDB->>ProximaDB: Validate Assertion/<br/>Token Signature
+        ProximaDB->>RBAC: Map User to Roles<br/>Extract Tenant ID
+        RBAC-->>ProximaDB: User Permissions
+        ProximaDB->>ProximaDB: Generate Internal JWT
+        ProximaDB-->>User: Set Session Cookie<br/>Provide API Access
+    else Authentication Failed
+        EnterpriseIDP-->>User: Authentication Error
+        User->>ProximaDB: No Access
+    end
+
+    Note over User,RBAC: Supports AWS IAM, Azure AD, Google Workspace, Okta
+----
+
+=== Security Best Practices
+
+==== API Key Management
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+stateDiagram-v2
+    [*] --> KeyGeneration
+    KeyGeneration --> Active : Store securely
+
+    Active --> Rotation : Scheduled rotation
+    Active --> Revocation : Security incident
+    Active --> Expiration : TTL reached
+
+    Rotation --> Active : New key active
+    Revocation --> Revoked : Immediate invalidation
+    Expiration --> Expired : Grace period
+
+    Expired --> Revoked : Grace period ended
+    Revoked --> [*] : Key destroyed
+
+    state Active {
+        [*] --> ValidateRequest
+        ValidateRequest --> CheckPermissions
+        CheckPermissions --> GrantAccess : Authorized
+        CheckPermissions --> DenyAccess : Unauthorized
+        GrantAccess --> LogAudit
+        DenyAccess --> LogSecurity
+    }
+
+    state KeyGeneration {
+        [*] --> GenerateRandomKey
+        GenerateRandomKey --> ApplyMetadata
+        ApplyMetadata --> EncryptStorage
+        EncryptStorage --> [*]
+    }
+----
+
+=== Data Encryption and Storage Security
+
+==== Encryption at Rest Flow
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+flowchart TD
+    A[Vector Data] --> B[Serialize to Bytes]
+    B --> C{Encryption Enabled?}
+
+    C -->|No| D[Store Plaintext]
+    C -->|Yes| E[Generate DEK<br/>Data Encryption Key]
+
+    E --> F[Encrypt with AES-256]
+    F --> G[Encrypt DEK with KEK<br/>Key Encryption Key]
+    G --> H[Store Encrypted Data<br/>+ Encrypted DEK]
+
+    H --> I[UnifiedCachingFilesystem]
+    I --> J{Storage Backend}
+
+    J -->|Local| K[Local Filesystem<br/>File permissions]
+    J -->|S3| L[AWS S3<br/>Server-side encryption]
+    J -->|Azure| M[Azure Blob<br/>Storage encryption]
+    J -->|GCS| N[Google Cloud<br/>Encryption at rest]
+
+    D --> I
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
+    style K fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+    style L fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+    style M fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+    style N fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+----
+
+==== TLS/Network Security Flow
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+sequenceDiagram
+    participant Client
+    participant LoadBalancer
+    participant ProximaDB
+    participant Storage
+
+    Note over Client,Storage: TLS 1.3 Handshake
+
+    Client->>LoadBalancer: ClientHello<br/>(TLS 1.3, cipher suites)
+    LoadBalancer->>ProximaDB: Forward ClientHello
+    ProximaDB->>ProximaDB: Select cipher suite<br/>Generate server keys
+    ProximaDB-->>LoadBalancer: ServerHello + Certificate
+    LoadBalancer-->>Client: ServerHello + Certificate
+
+    Client->>Client: Verify certificate<br/>Generate client keys
+    Client->>LoadBalancer: ClientKeyExchange<br/>(encrypted)
+    LoadBalancer->>ProximaDB: Forward encrypted keys
+
+    Note over Client,ProximaDB: TLS session established
+
+    Client->>LoadBalancer: Encrypted API Request
+    LoadBalancer->>ProximaDB: Decrypt + Forward
+    ProximaDB->>Storage: Internal communication<br/>(encrypted if remote)
+    Storage-->>ProximaDB: Response
+    ProximaDB-->>LoadBalancer: Encrypt + Send
+    LoadBalancer-->>Client: Encrypted Response
+
+    Note over Client,Storage: All data in transit encrypted with AES-256-GCM
+----
+
+=== Security Compliance and Auditing
+
+==== Audit Trail Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "AUDIT SOURCES"
+        A[Authentication Events]
+        B[Authorization Decisions]
+        C[Data Access Operations]
+        D[Configuration Changes]
+        E[System Events]
+    end
+
+    subgraph "AUDIT PROCESSING"
+        F[Event Collector]
+        G[Event Enrichment<br/>Add context, timestamps]
+        H[Event Validation<br/>Integrity verification]
+        I[Event Formatting<br/>JSON/CEF/SIEM]
+    end
+
+    subgraph "AUDIT STORAGE"
+        J[Local Audit Log<br/>Immutable append-only]
+        K[SIEM Integration<br/>Splunk, ELK, QRadar]
+        L[Cloud Audit Service<br/>AWS CloudTrail, Azure Monitor]
+        M[Compliance Archive<br/>Long-term retention]
+    end
+
+    A --> F
+    B --> F
+    C --> F
+    D --> F
+    E --> F
+
+    F --> G
+    G --> H
+    H --> I
+
+    I --> J
+    I --> K
+    I --> L
+    I --> M
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style I fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
+    style J fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+    style K fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+    style L fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+    style M fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
+----
+
+==== Security Incident Response Flow
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+flowchart TD
+    A[Security Alert Triggered] --> B{Threat Assessment}
+
+    B -->|Low Risk| C[Log and Monitor]
+    B -->|Medium Risk| D[Automated Response]
+    B -->|High Risk| E[Immediate Isolation]
+
+    C --> F[Continue Normal Operations]
+    C --> G[Enhanced Monitoring]
+
+    D --> H[Rate Limit Source]
+    D --> I[Temporary IP Block]
+    D --> J[Alert Security Team]
+
+    E --> K[Isolate Affected Systems]
+    E --> L[Revoke Compromised Keys]
+    E --> M[Emergency Response Team]
+
+    J --> N[Incident Investigation]
+    M --> N
+
+    N --> O{Root Cause Found?}
+    O -->|No| P[Continue Investigation]
+    O -->|Yes| Q[Implement Fix]
+
+    P --> N
+    Q --> R[Security Patch Deployment]
+    R --> S[Resume Normal Operations]
+    S --> T[Post-Incident Review]
+
+    G --> U[Pattern Analysis]
+    U --> V{Suspicious Pattern?}
+    V -->|Yes| D
+    V -->|No| F
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style K fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style L fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style M fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style S fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+----
+
+== Security Configuration Examples
+
+=== Production Security Configuration
+
+[source,toml]
+----
+[security]
+# Authentication
+auth_enabled = true
+auth_method = "jwt"
+jwt_secret_file = "/etc/proximadb/jwt.secret"
+jwt_expiry = "8h"
+jwt_refresh_enabled = true
+
+# Authorization
+rbac_enabled = true
+default_role = "viewer"
+admin_role = "admin"
+tenant_isolation = "strict"
+
+# Encryption
+tls_enabled = true
+tls_cert_file = "/etc/proximadb/certs/server.crt"
+tls_key_file = "/etc/proximadb/certs/server.key"
+tls_ca_file = "/etc/proximadb/certs/ca.crt"
+tls_min_version = "1.3"
+
+# Data encryption
+encryption_at_rest = true
+encryption_algorithm = "AES-256-GCM"
+key_rotation_days = 90
+
+# Rate limiting
+rate_limiting_enabled = true
+rate_limit_requests = 1000
+rate_limit_window = "1m"
+rate_limit_burst = 100
+
+# Audit logging
+audit_logging_enabled = true
+audit_log_file = "/var/log/proximadb/audit.log"
+audit_log_level = "info"
+audit_siem_endpoint = "https://siem.company.com/api/events"
+----
+
+=== Zero-Trust Network Configuration
+
+[source,toml]
+----
+[network]
+# Zero-trust principles
+verify_all_requests = true
+mutual_tls_enabled = true
+client_cert_validation = "strict"
+
+# Network isolation
+bind_address = "0.0.0.0"
+allowed_networks = ["10.0.0.0/8", "172.16.0.0/12"]
+blocked_networks = ["0.0.0.0/0"]  # Block all by default
+
+# API gateway integration
+api_gateway_enabled = true
+api_gateway_url = "https://gateway.company.com"
+forward_auth_headers = true
+
+[security.firewall]
+# Application-level firewall
+enable_waf = true
+block_malicious_patterns = true
+sql_injection_protection = true
+xss_protection = true
+rate_limit_per_ip = 100
+----
+
+This comprehensive security guide provides detailed flows for authentication, authorization, encryption, and compliance monitoring, all using the ProximaDB color palette for professional documentation.

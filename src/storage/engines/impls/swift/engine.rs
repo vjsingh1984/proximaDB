@@ -758,12 +758,46 @@ impl UnifiedStorageEngine for SwiftEngine {
         // ========================================================================
         // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
         // ========================================================================
-
+        // TODO: Integrate with AdvancedSearchOptimizer for intelligent search routing
+        //
+        // The AdvancedSearchOptimizer provides significant value for SWIFT engine:
+        // 1. **Ultra-low latency routing**: Chooses fastest path based on data locality
+        // 2. **FastLanes optimization**: Leverages SWIFT's columnar blocks intelligently
+        // 3. **SIMD acceleration**: Routes to hardware-optimized paths automatically
+        // 4. **Memory-mapped I/O**: Optimizes based on available memory and cache
+        // 5. **Predictive prefetching**: Uses access patterns for zero-copy operations
+        //
+        // Implementation pattern:
+        // ```rust
+        // let axis_manager = self.get_axis_manager().await?;
+        // let cost_estimator = self.get_cost_estimator().await?;
+        //
+        // let orchestrator = AdvancedSearchOptimizer::new(
+        //     ctx.clone(),
+        //     axis_manager,
+        //     cost_estimator,
+        // ).await?;
+        //
+        // let strategy = orchestrator.select_optimal_strategy().await?;
+        // match strategy {
+        //     ExecutionStrategy::IndexFirst { .. } => // Use memory-mapped index
+        //     ExecutionStrategy::DirectFP32 { .. } => // FastLanes direct scan
+        //     ExecutionStrategy::ProgressiveQuantization { .. } => // Multi-resolution
+        // }
+        // ```
+        //
+        // SWIFT-specific benefits:
+        // - Leverage FastLanes encoding for 10x faster scans
+        // - Zero-copy operations with SharedSstFormatReader
+        // - Hardware-aware SIMD path selection
+        //
+        // Current blocker: Service infrastructure for AXIS and cost estimation
+        //
         // Check if orchestration should be used based on context metadata
         let use_orchestration = _ctx.metadata.use_axis_indexes || _ctx.metadata.has_quantization;
 
         if use_orchestration {
-            info!("🎯 SWIFT: Orchestration requested but not yet implemented");
+            info!("🎯 SWIFT: Orchestration requested - using direct FastLanes search until AdvancedSearchOptimizer integrated");
             // TODO: Implement proper orchestration when the API is ready
             // For now, fall back to direct search
             return self
