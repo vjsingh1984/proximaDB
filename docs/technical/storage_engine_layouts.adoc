@@ -65,7 +65,7 @@ For performance metrics and benchmarks, see link:../PERFORMANCE.adoc[Performance
 
 [source,mermaid]
 ----
-%%{init: {"theme": "default"}}%%
+%%{init: {"theme": "neutral"}}%%
 mindmap
   root((Data Layout Strategies))
     Row-Based Layouts
@@ -89,7 +89,7 @@ mindmap
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Workload Analysis] --> B{Primary Use Case?}
 
@@ -107,20 +107,20 @@ flowchart TD
     E -->|Memory limited| K[PRISM Engine<br/>Multi-resolution]
     E -->|Adaptive workload| L[RAPTOR Engine<br/>P×K optimization]
 
-    style G fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style H fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style I fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style J fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style K fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style L fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style F fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style G fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style H fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style I fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style J fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style K fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style L fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style F fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#000
 ----
 
 === **Level 3: Unified Format Foundation
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "SHARED INFRASTRUCTURE"
         A[Unified Quantization Engine<br/>Binary • INT8 • PQ4/8/16/32]
@@ -146,9 +146,9 @@ graph TB
     C --> I
     C --> J
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style C fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style C fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
 ----
 
 == Engine-Specific Layout Diagrams
@@ -161,7 +161,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 block-beta
     columns 5
 
@@ -222,7 +222,7 @@ Query → Bloom Filter (95% reduction) → Quantized Search → Full Precision �
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2196f3", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1565c0", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Parquet File Header<br/>Magic: VIPR + Schema] --> B[Row Group 1<br/>128K Vectors]
     A --> C[Row Group 2<br/>128K Vectors]
@@ -241,10 +241,10 @@ flowchart TD
     G --> M[Run-Length Encoded<br/>Sparse Dimensions]
     H --> N[Zone Maps<br/>Min/Max Pruning]
 
-    style A fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
 ----
 
 **Column-Major SIMD Optimization:**
@@ -271,7 +271,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#673ab7", "primaryTextColor": "#ffffff", "primaryBorderColor": "#4527a0", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     subgraph "Disk Storage"
         A[data_001.parquet<br/>Standard Parquet]
@@ -303,15 +303,15 @@ flowchart LR
     B --> K
     B --> L
 
-    style A fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style B fill:#673ab7,stroke:#4527a0,stroke-width:2px,color:#ffffff
+    style A fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style B fill:#673ab7,stroke:#4527a0,stroke-width:2px,color:#000
 ----
 
 ==== Hierarchical Pruning Architecture
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#673ab7", "primaryTextColor": "#ffffff", "primaryBorderColor": "#4527a0", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Query Vector] --> B{Load Sidecar<br/>.nova_meta?}
 
@@ -333,10 +333,10 @@ flowchart TD
     K --> M[3% of data read<br/>97% I/O reduction]
     L --> N[100% of data read<br/>Sequential access]
 
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style M fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style N fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style M fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style N fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
 ----
 
 ==== Sidecar Metadata Contents
@@ -422,7 +422,7 @@ Total: ~100-500ms (no overhead)
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ff5722", "primaryTextColor": "#ffffff", "primaryBorderColor": "#d84315", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 block-beta
     columns 3
 
@@ -466,7 +466,7 @@ CPU Detection → Encoding Selection → SuperBlock Layout → DataBlock Optimiz
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#e91e63", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2185b", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     A[RAPTOR Row Group<br/>Adaptive Size: 32K-256K] --> B[Matrix Trinity Architecture]
 
@@ -481,11 +481,11 @@ graph TB
     D --> I[Bloom Filters<br/>Multi-granularity<br/>10% Coverage Floor]
     E --> J[Boundary Detection<br/>Smart Vector Selection<br/>Importance Scoring]
 
-    style A fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style B fill:#f06292,stroke:#e91e63,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style E fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style A fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#000
+    style B fill:#f06292,stroke:#e91e63,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style E fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
 ----
 
 **Matrix Layout Detail (ASCII):**
@@ -521,7 +521,7 @@ RAPTOR Matrix Trinity Layout:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#795548", "primaryTextColor": "#ffffff", "primaryBorderColor": "#5d4037", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     A[Memory Pressure<br/>Monitor] --> B{Memory<br/>Threshold}
 
@@ -540,8 +540,8 @@ graph LR
     F --> K[Level 5: FP16<br/>Marker 0xB8]
     F --> L[Level 6: FP32<br/>Marker 0xBA]
 
-    style A fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
-    style F fill:#8d6e63,stroke:#6d4c41,stroke-width:2px,color:#ffffff
+    style A fill:#795548,stroke:#5d4037,stroke-width:2px,color:#000
+    style F fill:#8d6e63,stroke:#6d4c41,stroke-width:2px,color:#000
 ----
 
 **Progressive Resolution Detail:**
@@ -570,7 +570,7 @@ Low Pressure  → Load all resolutions (full quality)
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#607d8b", "primaryTextColor": "#ffffff", "primaryBorderColor": "#455a64", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 timeline
     title HELIX Temporal Clustering Layout
 
@@ -599,7 +599,7 @@ timeline
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#607d8b", "primaryTextColor": "#ffffff", "primaryBorderColor": "#455a64", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     A[Input Vector<br/>High Dimensional] --> B[PCA Projection<br/>Dimensionality Reduction]
 
@@ -613,9 +613,9 @@ graph TB
 
     F --> G[Pruning Metadata<br/>Key Range + Timestamps]
 
-    style A fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
-    style C fill:#78909c,stroke:#546e7a,stroke-width:2px,color:#ffffff
-    style F fill:#90a4ae,stroke:#607d8b,stroke-width:2px,color:#ffffff
+    style A fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#000
+    style C fill:#78909c,stroke:#546e7a,stroke-width:2px,color:#000
+    style F fill:#90a4ae,stroke:#607d8b,stroke-width:2px,color:#000
 ----
 
 **Hilbert Curve Benefits:**
@@ -632,7 +632,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[What's your primary workload?] --> B{Real-time requirements?}
     A --> C{Analytics focus?}
@@ -650,21 +650,21 @@ flowchart TD
 
     E -->|Yes, temporal patterns| L[HELIX Engine<br/>Temporal optimization]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style I fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style J fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style K fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
-    style L fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style I fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
+    style J fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#000
+    style K fill:#795548,stroke:#5d4037,stroke-width:2px,color:#000
+    style L fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#000
 ----
 
 === Storage Layout Performance Analysis
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 xychart-beta
     title "Storage Engine Performance vs Memory Efficiency"
     x-axis ["Memory Usage (GB per 1M vectors)"]
@@ -682,7 +682,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "REAL-TIME ENGINES"
         A[SST: Linear Sequential<br/>✓ Simple format<br/>✓ Fast writes<br/>✓ Good read performance<br/>⚠ Higher memory usage]
@@ -700,13 +700,13 @@ graph TB
         G[HELIX: Temporal<br/>✓ Time-series optimization<br/>✓ Hilbert curve locality<br/>✓ Temporal patterns<br/>⚠ Specialized use case]
     end
 
-    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style D fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style F fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style G fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style D fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style F fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style G fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#000
 ----
 
 == Production Configuration Guidelines

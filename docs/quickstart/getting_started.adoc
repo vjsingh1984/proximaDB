@@ -42,7 +42,7 @@ The following sequence diagram shows the complete ProximaDB setup and first quer
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant User as Developer
     participant Docker as Docker Runtime
@@ -126,7 +126,7 @@ Navigate to: **http://localhost:5678/dashboard**
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 mindmap
   root((Enterprise Dashboard))
     System Overview
@@ -378,7 +378,7 @@ Performance Results:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 xychart-beta
     title "Storage Engine Performance by Workload Type"
     x-axis [SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX]
@@ -523,7 +523,7 @@ spec:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "LOAD BALANCER"
         A[HAProxy/NGINX<br/>Load balancing<br/>Health checks]
@@ -550,12 +550,12 @@ graph TB
     C --> F
     D --> F
 
-    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style B fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style D fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style F fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style B fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style D fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style F fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
 ----
 
 == Monitoring & Observability
@@ -661,7 +661,7 @@ curl http://localhost:5678/metrics
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#2563eb", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1d4ed8", "lineColor": "#374151", "sectionBkgColor": "#f3f4f6", "altSectionBkgColor": "#e5e7eb", "gridColor": "#6b7280", "tertiaryColor": "#ffffff", "background": "#ffffff", "mainBkg": "#ffffff", "secondBkg": "#f9fafb"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 journey
     title ProximaDB Learning Journey
     section Week 1: Foundations

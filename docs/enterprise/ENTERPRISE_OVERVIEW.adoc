@@ -16,7 +16,7 @@ _The only enterprise platform that unifies vector search, graph analytics, and A
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "TRADITIONAL FRAGMENTED APPROACH"
         A[Vector Database<br/>$50K/year<br/>Complex setup]
@@ -41,13 +41,13 @@ graph TB
     E --> F
     F -.->|Replace with| G
 
-    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style D fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style F fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style D fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style F fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
 ----
 
 === **ProximaDB Enterprise Value Proposition**
@@ -100,7 +100,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "AI-POWERED INTELLIGENCE PLATFORM"
         A[Natural Language Business Intelligence<br/>Query data in plain English<br/>Automated executive insights]
@@ -127,15 +127,15 @@ graph TB
     E --> H
     F --> I
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
 ----
 
 === **7 Specialized Storage Engines for Maximum Performance**
@@ -188,7 +188,7 @@ Transform how executives and business users access enterprise data:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     A[Business Question<br/>What drove Q3 growth?] --> B[AI Processing<br/>Natural language understanding<br/>Context analysis]
     B --> C[Vector Intelligence<br/>Semantic similarity search<br/>Pattern recognition]
@@ -196,12 +196,12 @@ flowchart LR
     D --> E[Business Intelligence<br/>Automated analysis<br/>Actionable insights]
     E --> F[Executive Answer<br/>Q3 growth driven by enterprise<br/>customers, 25% increase from<br/>premium tier expansion]
 
-    style A fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#ffffff
-    style B fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#e11d48,stroke:#be185d,stroke-width:2px,color:#ffffff
-    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style F fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style A fill:#9333ea,stroke:#7c3aed,stroke-width:2px,color:#000
+    style B fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style D fill:#e11d48,stroke:#be185d,stroke-width:2px,color:#000
+    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style F fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
 ----
 
 **Business Value**: Reduces executive reporting time from hours to minutes while providing deeper insights
@@ -277,7 +277,7 @@ Complete enterprise-grade tenant isolation ensuring data security and compliance
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 xychart-beta
     title "Performance Leadership Across Vector Dimensions"
     x-axis [128D, 256D, 512D, 1024D, 1536D]
@@ -330,7 +330,7 @@ Automated enterprise deployment across all major platforms:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 journey
     title Enterprise Deployment Journey
     section Day 1: Setup
@@ -362,7 +362,7 @@ Sophisticated revenue management for enterprise scaling:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 pie title "5-Year Total Cost of Ownership Analysis"
     "Traditional Multi-Vendor ($2.6M)" : 2600
     "Single Vendor Platform ($750K)" : 750
@@ -485,7 +485,7 @@ RECOMMENDATIONS:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "PROXIMADB COMPREHENSIVE PLATFORM"
         A[AI-Powered Intelligence<br/>Natural language business intelligence<br/>8 LLM provider ecosystem]
@@ -503,12 +503,12 @@ graph TB
     B --> E
     C --> F
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
 ----
 
 [cols="2,3,2", options="header"]

@@ -16,7 +16,7 @@ ProximaDB implements multiple layers of security to protect data and ensure secu
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "CLIENT LAYER"
         A[REST Client<br/>TLS 1.3]
@@ -62,21 +62,21 @@ graph TB
     K --> N
     L --> O
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style K fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style N fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style O fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style K fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style N fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style O fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
 ----
 
 == Current Security Features
@@ -176,7 +176,7 @@ curl -H "Authorization: Bearer your-api-key" \
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant Client
     participant AuthService
@@ -213,7 +213,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Incoming Request] --> B[Extract JWT/API Key]
     B --> C{Valid Credentials?}
@@ -240,12 +240,12 @@ flowchart TD
     P --> R[Return Success Response]
     Q --> S[Return Error Response]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style L fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style O fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#000
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style L fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style O fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
     style D fill:#ffcdd2,stroke:#d32f2f,stroke-width:2px,color:#000000
     style G fill:#ffcdd2,stroke:#d32f2f,stroke-width:2px,color:#000000
     style J fill:#ffcdd2,stroke:#d32f2f,stroke-width:2px,color:#000000
@@ -258,7 +258,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant User
     participant ProximaDB
@@ -294,7 +294,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 stateDiagram-v2
     [*] --> KeyGeneration
     KeyGeneration --> Active : Store securely
@@ -333,7 +333,7 @@ stateDiagram-v2
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Vector Data] --> B[Serialize to Bytes]
     B --> C{Encryption Enabled?}
@@ -355,10 +355,10 @@ flowchart TD
 
     D --> I
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
     style H fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
     style K fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
     style L fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
@@ -370,7 +370,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant Client
     participant LoadBalancer
@@ -407,7 +407,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "AUDIT SOURCES"
         A[Authentication Events]
@@ -446,14 +446,14 @@ graph TB
     I --> L
     I --> M
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
     style I fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
     style J fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
     style K fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
@@ -465,7 +465,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Security Alert Triggered] --> B{Threat Assessment}
 
@@ -501,14 +501,14 @@ flowchart TD
     V -->|Yes| D
     V -->|No| F
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style K fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style L fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style M fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style S fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style K fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style L fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style M fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style S fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 == Security Configuration Examples

@@ -100,7 +100,7 @@ For detailed benchmark charts and comparative analysis, see:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 xychart
     title "ProximaDB vs Competition: Throughput Performance"
     x-axis ["128D", "256D", "512D", "768D", "1536D"]
@@ -117,7 +117,7 @@ xychart
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 pie title SIMD Performance Gains by Architecture
     "Apple M4 Pro NEON" : 85
     "Intel AVX-512" : 78
@@ -285,7 +285,7 @@ Batch operations maintain consistent **2.46M vectors/sec** throughput regardless
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     A[Workload Analysis] --> B{Query Pattern}
     B -->|Real-time OLTP| C[SST Engine<br/>200K vectors/sec<br/>365ps query]
@@ -296,11 +296,11 @@ flowchart LR
     B -->|Memory Constrained| H[PRISM Engine<br/>Memory Efficient<br/>60% reduction]
     B -->|Time-series Data| I[HELIX Engine<br/>Time-optimized<br/>Temporal patterns]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#000
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style E fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
     style F fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#333333
     style G fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#333333
     style H fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#333333

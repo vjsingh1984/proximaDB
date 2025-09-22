@@ -27,7 +27,7 @@ ProximaDB benchmark suite demonstrates exceptional performance across all storag
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     subgraph "384D Vectors"
         A[DotProduct<br/>117ns<br/>8.54M ops/s]
@@ -41,12 +41,12 @@ graph LR
         F[Cosine<br/>408ns<br/>2.45M ops/s]
     end
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
 ----
 
 === Storage Engine Search Performance (250 vectors, top-10)
@@ -118,7 +118,7 @@ _All values in microseconds (μs). **Bold** = Best in category_
 ==== Compression Impact
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "Compression Overhead"
         N[None<br/>Baseline]
@@ -133,11 +133,11 @@ graph TB
     N --> S
     N --> G
 
-    style N fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style Z fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style S fill:#66bb6a,stroke:#388e3c,stroke-width:2px,color:#ffffff
-    style G fill:#66bb6a,stroke:#388e3c,stroke-width:2px,color:#ffffff
+    style N fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style Z fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style S fill:#66bb6a,stroke:#388e3c,stroke-width:2px,color:#000
+    style G fill:#66bb6a,stroke:#388e3c,stroke-width:2px,color:#000
 ----
 
 == Batch Operations Performance
@@ -171,7 +171,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     START[Use Case] --> RT{Real-time?}
     RT -->|Yes| RAPTOR[RAPTOR<br/>7.69-7.82 μs<br/>Use GZIP]
@@ -186,11 +186,11 @@ flowchart TD
     MIXED -->|Yes| NOVA[NOVA<br/>7.91-8.08 μs<br/>Any Compression]
     MIXED -->|No| SST[SST<br/>8.04-8.25 μs<br/>Use LZ4]
 
-    style RAPTOR fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style VIPER fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style PRISM fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#ffffff
-    style NOVA fill:#9c27b0,stroke:#6a1b9a,stroke-width:2px,color:#ffffff
-    style SST fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
+    style RAPTOR fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style VIPER fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style PRISM fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
+    style NOVA fill:#9c27b0,stroke:#6a1b9a,stroke-width:2px,color:#000
+    style SST fill:#f44336,stroke:#c62828,stroke-width:2px,color:#000
 ----
 
 == Performance Achievements

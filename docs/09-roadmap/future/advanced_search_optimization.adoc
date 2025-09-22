@@ -71,7 +71,7 @@ trait StorageEngineContext {
 .SST Optimization Strategy
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Query Request] --> B{Selectivity Analysis}
     B -->|High Selectivity| C[Bloom Filter Path]
@@ -88,9 +88,9 @@ flowchart TD
 
     I --> J[Results Merge]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#000
+    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Expected Performance Impact**: 2-10x improvement on filtered queries
@@ -100,7 +100,7 @@ flowchart TD
 .VIPER Optimization Strategy
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Analytical Query] --> B{Parquet Statistics}
     B -->|Column Pruning| C[Columnar Predicate Pushdown]
@@ -115,9 +115,9 @@ flowchart TD
     G --> I
     H --> I
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#000
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Expected Performance Impact**: 10-100x improvement on analytical queries
@@ -127,7 +127,7 @@ flowchart TD
 .NOVA Progressive Optimization
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     A[Query Start] --> B[Coarse Quantization]
     B --> C{Confidence Check}
@@ -139,8 +139,8 @@ flowchart LR
     F --> G[Final Refinement]
     G --> H[Return Results]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Expected Performance Impact**: 3-15x speedup through early termination

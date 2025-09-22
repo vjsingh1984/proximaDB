@@ -35,28 +35,28 @@ image:https://img.shields.io/badge/Performance-5.1M%20ops%2Fsec-success[Performa
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
-    subgraph "CLIENT APPLICATIONS"
+    subgraph CLIENT["CLIENT APPLICATIONS"]
         A[Web Apps<br/>React/Vue/Angular]
         B[Mobile Apps<br/>iOS/Android]
         C[Backend Services<br/>Python/Node/Go]
         D[ML Pipelines<br/>Jupyter/MLOps]
     end
 
-    subgraph "PROXIMADB UNIFIED PLATFORM"
+    subgraph PLATFORM["PROXIMADB UNIFIED PLATFORM"]
         E[REST API<br/>Port 5678]
         F[gRPC API<br/>Port 5679]
         G[SQL Interface<br/>Postgres Compatible]
 
-        subgraph "AI INTELLIGENCE LAYER"
+        subgraph AI["AI INTELLIGENCE LAYER"]
             H[Vector Search<br/>8.5M+ ops/sec<br/>Sub-10μs latency]
             I[Graph Analytics<br/>Relationship Discovery]
             J[8 AI Providers<br/>OpenAI • Anthropic • Azure]
             K[Business Intelligence<br/>Natural Language Queries]
         end
 
-        subgraph "7 STORAGE ENGINES - AUTO-OPTIMIZED"
+        subgraph STORAGE["7 STORAGE ENGINES - AUTO-OPTIMIZED"]
             L[SST Engine<br/>Real-time OLTP]
             M[VIPER Engine<br/>Analytics & Compression]
             N[SWIFT Engine<br/>Ultra-low Latency]
@@ -66,14 +66,14 @@ graph TB
             R[HELIX Engine<br/>Time-series Data]
         end
 
-        subgraph "UNIFIED INFRASTRUCTURE"
+        subgraph INFRA["UNIFIED INFRASTRUCTURE"]
             S[Multi-Cloud Storage<br/>AWS • Azure • GCP]
             T[Hardware Acceleration<br/>SIMD • GPU • CPU Cache]
             U[Advanced Caching<br/>Multi-tier Memory Management]
         end
     end
 
-    subgraph "TRADITIONAL AI STACK (REPLACED)"
+    subgraph TRADITIONAL["TRADITIONAL AI STACK (REPLACED)"]
         V[Vector DB<br/>$50K/year]
         W[Graph DB<br/>$75K/year]
         X[AI Services<br/>$100K/year]
@@ -113,32 +113,39 @@ graph TB
     S --> T
     T --> U
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style K fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style N fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style O fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style P fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style Q fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style R fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style S fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#333333
-    style T fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#333333
-    style U fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#333333
-    style V fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style W fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style X fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style Y fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style Z fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style C fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style D fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style G fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style I fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style J fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style K fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style L fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style M fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style N fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style O fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style P fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style Q fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style R fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style S fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style T fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style U fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style V fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style W fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style X fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style Y fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style Z fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+
+    style CLIENT fill:#f0f4f8,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style PLATFORM fill:#e8f0fa,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style AI fill:#dde9f5,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style STORAGE fill:#d2e1f0,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style INFRA fill:#c7d9eb,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style TRADITIONAL fill:#fdeaa7,stroke:#5a5a5a,stroke-width:1px,color:#000
 ----
 
 *ProximaDB Platform Architecture: One platform replaces 6+ separate AI infrastructure components, reducing costs by 95% while delivering industry-leading 20M+ operations/sec performance.*
@@ -256,7 +263,7 @@ print(insights.answer)
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Business Question<br/>"What's driving our growth?"] --> B{Query Type Detection}
     B -->|Vector Search| C[Embed Query<br/>OpenAI/Anthropic]
@@ -284,22 +291,22 @@ flowchart TD
     N --> O[Business Intelligence<br/>Context + Insights]
     O --> P[Final Response<br/>Actionable Insights]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style H fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style I fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style K fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style M fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style N fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#333333
-    style O fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style P fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#3d7ab8,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style C fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style D fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style F fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style H fill:#3d7ab8,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style I fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style J fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style K fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style L fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style M fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style N fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style O fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style P fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 *Query Processing Flow: From natural language questions to actionable business insights in milliseconds*
@@ -450,7 +457,7 @@ insights = collection.analyze(
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}%%
 gantt
     title ProximaDB Development Roadmap
     dateFormat YYYY-MM-DD

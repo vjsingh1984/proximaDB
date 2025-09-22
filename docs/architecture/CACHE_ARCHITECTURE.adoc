@@ -27,7 +27,7 @@ All critical issues have been resolved as of Phase 5 completion. The cache syste
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "GLOBAL ORCHESTRATION"
         A[CrossCacheOrchestrator<br/>Global Singleton]
@@ -64,16 +64,16 @@ graph TB
     H --> J
     I --> J
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style J fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
     style K fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#333333
     style L fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#333333
 ----
@@ -122,7 +122,7 @@ ProximaDB manages 11 distinct cache types, each optimized for specific data patt
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     A[Cache Request] --> B{Cache Type}
     B -->|Vectors| C[VectorCache<br/>40% Memory]
@@ -137,18 +137,18 @@ flowchart LR
     F --> K[NodeKey<br/>IndexNode Value]
     G --> L[String Key<br/>Serialized Value]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style K fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style L fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#000
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style K fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style L fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
 ----
 
 === Specialized Cache Implementations
@@ -207,7 +207,7 @@ VectorCache was newly implemented in Phase 1 to resolve type mismatch issues whe
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 pie title Memory Budget Allocation
     "VectorData" : 40
     "QueryResult" : 30
@@ -264,7 +264,7 @@ if cache_stats.hit_rate > 0.8 && cache_stats.memory_usage > 0.9 {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Cache Full] --> B{Eviction Policy}
     B -->|LRU| C[Remove Least<br/>Recently Used]
@@ -281,15 +281,15 @@ flowchart TD
 
     H --> I[Insert New Entry]
 
-    style A fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#000
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style H fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 === Eviction Triggers
@@ -362,7 +362,7 @@ All 7 storage engines properly integrate with the cache system:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant Client
     participant Engine as Storage Engine
@@ -655,7 +655,7 @@ Cache warming is **disabled by default** for resource efficiency. Only enable fo
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     subgraph "CURRENT"
         A1[Memory Cache]
@@ -682,15 +682,15 @@ flowchart LR
     B2 --> C2
     B3 --> C3
 
-    style A1 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style A2 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style A3 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B1 fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style B2 fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style B3 fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C1 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C2 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C3 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A1 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style A2 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style A3 fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B1 fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style B2 fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style B3 fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C1 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style C2 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style C3 fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
 ----
 
 == Conclusion

@@ -267,6 +267,7 @@ cargo bench -- --warm-up-time 5 --measurement-time 10
 
 [source,mermaid]
 ----
+%%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "Storage Engine Performance Comparison"
     x-axis ["SST", "VIPER", "NOVA", "SWIFT", "RAPTOR", "PRISM", "HELIX"]

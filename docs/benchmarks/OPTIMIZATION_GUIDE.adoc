@@ -21,7 +21,7 @@ toc::[]
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Performance Goal] --> B{Primary Concern?}
     B -->|Speed| C[Low Latency Path]
@@ -34,12 +34,12 @@ flowchart TD
     E --> I[PRISM + PQ4/8 + Sparsity]
     F --> J[NOVA + Minimal Quant + All Stages]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
-    style B fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style H fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#000
+    style B fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style H fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 == 5-Minute Optimization Paths

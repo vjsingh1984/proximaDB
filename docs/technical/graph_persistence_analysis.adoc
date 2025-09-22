@@ -19,7 +19,7 @@ This document analyzes the current state of graph persistence in ProximaDB, iden
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "EXISTING INFRASTRUCTURE"
         A[Vector WAL System<br/>src/storage/persistence/write_ahead_log/]
@@ -48,17 +48,17 @@ graph TB
     J -.->|Should Use| A
     J -.->|Should Use| B
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style J fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
-    style K fill:#9e9e9e,stroke:#616161,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style J fill:#f44336,stroke:#c62828,stroke-width:2px,color:#000
+    style K fill:#9e9e9e,stroke:#616161,stroke-width:2px,color:#000
 ----
 
 === Key Findings
@@ -166,7 +166,7 @@ The `GraphService` assumes a single graph instance. Multi-graph support is desig
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "UNIFIED PERSISTENCE LAYER"
         A[Extended WAL<br/>Vector + Graph Ops]
@@ -201,11 +201,11 @@ graph TB
     B --> B1
     B --> B2
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
 ----
 
 == Implementation Plan
@@ -477,7 +477,7 @@ impl GraphService {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant Client
     participant GraphService
@@ -513,7 +513,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "GRAPH MEMTABLE"
         A[CSR Structure<br/>Fast traversal]
@@ -541,16 +541,16 @@ graph TB
     J --> D
     K --> A
 
-    style A fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style A fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
 ----
 
 === Recovery Process
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Server Startup] --> B{Graph Snapshots Exist?}
 
@@ -575,11 +575,11 @@ flowchart TD
     J --> M[Register with Service]
     M --> N[Accept Requests]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style I fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style N fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style I fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style N fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 == Rationale for Design Decisions

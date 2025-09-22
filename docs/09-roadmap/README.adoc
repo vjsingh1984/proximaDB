@@ -14,7 +14,7 @@ ProximaDB follows a quarterly release cycle with major feature releases and cont
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 gantt
     title ProximaDB Strategic Development Roadmap
     dateFormat YYYY-MM-DD
@@ -52,7 +52,7 @@ gantt
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     A[Q4 2024<br/>Foundation] --> B[Q1 2025<br/>Scale & Intelligence]
     B --> C[Q2 2025<br/>Platform & Ecosystem]
@@ -68,10 +68,10 @@ flowchart LR
     C -.-> C1
     D -.-> D1
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
     style A1 fill:#e8f5e8,stroke:#4caf50,stroke-width:1px,color:#2e7d32
     style B1 fill:#e3f2fd,stroke:#2196f3,stroke-width:1px,color:#1565c0
     style C1 fill:#fff3e0,stroke:#ff9800,stroke-width:1px,color:#f57c00

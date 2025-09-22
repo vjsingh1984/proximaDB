@@ -40,7 +40,7 @@
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "Production Network"
         A[REST API<br/>Port 5678<br/>HTTPS Ready]
@@ -80,10 +80,10 @@ graph TB
     L --> C
     M --> C
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style H fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
 ----
 
 === Core Components
@@ -102,7 +102,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant Client
     participant Dashboard
@@ -147,7 +147,7 @@ curl http://localhost:5678/health
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Start Deployment] --> B{Health Check}
     B -->|Pass| C[Performance Test]
@@ -159,13 +159,13 @@ flowchart TD
     D --> G[Investigate & Fix]
     G --> A
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style D fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
 ----
 
 === 2. Enterprise Monitoring
@@ -179,7 +179,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     subgraph "Critical Metrics"
         A[CPU < 80%<br/>Current: 45.2%]
@@ -197,13 +197,13 @@ graph LR
 
     F --> G[Enterprise Dashboard<br/>Real-time Monitoring]
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
 ----
 
 **Performance Thresholds**:
@@ -237,7 +237,7 @@ graph LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     subgraph "Enterprise Dashboard Tabs"
         A[System Overview<br/>Health & Status]
@@ -258,14 +258,14 @@ graph LR
     F --> G
     G --> H
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
 ----
 
 [[performance-tuning]]
@@ -290,7 +290,7 @@ export PROXIMADB_UNIFIED_CACHE=true
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TD
     A{Workload Type} --> B[OLTP Writes]
     A --> C[Analytics Queries]
@@ -302,15 +302,15 @@ graph TD
     D --> H[NOVA Engine<br/>Progressive Analytics<br/>Hierarchical Stats]
     E --> I[HELIX Engine<br/>Time-Series Optimized<br/>Spiral Pattern Storage]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
 ----
 
 [[security-operations]]
@@ -320,7 +320,7 @@ graph TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "Authentication Layer"
         A[API Keys<br/>Production Ready]
@@ -361,20 +361,20 @@ graph TB
     I --> L
     J --> M
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style I fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style J fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style K fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style L fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style M fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style N fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style I fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style J fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style K fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style L fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style M fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style N fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
 ----
 
 ==== Security Configuration
@@ -404,7 +404,7 @@ export PROXIMADB_AUDIT_PATH="/var/log/proximadb/audit.log"
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     A[System Metrics<br/>CPU/Memory/Disk] --> D[MetricsCollector<br/>Unified Collection]
     B[Query Metrics<br/>Latency/Throughput] --> D
@@ -419,17 +419,17 @@ flowchart LR
     G --> J[Grafana<br/>External Visualization]
     H --> K[Multi-channel Alerts<br/>Email/Slack/Webhook]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
 ----
 
 === 7. Backup & Recovery
@@ -438,7 +438,7 @@ flowchart LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 stateDiagram-v2
     [*] --> Continuous_Backup
     Continuous_Backup --> Incremental_Backup : Every 6 hours
@@ -477,7 +477,7 @@ kubectl exec -it proximadb-0 -- proximadb-cli restore \
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Alert Triggered] --> B{Severity Level?}
 
@@ -507,23 +507,23 @@ flowchart TD
     L --> N
     E --> N
 
-    style A fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style H fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style M fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style N fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style O fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style P fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style Q fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style A fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style C fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style H fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style I fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style M fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style N fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style O fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style P fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style Q fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
 ----
 
 === Performance Issues
@@ -532,7 +532,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     A[High Memory Alert] --> B{Check Cache Usage}
     B -->|> 85%| C[Cache Optimization]
@@ -547,16 +547,16 @@ graph LR
     H -->|Yes| I[Resolved]
     H -->|No| J[Escalate to Engineering]
 
-    style A fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style J fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style A fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style C fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style E fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style F fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style J fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
 ----
 
 === Query Performance Issues
@@ -621,7 +621,7 @@ curl -X POST http://localhost:5678/v1/explain \
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TD
     A[Security Validation] --> B[TLS 1.3 Enabled?]
     B -->|Yes| C[Authentication Configured?]
@@ -649,18 +649,18 @@ graph TD
     L --> K[Fix Security Issues]
     K --> A
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style L fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style K fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style L fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
 ----
 
 **Security Checklist**: **ALL ITEMS COMPLETED**
@@ -678,7 +678,7 @@ graph TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     A[Issue Detection] --> B{Severity Level}
 
@@ -697,18 +697,18 @@ graph TB
     J --> K
     K --> L[Issue Resolved]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#ffffff
-    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style K fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style E fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style F fill:#ff5722,stroke:#d84315,stroke-width:2px,color:#000
+    style G fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style K fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Support Information**:
@@ -723,7 +723,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     subgraph "Compute Resources"
         A[CPU: 4 cores<br/>Current Usage: 45.2%]
@@ -747,15 +747,15 @@ graph LR
     B --> H
     D --> I
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style B fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
 ----
 
 **Resource Guidelines**:

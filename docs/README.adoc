@@ -33,7 +33,7 @@ _Organized by use case and technical depth_
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "Getting Started"
         A[Getting Started Guide<br/>Installation & Setup]
@@ -83,14 +83,14 @@ graph TB
     P --> R
     R --> T
 
-    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style H fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style L fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style N fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style P fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
-    style R fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
-    style T fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style H fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style L fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style N fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
+    style P fill:#f44336,stroke:#c62828,stroke-width:2px,color:#000
+    style R fill:#795548,stroke:#5d4037,stroke-width:2px,color:#000
+    style T fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#000
 ----
 
 === 🚀 Getting Started

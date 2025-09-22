@@ -38,7 +38,7 @@ Distance computation is the fundamental operation in vector search, executed bil
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     subgraph "Distance Computation Performance"
         A[128D<br/>20.6M ops/s] --> B[256D<br/>8.4M ops/s]
@@ -178,7 +178,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TD
     Start[Select Storage Engine] --> Q1{Workload Type?}
 
@@ -419,7 +419,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TD
     Start[Optimization Goal] --> Type{Primary Concern?}
 

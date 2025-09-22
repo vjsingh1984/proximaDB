@@ -16,7 +16,7 @@ _Detailed technical information for architects, engineers, and technical decisio
 
 [source,mermaid]
 ----
-%%{init: {"theme": "default"}}%%
+%%{init: {"theme": "neutral"}}%%
 mindmap
   root((ProximaDB Platform))
     Vector Intelligence
@@ -41,27 +41,27 @@ mindmap
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
-    subgraph "API GATEWAY"
+    subgraph GATEWAY["API GATEWAY"]
         A[REST API<br/>Port 5678]
         B[gRPC API<br/>Port 5679]
         C[WebSocket<br/>Real-time]
     end
 
-    subgraph "AI INTELLIGENCE"
+    subgraph AI["AI INTELLIGENCE"]
         D[LLM Router<br/>8 Providers]
         E[Query Processor<br/>NL to SQL]
         F[Business Intelligence<br/>Insights Engine]
     end
 
-    subgraph "CORE SERVICES"
+    subgraph SERVICES["CORE SERVICES"]
         G[Collection Service<br/>Multi-tenant]
         H[Vector Operations<br/>Search & Similarity]
         I[Graph Service<br/>Relationships]
     end
 
-    subgraph "STORAGE ENGINES"
+    subgraph STORAGE["STORAGE ENGINES"]
         J[SST<br/>Real-time]
         K[VIPER<br/>Analytics]
         L[NOVA<br/>Advanced]
@@ -69,7 +69,7 @@ graph TB
         N["...+3 More"]
     end
 
-    subgraph "GRAPH ENGINES"
+    subgraph GRAPH["GRAPH ENGINES"]
         O[ORION<br/>Discovery]
         P[PULSAR<br/>Analysis]
         Q[QUASAR<br/>Knowledge]
@@ -88,23 +88,29 @@ graph TB
     H --> P
     I --> Q
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style K fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style N fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style O fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
-    style P fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
-    style Q fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style C fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style D fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style G fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style I fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style J fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style K fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style L fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style M fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style N fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style O fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style P fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style Q fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+
+    style GATEWAY fill:#f0f4f8,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style AI fill:#e8f0fa,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style SERVICES fill:#dde9f5,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style STORAGE fill:#d2e1f0,stroke:#5a5a5a,stroke-width:1px,color:#000
+    style GRAPH fill:#c7d9eb,stroke:#5a5a5a,stroke-width:1px,color:#000
 ----
 
 === **Level 3: Detailed Technical Architecture**
@@ -113,7 +119,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Client Request] --> B{Request Type}
 
@@ -154,19 +160,19 @@ flowchart TD
     V --> W[Response Formatting]
     W --> X[Client Response]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
-    style R fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
-    style V fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
-    style X fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#ffffff
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:3px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style E fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style F fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style G fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style H fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style I fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style J fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style R fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style V fill:#d6e4f0,stroke:#5a5a5a,stroke-width:2px,color:#000
+    style X fill:#4a90e2,stroke:#2e5c8a,stroke-width:3px,color:#000
 ----
 
 === Core Architecture Principles
@@ -182,7 +188,7 @@ ProximaDB is built on **five foundational architecture principles**:
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "CLIENT ACCESS LAYER"
         A[REST API<br/>RESTful endpoints<br/>JSON/HTTP protocols]
@@ -222,20 +228,20 @@ graph TB
     I --> M
     J --> N
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style K fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style L fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style M fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style N fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style C fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style D fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style G fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style I fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style J fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style K fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style L fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style M fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
+    style N fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
 ----
 
 == AI Intelligence Architecture
@@ -252,7 +258,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant User
     participant NL_Processor
@@ -278,7 +284,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Workload Analysis] --> B{Data Pattern?}
 
@@ -290,20 +296,20 @@ flowchart TD
     B -->|Memory Constrained| H[PRISM Engine<br/>60% memory reduction]
     B -->|Time-series| I[HELIX Engine<br/>Temporal optimization]
 
-    style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style F fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style G fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
-    style H fill:#ec4899,stroke:#db2777,stroke-width:2px,color:#ffffff
-    style I fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
+    style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style F fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style G fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#000
+    style H fill:#ec4899,stroke:#db2777,stroke-width:2px,color:#000
+    style I fill:#10b981,stroke:#059669,stroke-width:2px,color:#000
 ----
 
 === **Level 2: Storage Engine Internal Architecture**
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "WRITE PATH"
         A[Vector Insert] --> B[Memtable Buffer]
@@ -334,17 +340,17 @@ graph TB
         R --> S[Cache Warming]
     end
 
-    style A fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style G fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style Q fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style A fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style G fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style E fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style Q fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#000
 ----
 
 === **Level 3: Quantization and Hardware Acceleration**
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 stateDiagram-v2
     [*] --> VectorInput
     VectorInput --> QuantizationAnalysis
@@ -382,7 +388,7 @@ stateDiagram-v2
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#dc2626", "primaryTextColor": "#ffffff", "primaryBorderColor": "#b91c1c", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[Vector Insert] --> B[Row-based Layout]
     B --> C[Three-stage Filter]
@@ -391,15 +397,15 @@ flowchart LR
     E --> F[Exact Match]
     F --> G[Result: 200K vec/sec]
 
-    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
 ----
 
 ==== VIPER Engine (Analytics)
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart LR
     A[Batch Insert] --> B[Columnar Layout]
     B --> C[Parquet Format]
@@ -408,8 +414,8 @@ flowchart LR
     E --> F[Delta Compression]
     F --> G[Result: 90% compression]
 
-    style A fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style A fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
 ----
 
 == Graph Engine Architecture - Multi-Level View
@@ -418,7 +424,7 @@ flowchart LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#8b5cf6", "primaryTextColor": "#ffffff", "primaryBorderColor": "#7c3aed", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "GRAPH QUERY INTERFACE"
         A[Cypher Queries]
@@ -454,25 +460,25 @@ graph TB
     F --> I
     I --> L
 
-    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style B fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style D fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style F fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style G fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style H fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style I fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style J fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style K fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style L fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style B fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style D fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style F fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style G fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style H fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style I fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style J fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style K fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style L fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
 ----
 
 === **Level 2: Graph Processing Pipeline**
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#8b5cf6", "primaryTextColor": "#ffffff", "primaryBorderColor": "#7c3aed", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 sequenceDiagram
     participant Client
     participant GraphAPI
@@ -504,7 +510,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#8b5cf6", "primaryTextColor": "#ffffff", "primaryBorderColor": "#7c3aed", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 flowchart TD
     A[Hybrid Query] --> B{Query Type Analysis}
 
@@ -531,9 +537,9 @@ flowchart TD
     O --> P[Score Normalization]
     P --> Q[Final Rankings]
 
-    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style O fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style Q fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style A fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style O fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style Q fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
 ----
 
 == Multi-Tenant Enterprise Architecture
@@ -542,7 +548,7 @@ flowchart TD
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#10b981", "primaryTextColor": "#ffffff", "primaryBorderColor": "#059669", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
     subgraph "TENANT A - Enterprise Corp"
         A1[Dedicated Namespace]
@@ -574,18 +580,18 @@ graph TB
     C4 --> A2
     C4 --> B2
 
-    style A1 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style A2 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style A3 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style A4 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style B1 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style B2 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style B3 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style B4 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style C1 fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
-    style C2 fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
-    style C3 fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
-    style C4 fill:#10b981,stroke:#059669,stroke-width:2px,color:#ffffff
+    style A1 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style A2 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style A3 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style A4 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style B1 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style B2 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style B3 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style B4 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style C1 fill:#10b981,stroke:#059669,stroke-width:2px,color:#000
+    style C2 fill:#10b981,stroke:#059669,stroke-width:2px,color:#000
+    style C3 fill:#10b981,stroke:#059669,stroke-width:2px,color:#000
+    style C4 fill:#10b981,stroke:#059669,stroke-width:2px,color:#000
 ----
 
 === **Level 2: Tenant Isolation Design**
@@ -598,7 +604,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#10b981", "primaryTextColor": "#ffffff", "primaryBorderColor": "#059669", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 stateDiagram-v2
     [*] --> TenantRequest
     TenantRequest --> AuthenticationCheck
@@ -629,7 +635,7 @@ stateDiagram-v2
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 timeline
     title ProximaDB Performance Evolution
 
@@ -663,7 +669,7 @@ timeline
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "ProximaDB Scaling Performance"
     x-axis ["1K vectors", "10K vectors", "100K vectors", "1M vectors", "10M vectors", "100M vectors"]
@@ -678,7 +684,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "REAL-TIME ENGINES"
         A[SST: 200K vec/sec<br/>1GB/1M vectors<br/>5ms latency]
@@ -696,20 +702,20 @@ graph LR
         G[HELIX: Time-series<br/>Temporal patterns<br/>Hilbert curves]
     end
 
-    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style D fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style F fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
+    style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style B fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style C fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style D fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style E fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style F fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style G fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
 ----
 
 === Security Framework
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph LR
     subgraph "AUTHENTICATION LAYER"
         A[Enterprise SSO<br/>AWS IAM, Azure AD]
@@ -736,15 +742,15 @@ graph LR
     E --> H
     F --> I
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style D fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style H fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style C fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style D fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style G fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style I fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
 ----
 
 == Performance and Optimization

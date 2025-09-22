@@ -39,7 +39,7 @@ Measure raw performance of vector distance calculations using hardware-accelerat
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 xychart
     title "Distance Computation Latency by Dimension (nanoseconds)"
     x-axis ["384D", "768D", "1024D", "1536D", "3072D"]
@@ -186,7 +186,7 @@ Measure compression algorithm performance and quality trade-offs.
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 xychart
     title "Compression Ratio by Algorithm and Dimension"
     x-axis ["256D", "512D", "768D", "1536D"]
@@ -294,7 +294,7 @@ Evaluate multi-stage search optimization with early termination.
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     subgraph "Direct Search"
         A[10,000 vectors] -->|56μs| B[Top 10]
@@ -306,10 +306,10 @@ graph LR
         E -->|5.6μs| F[Top 10]
     end
 
-    style A fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
-    style B fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#f44336,stroke:#c62828,stroke-width:2px,color:#000
+    style B fill:#f44336,stroke:#c62828,stroke-width:2px,color:#000
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Result**: Progressive search 5.8x faster (9.6μs vs 56μs)
@@ -731,7 +731,7 @@ Binary filtering provides extremely fast first-pass candidate reduction.
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     START[Workload Type] --> LATENCY{Latency Critical?}
 
@@ -747,11 +747,11 @@ flowchart TD
     BATCH -->|Yes| VIPER[VIPER Engine<br/>ZSTD compression<br/>8.00μs]
     BATCH -->|No| NOVA[NOVA Engine<br/>Any compression<br/>7.91μs]
 
-    style RAPTOR fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style PRISM fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style SST fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#ffffff
-    style VIPER fill:#9c27b0,stroke:#6a1b9a,stroke-width:2px,color:#ffffff
-    style NOVA fill:#607d8b,stroke:#37474f,stroke-width:2px,color:#ffffff
+    style RAPTOR fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style PRISM fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style SST fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
+    style VIPER fill:#9c27b0,stroke:#6a1b9a,stroke-width:2px,color:#000
+    style NOVA fill:#607d8b,stroke:#37474f,stroke-width:2px,color:#000
 ----
 
 === Optimization Priorities

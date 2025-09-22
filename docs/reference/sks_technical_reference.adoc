@@ -14,7 +14,7 @@ The Semantic Knowledge Store transforms ProximaDB from a pure vector database in
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "SKS Components"
         A[Entity Store<br/>Multi-version embeddings<br/>TypedMetadata]
@@ -42,21 +42,21 @@ graph TB
     E --> G
     F --> H
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
 ----
 
 == Implementation Status
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 pie title SKS Implementation Completion
     "Entity Store (Complete)" : 100
     "Relations Store (Complete)" : 100
@@ -115,7 +115,7 @@ pie title SKS Implementation Completion
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 classDiagram
     class EntityStore {
         <<interface>>
@@ -155,7 +155,7 @@ classDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 stateDiagram-v2
     [*] --> EntityCreated
     EntityCreated --> EmbeddingV1: Initial embedding
@@ -205,7 +205,7 @@ impl EntityStore {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     subgraph "Forward Index"
         A[Entity ID] --> B[Outgoing Relations]
@@ -226,16 +226,16 @@ graph LR
     C --> G
     F --> G
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Key Features:**
@@ -250,7 +250,7 @@ graph LR
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant Client
     participant gRPC_Server
@@ -315,7 +315,7 @@ service EntityService {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     A[SQL Query with SIMILAR] --> B[Parse Query]
     B --> C[Extract Vector Component]
@@ -323,12 +323,12 @@ flowchart LR
     D --> E[Apply Similarity Threshold]
     E --> F[Return Results]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Syntax Examples:**
@@ -350,18 +350,18 @@ WITH THRESHOLD 0.75;
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     A[Start Entity] --> B[Follow Relations]
     B --> C[Traverse Graph]
     C --> D[Apply Filters]
     D --> E[Collect Results]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Syntax Examples:**
@@ -383,7 +383,7 @@ WITH MAX_DEPTH 2;
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Vector Results] --> C[Fusion Engine]
     B[Graph Results] --> C
@@ -391,12 +391,12 @@ flowchart TD
     D --> E[Context Assembly]
     E --> F[Final Results]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Syntax Example:**
@@ -415,7 +415,7 @@ WITH MAX_DEPTH 2, THRESHOLD 0.8;
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 xychart-beta
     title "SKS Operation Performance"
     x-axis ["Entity Upsert", "Entity Search", "Graph Traversal", "Hybrid Query", "Context Assembly"]
@@ -459,7 +459,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Raw Documents] --> B[Text Extraction]
     B --> C[Embedding Generation]
@@ -470,15 +470,15 @@ flowchart TD
     G --> H[Provenance Tracking]
     H --> I[Knowledge Graph Complete]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Implementation Example:**
@@ -543,7 +543,7 @@ results = await sks_client.hybrid_search(
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph LR
     subgraph "Source Documents"
         A[PDF Document] --> B[Text Extraction]
@@ -562,15 +562,15 @@ graph LR
         H --> I[Lineage Tracking]
     end
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 **Provenance Data Structure:**
@@ -599,7 +599,7 @@ pub enum ExtractionMethod {
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant QueryParser
     participant VectorEngine
@@ -655,7 +655,7 @@ LIMIT 10;
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "Document Processing"
         A[Documents] --> B[Text Extraction]
@@ -678,25 +678,25 @@ graph TB
 
     G --> J
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style J fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style I fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style J fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
 ----
 
 === Multi-Modal Knowledge Store
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart LR
     subgraph "Input Sources"
         A[Text Documents]
@@ -724,14 +724,14 @@ flowchart LR
     F --> G
     F --> H
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style F fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style G fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
 ----
 
 == Best Practices

@@ -15,7 +15,7 @@ ProximaDB offers **7 production-ready storage engines** optimized for different 
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "REAL-TIME ENGINES"
         A[SST Engine<br/>✓ Row-based OLTP<br/>200K vec/sec writes<br/>365ps query, 724μs @ 90% sparse]
@@ -33,13 +33,13 @@ graph TB
         G[HELIX Engine<br/>✓ Time-series Data<br/>Hilbert curve locality<br/>Temporal optimization]
     end
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
 ----
 
 === Performance Specifications
@@ -66,7 +66,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[What's your primary workload?] --> B{Real-time queries?}
     A --> C{Analytics workload?}
@@ -84,14 +84,14 @@ flowchart TD
 
     E -->|Yes| L[HELIX Engine<br/>Temporal optimization]
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style I fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style J fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style K fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
-    style L fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style G fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style H fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style I fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
+    style J fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#000
+    style K fill:#795548,stroke:#5d4037,stroke-width:2px,color:#000
+    style L fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#000
 ----
 
 === Engine Selection Matrix

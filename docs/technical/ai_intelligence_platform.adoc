@@ -14,7 +14,7 @@
 
 [source,mermaid]
 ----
-%%{init: {"theme": "default"}}%%
+%%{init: {"theme": "neutral"}}%%
 mindmap
   root((AI Intelligence Platform))
     Natural Language Interface
@@ -39,7 +39,7 @@ mindmap
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[User Query] --> B{LLM Router}
 
@@ -61,22 +61,22 @@ flowchart TD
 
     F --> F1[TogetherAI<br/>Cost effective]
 
-    style C1 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style C2 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style C3 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff
-    style D1 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style D2 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style E1 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style E2 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style E3 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style F1 fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
+    style C1 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style C2 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style C3 fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#000
+    style D1 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style D2 fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style E1 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style E2 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style E3 fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style F1 fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
 ----
 
 === **Level 3: Query Processing Pipeline**
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e40af", "primaryTextColor": "#ffffff", "primaryBorderColor": "#1e3a8a", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 sequenceDiagram
     participant User
     participant API
@@ -112,7 +112,7 @@ sequenceDiagram
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 graph TB
     subgraph "NATURAL LANGUAGE INTELLIGENCE"
         A[Natural Language Querying<br/>Plain English data access<br/>No SQL expertise required]
@@ -139,15 +139,15 @@ graph TB
     E --> H
     F --> I
 
-    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
-    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
-    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#ffffff
-    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
-    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
-    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
-    style H fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#ffffff
-    style I fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
+    style C fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
+    style D fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
+    style E fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style G fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
+    style H fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#000
+    style I fill:#795548,stroke:#5d4037,stroke-width:2px,color:#000
 ----
 
 == Natural Language Business Intelligence
@@ -211,7 +211,7 @@ graph TB
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#dc2626", "primaryTextColor": "#ffffff", "primaryBorderColor": "#b91c1c", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 stateDiagram-v2
     [*] --> QueryReceived
     QueryReceived --> AuthenticationCheck
@@ -246,7 +246,7 @@ stateDiagram-v2
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#16a34a", "primaryTextColor": "#ffffff", "primaryBorderColor": "#15803d", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 xychart-beta
     title "LLM Provider Performance Metrics"
     x-axis ["OpenAI GPT-4", "Anthropic Claude", "Azure OpenAI", "AWS Bedrock", "Cohere", "vLLM Local", "Ollama", "HuggingFace"]
@@ -259,7 +259,7 @@ xychart-beta
 
 [source,mermaid]
 ----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ea580c", "primaryTextColor": "#ffffff", "primaryBorderColor": "#c2410c", "lineColor": "#374151"}}}%%
+%%{init: {"theme": "neutral"}}}%%
 flowchart TD
     A[Query Analysis] --> B{Complexity Assessment}
 
@@ -283,10 +283,10 @@ flowchart TD
     L -->|Approaching Limit| N[Shift to Cost-Effective Providers]
     L -->|Over Budget| O[Activate Emergency Fallback<br/>Local-only mode]
 
-    style C fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#ffffff
-    style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#ffffff
-    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#ffffff
-    style F fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#ffffff
+    style C fill:#16a34a,stroke:#15803d,stroke-width:2px,color:#000
+    style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
+    style E fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
+    style F fill:#8b5cf6,stroke:#7c3aed,stroke-width:2px,color:#000
 ----
 
 === Enterprise AI Compliance Framework
