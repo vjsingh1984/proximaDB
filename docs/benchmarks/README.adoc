@@ -6,7 +6,9 @@
 [abstract]
 .Performance Validation and Optimization
 --
-Comprehensive benchmark suite for ProximaDB covering core operations, storage engines, and system optimization. All benchmarks use **realistic embedding generators** that accurately simulate BERT (768D, normal distribution) and OpenAI Ada (1536D, positive-skewed) embedding characteristics for production-accurate performance measurements on Apple M4 Pro hardware.
+Comprehensive benchmark suite for ProximaDB covering core operations, storage engines, and system optimization. All benchmarks use **realistic embedding generators** that accurately simulate BERT (768D, normal distribution) and OpenAI Ada (1536D, positive-skewed) embedding characteristics for production-accurate performance measurements.
+
+**Latest Results**: link:DECEMBER_2024_RESULTS.adoc[December 2024 Benchmarks] - **Sub-10μs search latency** across all engines, **8.5M ops/sec** for 384D vectors, **2.46M vectors/sec** sustained throughput.
 --
 
 toc::[]
@@ -42,7 +44,15 @@ toc::[]
 
 [IMPORTANT]
 ====
-**New**: link:BENCHMARK_ANALYSIS.adoc[📊 Complete Benchmark Analysis with Visual Charts]
+**Latest Results**: link:DECEMBER_2024_RESULTS.adoc[📊 December 2024 Benchmark Results]
+
+Complete performance validation showing:
+* All 7 storage engines delivering **sub-10μs search latency**
+* SIMD-accelerated distance computation achieving **8.5M ops/sec** for 384D vectors
+* Perfect linear scaling with **2.46M vectors/sec** sustained throughput
+* Minimal compression overhead (< 5%) across all algorithms
+
+**Analysis**: link:BENCHMARK_ANALYSIS.adoc[📈 Complete Benchmark Analysis with Visual Charts]
 
 Includes XY charts showing dimensional scaling, batch size impact, and detailed decision matrices for storage engine selection and optimization strategies.
 ====

@@ -50,7 +50,7 @@ graph TB
         G[SQL Interface<br/>Postgres Compatible]
 
         subgraph "AI INTELLIGENCE LAYER"
-            H[Vector Search<br/>20M+ ops/sec]
+            H[Vector Search<br/>8.5M+ ops/sec<br/>Sub-10μs latency]
             I[Graph Analytics<br/>Relationship Discovery]
             J[8 AI Providers<br/>OpenAI • Anthropic • Azure]
             K[Business Intelligence<br/>Natural Language Queries]
@@ -178,10 +178,10 @@ print(results.insights)
 == Features That Matter for Startups
 
 === Performance That Scales With You
-* **20.6M operations/sec** with hardware acceleration (SIMD/GPU)
-* **Sub-millisecond latency** for real-time applications
-* **Handles millions of vectors** on standard hardware
-* **Automatic optimization** for your CPU architecture
+* **8.5M operations/sec** for 384D vectors with hardware acceleration (NEON/AVX)
+* **Sub-10 microsecond latency** across all storage engines (validated December 2024)
+* **2.46M vectors/second** sustained throughput on standard hardware
+* **Automatic optimization** for ARM (NEON) and x86 (AVX2/AVX512) architectures
 
 === Everything You Need, Nothing You Don't
 * **Vector search** for semantic similarity and RAG

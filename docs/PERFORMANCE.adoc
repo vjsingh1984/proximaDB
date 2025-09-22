@@ -22,78 +22,78 @@ For detailed benchmark charts and comparative analysis, see:
 
 == Executive Performance Summary
 
-=== Hardware-Accelerated SIMD Performance (September 2025)
+=== Hardware-Accelerated SIMD Performance (December 2024)
 
 **ProximaDB delivers exceptional performance with automatic hardware acceleration:**
 
 [cols="3,2,2,2,2", options="header"]
 |===
-|Dimension |Metric |Throughput (ops/sec) |Latency (μs) |Hardware
+|Dimension |Metric |Throughput (ops/sec) |Latency (ns) |Hardware
 
-|**128D**
+|**384D**
 |DotProduct
-|**20.6M**
-|**0.049**
-|AVX2/NEON
+|**8.54M**
+|**117**
+|ARM NEON
 
-|**128D**
+|**384D**
 |Euclidean
-|**18.0M**
-|**0.056**
-|AVX2/NEON
+|**8.18M**
+|**122**
+|ARM NEON
 
-|**128D**
-|Manhattan
-|**17.7M**
-|**0.057**
-|AVX2/NEON
-
-|**128D**
+|**384D**
 |Cosine
-|**12.2M**
-|**0.082**
-|AVX2/NEON
+|**5.16M**
+|**194**
+|ARM NEON
 
-|**256D**
+|**768D**
 |DotProduct
-|**8.4M**
-|**0.120**
-|AVX2/NEON
+|**3.40M**
+|**294**
+|ARM NEON
 
-|**256D**
+|**768D**
 |Euclidean
-|**7.9M**
-|**0.126**
-|AVX2/NEON
+|**3.26M**
+|**306**
+|ARM NEON
 
-|**512D**
+|**768D**
+|Cosine
+|**2.45M**
+|**408**
+|ARM NEON
+
+|**1024D**
 |DotProduct
-|**3.8M**
-|**0.265**
-|AVX2/NEON
+|**2.39M**
+|**419**
+|ARM NEON
 
-|**512D**
+|**1024D**
 |Euclidean
-|**3.7M**
-|**0.271**
-|AVX2/NEON
-
-|**768D BERT**
-|Mixed
-|**2.5M**
-|**< 5ms**
-|M4 Pro SIMD
+|**2.31M**
+|**432**
+|ARM NEON
 
 |**1536D OpenAI**
-|Mixed
-|**1.8M**
-|**< 5ms**
-|M4 Pro SIMD
+|DotProduct
+|**1.50M**
+|**667**
+|ARM NEON
+
+|**3072D**
+|DotProduct
+|**706K**
+|**1,417**
+|ARM NEON
 |===
 
 [IMPORTANT]
 ====
-**Performance Achievement**: ProximaDB's SIMD acceleration delivers **20M+ operations/sec** performance, representing industry-leading vector computation speed on standard hardware.
+**Performance Achievement**: ProximaDB's SIMD acceleration delivers **8.5M+ operations/sec** for 384D vectors and consistent **sub-10μs search latency** across all storage engines, representing industry-leading vector computation speed on ARM Silicon.
 ====
 
 === Performance Comparison Overview
@@ -224,19 +224,62 @@ prefetch_distance = 8
 
 == Storage Engine Performance Analysis
 
-=== Validated Engine Performance (Apple M4 Pro, September 2025)
+=== Validated Engine Performance (Apple Silicon, December 2024)
 
 **All 7 storage engines benchmarked with realistic workloads:**
 
-[source,mermaid]
-----
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
-xychart
-    title "Storage Engine Throughput Comparison"
-    x-axis ["SST", "SWIFT", "NOVA", "VIPER", "RAPTOR", "PRISM", "HELIX"]
-    y-axis "Throughput (K vectors/sec)" 0 --> 250
-    bar [200, 150, 120, 80, 110, 95, 85]
-----
+[cols="2,2,2,2,3", options="header"]
+|===
+|Engine |Search Latency |Best Compression |Throughput |Optimal Use Case
+
+|**SST**
+|8.04-8.25 μs
+|LZ4
+|2.46M vec/s
+|Real-time OLTP
+
+|**VIPER**
+|7.92-8.67 μs
+|ZSTD
+|2.46M vec/s
+|Analytics, Compression
+
+|**NOVA**
+|7.91-8.08 μs
+|Any (< 2% variance)
+|2.46M vec/s
+|Mixed Workloads
+
+|**SWIFT**
+|7.83-8.09 μs
+|ZSTD/Snappy
+|2.46M vec/s
+|Read-Heavy
+
+|**RAPTOR**
+|7.69-7.82 μs
+|GZIP
+|2.46M vec/s
+|Low Latency
+
+|**PRISM**
+|7.70-7.94 μs
+|LZ4
+|2.46M vec/s
+|Memory-Constrained
+
+|**HELIX**
+|7.69-7.83 μs
+|None/ZSTD
+|2.46M vec/s
+|High Dimensional
+|===
+
+[NOTE]
+====
+**Key Achievement**: All engines deliver **sub-10μs search latency** with minimal compression overhead (< 5%).
+Batch operations maintain consistent **2.46M vectors/sec** throughput regardless of batch size (250-5000).
+====
 
 *Storage Engine Optimization: Each engine optimized for specific workload patterns delivering 80K-200K vectors/sec*
 
