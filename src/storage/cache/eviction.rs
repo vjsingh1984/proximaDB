@@ -413,6 +413,29 @@ impl CacheEvictor {
     pub fn access_tracker(&self) -> Arc<AccessTracker> {
         self.access_tracker.clone()
     }
+
+    /// Trigger immediate cache eviction (called when memory pressure detected)
+    pub async fn trigger_immediate_eviction(&self) -> Result<()> {
+        tracing::info!("Triggering immediate cache eviction due to memory pressure");
+
+        let mut total_evicted = 0u64;
+
+        // Execute all configured eviction policies immediately
+        for policy in &self.eviction_policies {
+            match self.execute_policy(policy).await {
+                Ok(evicted) => {
+                    total_evicted += evicted;
+                    tracing::debug!("Evicted {} items using policy {:?}", evicted, policy);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to execute eviction policy {:?}: {:?}", policy, e);
+                }
+            }
+        }
+
+        tracing::info!("Immediate eviction completed: {} items evicted", total_evicted);
+        Ok(())
+    }
 }
 
 /// Cache eviction configuration

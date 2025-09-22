@@ -213,7 +213,7 @@ pub use performance_optimizer::{CacheOptimizer, OptimizationReport};
 pub use traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
 
 // Re-export specialized caches
-pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache};
+pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache};
 
 // Re-export new cache modules
 pub use warming::{CacheWarmer, WarmingStrategy, CacheWarmingConfig};

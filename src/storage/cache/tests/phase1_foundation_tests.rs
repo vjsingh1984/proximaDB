@@ -120,49 +120,68 @@ async fn test_base_cache_trait_template_method() {
     assert_eq!(cache.metrics.total_gets(), 1);
 }
 
-/// Test eviction strategies
+/// Test eviction policies
 #[tokio::test]
-async fn test_eviction_strategies() {
+async fn test_eviction_policies() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::storage::cache::eviction::*;
+    use crate::storage::cache::eviction::{EvictionPolicy, AccessTracker};
 
-    // Test LRU
-    let mut lru = LRUStrategy::new();
-    lru.update_on_access(&"a");
-    lru.update_on_access(&"b");
-    lru.update_on_access(&"c");
-    lru.update_on_access(&"d"); // Should evict "a"
-
-    let cache_state = CacheState {
-        total_capacity: 100,
-        current_size: 90,
-        entry_count: 4,
+    // Test LRU Policy
+    let lru_policy = EvictionPolicy::LRU {
+        max_items: 1000,
+        batch_size: 10,
     };
-    let to_evict = lru.select_victim(&cache_state);
-    // Note: LRU evicts from back, which would be "a" in this case
 
-    // Test LFU
-    let mut lfu = LFUStrategy::new();
-    lfu.update_on_access(&"a");
-    lfu.update_on_access(&"a");
-    lfu.update_on_access(&"b");
-    lfu.update_on_access(&"c");
+    match lru_policy {
+        EvictionPolicy::LRU { max_items, batch_size } => {
+            assert_eq!(max_items, 1000);
+            assert_eq!(batch_size, 10);
+        }
+        _ => panic!("Expected LRU policy"),
+    }
 
-    let to_evict = lfu.select_victim(&cache_state);
-    // LFU evicts least frequently used
+    // Test LFU Policy
+    let lfu_policy = EvictionPolicy::LFU {
+        max_items: 500,
+        min_access_count: 2,
+        frequency_window_hours: 24,
+    };
 
-    // Test ARC
-    let mut arc = ARCStrategy::new(4);
-    arc.update_on_access(&"a");
-    arc.update_on_access(&"b");
-    arc.update_on_access(&"c");
-    arc.update_on_access(&"d");
-    arc.update_on_access(&"a"); // Move to T2
+    match lfu_policy {
+        EvictionPolicy::LFU { max_items, min_access_count, frequency_window_hours } => {
+            assert_eq!(max_items, 500);
+            assert_eq!(min_access_count, 2);
+            assert_eq!(frequency_window_hours, 24);
+        }
+        _ => panic!("Expected LFU policy"),
+    }
 
-    let to_evict = arc.select_victim(&cache_state);
-    // ARC has adaptive replacement logic
+    // Test ARC Policy
+    let arc_policy = EvictionPolicy::ARC {
+        target_size: 1000,
+        recent_size: 500,
+        frequent_size: 500,
+    };
+
+    match arc_policy {
+        EvictionPolicy::ARC { target_size, recent_size, frequent_size } => {
+            assert_eq!(target_size, 1000);
+            assert_eq!(recent_size, 500);
+            assert_eq!(frequent_size, 500);
+        }
+        _ => panic!("Expected ARC policy"),
+    }
+
+    // Test AccessTracker
+    let tracker = AccessTracker::new();
+    tracker.track_access("key1".to_string()).await;
+    tracker.track_access("key2".to_string()).await;
+
+    // Verify tracker records access patterns
+    let stats = tracker.get_access_stats("key1").await;
+    assert!(stats.is_some());
 }
 
 /// Test storage backends

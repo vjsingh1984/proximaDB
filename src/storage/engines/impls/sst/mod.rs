@@ -2847,13 +2847,13 @@ impl UnifiedStorageEngine for SstEngine {
         // Access global unified cache through CrossCacheOrchestrator
         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
         if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
-            // Try to get from query cache first
-            if let Some(query_cache) = orchestrator.get_query_cache() {
-                if let Ok(Some(cached_vector)) = query_cache.get(&cache_key).await {
+            // Try to get from vector cache first (using correct cache type now)
+            if let Some(vector_cache) = orchestrator.get_vector_cache() {
+                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
                     // Track cache hit for access pattern learning
                     orchestrator.pattern_tracker().track_access_async(
                         cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::Query,
+                        crate::storage::cache::orchestrator::CacheType::VectorData,
                     );
                     return Ok(Some(cached_vector));
                 }
@@ -2862,7 +2862,7 @@ impl UnifiedStorageEngine for SstEngine {
             // Track cache miss
             orchestrator.pattern_tracker().track_access_async(
                 cache_key.clone(),
-                crate::storage::cache::orchestrator::CacheType::Query,
+                crate::storage::cache::orchestrator::CacheType::VectorData,
             );
         }
 
@@ -2939,8 +2939,8 @@ impl UnifiedStorageEngine for SstEngine {
 
                         // Update global cache with found vector
                         if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
-                            if let Some(query_cache) = orchestrator.get_query_cache() {
-                                let _ = query_cache.put(cache_key, record.clone()).await;
+                            if let Some(vector_cache) = orchestrator.get_vector_cache() {
+                                let _ = vector_cache.put(cache_key, record.clone()).await;
                             }
                         }
 

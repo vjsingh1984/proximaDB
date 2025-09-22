@@ -318,6 +318,22 @@ impl UnifiedMetricsCollector {
         let mut metrics = self.metrics.write().await;
         *metrics = MetricsData::default();
     }
+
+    /// Record an operation with timing
+    pub async fn record_operation(
+        &self,
+        op_type: MetricsOperationType,
+        success: bool,
+        bytes: usize,
+        duration: std::time::Duration,
+    ) {
+        self.record(
+            op_type,
+            duration.as_millis() as u64,
+            success,
+            if bytes > 0 { Some(bytes) } else { None },
+        );
+    }
 }
 
 impl Clone for UnifiedMetricsCollector {
@@ -431,6 +447,8 @@ impl MetricsData {
             } else {
                 0.0
             },
+            cache_hits: self.cache_hits,
+            cache_misses: self.cache_misses,
             last_reset: self.last_reset,
         }
     }
@@ -477,6 +495,8 @@ pub struct MetricsSnapshot {
     pub p99_latency_ms: u64,
     pub operations_per_type: HashMap<String, u64>,
     pub error_rate: f64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
     pub last_reset: chrono::DateTime<chrono::Utc>,
 }
 

@@ -194,7 +194,18 @@ impl ProximaDB {
             .as_ref()
             .map(|c| c.total_memory_mb)
             .unwrap_or(config.storage.cache_size_mb);
-        let orchestrator = Arc::new(CrossCacheOrchestrator::new((cache_budget_mb * 1024 * 1024) as usize));
+        let mut orchestrator = CrossCacheOrchestrator::new((cache_budget_mb * 1024 * 1024) as usize);
+
+        // Start cache eviction service with default configuration
+        orchestrator.start_eviction_service(None);
+
+        // Start cache warming service (optional, disabled by default)
+        // orchestrator.start_warming_service(None);
+
+        // Start periodic memory rebalancing service
+        orchestrator.start_rebalancing_service();
+
+        let orchestrator = Arc::new(orchestrator);
         CrossCacheOrchestrator::register_global(orchestrator.clone());
 
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(

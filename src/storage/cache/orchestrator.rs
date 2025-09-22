@@ -25,10 +25,13 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{Mutex, mpsc};
+use tracing::{debug, info, warn};
 
 use crate::metrics::collectors::AccessPatternMetricsCollector;
+use crate::storage::cache::eviction::{CacheEvictor, CacheEvictionConfig, EvictionPolicy};
 use crate::storage::cache::metrics::CacheMetrics;
-use crate::storage::cache::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache};
+use crate::storage::cache::warming::{CacheWarmer, CacheWarmingConfig, WarmingStrategy};
+use crate::storage::cache::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache};
 
 /// Event for async cache access tracking
 ///
@@ -746,6 +749,8 @@ impl CascadeInvalidator {
 
 /// Orchestrates multiple specialized caches for cross-cache operations
 pub struct CrossCacheOrchestrator {
+    /// Vector data cache (individual vectors)
+    vector_cache: Option<Arc<VectorCache>>,
     /// Query result cache
     query_cache: Option<Arc<QueryCache>>,
     /// Filter bitmap cache
@@ -764,6 +769,11 @@ pub struct CrossCacheOrchestrator {
     /// Cascade invalidator for propagating updates
     cascade_invalidator: Arc<CascadeInvalidator>,
 
+    /// Cache evictor for memory management
+    cache_evictor: Option<Arc<CacheEvictor>>,
+    /// Cache warmer for preloading data
+    cache_warmer: Option<Arc<CacheWarmer>>,
+
     /// Metrics
     metrics: Arc<CacheMetrics>,
     // Optional: cache providers for usage snapshots
@@ -780,6 +790,7 @@ impl CrossCacheOrchestrator {
         let metrics = Arc::new(CacheMetrics::new());
 
         Self {
+            vector_cache: None,
             query_cache: None,
             filter_cache: None,
             index_cache: None,
@@ -788,6 +799,8 @@ impl CrossCacheOrchestrator {
             memory_allocator,
             prefetch_engine,
             cascade_invalidator,
+            cache_evictor: None,
+            cache_warmer: None,
             metrics,
             cache_providers: Arc::new(DashMap::new()),
         }
@@ -800,6 +813,12 @@ impl CrossCacheOrchestrator {
         provider: Arc<dyn CacheStatsProvider + Send + Sync>,
     ) {
         self.cache_providers.entry(cache_type).or_default().push(provider);
+    }
+
+    /// Register vector data cache
+    pub fn with_vector_cache(mut self, cache: Arc<VectorCache>) -> Self {
+        self.vector_cache = Some(cache);
+        self
     }
 
     /// Register query result cache
@@ -980,6 +999,36 @@ impl CrossCacheOrchestrator {
         });
     }
 
+    /// Start periodic memory rebalancing task
+    /// This task runs every 5 minutes to rebalance cache memory based on usage patterns
+    pub fn start_rebalancing_service(&self) {
+        let orchestrator_weak = Arc::downgrade(&Arc::new(self.clone()));
+
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
+
+            loop {
+                interval.tick().await;
+
+                // Try to get strong reference, exit if orchestrator is dropped
+                if let Some(orchestrator) = orchestrator_weak.upgrade() {
+                    info!("Starting periodic cache memory rebalancing");
+
+                    // Trigger memory rebalancing
+                    if let Err(e) = orchestrator.reallocate_memory_tiers().await {
+                        warn!("Failed to rebalance cache memory: {}", e);
+                    } else {
+                        debug!("Cache memory rebalancing completed successfully");
+                    }
+                } else {
+                    // Orchestrator has been dropped, exit task
+                    info!("Cache orchestrator dropped, stopping rebalancing service");
+                    break;
+                }
+            }
+        });
+    }
+
     /// Get pattern tracker for external use
     pub fn pattern_tracker(&self) -> Arc<AccessPatternTracker> {
         self.pattern_tracker.clone()
@@ -1006,6 +1055,31 @@ impl CrossCacheOrchestrator {
     /// Get metrics
     pub fn metrics(&self) -> Arc<CacheMetrics> {
         self.metrics.clone()
+    }
+
+    /// Get vector cache
+    pub fn get_vector_cache(&self) -> Option<Arc<VectorCache>> {
+        self.vector_cache.clone()
+    }
+
+    /// Get query cache
+    pub fn get_query_cache(&self) -> Option<Arc<QueryCache>> {
+        self.query_cache.clone()
+    }
+
+    /// Get filter cache
+    pub fn get_filter_cache(&self) -> Option<Arc<BitmapFilterCache>> {
+        self.filter_cache.clone()
+    }
+
+    /// Get index cache
+    pub fn get_index_cache(&self) -> Option<Arc<IndexNodeCache>> {
+        self.index_cache.clone()
+    }
+
+    /// Get metadata cache
+    pub fn get_metadata_cache(&self) -> Option<Arc<MetadataStore>> {
+        self.metadata_cache.clone()
     }
 
     /// Execute batch cache operations for improved performance
@@ -1264,6 +1338,117 @@ impl CrossCacheOrchestrator {
         }
 
         Ok(serde_json::Value::Object(metrics))
+    }
+
+    /// Initialize and start cache eviction background service
+    pub fn start_eviction_service(&mut self, config: Option<CacheEvictionConfig>) {
+        let eviction_config = config.unwrap_or_default();
+
+        if !eviction_config.enabled {
+            tracing::info!("Cache eviction service disabled by configuration");
+            return;
+        }
+
+        // Create the cache evictor
+        let orchestrator_ref = match GLOBAL_ORCHESTRATOR.get() {
+            Some(orch) => orch.clone(),
+            None => {
+                tracing::warn!("Cannot start eviction service: global orchestrator not registered");
+                return;
+            }
+        };
+
+        // Create a metrics collector for the evictor
+        use crate::storage::traits::UnifiedMetricsCollector;
+        let metrics_collector = Arc::new(UnifiedMetricsCollector::new());
+
+        let mut evictor = CacheEvictor::new(orchestrator_ref, metrics_collector);
+
+        // Add configured policies
+        for policy in eviction_config.policies {
+            evictor.add_policy(policy);
+        }
+
+        let evictor = Arc::new(evictor);
+
+        // Start the background eviction task
+        let evictor_clone = evictor.clone();
+        tokio::spawn(async move {
+            if let Err(e) = evictor_clone.start_eviction().await {
+                tracing::error!("Cache eviction service failed: {:?}", e);
+            }
+        });
+
+        self.cache_evictor = Some(evictor);
+        tracing::info!("Cache eviction service started successfully");
+    }
+
+    /// Initialize and start cache warming background service
+    pub fn start_warming_service(&mut self, config: Option<CacheWarmingConfig>) {
+        let warming_config = config.unwrap_or_default();
+
+        if !warming_config.enabled {
+            tracing::info!("Cache warming service disabled by configuration");
+            return;
+        }
+
+        // Create the cache warmer
+        let orchestrator_ref = match GLOBAL_ORCHESTRATOR.get() {
+            Some(orch) => orch.clone(),
+            None => {
+                tracing::warn!("Cannot start warming service: global orchestrator not registered");
+                return;
+            }
+        };
+
+        // Create a metrics collector for the warmer
+        use crate::storage::traits::UnifiedMetricsCollector;
+        let metrics_collector = Arc::new(UnifiedMetricsCollector::new());
+        let warmer = Arc::new(CacheWarmer::new(orchestrator_ref, metrics_collector));
+
+        // Start the background warming task with configured strategy
+        let warmer_clone = warmer.clone();
+        let strategy = warming_config.strategy;
+        tokio::spawn(async move {
+            if let Err(e) = warmer_clone.start_warming(strategy).await {
+                tracing::error!("Cache warming service failed: {:?}", e);
+            }
+        });
+
+        self.cache_warmer = Some(warmer);
+        tracing::info!("Cache warming service started with strategy: {:?}", warming_config.strategy);
+    }
+
+    /// Trigger immediate cache eviction if capacity exceeded
+    pub async fn trigger_eviction_if_needed(&self) -> Result<()> {
+        if let Some(ref evictor) = self.cache_evictor {
+            // Check current memory usage
+            let current_usage = self.get_total_memory_usage().await;
+            let memory_budget = self.memory_allocator.total_budget;
+
+            if current_usage > (memory_budget * 90 / 100) {
+                tracing::info!("Memory usage at {}%, triggering cache eviction",
+                    (current_usage * 100) / memory_budget);
+                evictor.trigger_immediate_eviction().await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Get total memory usage across all caches
+    async fn get_total_memory_usage(&self) -> usize {
+        let mut total = 0;
+
+        if let Some(ref cache) = self.vector_cache {
+            total += cache.memory_usage().await;
+        }
+        if let Some(ref cache) = self.query_cache {
+            // Query cache doesn't have memory_usage method yet
+            // total += cache.memory_usage().await;
+        }
+        // Add other caches as needed
+
+        total
     }
 }
 

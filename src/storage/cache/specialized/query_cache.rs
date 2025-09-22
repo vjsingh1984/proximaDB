@@ -183,4 +183,46 @@ impl QueryCache {
     pub fn metrics(&self) -> &crate::storage::cache::metrics::CacheMetrics {
         self.base.metrics()
     }
+
+    /// Get the size of the cache (number of entries)
+    pub async fn size(&self) -> usize {
+        // Return the number of entries in the cache
+        // This delegates to the base cache's size method
+        self.base.size().await
+    }
+
+    /// Remove a specific entry from the cache
+    pub async fn remove(&self, key: &QueryKey) -> Option<CachedQueryResult> {
+        // Remove and return the cached entry if it exists
+        self.base.remove(key).await
+    }
+
+    /// Get cache statistics
+    pub async fn statistics(&self) -> CacheStatistics {
+        // Get snapshot from unified metrics
+        let snapshot = self.base.metrics().get_snapshot().await;
+
+        CacheStatistics {
+            total_entries: self.size().await,
+            hit_count: snapshot.cache_hits,
+            miss_count: snapshot.cache_misses,
+            eviction_count: 0, // Not tracked directly in unified metrics
+            memory_usage_bytes: self.base.memory_usage().await,
+        }
+    }
+
+    /// Get memory usage of the cache in bytes
+    pub async fn memory_usage(&self) -> usize {
+        self.base.memory_usage().await
+    }
+}
+
+/// Cache statistics structure
+#[derive(Debug, Clone, Default)]
+pub struct CacheStatistics {
+    pub total_entries: usize,
+    pub hit_count: u64,
+    pub miss_count: u64,
+    pub eviction_count: u64,
+    pub memory_usage_bytes: usize,
 }

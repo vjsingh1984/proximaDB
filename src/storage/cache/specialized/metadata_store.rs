@@ -63,12 +63,14 @@ impl MetadataStore {
 
     /// Get total size in bytes
     pub async fn size_bytes(&self) -> usize {
-        self.base.metrics().total_allocated_bytes()
+        // Use the memory_usage method from base cache
+        self.base.memory_usage().await
     }
 
     /// Get total number of entries
     pub async fn total_entries(&self) -> usize {
-        self.base.metrics().total_entries()
+        // Use the size method from base cache
+        self.base.size().await
     }
 
     /// Invalidate a metadata entry

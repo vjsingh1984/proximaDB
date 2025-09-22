@@ -203,6 +203,18 @@ cargo check --all-targets  # Faster compilation check without generating binarie
 - `proximadb-server`: Main database server (src/bin/server.rs)
 - `proximadb-bench`: Benchmarking tool (src/bin/proximadb-bench-consolidated.rs)
 
+### Available Benchmark Suites (benches/)
+- `bench_01_core_distance`: Core distance metrics performance
+- `bench_02_hardware_simd`: SIMD hardware acceleration tests
+- `bench_03_memory_vector`: Memory and vector operations
+- `bench_04_storage_unified`: Unified storage engine benchmarks
+- `bench_08_quantization_sst`: SST quantization performance
+- `bench_09_columnar_viper`: VIPER columnar operations
+- `bench_10_query_progressive`: Progressive query optimization
+- `bench_12_system_optimization`: System-wide optimizations
+- `bench_13_complete_suite`: Full benchmark suite
+- `bench_14_graph_operations`: Graph operations performance
+
 ### Quick Development Workflow
 ```bash
 # Fast iteration cycle for development
@@ -242,6 +254,10 @@ cargo test --lib compute::quantization  # Test specific module
 # Single test with debug output
 RUST_LOG=debug cargo test test_name -- --nocapture
 cargo test test_name -- --exact --nocapture  # Exact test name matching
+
+# Run specific benchmark
+cargo bench --bench bench_01_core_distance
+cargo bench --bench bench_04_storage_unified
 
 # Test with specific features
 cargo test --features "aws azure gcp"
@@ -460,6 +476,14 @@ All engines implement the `UnifiedStorageEngine` trait with:
 - **Metadata Consistency**: Shared metadata format across all engines
 - **Cross-Engine Operations**: Engines can delegate operations to each other
 
+### Cache Architecture (Recent Update)
+The caching system has been recently unified (`src/storage/cache/`):
+- **CacheOrchestrator**: Central coordination of all cache subsystems
+- **VectorCache**: Specialized cache for vector operations (`src/storage/cache/specialized/vector_cache.rs`)
+- **EvictionPolicy**: LRU, LFU, and Adaptive strategies
+- **Integration Points**: All storage engines now use the unified cache through `CacheOrchestrator`
+- **Recent Fix**: Cache module conflicts were resolved by consolidating duplicate implementations
+
 ## Development Guidelines
 
 ### When Fixing Compilation Errors
@@ -519,6 +543,7 @@ All engines implement the `UnifiedStorageEngine` trait with:
 ### Important Files
 - `src/lib.rs`: Main library entry point
 - `src/bin/server.rs`: Server binary implementation
+- `src/bin/proximadb-bench-consolidated.rs`: Consolidated benchmarking binary
 - `proto/proximadb.proto`: Protocol buffer definitions
 - `src/storage/engines/factory.rs`: Storage engine selection logic
 - `src/compute/quantization/unified.rs`: Unified quantization engine
@@ -527,6 +552,8 @@ All engines implement the `UnifiedStorageEngine` trait with:
 - `build.rs`: Protocol buffer compilation and build configuration
 - `Cargo.toml`: Dependencies and feature flags configuration
 - `config/config.toml`: Main server configuration file
+- `src/storage/cache/`: Unified cache system with VectorCache specialization
+- `src/network/multi_server.rs`: Concurrent REST and gRPC server implementation
 
 ### Health Checks and API Testing
 ```bash
@@ -604,6 +631,34 @@ Supports automatic protocol selection (REST/gRPC) with:
 - Similarity search with metadata filtering
 - SQL-style queries
 - Compression configuration
+
+Testing Python SDK:
+```bash
+# Install Python SDK in development mode
+cd clients/python
+pip install -e .
+
+# Run Python SDK tests
+pytest tests/ -v
+
+# Run specific Python test files
+python test_v1_client.py
+python test_grpc_simple.py
+```
+
+## Recent Development Context
+
+### Current Development Status (September 2025)
+- **Active Branch**: Working on `cleanup_demo` branch (main branch is `main`)
+- **Recent Focus**: Cache system unification and engine completion
+- **Modified Files**: Cache modules, storage engines, multi-server implementation
+- **Recent Commits**: Cache integration fixes, Mermaid syntax corrections, documentation improvements
+
+### Key Recent Changes
+- Unified cache system implementation in `src/storage/cache/`
+- VectorCache specialization added for optimized vector operations
+- All storage engines now integrated with CacheOrchestrator
+- Documentation migrated to AsciiDoc format with Mermaid diagrams
 
 ## Troubleshooting
 

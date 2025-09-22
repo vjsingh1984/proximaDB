@@ -214,12 +214,20 @@ impl FilesystemMetadataStore {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> FilesystemCacheStats {
+    pub async fn stats(&self) -> FilesystemCacheStats {
+        // Get metrics snapshot from unified metrics
+        let snapshot = self.base.metrics().get_snapshot().await;
+        let hit_rate = if snapshot.cache_hits + snapshot.cache_misses > 0 {
+            snapshot.cache_hits as f64 / (snapshot.cache_hits + snapshot.cache_misses) as f64
+        } else {
+            0.0
+        };
+
         FilesystemCacheStats {
-            base_entries: self.base.metrics().total_entries(),
+            base_entries: self.base.size().await,
             hot_entries: self.hot_cache.len(),
-            base_memory_bytes: self.base.metrics().total_allocated_bytes(),
-            hit_rate: self.base.metrics().hit_rate(),
+            base_memory_bytes: self.base.memory_usage().await,
+            hit_rate,
         }
     }
 

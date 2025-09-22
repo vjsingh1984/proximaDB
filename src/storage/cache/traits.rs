@@ -4,7 +4,7 @@ use std::hash::Hash;
 use std::time::SystemTime;
 
 use crate::storage::cache::backend::CacheTier;
-use crate::storage::cache::metrics::CacheMetrics;
+use crate::storage::traits::UnifiedMetricsCollector;
 
 /// Base trait for cache keys
 pub trait CacheKey: Hash + Eq + Clone + Send + Sync + Debug + 'static {}
@@ -120,7 +120,7 @@ pub trait BaseCache: Send + Sync {
         self.metrics().record_miss();
     }
 
-    fn metrics(&self) -> &CacheMetrics;
+    fn metrics(&self) -> &UnifiedMetricsCollector;
 }
 
 /// Cache entry with metadata
