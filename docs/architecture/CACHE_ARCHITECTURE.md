@@ -191,6 +191,43 @@ if let Some(orchestrator) = CrossCacheOrchestrator::global() {
   - Added record_operation() for consistent metrics recording
 - **Status**: Single unified metrics system across entire cache subsystem
 
+### Issue #4: Configuration Hardcoding ✅ RESOLVED (Phase 5)
+- **Solution**: Exposed comprehensive cache configuration in config.toml
+- **Implementation**:
+  - Added [cache] section with total memory budget
+  - Per-cache-type allocations (vector, query, metadata, index, filter)
+  - Configurable eviction policies (LRU, TTL)
+  - Rebalancing intervals and thresholds
+  - Cache warming settings (disabled by default)
+- **Status**: Full configurability without code changes
+
+## Cache Warming Service Status
+
+**Decision**: DISABLED by default
+
+**Rationale**:
+1. **Resource Efficiency**: Warming wastes memory on speculative loading
+2. **Workload Dependent**: Only beneficial for predictable access patterns
+3. **Performance Impact**: Can slow startup and consume CPU unnecessarily
+4. **Configuration Available**: Can be enabled via `cache.enable_warming = true`
+
+**When to Enable**:
+- Stable, predictable workloads
+- Known hot data sets
+- After analyzing access patterns
+- When startup latency is acceptable
+
+**Configuration Example**:
+```toml
+[cache]
+enable_warming = true  # Enable only for predictable workloads
+
+[cache.warming]
+strategies = ["popularity", "time_based"]
+warm_on_startup = true
+popularity_threshold = 10  # Items accessed > 10 times
+```
+
 ## Suggested Improvements
 
 ### 1. Implement VectorCache

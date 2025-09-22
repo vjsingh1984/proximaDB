@@ -516,21 +516,19 @@ impl SharedServices {
         debug!(
             "🔧 SharedServices::new - About to create VectorOperationsService with two-stage search..."
         );
-        // Initialize global Cross-Cache Orchestrator from storage config budget
+        // Use the passed orchestrator if available, otherwise create a default one
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-        let mut orchestrator = CrossCacheOrchestrator::new((storage_config.cache_size_mb * 1024 * 1024) as usize);
-
-        // Start cache eviction service with default configuration
-        orchestrator.start_eviction_service(None);
-
-        // Start cache warming service (optional, disabled by default)
-        // orchestrator.start_warming_service(None);
-
-        // Start periodic memory rebalancing service
-        orchestrator.start_rebalancing_service();
-
-        let orchestrator = Arc::new(orchestrator);
-        CrossCacheOrchestrator::register_global(orchestrator.clone());
+        let orchestrator = if let Some(orch) = orchestrator {
+            orch
+        } else {
+            // Create a default orchestrator if none provided (backward compatibility)
+            let mut default_orchestrator = CrossCacheOrchestrator::new((storage_config.cache_size_mb * 1024 * 1024) as usize);
+            default_orchestrator.start_eviction_service(None);
+            default_orchestrator.start_rebalancing_service();
+            let orch = Arc::new(default_orchestrator);
+            CrossCacheOrchestrator::register_global(orch.clone());
+            orch
+        };
 
         let vector_operations_service = Arc::new(
             VectorOperationsService::new(

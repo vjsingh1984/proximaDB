@@ -189,21 +189,30 @@ impl ProximaDB {
         );
         // Build global Cross-Cache Orchestrator from [cache] or fallback to storage.cache_size_mb
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-        let cache_budget_mb = config
-            .cache
-            .as_ref()
-            .map(|c| c.total_memory_mb)
-            .unwrap_or(config.storage.cache_size_mb);
+        let cache_config = config.cache.clone().unwrap_or_default();
+        let cache_budget_mb = cache_config.total_memory_mb;
         let mut orchestrator = CrossCacheOrchestrator::new((cache_budget_mb * 1024 * 1024) as usize);
 
-        // Start cache eviction service with default configuration
-        orchestrator.start_eviction_service(None);
+        // Start cache eviction service if enabled
+        if cache_config.eviction.enabled {
+            // Convert our config to the cache eviction config format
+            orchestrator.start_eviction_service(None); // TODO: Wire up eviction config conversion
+        }
 
-        // Start cache warming service (optional, disabled by default)
-        // orchestrator.start_warming_service(None);
+        // Start cache warming service if enabled (disabled by default)
+        if cache_config.enable_warming {
+            info!("Cache warming enabled via configuration");
+            // Convert our config to the cache warming config format
+            orchestrator.start_warming_service(None); // TODO: Wire up warming config conversion
+        } else {
+            info!("Cache warming disabled (default)");
+        }
 
-        // Start periodic memory rebalancing service
-        orchestrator.start_rebalancing_service();
+        // Start periodic memory rebalancing service if enabled
+        if cache_config.rebalancing.enabled {
+            info!("Starting cache memory rebalancing service (interval: {}s)", cache_config.rebalancing.interval_seconds);
+            orchestrator.start_rebalancing_service();
+        }
 
         let orchestrator = Arc::new(orchestrator);
         CrossCacheOrchestrator::register_global(orchestrator.clone());

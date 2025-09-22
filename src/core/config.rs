@@ -195,13 +195,167 @@ impl Default for Config {
 pub struct CacheRuntimeConfig {
     /// Total memory budget for orchestrator-managed caches (in MB)
     pub total_memory_mb: u64,
+
+    /// Enable cache warming service
+    pub enable_warming: bool,
+
+    /// Memory rebalancing configuration
+    pub rebalancing: CacheRebalancingConfig,
+
+    /// Eviction configuration
+    pub eviction: CacheEvictionConfig,
+
+    /// Per-cache-type configurations
+    pub types: CacheTypesConfig,
+
+    /// Cache warming configuration
+    pub warming: CacheWarmingConfig,
 }
 
 fn default_orchestrator_budget_mb() -> u64 { 512 }
 
 impl Default for CacheRuntimeConfig {
     fn default() -> Self {
-        Self { total_memory_mb: default_orchestrator_budget_mb() }
+        Self {
+            total_memory_mb: default_orchestrator_budget_mb(),
+            enable_warming: false,  // Disabled by default
+            rebalancing: CacheRebalancingConfig::default(),
+            eviction: CacheEvictionConfig::default(),
+            types: CacheTypesConfig::default(),
+            warming: CacheWarmingConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheRebalancingConfig {
+    pub enabled: bool,
+    pub interval_seconds: u64,
+    pub min_hit_rate_threshold: f64,
+}
+
+impl Default for CacheRebalancingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_seconds: 300,  // 5 minutes
+            min_hit_rate_threshold: 0.1,  // 10% minimum hit rate
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheEvictionConfig {
+    pub enabled: bool,
+    pub check_interval_seconds: u64,
+    pub batch_size: usize,
+    pub memory_threshold_percent: u8,
+    pub policies: Vec<EvictionPolicyConfig>,
+}
+
+impl Default for CacheEvictionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            check_interval_seconds: 60,
+            batch_size: 100,
+            memory_threshold_percent: 90,
+            policies: vec![
+                EvictionPolicyConfig {
+                    policy_type: "lru".to_string(),
+                    max_items: Some(10000),
+                    batch_size: Some(100),
+                    max_age_seconds: None,
+                    cleanup_interval_seconds: None,
+                },
+                EvictionPolicyConfig {
+                    policy_type: "ttl".to_string(),
+                    max_items: None,
+                    batch_size: None,
+                    max_age_seconds: Some(3600),
+                    cleanup_interval_seconds: Some(300),
+                },
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvictionPolicyConfig {
+    #[serde(rename = "type")]
+    pub policy_type: String,
+    pub max_items: Option<usize>,
+    pub batch_size: Option<usize>,
+    pub max_age_seconds: Option<u64>,
+    pub cleanup_interval_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheTypesConfig {
+    pub vector: CacheTypeConfig,
+    pub query: CacheTypeConfig,
+    pub metadata: CacheTypeConfig,
+    pub index: CacheTypeConfig,
+    pub filter: CacheTypeConfig,
+}
+
+impl Default for CacheTypesConfig {
+    fn default() -> Self {
+        Self {
+            vector: CacheTypeConfig {
+                initial_allocation_mb: 200,
+                min_allocation_mb: 50,
+                max_allocation_mb: 400,
+            },
+            query: CacheTypeConfig {
+                initial_allocation_mb: 150,
+                min_allocation_mb: 30,
+                max_allocation_mb: 300,
+            },
+            metadata: CacheTypeConfig {
+                initial_allocation_mb: 50,
+                min_allocation_mb: 10,
+                max_allocation_mb: 100,
+            },
+            index: CacheTypeConfig {
+                initial_allocation_mb: 50,
+                min_allocation_mb: 10,
+                max_allocation_mb: 100,
+            },
+            filter: CacheTypeConfig {
+                initial_allocation_mb: 50,
+                min_allocation_mb: 10,
+                max_allocation_mb: 100,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheTypeConfig {
+    pub initial_allocation_mb: u64,
+    pub min_allocation_mb: u64,
+    pub max_allocation_mb: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheWarmingConfig {
+    pub strategies: Vec<String>,
+    pub warm_on_startup: bool,
+    pub warm_batch_size: usize,
+    pub popularity_threshold: u32,
+    pub time_window_hours: u64,
+}
+
+impl Default for CacheWarmingConfig {
+    fn default() -> Self {
+        Self {
+            strategies: vec!["popularity".to_string(), "time_based".to_string()],
+            warm_on_startup: false,
+            warm_batch_size: 100,
+            popularity_threshold: 10,
+            time_window_hours: 24,
+        }
     }
 }
 

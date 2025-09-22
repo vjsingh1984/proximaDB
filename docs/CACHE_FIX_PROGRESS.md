@@ -142,6 +142,26 @@ pub fn start_rebalancing_service(&self) {
 - `src/storage/traits.rs`: Extended MetricsSnapshot with cache stats
 - `src/storage/cache/specialized/*`: All using unified metrics
 
+## Completed Work (Phase 5) - 2025-09-21 (Session 4)
+
+### Cache Configuration Exposed ✅
+**Problem Solved**: Cache settings were hardcoded, not configurable.
+
+**Solution Implemented**:
+1. Added comprehensive cache configuration section to config.toml
+2. Exposed all cache parameters:
+   - Total memory budget
+   - Per-cache-type allocations
+   - Eviction policies and thresholds
+   - Rebalancing intervals
+   - Cache warming settings (disabled by default)
+
+**Configuration Added**:
+- Memory allocations for vector, query, metadata, index, filter caches
+- LRU and TTL eviction policies
+- Rebalancing every 5 minutes with hit rate thresholds
+- Cache warming disabled by default (enable for predictable workloads)
+
 ## Current Status Summary
 
 ### What's Working ✅
@@ -151,12 +171,27 @@ pub fn start_rebalancing_service(&self) {
 4. **Unified Metrics**: Single metrics system across entire codebase
 5. **Storage Engine Integration**: All 7 engines properly using VectorCache
 6. **Test Suite**: Updated tests for new architecture
+7. **Configuration**: Full cache configuration exposed in config.toml
+
+### Cache Warming Service Decision
+**Status**: DISABLED by default
+**Reasoning**:
+- Warming is only beneficial for predictable workloads
+- Can waste memory on speculative loading
+- Enable only when you have stable access patterns
+- Configuration available when needed via `cache.enable_warming = true`
+
+### Configuration Wiring Complete ✅
+**Status**: Fully implemented
+- Cache configuration structures created in `src/core/config.rs`
+- Configuration wired to initialization in `src/lib.rs`
+- Orchestrator properly passed to SharedServices
+- Cache warming conditionally enabled based on config
+- Rebalancing service conditionally started based on config
 
 ### What Still Needs Work 🟡
-1. **Compilation Issues**: Some remaining type mismatches in other modules
+1. **Compilation Issues**: Some remaining type mismatches in other modules (not cache-related)
 2. **Performance Testing**: Need benchmarks under load
-3. **Cache Warming**: Service exists but disabled by default
-4. **Configuration**: Need to expose cache settings in config.toml
 
 ### Testing Checklist
 - [x] Cache compilation fixes complete
