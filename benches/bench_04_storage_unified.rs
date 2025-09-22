@@ -977,13 +977,17 @@ fn bench_insertion_performance(c: &mut Criterion) {
     });
 }
 
-// Configure and run all benchmarks
-criterion_group!(
-    benches,
-    bench_compression_with_search,
-    bench_engine_lifecycle,
-    bench_large_scale_search,
-    bench_insertion_performance
-);
+// Configure and run all benchmarks with custom settings
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(10)
+        .measurement_time(Duration::from_secs(2))
+        .warm_up_time(Duration::from_millis(100));
+    targets = bench_compression_with_search,
+              bench_engine_lifecycle,
+              bench_large_scale_search,
+              bench_insertion_performance
+}
 
 criterion_main!(benches);
