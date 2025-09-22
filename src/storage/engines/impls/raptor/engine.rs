@@ -1486,11 +1486,23 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
     pub fn determine_storage_tier(base_path: &str) -> crate::storage::persistence::filesystem::FileStorageTier {
         use crate::storage::persistence::filesystem::FileStorageTier;
 
-        if base_path.contains("s3://") || base_path.contains("azure://") || base_path.contains("gcs://") {
-            FileStorageTier::S3Standard
+        if base_path.contains("s3://") {
+            // Check for S3 Express bucket (contains "express" in the bucket name)
+            if base_path.contains("express") {
+                FileStorageTier::S3Express
+            } else {
+                FileStorageTier::S3Standard
+            }
+        } else if base_path.contains("gs://") || base_path.contains("gcs://") {
+            FileStorageTier::GcsSSD
+        } else if base_path.contains("azure://") {
+            FileStorageTier::AzurePremium
         } else if base_path.contains("memory") {
             // Only treat explicit memory:// paths as memory tier
             FileStorageTier::Memory
+        } else if base_path.contains("nvme") {
+            // NVMe paths
+            FileStorageTier::NVMe
         } else {
             // Local filesystem paths use SSD tier
             FileStorageTier::SSD

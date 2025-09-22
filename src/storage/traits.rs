@@ -1764,6 +1764,12 @@ impl StorageQueryContext {
 
     /// Get the query vector (convenience method)
     pub fn query_vector(&self) -> Option<&[f32]> {
+        // Check for single vector first (most common case)
+        if let Some(ref vector) = self.search_params.vector {
+            return Some(vector.as_slice());
+        }
+
+        // Fall back to checking query_vectors array
         self.search_params
             .query_vectors
             .as_ref()

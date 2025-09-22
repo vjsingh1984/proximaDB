@@ -558,6 +558,26 @@ impl Flush {
                 Vec::new()
             };
 
+        // Add quantized vector fields if quantization is enabled
+        let has_quantization = quantization.as_ref().map(|q| q.enabled).unwrap_or(false);
+        if has_quantization {
+            schema_fields.push(Field::new(
+                "vector_int8",
+                DataType::List(Arc::new(Field::new("item", DataType::Int8, true))),
+                true,
+            ));
+            schema_fields.push(Field::new(
+                "vector_pq8",
+                DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
+                true,
+            ));
+            schema_fields.push(Field::new(
+                "vector_pq4",
+                DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
+                true,
+            ));
+        }
+
         // Add filterable metadata columns based on collection configuration using proto types
         for filterable_column in &filterable_metadata {
             // Convert FilterableDataType to Arrow DataType
@@ -626,7 +646,7 @@ impl Flush {
         let mut vector_int8_data: Vec<Vec<i8>> = Vec::with_capacity(capacity);
         let mut vector_pq8_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
         let mut vector_pq4_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
-        let has_quantization = quantization.as_ref().map(|q| q.enabled).unwrap_or(false);
+        // has_quantization already computed above when building schema
 
         let filterable_field_names: std::collections::HashSet<String> = filterable_metadata
             .iter()

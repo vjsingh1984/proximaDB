@@ -505,7 +505,16 @@ mod tests {
             records: vec![VectorRecord {
                 id: "1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: std::collections::HashMap::new(),
+                metadata: {
+                    let mut meta = std::collections::HashMap::new();
+                    meta.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())),
+                    });
+                    meta.insert("price".to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(99.99)),
+                    });
+                    meta
+                },
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,

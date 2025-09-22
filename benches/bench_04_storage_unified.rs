@@ -456,8 +456,15 @@ fn bench_compression_with_search(c: &mut Criterion) {
                             }
                         }
                     } else if let Err(ref e) = result {
-                        eprintln!("    ❌ Pure search failed for {} with {}: {:?}",
-                                 engine_name, compress_name, e);
+                        // Only log first error to avoid spam
+                        static mut SEARCH_ERROR_LOGGED: bool = false;
+                        unsafe {
+                            if !SEARCH_ERROR_LOGGED {
+                                eprintln!("    ❌ Pure search failed for {} with {}: {:?}",
+                                         engine_name, compress_name, e);
+                                SEARCH_ERROR_LOGGED = true;
+                            }
+                        }
                     }
 
                     black_box(result)
@@ -578,8 +585,15 @@ fn bench_compression_with_search(c: &mut Criterion) {
                             }
                         }
                     } else if let Err(ref e) = result {
-                        eprintln!("    ❌ Filtered search failed for {} with {}: {:?}",
-                                 engine_name, compress_name, e);
+                        // Only log first error to avoid spam
+                        static mut FILTERED_ERROR_LOGGED: bool = false;
+                        unsafe {
+                            if !FILTERED_ERROR_LOGGED {
+                                eprintln!("    ❌ Filtered search failed for {} with {}: {:?}",
+                                         engine_name, compress_name, e);
+                                FILTERED_ERROR_LOGGED = true;
+                            }
+                        }
                     }
 
                     black_box(result)

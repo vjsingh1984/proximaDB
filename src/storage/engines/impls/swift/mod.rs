@@ -1132,7 +1132,7 @@ mod tests {
     #[test]
     fn test_quantization_config_default() {
         let config = QuantizationConfig::default();
-        // The proto config structure is different
-        assert!(config.enabled);
+        // Proto bool fields default to false
+        assert!(!config.enabled);
     }
 }

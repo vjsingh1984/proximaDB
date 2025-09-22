@@ -257,11 +257,12 @@ impl CachedSSTReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::persistence::filesystem::FilesystemConfig;
 
-    #[test]
-    fn test_unified_reader_strategy_selection() {
+    #[tokio::test]
+    async fn test_unified_reader_strategy_selection() {
         // Test that correct strategy is selected for different use cases
-        let factory = Arc::new(FilesystemFactory::default());
+        let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
 
         // Compaction should use DirectStream
         let compaction_reader = UnifiedSSTReader::for_compaction(

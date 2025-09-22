@@ -538,6 +538,9 @@ impl SstableWriter {
         // Accumulate all data to write atomically
         let mut output_data = Vec::new();
 
+        // Write magic bytes for SSTable format
+        output_data.extend_from_slice(b"SST1");
+
         // Use shared FastLanes serialization for data blocks
         debug!("📦 Writing {} data blocks using FastLanes serialization", data_blocks.len());
         for block in &data_blocks {

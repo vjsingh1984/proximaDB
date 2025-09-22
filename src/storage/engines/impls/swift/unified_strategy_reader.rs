@@ -407,10 +407,11 @@ impl CachedSWIFTReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::persistence::filesystem::FilesystemConfig;
 
-    #[test]
-    fn test_swift_strategy_selection() {
-        let factory = Arc::new(FilesystemFactory::default());
+    #[tokio::test]
+    async fn test_swift_strategy_selection() {
+        let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
 
         // Compaction should use DirectStream
         let compaction_reader = UnifiedSWIFTReader::for_compaction(
@@ -429,9 +430,9 @@ mod tests {
         assert!(search_reader.is_using_cache());
     }
 
-    #[test]
-    fn test_config_updates_with_strategy() {
-        let factory = Arc::new(FilesystemFactory::default());
+    #[tokio::test]
+    async fn test_config_updates_with_strategy() {
+        let factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
         let mut reader = UnifiedSWIFTReader::for_search(
             factory,
             "test".to_string(),
