@@ -3710,6 +3710,13 @@ impl SstEngine {
                 collection_config,
             );
 
+            // Apply compression config if provided
+            let writer = if let Some(ref comp_config) = compression_config {
+                writer.with_compression_config(Some(comp_config.clone()))
+            } else {
+                writer
+            };
+
             // Use bloom filter config from SST config if available
             let writer = if let Some(ref bloom_config) = self.config.bloom_filter_config {
                 writer.with_bloom_config(bloom_config.clone())

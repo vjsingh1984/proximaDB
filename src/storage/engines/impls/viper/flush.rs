@@ -560,9 +560,31 @@ impl Flush {
 
         // Add filterable metadata columns based on collection configuration using proto types
         for filterable_column in &filterable_metadata {
-            // TODO: Implement convert_proto_type_to_arrow method on ColumnarSchema
-            // For now, use String as default for filterable columns
-            let arrow_data_type = arrow_schema::DataType::Utf8;
+            // Convert FilterableDataType to Arrow DataType
+            use crate::proto::proximadb_v1::FilterableDataType;
+            let arrow_data_type = match FilterableDataType::try_from(filterable_column.data_type) {
+                Ok(FilterableDataType::FilterableString) | Ok(FilterableDataType::FilterableArrayString) => {
+                    arrow_schema::DataType::Utf8
+                }
+                Ok(FilterableDataType::FilterableInteger) | Ok(FilterableDataType::FilterableArrayInteger) => {
+                    arrow_schema::DataType::Int64
+                }
+                Ok(FilterableDataType::FilterableFloat) | Ok(FilterableDataType::FilterableArrayFloat) => {
+                    arrow_schema::DataType::Float64
+                }
+                Ok(FilterableDataType::FilterableBoolean) => {
+                    arrow_schema::DataType::Boolean
+                }
+                Ok(FilterableDataType::FilterableDatetime) => {
+                    arrow_schema::DataType::Int64  // Store as timestamp
+                }
+                _ => {
+                    // Default to string for unknown types
+                    warn!("Unknown filterable data type {} for column {}, defaulting to Utf8",
+                          filterable_column.data_type, filterable_column.name);
+                    arrow_schema::DataType::Utf8
+                }
+            };
 
             schema_fields.push(Field::new(
                 &filterable_column.name,
@@ -867,14 +889,7 @@ impl Flush {
             columns.len()
         );
 
-        // Add dynamic filterable columns
-        info!(
-            "🔍 VIPER FLUSH DEBUG: Adding {} dynamic filterable arrays",
-            dynamic_filterable_arrays.len()
-        );
-        columns.extend(dynamic_filterable_arrays);
-
-        // Phase 2: Add quantized vector columns if quantization is enabled
+        // Phase 2: Add quantized vector columns if quantization is enabled (BEFORE filterable columns to match schema)
         if has_quantization {
             // Create INT8 quantized vector array
             let mut int8_list_builder = ListBuilder::new(Int8Builder::new());
@@ -917,6 +932,13 @@ impl Flush {
                 3
             );
         }
+
+        // Add dynamic filterable columns (AFTER quantized columns to match schema)
+        info!(
+            "🔍 VIPER FLUSH DEBUG: Adding {} dynamic filterable arrays",
+            dynamic_filterable_arrays.len()
+        );
+        columns.extend(dynamic_filterable_arrays);
 
         // Add extra_meta column
         columns.push(Arc::new(extra_meta_array));
@@ -1094,12 +1116,18 @@ impl Flush {
         }*/
 
         // Configure ParquetWriterConfig from VIPER settings
+        // Include filterable columns in bloom filters for fast filtering
+        let mut bloom_columns = vec!["id".to_string()];
+        for filterable_column in &filterable_metadata {
+            bloom_columns.push(filterable_column.name.clone());
+        }
+
         let writer_config = ParquetWriterConfig {
             row_group_size: viper_config.row_group_size,
-            enable_bloom_filters: true, // Enable for efficient ID lookups
+            enable_bloom_filters: true, // Enable for efficient ID and metadata lookups
             bloom_filter_fpp: 0.01,
             expected_ndv: Some(records.len()),
-            bloom_filter_columns: vec!["id".to_string()],
+            bloom_filter_columns: bloom_columns,
             compression: compression_algorithm,
             enable_column_statistics: true,
             enable_page_index: true,

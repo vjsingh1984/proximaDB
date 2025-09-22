@@ -13,6 +13,112 @@ use tracing::{debug, info, trace};
 
 use super::QuantizationConfig;
 use crate::core::compression::CompressionAlgorithm;
+use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
+
+/// Convert proto FilterableColumnSpec to internal ColumnarFilterableSpec
+pub fn convert_filterable_spec(spec: &FilterableColumnSpec) -> ColumnarFilterableSpec {
+    let data_type = match FilterableDataType::try_from(spec.data_type) {
+        Ok(FilterableDataType::FilterableString) | Ok(FilterableDataType::FilterableArrayString) => {
+            FilterableData::String
+        }
+        Ok(FilterableDataType::FilterableInteger) | Ok(FilterableDataType::FilterableArrayInteger) => {
+            FilterableData::Integer
+        }
+        Ok(FilterableDataType::FilterableFloat) | Ok(FilterableDataType::FilterableArrayFloat) => {
+            FilterableData::Float
+        }
+        Ok(FilterableDataType::FilterableBoolean) => {
+            FilterableData::Boolean
+        }
+        Ok(FilterableDataType::FilterableDatetime) => {
+            FilterableData::Datetime
+        }
+        _ => FilterableData::String, // Default fallback
+    };
+
+    ColumnarFilterableSpec {
+        name: spec.name.clone(),
+        data_type,
+        nullable: true,
+        indexed: spec.indexed,
+        estimated_cardinality: spec.estimated_cardinality.map(|c| c as usize),
+    }
+}
+
+/// Create Arrow schema for Parquet files from proto specs
+/// Used by both VIPER and NOVA engines for consistent schema generation
+pub fn create_parquet_schema_from_specs(
+    dimension: usize,
+    filterable_specs: &[FilterableColumnSpec],
+    include_quantization: bool,
+) -> Arc<Schema> {
+    let mut fields = vec![
+        // Core fields
+        Field::new("id", DataType::Utf8, false),
+        Field::new(
+            "vector",
+            DataType::FixedSizeBinary((dimension * 4) as i32), // FP32 vectors
+            false,
+        ),
+        Field::new("timestamp", DataType::Int64, false),
+        Field::new("version", DataType::Int64, true),
+    ];
+
+    // Add quantization fields if enabled
+    if include_quantization {
+        // Binary quantization
+        fields.push(Field::new(
+            "vector_binary",
+            DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
+            true,
+        ));
+
+        // INT8 quantization
+        fields.push(Field::new(
+            "vector_int8",
+            DataType::FixedSizeBinary(dimension as i32),
+            true,
+        ));
+        fields.push(Field::new("int8_scale", DataType::Float32, true));
+        fields.push(Field::new("int8_zero_point", DataType::Int8, true));
+
+        // Product Quantization (default 32 segments)
+        fields.push(Field::new(
+            "vector_pq",
+            DataType::FixedSizeBinary(32),
+            true,
+        ));
+    }
+
+    // Add filterable metadata columns with proper types
+    for spec in filterable_specs {
+        let arrow_data_type = match FilterableDataType::try_from(spec.data_type) {
+            Ok(FilterableDataType::FilterableString) | Ok(FilterableDataType::FilterableArrayString) => {
+                DataType::Utf8
+            }
+            Ok(FilterableDataType::FilterableInteger) | Ok(FilterableDataType::FilterableArrayInteger) => {
+                DataType::Int64
+            }
+            Ok(FilterableDataType::FilterableFloat) | Ok(FilterableDataType::FilterableArrayFloat) => {
+                DataType::Float64
+            }
+            Ok(FilterableDataType::FilterableBoolean) => {
+                DataType::Boolean
+            }
+            Ok(FilterableDataType::FilterableDatetime) => {
+                DataType::Timestamp(TimeUnit::Millisecond, None)
+            }
+            _ => DataType::Utf8, // Default to string for unknown types
+        };
+
+        fields.push(Field::new(&spec.name, arrow_data_type, true));
+    }
+
+    // Add extra_metadata field for non-filterable data
+    fields.push(Field::new("extra_metadata", DataType::Utf8, true));
+
+    Arc::new(Schema::new(fields))
+}
 
 /// Schema configuration with quantization awareness
 #[derive(Debug, Clone)]

@@ -560,6 +560,10 @@ impl NovaEngine {
             }]);
 
         // Configure writer with NOVA-specific settings
+        // Include both ID and filterable columns in bloom filters
+        let mut bloom_columns = vec!["id".to_string()];
+        bloom_columns.extend(filterable_columns.iter().map(|c| c.name.clone()));
+
         let writer_config = ParquetWriterConfig {
             compression: CompressionAlgorithm::Zstd,
             row_group_size: 50_000, // 50K vectors per row group
@@ -567,7 +571,7 @@ impl NovaEngine {
             enable_bloom_filters: true,
             bloom_filter_fpp: 0.01, // 1% false positive rate
             expected_ndv: Some(1000000), // Expect up to 1M unique IDs
-            bloom_filter_columns: filterable_columns.iter().map(|c| c.name.clone()).collect(),
+            bloom_filter_columns: bloom_columns,
             enable_column_statistics: true,
             enable_page_index: true,
             enable_column_index: true,
@@ -645,7 +649,8 @@ impl NovaEngine {
         records: &[VectorRecord],
         schema: &Arc<arrow_schema::Schema>,
     ) -> Result<arrow_array::RecordBatch> {
-        use arrow_array::{Float32Array, StringArray, Int64Array, builder::*};
+        use arrow_array::{Float32Array, StringArray, Int64Array, Float64Array, BooleanArray, builder::*};
+        use arrow_array::builder::{FixedSizeBinaryBuilder, Int8Builder};
         use std::sync::Arc;
 
         // Build arrays for each field
@@ -653,6 +658,30 @@ impl NovaEngine {
         let mut vector_builder = Float32Builder::new();
         let mut timestamp_builder = Int64Builder::new();
         let mut version_builder = Int64Builder::new();
+
+        // Check if quantization fields are present in schema (they would be after the 4 core fields)
+        let mut quantization_field_count = 0;
+        for field in schema.fields().iter().skip(4) {
+            if field.name().starts_with("vector_") || field.name() == "int8_scale" || field.name() == "int8_zero_point" {
+                quantization_field_count += 1;
+            } else {
+                break; // Stop when we hit the first non-quantization field
+            }
+        }
+
+        // Build metadata columns dynamically based on schema (skip core + quantization fields)
+        let mut metadata_builders: Vec<Box<dyn arrow_array::builder::ArrayBuilder>> = Vec::new();
+        for field_idx in (4 + quantization_field_count)..schema.fields().len() {
+            let field = &schema.fields()[field_idx];
+            let builder: Box<dyn arrow_array::builder::ArrayBuilder> = match field.data_type() {
+                arrow_schema::DataType::Utf8 => Box::new(StringBuilder::new()),
+                arrow_schema::DataType::Int64 => Box::new(Int64Builder::new()),
+                arrow_schema::DataType::Float64 => Box::new(Float64Builder::new()),
+                arrow_schema::DataType::Boolean => Box::new(BooleanBuilder::new()),
+                _ => Box::new(StringBuilder::new()), // Default to string
+            };
+            metadata_builders.push(builder);
+        }
 
         for record in records {
             // ID column
@@ -668,15 +697,135 @@ impl NovaEngine {
 
             // Version column
             version_builder.append_option(record.version);
+
+            // Metadata columns
+            for (field_idx, builder) in metadata_builders.iter_mut().enumerate() {
+                let field = &schema.fields()[field_idx + 4 + quantization_field_count];
+                let field_name = field.name();
+
+                // Get metadata value for this field
+                let metadata_value = record.metadata.get(field_name);
+
+                // Append value based on field type
+                match field.data_type() {
+                    arrow_schema::DataType::Utf8 => {
+                        let string_builder = builder.as_any_mut().downcast_mut::<StringBuilder>().unwrap();
+                        if let Some(value) = metadata_value {
+                            if let Some(s) = value.value.as_ref().and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Some(s.as_str()),
+                                _ => None,
+                            }) {
+                                string_builder.append_value(s);
+                            } else {
+                                string_builder.append_null();
+                            }
+                        } else {
+                            string_builder.append_null();
+                        }
+                    }
+                    arrow_schema::DataType::Int64 => {
+                        let int_builder = builder.as_any_mut().downcast_mut::<Int64Builder>().unwrap();
+                        if let Some(value) = metadata_value {
+                            if let Some(i) = value.value.as_ref().and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => Some(*i),
+                                _ => None,
+                            }) {
+                                int_builder.append_value(i);
+                            } else {
+                                int_builder.append_null();
+                            }
+                        } else {
+                            int_builder.append_null();
+                        }
+                    }
+                    arrow_schema::DataType::Float64 => {
+                        let float_builder = builder.as_any_mut().downcast_mut::<Float64Builder>().unwrap();
+                        if let Some(value) = metadata_value {
+                            if let Some(f) = value.value.as_ref().and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => Some(*f),
+                                _ => None,
+                            }) {
+                                float_builder.append_value(f);
+                            } else {
+                                float_builder.append_null();
+                            }
+                        } else {
+                            float_builder.append_null();
+                        }
+                    }
+                    arrow_schema::DataType::Boolean => {
+                        let bool_builder = builder.as_any_mut().downcast_mut::<BooleanBuilder>().unwrap();
+                        if let Some(value) = metadata_value {
+                            if let Some(b) = value.value.as_ref().and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => Some(*b),
+                                _ => None,
+                            }) {
+                                bool_builder.append_value(b);
+                            } else {
+                                bool_builder.append_null();
+                            }
+                        } else {
+                            bool_builder.append_null();
+                        }
+                    }
+                    _ => {
+                        // Default to string representation
+                        let string_builder = builder.as_any_mut().downcast_mut::<StringBuilder>().unwrap();
+                        string_builder.append_null();
+                    }
+                }
+            }
         }
 
         // Create arrays
-        let arrays: Vec<Arc<dyn arrow_array::Array>> = vec![
+        let mut arrays: Vec<Arc<dyn arrow_array::Array>> = vec![
             Arc::new(id_builder.finish()),
             Arc::new(vector_builder.finish()),
             Arc::new(timestamp_builder.finish()),
             Arc::new(version_builder.finish()),
         ];
+
+        // Add null arrays for quantization fields if present
+        for field_idx in 4..(4 + quantization_field_count) {
+            let field = &schema.fields()[field_idx];
+            let null_array = match field.data_type() {
+                arrow_schema::DataType::FixedSizeBinary(len) => {
+                    let mut builder = FixedSizeBinaryBuilder::new(*len);
+                    for _ in 0..records.len() {
+                        builder.append_null();
+                    }
+                    Arc::new(builder.finish()) as Arc<dyn arrow_array::Array>
+                }
+                arrow_schema::DataType::Float32 => {
+                    let mut builder = Float32Builder::new();
+                    for _ in 0..records.len() {
+                        builder.append_null();
+                    }
+                    Arc::new(builder.finish()) as Arc<dyn arrow_array::Array>
+                }
+                arrow_schema::DataType::Int8 => {
+                    let mut builder = Int8Builder::new();
+                    for _ in 0..records.len() {
+                        builder.append_null();
+                    }
+                    Arc::new(builder.finish()) as Arc<dyn arrow_array::Array>
+                }
+                _ => {
+                    // Default to null string array
+                    let mut builder = StringBuilder::new();
+                    for _ in 0..records.len() {
+                        builder.append_null();
+                    }
+                    Arc::new(builder.finish()) as Arc<dyn arrow_array::Array>
+                }
+            };
+            arrays.push(null_array);
+        }
+
+        // Add metadata arrays
+        for mut builder in metadata_builders {
+            arrays.push(builder.finish());
+        }
 
         // Create record batch
         arrow_array::RecordBatch::try_new(schema.clone(), arrays)
@@ -737,6 +886,26 @@ impl UnifiedStorageEngine for NovaEngine {
         // Use default compression for Parquet
         let compression_algorithm = CompressionAlgorithm::Zstd;
         debug!("NOVA: Using compression: {:?}", compression_algorithm);
+
+        // Get filterable columns from collection config
+        let filterable_columns = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.filterable_columns.clone())
+            .unwrap_or_default();
+
+        // Create schema with proper column types
+        let filterable_column_names: Vec<String> = filterable_columns.iter()
+            .map(|col| col.name.clone())
+            .collect();
+        let schema = super::create_vector_schema_with_types(
+            dimension as usize,
+            &super::QuantizationConfig::default(),
+            &filterable_column_names,
+            &filterable_columns,
+        );
+
         // Enhanced row group statistics (optimized NOVA design)
         let enhanced_stats =
             self.compute_enhanced_row_group_stats(&params.vector_records, dimension as usize)?;
@@ -746,7 +915,7 @@ impl UnifiedStorageEngine for NovaEngine {
 
         let nova_file = NovaFile {
             quantized_columns: super::quantized_columns::QuantizedColumnMetadata::default(),
-            schema: Arc::new(arrow_schema::Schema::empty()),
+            schema,
             metadata: crate::storage::engines::core::formats::columnar::ColumnarFileMetadata {
                 collection_id: collection_id.to_string(),
                 num_vectors: params.vector_records.len() as u64,
@@ -926,13 +1095,18 @@ impl UnifiedStorageEngine for NovaEngine {
         let filterable_column_names: Vec<String> = filterable_columns.iter()
             .map(|col| col.name.clone())
             .collect();
-        let schema = super::create_vector_schema(
+        let schema = super::create_vector_schema_with_types(
             dimension as usize,
             &super::QuantizationConfig::default(),
             &filterable_column_names,
+            &filterable_columns,
         );
 
         // Configure writer for compaction (larger row groups)
+        // Include both ID and filterable columns in bloom filters
+        let mut bloom_columns_compact = vec!["id".to_string()];
+        bloom_columns_compact.extend(filterable_columns.iter().map(|c| c.name.clone()));
+
         let writer_config = ParquetWriterConfig {
             compression: CompressionAlgorithm::Zstd,
             row_group_size: 100_000, // Larger row groups for compacted files
@@ -940,7 +1114,7 @@ impl UnifiedStorageEngine for NovaEngine {
             enable_bloom_filters: true,
             bloom_filter_fpp: 0.01,
             expected_ndv: Some(2000000), // Larger for compacted files
-            bloom_filter_columns: filterable_columns.iter().map(|c| c.name.clone()).collect(),
+            bloom_filter_columns: bloom_columns_compact,
             enable_column_statistics: true,
             enable_page_index: true,
             enable_column_index: true,

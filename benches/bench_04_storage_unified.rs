@@ -40,21 +40,39 @@ async fn measure_directory_size_async(
     path: &str,
     filesystem_factory: &FilesystemFactory,
 ) -> anyhow::Result<u64> {
+    // Only add file:// prefix if it's not already a URL
     let fs_url = if path.starts_with("s3://") || path.starts_with("gs://")
-        || path.starts_with("azure://") || path.starts_with("wasbs://") {
+        || path.starts_with("azure://") || path.starts_with("wasbs://")
+        || path.starts_with("file://") {
         path.to_string()
     } else {
         format!("file://{}", path)
     };
 
     let fs = filesystem_factory.get_filesystem(&fs_url)?;
-    let entries = fs.list(path).await?;
+
+    // For listing, we need to use the path without the scheme
+    let list_path = if let Some(stripped) = path.strip_prefix("file://") {
+        stripped
+    } else if path.contains("://") {
+        // For other schemes, extract path after ://
+        path.split("://").nth(1).unwrap_or(path)
+    } else {
+        path
+    };
+
+    let entries = fs.list(list_path).await?;
 
     let mut total_size = 0u64;
     for entry in entries {
         if entry.metadata.is_directory {
-            // It's a directory, recursively measure
-            total_size += Box::pin(measure_directory_size_async(&entry.url, filesystem_factory)).await?;
+            // For recursive calls, construct the proper path
+            let subdir_path = if list_path.ends_with('/') {
+                format!("{}{}", list_path, entry.name)
+            } else {
+                format!("{}/{}", list_path, entry.name)
+            };
+            total_size += Box::pin(measure_directory_size_async(&subdir_path, filesystem_factory)).await?;
         } else {
             total_size += entry.metadata.size;
         }
@@ -65,6 +83,11 @@ async fn measure_directory_size_async(
 
 /// Synchronous wrapper for directory size measurement
 fn measure_directory_size(path: &str, runtime: &tokio::runtime::Runtime) -> std::io::Result<u64> {
+    // Check if path exists first
+    if !std::path::Path::new(path).exists() {
+        return Ok(0);
+    }
+
     runtime.block_on(async {
         let fs_factory = FilesystemFactory::new(FilesystemConfig::default())
             .await
@@ -135,15 +158,15 @@ fn bench_compression_with_search(c: &mut Criterion) {
     print_system_info("Storage Engine Unified Benchmarks");
     init_hardware();
 
-    eprintln!("\n📊 UNIFIED COMPRESSION + SEARCH BENCHMARK");
-    eprintln!("   Flush once → Search twice (pure + filtered)");
-    eprintln!("   Dimension: 768, Vectors: 1000");
-    eprintln!("\n{:<8} {:<8} {:>10} {:>8} {:>8} {:>10} {:>10}",
-             "Engine", "Compress", "Size(MB)", "Ratio", "Save%", "Pure(ms)", "Filter(ms)");
-    eprintln!("{}", "-".repeat(72));
-
     let dimension = 768;
     let count = 1000;
+
+    eprintln!("\n📊 UNIFIED COMPRESSION + SEARCH BENCHMARK");
+    eprintln!("   Flush once → Search twice (pure + filtered)");
+    eprintln!("   Dimension: {}, Vectors: {}", dimension, count);
+    eprintln!("\n{:<8} {:<8} {:>10} {:>8} {:>8} {:>10} {:>10} {:>10}",
+             "Engine", "Compress", "Size(MB)", "Ratio", "Save%", "Flush(ms)", "Pure(ms)", "Filter(ms)");
+    eprintln!("{}", "-".repeat(80));
     let vectors = generate_test_vectors(count, dimension);
     let query_vector = generate_random_vector(dimension);
 
@@ -185,10 +208,43 @@ fn bench_compression_with_search(c: &mut Criterion) {
             });
 
             // Step 1: Flush data with compression
-            eprintln!("  Flushing {} vectors with {} compression to {}...", count, compress_name, base_path);
+            eprintln!("  Flushing {} vectors (dim={}) with {} compression to {}...",
+                     count, dimension, compress_name, base_path);
+
+            // Calculate expected size
+            let expected_bytes = count * dimension * std::mem::size_of::<f32>();
+            eprintln!("    Expected raw size: {} bytes ({:.2} MB)",
+                     expected_bytes, expected_bytes as f64 / 1_048_576.0);
+
+            let flush_start = std::time::Instant::now();
             let flush_result = runtime.block_on(async {
                 let mut storage_config = StorageConfig::default();
                 storage_config.compression = *compress_value;
+
+                // Define filterable columns for metadata schema
+                let filterable_columns = vec![
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "category".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                        indexed: true,
+                        supports_range: false,
+                        estimated_cardinality: Some(10), // We have 10 categories
+                    },
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "price".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                        indexed: true,
+                        supports_range: true,
+                        estimated_cardinality: None,
+                    },
+                    proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                        name: "tags".to_string(),
+                        data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                        indexed: true,
+                        supports_range: false,
+                        estimated_cardinality: Some(15), // Combinations of tags
+                    },
+                ];
 
                 let collection = Collection {
                     id: collection_id.clone(),
@@ -196,6 +252,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         name: collection_id.clone(),
                         dimension: dimension as u32,
                         storage_config: Some(storage_config),
+                        filterable_columns,
                         ..Default::default()
                     }),
                     storage_assignment: Some(StorageAssignment {
@@ -217,41 +274,87 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
                 engine.flush(params).await
             });
+            let flush_time_ms = flush_start.elapsed().as_millis();
 
             // Validate flush result
             let flush_result = match flush_result {
                 Ok(result) => {
                     // Validate that data was actually written
-                    if result.vectors_written == 0 {
+                    if result.entries_flushed.unwrap_or(0) == 0 {
                         eprintln!("    ⚠️  WARNING: No vectors written for {} with {}", engine_name, compress_name);
                     }
-                    if result.bytes_written == 0 {
+                    if result.bytes_written.unwrap_or(0) == 0 {
                         eprintln!("    ⚠️  WARNING: No bytes written for {} with {}", engine_name, compress_name);
                     }
-                    eprintln!("    ✓ Flushed {} vectors, {} bytes written",
-                             result.vectors_written, result.bytes_written);
+                    let vectors_written = result.entries_flushed.unwrap_or(0);
+                    let bytes_written = result.bytes_written.unwrap_or(0);
+                    eprintln!("    ✓ Flushed {} vectors, {} bytes written in {}ms",
+                             vectors_written, bytes_written, flush_time_ms);
+
+                    // Validate size is reasonable
+                    if bytes_written < (expected_bytes as u64 / 100) {
+                        eprintln!("    ⚠️  SUSPICIOUSLY SMALL: {} bytes is < 1% of expected {} bytes",
+                                 bytes_written, expected_bytes);
+                    }
                     Ok(result)
                 },
                 Err(e) => Err(e)
             };
 
-            if let Err(e) = flush_result {
-                eprintln!("    ⚠️  Flush failed for {} with {}: {:?}", engine_name, compress_name, e);
+            // Check if flush failed or wrote no data
+            let flush_success = match &flush_result {
+                Err(e) => {
+                    eprintln!("    ⚠️  Flush failed for {} with {}: {:?}", engine_name, compress_name, e);
+                    false
+                },
+                Ok(result) if result.entries_flushed.unwrap_or(0) == 0 => {
+                    eprintln!("    ⚠️  Flush succeeded but wrote 0 vectors for {} with {}, skipping search", engine_name, compress_name);
+                    false
+                },
+                Ok(_) => true
+            };
+
+            if !flush_success {
+                // Print skipped status in results table
+                eprintln!("{:<8} {:<8} {:>10} {:>8} {:>7} {:>10} {:>10} {:>10}  ⛔ SKIPPED",
+                         engine_name, compress_name, "FAILED", "N/A", "N/A", flush_time_ms, "N/A", "N/A");
+                eprintln!();
+                // Clean up any partial data
+                runtime.block_on(async {
+                    let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+                    let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
+                    let _ = fs.remove_dir_all(&base_path).await;
+                    Some(())
+                });
                 continue;
             }
 
-            // Verify files were actually created
-            let files_created = runtime.block_on(async {
+            // Verify files were actually created and list them
+            let (files_created, file_details) = runtime.block_on(async {
                 let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
                 let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
                 let entries = fs.list(&base_path).await.ok()?;
-                Some(entries.len())
-            }).unwrap_or(0);
+
+                let mut details = Vec::new();
+                for entry in &entries {
+                    let size = if entry.metadata.is_directory {
+                        "DIR".to_string()
+                    } else {
+                        format!("{} bytes", entry.metadata.size)
+                    };
+                    details.push(format!("      {} ({})", entry.name, size));
+                }
+
+                Some((entries.len(), details))
+            }).unwrap_or((0, Vec::new()));
 
             if files_created == 0 {
                 eprintln!("    ⚠️  WARNING: No files created after flush for {} with {}", engine_name, compress_name);
             } else {
-                eprintln!("    ✓ Created {} files/directories", files_created);
+                eprintln!("    ✓ Created {} files/directories:", files_created);
+                for detail in &file_details {
+                    eprintln!("{}", detail);
+                }
             }
 
             // Measure storage metrics using filesystem API
@@ -275,7 +378,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             pure_group.bench_function("search", |b| {
                 b.iter(|| {
                     let start = std::time::Instant::now();
-                    let result = runtime.block_on(async {
+                    let result: Result<Vec<proximadb::core::search::results::OptimizedSearchRecord>, _> = runtime.block_on(async {
                         let search_params = Arc::new(SearchParams {
                             vector: Some(query_clone.clone()),
                             top_k: Some(10),
@@ -288,12 +391,38 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         let mut storage_config = StorageConfig::default();
                         storage_config.compression = compress_val;
 
+                        // Same filterable columns as flush
+                        let filterable_columns = vec![
+                            proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                                name: "category".to_string(),
+                                data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                                indexed: true,
+                                supports_range: false,
+                                estimated_cardinality: Some(10),
+                            },
+                            proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                                name: "price".to_string(),
+                                data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                                indexed: true,
+                                supports_range: true,
+                                estimated_cardinality: None,
+                            },
+                            proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                                name: "tags".to_string(),
+                                data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                                indexed: true,
+                                supports_range: false,
+                                estimated_cardinality: Some(15),
+                            },
+                        ];
+
                         let collection = Arc::new(Collection {
                             id: collection_id.clone(),
                             config: Some(CollectionConfig {
                                 name: collection_id.clone(),
                                 dimension: dimension as u32,
                                 storage_config: Some(storage_config),
+                                filterable_columns,
                                 ..Default::default()
                             }),
                             storage_assignment: Some(StorageAssignment {
@@ -314,15 +443,21 @@ fn bench_compression_with_search(c: &mut Criterion) {
                     });
                     pure_time_ms = start.elapsed().as_millis();
 
-                    // Validate search results
+                    // Validate and log search results
                     if let Ok(ref results) = result {
-                        if results.results.is_empty() {
+                        if results.is_empty() {
                             eprintln!("    ⚠️  WARNING: Pure search returned no results for {} with {}",
                                      engine_name, compress_name);
-                        } else if results.results.len() > 10 {
-                            eprintln!("    ⚠️  WARNING: Pure search returned {} results (expected <= 10) for {} with {}",
-                                     results.results.len(), engine_name, compress_name);
+                        } else {
+                            eprintln!("    ✓ Pure search returned {} results for {} with {}",
+                                     results.len(), engine_name, compress_name);
+                            if results.len() > 10 {
+                                eprintln!("      ⚠️  WARNING: Expected <= 10 results");
+                            }
                         }
+                    } else if let Err(ref e) = result {
+                        eprintln!("    ❌ Pure search failed for {} with {}: {:?}",
+                                 engine_name, compress_name, e);
                     }
 
                     black_box(result)
@@ -342,7 +477,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             filtered_group.bench_function("search", |b| {
                 b.iter(|| {
                     let start = std::time::Instant::now();
-                    let result = runtime.block_on(async {
+                    let result: Result<Vec<proximadb::core::search::results::OptimizedSearchRecord>, _> = runtime.block_on(async {
                         // Filter: category="cat_5" AND price < 500
                         let filter_expr = FilterExpression::And(vec![
                             FilterExpression::Comparison {
@@ -369,12 +504,38 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         let mut storage_config = StorageConfig::default();
                         storage_config.compression = compress_val;
 
+                        // Same filterable columns as flush
+                        let filterable_columns = vec![
+                            proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                                name: "category".to_string(),
+                                data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                                indexed: true,
+                                supports_range: false,
+                                estimated_cardinality: Some(10),
+                            },
+                            proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                                name: "price".to_string(),
+                                data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                                indexed: true,
+                                supports_range: true,
+                                estimated_cardinality: None,
+                            },
+                            proximadb::proto::proximadb_v1::FilterableColumnSpec {
+                                name: "tags".to_string(),
+                                data_type: proximadb::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                                indexed: true,
+                                supports_range: false,
+                                estimated_cardinality: Some(15),
+                            },
+                        ];
+
                         let collection = Arc::new(Collection {
                             id: collection_id.clone(),
                             config: Some(CollectionConfig {
                                 name: collection_id.clone(),
                                 dimension: dimension as u32,
                                 storage_config: Some(storage_config),
+                                filterable_columns,
                                 ..Default::default()
                             }),
                             storage_assignment: Some(StorageAssignment {
@@ -395,14 +556,19 @@ fn bench_compression_with_search(c: &mut Criterion) {
                     });
                     filter_time_ms = start.elapsed().as_millis();
 
-                    // Validate filtered search results
+                    // Validate and log filtered search results
                     if let Ok(ref results) = result {
-                        if results.results.is_empty() {
+                        if results.is_empty() {
                             eprintln!("    ⚠️  WARNING: Filtered search returned no results for {} with {}",
                                      engine_name, compress_name);
                         } else {
+                            eprintln!("    ✓ Filtered search returned {} results for {} with {} (filter: category=cat_5 AND price<500)",
+                                     results.len(), engine_name, compress_name);
+                            if results.len() > 10 {
+                                eprintln!("      ⚠️  WARNING: Expected <= 10 results");
+                            }
                             // Verify filter was applied (results should have category=cat_5)
-                            let correctly_filtered = results.results.iter().all(|r| {
+                            let correctly_filtered = results.iter().all(|_r| {
                                 // Note: actual filter validation would check metadata
                                 true  // Simplified for now
                             });
@@ -411,6 +577,9 @@ fn bench_compression_with_search(c: &mut Criterion) {
                                          engine_name, compress_name);
                             }
                         }
+                    } else if let Err(ref e) = result {
+                        eprintln!("    ❌ Filtered search failed for {} with {}: {:?}",
+                                 engine_name, compress_name, e);
                     }
 
                     black_box(result)
@@ -420,11 +589,11 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
             // Print results with validation status
             if size_bytes == 0 && files_created == 0 {
-                eprintln!("{:<8} {:<8} {:>10} {:>8} {:>7} {:>10} {:>10}  ❌ NO DATA",
-                         engine_name, compress_name, "NO DATA", "N/A", "N/A", pure_time_ms, filter_time_ms);
+                eprintln!("{:<8} {:<8} {:>10} {:>8} {:>7} {:>10} {:>10} {:>10}  ❌ NO DATA",
+                         engine_name, compress_name, "NO DATA", "N/A", "N/A", flush_time_ms, pure_time_ms, filter_time_ms);
             } else {
-                eprintln!("{:<8} {:<8} {:>10.2} {:>8.3} {:>7.1}% {:>10} {:>10}",
-                         engine_name, compress_name, size_mb, ratio, savings, pure_time_ms, filter_time_ms);
+                eprintln!("{:<8} {:<8} {:>10.2} {:>8.3} {:>7.1}% {:>10} {:>10} {:>10}",
+                         engine_name, compress_name, size_mb, ratio, savings, flush_time_ms, pure_time_ms, filter_time_ms);
             }
 
             // Clean up immediately after each test using filesystem API

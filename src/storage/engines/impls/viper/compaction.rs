@@ -1175,13 +1175,25 @@ impl Compaction {
                     .map(|q| q.enabled)
                     .unwrap_or(false);
 
+                // Extract filterable columns for bloom filter configuration
+                let filterable_columns = collection_config.as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .map(|cfg| cfg.filterable_columns.clone())
+                    .unwrap_or_default();
+
+                // Include both ID and filterable columns in bloom filters
+                let mut bloom_columns = vec!["id".to_string()];
+                for col in &filterable_columns {
+                    bloom_columns.push(col.name.clone());
+                }
+
                 // Configure ParquetWriterConfig for compaction
                 let writer_config = ParquetWriterConfig {
                     row_group_size: 100000,     // Larger row groups for compacted files
-                    enable_bloom_filters: true, // Essential for efficient ID lookups
+                    enable_bloom_filters: true, // Essential for efficient ID and metadata lookups
                     bloom_filter_fpp: 0.01,
                     expected_ndv: Some(file_record_count),
-                    bloom_filter_columns: vec!["id".to_string()],
+                    bloom_filter_columns: bloom_columns,
                     compression: compression_algorithm,
                     enable_column_statistics: true,
                     enable_page_index: true,

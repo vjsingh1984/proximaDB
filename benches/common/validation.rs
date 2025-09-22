@@ -1,12 +1,12 @@
 /// Validation utilities for benchmarks to ensure correctness
 
-use proximadb::storage::traits::FlushResult;
-use proximadb::core::search::results::SearchResults;
+use proximadb::storage::traits::FlushResult as TraitFlushResult;
+use proximadb::core::search::results::OptimizedSearchRecord;
 use proximadb::proto::proximadb_v1::SqlValue;
 use std::collections::HashMap;
 
 /// Validate flush operation results
-pub fn validate_flush_result(result: &FlushResult, engine: &str, compression: &str, expected_vectors: usize) -> bool {
+pub fn validate_flush_result(result: &TraitFlushResult, engine: &str, compression: &str, expected_vectors: usize) -> bool {
     let mut valid = true;
 
     // Check if flush was successful
@@ -16,18 +16,18 @@ pub fn validate_flush_result(result: &FlushResult, engine: &str, compression: &s
     }
 
     // Check vectors written
-    if result.vectors_written == 0 {
+    if result.entries_flushed.unwrap_or(0) == 0 {
         eprintln!("    ⚠️  WARNING: No vectors written for {} with {} (expected {})",
                  engine, compression, expected_vectors);
         valid = false;
-    } else if result.vectors_written != expected_vectors {
+    } else if result.entries_flushed.unwrap_or(0) != expected_vectors as u64 {
         eprintln!("    ⚠️  WARNING: Written {} vectors, expected {} for {} with {}",
-                 result.vectors_written, expected_vectors, engine, compression);
+                 result.entries_flushed.unwrap_or(0), expected_vectors, engine, compression);
         valid = false;
     }
 
     // Check bytes written
-    if result.bytes_written == 0 {
+    if result.bytes_written.unwrap_or(0) == 0 {
         eprintln!("    ⚠️  WARNING: No bytes written for {} with {}", engine, compression);
         valid = false;
     }
@@ -35,7 +35,7 @@ pub fn validate_flush_result(result: &FlushResult, engine: &str, compression: &s
     // Success message if all good
     if valid {
         eprintln!("    ✅ Flush validated: {} vectors, {} bytes for {} with {}",
-                 result.vectors_written, result.bytes_written, engine, compression);
+                 result.entries_flushed.unwrap_or(0), result.bytes_written.unwrap_or(0), engine, compression);
     }
 
     valid
@@ -43,7 +43,7 @@ pub fn validate_flush_result(result: &FlushResult, engine: &str, compression: &s
 
 /// Validate search results
 pub fn validate_search_results(
-    results: &SearchResults,
+    results: &[OptimizedSearchRecord],
     engine: &str,
     compression: &str,
     top_k: usize,
@@ -52,7 +52,7 @@ pub fn validate_search_results(
     let mut valid = true;
 
     // Check if we got any results
-    if results.results.is_empty() {
+    if results.is_empty() {
         eprintln!("    ⚠️  WARNING: {} search returned no results for {} with {}",
                  if is_filtered { "Filtered" } else { "Pure" },
                  engine, compression);
@@ -60,22 +60,22 @@ pub fn validate_search_results(
     }
 
     // Check result count doesn't exceed top_k
-    if results.results.len() > top_k {
+    if results.len() > top_k {
         eprintln!("    ❌ ERROR: {} search returned {} results (expected <= {}) for {} with {}",
                  if is_filtered { "Filtered" } else { "Pure" },
-                 results.results.len(), top_k, engine, compression);
+                 results.len(), top_k, engine, compression);
         valid = false;
     }
 
     // For filtered search, validate filter application
-    if is_filtered && !results.results.is_empty() {
+    if is_filtered && !results.is_empty() {
         // This is a placeholder - actual implementation would check metadata
         // based on the filter criteria used in the benchmark
         eprintln!("    ℹ️  INFO: Filter validation would check metadata here");
     }
 
     // Check result scores are valid (between 0 and 1 for cosine similarity)
-    for result in &results.results {
+    for result in results {
         if result.score < 0.0 || result.score > 1.0 {
             eprintln!("    ⚠️  WARNING: Invalid score {} for vector {} in {} with {}",
                      result.score, result.id, engine, compression);
@@ -83,10 +83,10 @@ pub fn validate_search_results(
         }
     }
 
-    if valid && !results.results.is_empty() {
+    if valid && !results.is_empty() {
         eprintln!("    ✅ {} search validated: {} results for {} with {}",
                  if is_filtered { "Filtered" } else { "Pure" },
-                 results.results.len(), engine, compression);
+                 results.len(), engine, compression);
     }
 
     valid
@@ -94,7 +94,7 @@ pub fn validate_search_results(
 
 /// Validate metadata filter was properly applied
 pub fn validate_metadata_filter(
-    results: &SearchResults,
+    results: &[OptimizedSearchRecord],
     field: &str,
     expected_value: &SqlValue,
     engine: &str,
@@ -103,7 +103,7 @@ pub fn validate_metadata_filter(
     let mut valid = true;
     let mut invalid_count = 0;
 
-    for result in &results.results {
+    for result in results {
         // Check if the result has the expected metadata field and value
         if let Some(actual_value) = result.metadata.get(field) {
             if actual_value != expected_value {
@@ -119,9 +119,9 @@ pub fn validate_metadata_filter(
         eprintln!("    ⚠️  WARNING: {} results don't match filter {}={:?} for {} with {}",
                  invalid_count, field, expected_value, engine, compression);
         valid = false;
-    } else if !results.results.is_empty() {
+    } else if !results.is_empty() {
         eprintln!("    ✅ Filter validated: All {} results match {}={:?} for {} with {}",
-                 results.results.len(), field, expected_value, engine, compression);
+                 results.len(), field, expected_value, engine, compression);
     }
 
     valid

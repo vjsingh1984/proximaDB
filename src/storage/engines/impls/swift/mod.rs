@@ -431,6 +431,15 @@ impl SwiftFile {
 
     /// Legacy build blocks method (deprecated, use build_blocks_from_records_with_adapters)
     pub fn build_blocks_from_records(&mut self, records: Vec<VectorRecord>) -> Result<()> {
+        self.build_blocks_from_records_with_compression(records, None)
+    }
+
+    /// Build blocks with compression configuration
+    pub fn build_blocks_from_records_with_compression(
+        &mut self,
+        records: Vec<VectorRecord>,
+        compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
+    ) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -440,11 +449,29 @@ impl SwiftFile {
         let mut block_id = 0;
 
         for chunk in records.chunks(records_per_block) {
-            // Create compression config
-            let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
+            // Create compression config from flush parameters
+            let block_compression_config = if let Some(ref comp_config) = compression_config {
+                crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+                    algorithm: match comp_config.algorithm {
+                        1 => crate::core::compression::CompressionAlgorithm::Zstd,
+                        2 => crate::core::compression::CompressionAlgorithm::Lz4,
+                        3 => crate::core::compression::CompressionAlgorithm::Snappy,
+                        4 => crate::core::compression::CompressionAlgorithm::Gzip,
+                        5 => crate::core::compression::CompressionAlgorithm::Brotli,
+                        _ => crate::core::compression::CompressionAlgorithm::Zstd, // Default
+                    },
+                    compression_level: comp_config.level.unwrap_or(3) as u8,
+                    enable_vector_compression: true,
+                    enable_metadata_compression: true,
+                    compression_threshold_bytes: 8192,
+                    dictionary_compression: false,
+                }
+            } else {
+                crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default()
+            };
 
             // Use row-based DataBlock constructor
-            let block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
+            let block = FastLanesDataBlock::new(chunk.to_vec(), block_compression_config);
 
             // Build quantized representations for the block
             // Note: Quantization is handled by the unified quantization system

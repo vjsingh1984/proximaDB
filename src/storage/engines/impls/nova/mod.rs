@@ -228,6 +228,37 @@ pub fn create_vector_schema(
     config: &QuantizationConfig,
     filterable_columns: &[String],
 ) -> Arc<Schema> {
+    create_vector_schema_with_types(dimension, config, filterable_columns, &[])
+}
+
+/// Create optimized Parquet schema with proper column types from FilterableColumnSpec
+/// Now delegates to shared columnar schema builder for consistency
+pub fn create_vector_schema_with_types(
+    dimension: usize,
+    config: &QuantizationConfig,
+    filterable_columns: &[String],
+    filterable_specs: &[crate::proto::proximadb_v1::FilterableColumnSpec],
+) -> Arc<Schema> {
+    // Use shared columnar schema builder
+    if !filterable_specs.is_empty() {
+        crate::storage::engines::core::formats::columnar::schema::create_parquet_schema_from_specs(
+            dimension,
+            filterable_specs,
+            config.enabled,
+        )
+    } else {
+        // Fallback for when we only have column names without specs
+        create_vector_schema_internal(dimension, config, filterable_columns, filterable_specs)
+    }
+}
+
+/// Internal schema creation (kept for backward compatibility)
+fn create_vector_schema_internal(
+    dimension: usize,
+    config: &QuantizationConfig,
+    filterable_columns: &[String],
+    filterable_specs: &[crate::proto::proximadb_v1::FilterableColumnSpec],
+) -> Arc<Schema> {
     let mut fields = vec![
         // Core fields
         Field::new("id", DataType::Utf8, false),
@@ -267,10 +298,38 @@ pub fn create_vector_schema(
         ));
     }
 
-    // Add filterable metadata columns
-    for column in filterable_columns {
-        // Infer type from first value (in production, use schema registry)
-        fields.push(Field::new(column, DataType::Utf8, true));
+    // Add filterable metadata columns with proper types if specs are provided
+    if !filterable_specs.is_empty() {
+        use crate::proto::proximadb_v1::FilterableDataType;
+        for spec in filterable_specs {
+            let arrow_data_type = match FilterableDataType::try_from(spec.data_type) {
+                Ok(FilterableDataType::FilterableString) | Ok(FilterableDataType::FilterableArrayString) => {
+                    DataType::Utf8
+                }
+                Ok(FilterableDataType::FilterableInteger) | Ok(FilterableDataType::FilterableArrayInteger) => {
+                    DataType::Int64
+                }
+                Ok(FilterableDataType::FilterableFloat) | Ok(FilterableDataType::FilterableArrayFloat) => {
+                    DataType::Float64
+                }
+                Ok(FilterableDataType::FilterableBoolean) => {
+                    DataType::Boolean
+                }
+                Ok(FilterableDataType::FilterableDatetime) => {
+                    DataType::Int64  // Store as timestamp
+                }
+                _ => {
+                    // Default to string for unknown types
+                    DataType::Utf8
+                }
+            };
+            fields.push(Field::new(&spec.name, arrow_data_type, true));
+        }
+    } else {
+        // Fallback to column names with default Utf8 type
+        for column in filterable_columns {
+            fields.push(Field::new(column, DataType::Utf8, true));
+        }
     }
 
     Arc::new(Schema::new(fields))

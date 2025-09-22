@@ -159,10 +159,10 @@ async fn benchmark_engine_configuration(
 
                 // Validate flush results
                 assert!(result.success, "Flush should succeed");
-                if result.vectors_written == 0 {
+                if result.entries_flushed.unwrap_or(0) == 0 {
                     eprintln!("WARNING: No vectors written in batch {}", batch_id);
                 }
-                if result.bytes_written == 0 {
+                if result.bytes_written.unwrap_or(0) == 0 {
                     eprintln!("WARNING: No bytes written in batch {}", batch_id);
                 }
             }
@@ -208,10 +208,10 @@ async fn benchmark_engine_configuration(
 
                 // Validate flush results
                 assert!(result.success, "Flush should succeed");
-                if result.vectors_written == 0 {
+                if result.entries_flushed.unwrap_or(0) == 0 {
                     eprintln!("WARNING: No vectors written in batch {}", batch_id);
                 }
-                if result.bytes_written == 0 {
+                if result.bytes_written.unwrap_or(0) == 0 {
                     eprintln!("WARNING: No bytes written in batch {}", batch_id);
                 }
             }

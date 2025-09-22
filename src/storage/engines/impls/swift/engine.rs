@@ -490,8 +490,32 @@ impl UnifiedStorageEngine for SwiftEngine {
         // This is the actual data that needs to be persisted
         let records = params.vector_records.clone();
 
-        // Add records to the SwiftFile structure
-        swift_file.build_blocks_from_records(records.clone())?;
+        // Get compression config from storage config
+        let compression_config = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .and_then(|cfg| cfg.storage_config.as_ref())
+            .and_then(|s| {
+                if s.compression != 0 {
+                    Some(crate::proto::proximadb_v1::CompressionConfig {
+                        algorithm: s.compression,
+                        level: None,
+                        adaptive: false,
+                        min_ratio: None,
+                        enable_quantization: false,
+                        quantization_type: None,
+                        normalization_method: None,
+                        block_size_kb: 64,
+                        dynamic_block_sizing: false,
+                    })
+                } else {
+                    None
+                }
+            });
+
+        // Add records to the SwiftFile structure with compression config
+        swift_file.build_blocks_from_records_with_compression(records.clone(), compression_config)?;
 
         // Get storage path from collection config (always present)
         // UnifiedCachingFilesystem will handle cloud storage transparently

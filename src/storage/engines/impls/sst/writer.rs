@@ -97,6 +97,8 @@ pub struct SstableWriter {
     /// Unified quantization engine from compute module
     quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    /// Compression configuration from flush parameters
+    compression_config: Option<CompressionConfig>,
 }
 
 impl SstableWriter {
@@ -183,6 +185,7 @@ impl SstableWriter {
             filesystem,
             compression_provider,
             quantization_engine,
+            compression_config: None,
         }
     }
 
@@ -295,6 +298,7 @@ impl SstableWriter {
             filesystem,
             compression_provider,
             quantization_engine,
+            compression_config: compression_config,
         }
     }
 
@@ -534,6 +538,18 @@ impl SstableWriter {
         // Accumulate all data to write atomically
         let mut output_data = Vec::new();
 
+        // Use shared FastLanes serialization for data blocks
+        debug!("📦 Writing {} data blocks using FastLanes serialization", data_blocks.len());
+        for block in &data_blocks {
+            // Serialize the block using the shared FastLanes format
+            let serialized_block = block.serialize()?;
+            // Write block length prefix for framing
+            output_data.extend_from_slice(&(serialized_block.len() as u32).to_le_bytes());
+            output_data.extend_from_slice(&serialized_block);
+        }
+        let data_blocks_size = output_data.len();
+        debug!("✅ Wrote {} bytes of FastLanes-encoded vector data", data_blocks_size);
+
         // Write index entries
         for entry in &index_entries {
             output_data.extend_from_slice(&entry.serialize()?);
@@ -608,9 +624,27 @@ impl SstableWriter {
         // The SST writer has a quantization_engine field that can be used for
         // quantization before creating blocks, but for now we keep FP32 vectors
         // and let FastLanes handle the encoding optimization
-        // Create compression config for the block
-        let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
-        let mut data_block = FastLanesDataBlock::new(current_block.to_vec(), compression_config);
+        // Create compression config for the block - use the config from flush parameters
+        let block_compression_config = if let Some(ref comp_config) = self.compression_config {
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+                algorithm: match comp_config.algorithm {
+                    1 => crate::core::compression::CompressionAlgorithm::Zstd,
+                    2 => crate::core::compression::CompressionAlgorithm::Lz4,
+                    3 => crate::core::compression::CompressionAlgorithm::Snappy,
+                    4 => crate::core::compression::CompressionAlgorithm::Gzip,
+                    5 => crate::core::compression::CompressionAlgorithm::Brotli,
+                    _ => crate::core::compression::CompressionAlgorithm::Zstd, // Default
+                },
+                compression_level: comp_config.level.unwrap_or(3) as u8,
+                enable_vector_compression: true,
+                enable_metadata_compression: true,
+                compression_threshold_bytes: 8192,
+                dictionary_compression: false,
+            }
+        } else {
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default()
+        };
+        let mut data_block = FastLanesDataBlock::new(current_block.to_vec(), block_compression_config);
         data_block.block_id = block_id;
 
         // Set block-level bloom filter
@@ -842,8 +876,27 @@ impl SstableWriter {
 
         // Create FastLanesDataBlock with hierarchical metadata
         // Create compression config for the block
-        let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
-        let mut data_block = FastLanesDataBlock::new(current_block.to_vec(), compression_config);
+        // Use the compression config from flush parameters
+        let block_compression_config = if let Some(ref comp_config) = self.compression_config {
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+                algorithm: match comp_config.algorithm {
+                    1 => crate::core::compression::CompressionAlgorithm::Zstd,
+                    2 => crate::core::compression::CompressionAlgorithm::Lz4,
+                    3 => crate::core::compression::CompressionAlgorithm::Snappy,
+                    4 => crate::core::compression::CompressionAlgorithm::Gzip,
+                    5 => crate::core::compression::CompressionAlgorithm::Brotli,
+                    _ => crate::core::compression::CompressionAlgorithm::Zstd, // Default
+                },
+                compression_level: comp_config.level.unwrap_or(3) as u8,
+                enable_vector_compression: true,
+                enable_metadata_compression: true,
+                compression_threshold_bytes: 8192,
+                dictionary_compression: false,
+            }
+        } else {
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default()
+        };
+        let mut data_block = FastLanesDataBlock::new(current_block.to_vec(), block_compression_config);
         data_block.block_id = block_id;
 
         // Set block-level bloom filter (combines key and metadata blooms into one)
@@ -972,8 +1025,9 @@ impl SstableWriter {
     }
 
     /// Set compression configuration (SDK-driven)
-    pub fn with_compression_config(self, config: Option<CompressionConfig>) -> Self {
+    pub fn with_compression_config(mut self, config: Option<CompressionConfig>) -> Self {
         // Update compression configuration (stored in compression_config field)
+        self.compression_config = config;
         self
     }
 
