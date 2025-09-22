@@ -498,45 +498,18 @@ batch_size = 1000
 
 == Performance Targets
 
-[cols="3,2,2,2"]
-|===
-|Metric |Minimum |Target |Excellent
+[source,mermaid]
+----
+xychart-beta
+    title "Performance Targets by Quality Level"
+    x-axis ["P50 Latency (ms)", "P99 Latency (ms)", "Throughput (K/s)", "Memory (KB)", "Recall (%)", "CPU (%)", "Compression"]
+    y-axis "Performance Value" 0 --> 1000
+    bar [50, 200, 10, 10, 85, 90, 2]
+    bar [10, 50, 100, 3, 95, 70, 5]
+    bar [2, 10, 1000, 1, 99, 50, 10]
+----
 
-|Query latency P50
-|< 50ms
-|< 10ms
-|< 2ms
-
-|Query latency P99
-|< 200ms
-|< 50ms
-|< 10ms
-
-|Write throughput
-|10K/s
-|100K/s
-|> 1M/s
-
-|Memory per vector
-|< 10KB
-|< 3KB
-|< 1KB
-
-|Search recall
-|> 85%
-|> 95%
-|> 99%
-
-|CPU utilization
-|< 90%
-|< 70%
-|< 50%
-
-|Compression ratio
-|> 2x
-|> 5x
-|> 10x
-|===
+**Legend**: Minimum (blue), Target (orange), Excellent (green)
 
 == Emergency Optimization
 

@@ -233,45 +233,18 @@ cargo bench -- --warm-up-time 5 --measurement-time 10
 
 == Storage Engine Selection
 
-[cols="2,2,2,2"]
-|===
-|Engine |Best For |Write Speed |Memory
+[source,mermaid]
+----
+xychart-beta
+    title "Storage Engine Performance Comparison"
+    x-axis ["SST", "VIPER", "NOVA", "SWIFT", "RAPTOR", "PRISM", "HELIX"]
+    y-axis "Write Speed (K vectors/sec)" 0 --> 500
+    bar [500, 100, 300, 400, 350, 200, 250]
+----
 
-|**SST**
-|Real-time ingestion
-|500K/s
-|3KB/vec
+**Write Speed Performance**: SST (500K/s), VIPER (100K/s), NOVA (300K/s), SWIFT (400K/s), RAPTOR (350K/s), PRISM (200K/s), HELIX (250K/s)
 
-|**VIPER**
-|Analytics, sparse data
-|100K/s
-|1KB/vec
-
-|**NOVA**
-|Balanced workloads
-|300K/s
-|2KB/vec
-
-|**SWIFT**
-|Low-latency queries
-|400K/s
-|2.5KB/vec
-
-|**RAPTOR**
-|Adaptive workloads
-|350K/s
-|2KB/vec
-
-|**PRISM**
-|Memory-constrained
-|200K/s
-|0.5KB/vec
-
-|**HELIX**
-|Time-series data
-|250K/s
-|1.5KB/vec
-|===
+**Memory Usage per Vector**: SST (3KB), VIPER (1KB), NOVA (2KB), SWIFT (2.5KB), RAPTOR (2KB), PRISM (0.5KB), HELIX (1.5KB)
 
 == Performance Targets
 

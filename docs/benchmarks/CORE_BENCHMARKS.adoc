@@ -165,30 +165,20 @@ Measures raw vector similarity calculation speed across distance metrics.
 Tests memory allocation patterns and pooling efficiency.
 
 === Key Results
-[cols="2,2,2,2"]
-|===
-|Strategy |Memory/Vector |Allocation Time |Improvement
+[source,mermaid]
+----
+xychart-beta
+    title "Memory Optimization Strategy Performance"
+    x-axis ["Baseline", "Pooled", "Arc-shared", "Compressed"]
+    y-axis "Memory per Vector (KB)" 0 --> 3.5
+    bar [3.0, 2.8, 0.5, 0.3]
+----
 
-|Baseline
-|3KB
-|500ns
-|1x
+**Memory Usage**: Baseline (3KB), Pooled (2.8KB), Arc-shared (0.5KB), Compressed (0.3KB)
 
-|Pooled
-|2.8KB
-|100ns
-|5x
+**Allocation Time**: Baseline (500ns), Pooled (100ns), Arc-shared (50ns), Compressed (150ns)
 
-|Arc-shared
-|0.5KB
-|50ns
-|10x
-
-|Compressed
-|0.3KB
-|150ns
-|10x
-|===
+**Performance Improvement**: Baseline (1x), Pooled (5x), Arc-shared (10x), Compressed (10x)
 
 === Optimization Techniques
 * **Vector Pooling**: Reuse allocated buffers
@@ -296,34 +286,20 @@ Validates SIMD/GPU utilization effectiveness.
 Measures multi-stage search performance and accuracy trade-offs.
 
 === Pipeline Performance
-[cols="2,2,2,2,2"]
-|===
-|Stage |Candidates |Latency |Cumulative Recall |Purpose
+[source,mermaid]
+----
+xychart-beta
+    title "Progressive Search Pipeline Performance"
+    x-axis ["Binary", "INT8", "PQ", "FP32"]
+    y-axis "Cumulative Recall (%)" 80 --> 100
+    line [85, 92, 96, 99]
+----
 
-|Binary
-|10K → 1K
-|0.1ms
-|85%
-|Initial filter
+**Pipeline Latency**: Binary (0.1ms), INT8 (0.5ms), PQ (1ms), FP32 (2ms)
 
-|INT8
-|1K → 200
-|0.5ms
-|92%
-|Refinement
+**Candidate Reduction**: Binary (10K→1K), INT8 (1K→200), PQ (200→50), FP32 (50→10)
 
-|PQ
-|200 → 50
-|1ms
-|96%
-|Fine-tuning
-
-|FP32
-|50 → 10
-|2ms
-|99%
-|Final ranking
-|===
+**Cumulative Recall**: Binary (85%), INT8 (92%), PQ (96%), FP32 (99%)
 
 === Search Scenarios
 [cols="2,3,2,2"]

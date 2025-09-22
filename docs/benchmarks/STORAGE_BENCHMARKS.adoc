@@ -160,45 +160,20 @@ let vectors = generator.generate_batch(count, dimension);
 |===
 
 ==== Read Performance
-[cols="2,2,2,2"]
-|===
-|Engine |P50 Latency |P99 Latency |QPS
+[source,mermaid]
+----
+xychart-beta
+    title "Storage Engine Read Performance Comparison"
+    x-axis ["SST", "VIPER", "NOVA", "SWIFT", "RAPTOR", "PRISM", "HELIX"]
+    y-axis "Queries per Second (K)" 0 --> 1000
+    bar [200, 330, 500, 1000, 400, 250, 285]
+----
 
-|SST
-|5ms
-|15ms
-|200K
+**QPS Performance**: SST (200K), VIPER (330K), NOVA (500K), SWIFT (1M), RAPTOR (400K), PRISM (250K), HELIX (285K)
 
-|VIPER
-|3ms
-|10ms
-|330K
+**P50 Latency**: SST (5ms), VIPER (3ms), NOVA (2ms), SWIFT (1ms), RAPTOR (2.5ms), PRISM (4ms), HELIX (3.5ms)
 
-|NOVA
-|2ms
-|8ms
-|500K
-
-|SWIFT
-|1ms
-|5ms
-|1M
-
-|RAPTOR
-|2.5ms
-|9ms
-|400K
-
-|PRISM
-|4ms
-|12ms
-|250K
-
-|HELIX
-|3.5ms
-|11ms
-|285K
-|===
+**P99 Latency**: SST (15ms), VIPER (10ms), NOVA (8ms), SWIFT (5ms), RAPTOR (9ms), PRISM (12ms), HELIX (11ms)
 
 ==== Resource Usage
 [cols="2,2,2,2"]
@@ -315,30 +290,24 @@ let vectors = generator.generate_batch(count, dimension);
 |===
 
 === Sparsity Impact
-[cols="2,2,2,2"]
-|===
-|Sparsity |No Quant |Binary |PQ8
+[source,mermaid]
+----
+xychart-beta
+    title "Sparsity Impact on Computation Time"
+    x-axis ["0%", "50%", "90%", "95%"]
+    y-axis "Computation Time (normalized, 1=baseline)" 0 --> 3500
+    line [1, 0.94, 1946, 3226]
+    line [1, 0.93, 1918, 3014]
+    line [1, 0.96, 1914, 3099]
+----
 
-|0%
-|372ps
-|365ps
-|371ps
+**Performance Impact by Sparsity Level:**
+- **0% sparse**: No Quant (372ps), Binary (365ps), PQ8 (371ps)
+- **50% sparse**: No Quant (350ps), Binary (340ps), PQ8 (355ps)
+- **90% sparse**: No Quant (724μs), Binary (700μs), PQ8 (710μs)
+- **95% sparse**: No Quant (1.2ms), Binary (1.1ms), PQ8 (1.15ms)
 
-|50%
-|350ps
-|340ps
-|355ps
-
-|90%
-|724μs
-|700μs
-|710μs
-
-|95%
-|1.2ms
-|1.1ms
-|1.15ms
-|===
+**Legend**: No Quant (blue), Binary (orange), PQ8 (green)
 
 == VIPER Columnar Engine
 `cargo bench --bench columnar_viper_parquet`
