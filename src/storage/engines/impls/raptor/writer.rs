@@ -3868,7 +3868,7 @@ impl RaptorWriter {
         self.flush_row_page().await?;
 
         // Count vectors in existing row groups
-        for rg in &self.rowgroups {
+        for rg in &self.row_groups {
             total_flushed += rg.vector_count;
         }
 

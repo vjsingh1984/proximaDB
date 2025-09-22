@@ -1114,14 +1114,19 @@ impl UnifiedStorageEngine for PrismEngine {
         let codec = FilenameCodec::new();
         let prism_filename = codec.generate(0, &crate::storage::engines::constants::PRISM_FILE_EXT[1..]); // Remove leading dot
 
-        // Get data directory from params
-        let data_dir = params.base_path
-            .as_ref()
-            .map(|p| format!("{}/{}/data", p, collection_id))
-            .ok_or_else(|| anyhow::anyhow!("Base path not provided in flush parameters"))?;
+        // Get data directory from collection config or use default
+        let data_dir = if let Some(collection_config) = &params.collection_config {
+            if let Some(config) = &collection_config.config {
+                format!("/data/collections/{}/prism", collection_id)
+            } else {
+                format!("/data/collections/{}/prism", collection_id)
+            }
+        } else {
+            format!("/data/collections/{}/prism", collection_id)
+        };
 
         // Ensure directory exists
-        let filesystem = self.filesystem.get_filesystem(&format!("file://{}", data_dir))?;
+        let filesystem = self.filesystem_factory.get_filesystem(&format!("file://{}", data_dir))?;
         filesystem.create_dir_all(&data_dir).await?;
 
         // Write file to disk

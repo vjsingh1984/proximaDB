@@ -834,7 +834,7 @@ impl FastLanesDataBlock {
             let compressed = compress(
                 &result,
                 config.algorithm,
-                config.level,
+                config.compression_level as i32,
                 CompressionContext::Block,
             )?;
 
@@ -1008,7 +1008,7 @@ impl FastLanesDataBlock {
         let block_id = metadata.record_count;
         let has_deletes = metadata.has_deletes;
         Ok(Self {
-            encoding_marker: marker,
+            encoding_marker: encoding_marker,
             encoding_metadata: None, // Will be reconstructed if needed
             block_id,
             records,
