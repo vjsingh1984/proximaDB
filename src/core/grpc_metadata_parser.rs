@@ -16,8 +16,9 @@ pub fn parse_metadata_query(
         return Ok(None);
     }
 
-    // Check if there's a special "__logical_query" field containing JSON
-    if let Some(logical_query_json) = metadata_filter.get("$logical") {
+    // Check if there's a special "__logical_query" or "$logical" field containing JSON
+    if let Some(logical_query_json) = metadata_filter.get("__logical_query")
+        .or_else(|| metadata_filter.get("$logical")) {
         return parse_json_logical_query(logical_query_json);
     }
 
@@ -47,15 +48,15 @@ fn parse_json_logical_query(json_str: &str) -> Result<Option<MetadataQuery>> {
 fn parse_json_query_value(value: &JsonValue) -> Result<Option<MetadataQuery>> {
     match value {
         JsonValue::Object(obj) => {
-            if let Some(and_array) = obj.get("$and") {
+            if let Some(and_array) = obj.get("$and").or_else(|| obj.get("and")) {
                 parse_json_and(and_array)
-            } else if let Some(or_array) = obj.get("$and") {
+            } else if let Some(or_array) = obj.get("$or").or_else(|| obj.get("or")) {
                 parse_json_or(or_array)
-            } else if let Some(not_obj) = obj.get("$and") {
+            } else if let Some(not_obj) = obj.get("$not").or_else(|| obj.get("not")) {
                 parse_json_not(not_obj)
             } else if let Some(field_name) = obj.keys().next() {
                 // Field-level query
-                if let Some(field_value) = obj.get("$and") {
+                if let Some(field_value) = obj.get(field_name) {
                     parse_json_field_query(field_name, field_value)
                 } else {
                     Ok(None)
@@ -206,7 +207,7 @@ fn parse_operator_queries(
 
 /// Parse NOT query from special field
 fn parse_not_query(metadata_filter: &HashMap<String, String>) -> Result<Option<MetadataQuery>> {
-    if let Some(not_value) = metadata_filter.get("$logical") {
+    if let Some(not_value) = metadata_filter.get("__not").or_else(|| metadata_filter.get("$not")) {
         match serde_json::from_str::<JsonValue>(not_value) {
             Ok(json_value) => {
                 if let Some(inner_query) = parse_json_query_value(&json_value)? {

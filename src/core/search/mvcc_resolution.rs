@@ -85,8 +85,8 @@ impl MvccResolver {
 
             // Sort by version, then timestamp
             versions.sort_by(|a, b| {
-                let ver_a = a.version;
-                let ver_b = b.version;
+                let ver_a = a.version.unwrap_or(1);
+                let ver_b = b.version.unwrap_or(1);
 
                 ver_a.cmp(&ver_b).then_with(|| {
                     // For same version, earliest timestamp wins
@@ -95,11 +95,18 @@ impl MvccResolver {
             });
 
             // Validate version continuity and find the latest valid version
-            let mut expected_version = 1;
+            // Find the starting version (could be 0, 1, or any other number)
+            let starting_version = if let Some(first_record) = versions.first() {
+                first_record.version.unwrap_or(1)
+            } else {
+                1
+            };
+
+            let mut expected_version = starting_version;
             let mut last_valid: Option<VectorRecord> = None;
 
             for record in versions {
-                let version = record.version.unwrap_or(0);
+                let version = record.version.unwrap_or(1);
 
                 if version == expected_version {
                     // This version is continuous
@@ -167,9 +174,9 @@ impl MvccResolver {
             return false; // Both expired, doesn't matter
         }
 
-        // Compare versions
-        let v1 = record1.version;
-        let v2 = record2.version;
+        // Compare versions - treat None as version 1
+        let v1 = record1.version.unwrap_or(1);
+        let v2 = record2.version.unwrap_or(1);
 
         if v1 > v2 {
             true

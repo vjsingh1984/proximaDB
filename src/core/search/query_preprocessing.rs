@@ -5,7 +5,7 @@
 //!
 //! Expected Performance Improvement: 15-25% reduction in repeated computation
 
-use crate::compute::distance_computation::DistanceMetric;
+use crate::proto::proximadb_v1::DistanceMetric;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::QuantizationLevel;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;

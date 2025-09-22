@@ -217,6 +217,13 @@ cargo check --all-targets  # Faster compilation check without generating binarie
 - `proximadb-server`: Main database server (src/bin/server.rs)
 - `proximadb-bench`: Benchmarking tool (src/bin/proximadb-bench-consolidated.rs)
 
+### Helper Scripts (scripts/)
+- `build_and_test.sh`: Full build and test pipeline
+- `build_minimal.sh`: Minimal build for quick iteration
+- `build-docker.sh`: Docker image build script
+- `consolidate_docs.sh`: Documentation consolidation utility
+- `test-integration.sh`: Run integration test suite
+
 ### Available Benchmark Suites (benches/)
 - `bench_01_core_distance`: Core distance metrics performance
 - `bench_02_hardware_simd`: SIMD hardware acceleration tests
@@ -234,8 +241,10 @@ cargo check --all-targets  # Faster compilation check without generating binarie
 # Fast iteration cycle for development
 cargo check --all-targets  # Quick compilation check without binaries
 cargo build 2>&1 | tee current_error.log  # Build with error logging
-cargo test --lib compute::quantization --no-capture  # Test specific modules
+cargo test --lib compute::quantization -- --nocapture  # Test specific modules
+cargo test testname -- --exact --nocapture  # Run single test exactly
 cargo clippy -- -D warnings  # Lint check
+cargo build --message-format=short  # Concise error output
 ```
 
 ### Running Tests
@@ -268,6 +277,7 @@ cargo test --lib compute::quantization  # Test specific module
 # Single test with debug output
 RUST_LOG=debug cargo test test_name -- --nocapture
 cargo test test_name -- --exact --nocapture  # Exact test name matching
+cargo test --no-fail-fast  # Run all tests even if some fail
 
 # Run specific benchmark
 cargo bench --bench bench_01_core_distance
@@ -502,7 +512,7 @@ The caching system has been recently unified (`src/storage/cache/`):
 
 ### When Fixing Compilation Errors
 1. **Check current_error.log**: Always review the latest compilation log with `cargo build 2>&1 | tee current_error.log`
-2. **Recent Development Focus**: The codebase has undergone systematic compilation error fixes and engine completion as of September 2025
+2. **Recent Development Focus**: The codebase has undergone systematic test failure fixes and performance optimization as of December 2024
 3. **Common Error Patterns**:
    - `struct import 'AxisConfig' is private`: Use public interfaces from index::axis modules
    - `this function takes 1 argument but 0 arguments were supplied`: Check UnifiedDistanceCompute requires DistanceMetric parameter
@@ -518,6 +528,26 @@ The caching system has been recently unified (`src/storage/cache/`):
    cargo check --all-targets 2>&1 | head -20  # Quick check first errors
    cargo build --message-format=short  # Concise error output
    cargo fix --allow-dirty  # Auto-fix some common issues
+   ```
+
+### Common Development Patterns
+1. **Adding a New Storage Engine**:
+   - Implement `UnifiedStorageEngine` trait in `src/storage/engines/impls/`
+   - Use `compute::quantization::unified` for quantization
+   - Use `UnifiedCachingFilesystem` for all I/O operations
+   - Add engine to factory in `src/storage/engines/factory.rs`
+
+2. **Modifying API Endpoints**:
+   - Update proto definitions in `proto/proximadb.proto`
+   - Run `cargo build` to regenerate proto types
+   - Implement handlers in `src/api_handlers/`
+   - Keep internal types separate from proto types
+
+3. **Running Tests After Changes**:
+   ```bash
+   cargo test --lib module_name  # Test specific module first
+   cargo test --no-fail-fast     # See all failures at once
+   cargo test 2>&1 | tee test_error.log  # Capture output for analysis
    ```
 
 ### Documentation Requirements
@@ -568,6 +598,10 @@ The caching system has been recently unified (`src/storage/cache/`):
 - `config/config.toml`: Main server configuration file
 - `src/storage/cache/`: Unified cache system with VectorCache specialization
 - `src/network/multi_server.rs`: Concurrent REST and gRPC server implementation
+- `test_error.log`: Current test failure log (used for debugging)
+
+### Files to Ignore
+- `available_domains.txt`: Auto-generated domain discovery file (continuously updated by background process)
 
 ### Health Checks and API Testing
 ```bash
@@ -598,7 +632,7 @@ open http://localhost:5678/dashboard
 
 ### Performance Optimization
 
-### Current Benchmark Results (September 2025)
+### Current Benchmark Results (December 2024)
 ProximaDB delivers exceptional performance with hardware-accelerated SIMD optimization:
 
 | Dimension | Metric | Throughput (ops/sec) | Latency (μs) |
@@ -662,17 +696,21 @@ python test_grpc_simple.py
 
 ## Recent Development Context
 
-### Current Development Status (September 2025)
+### Current Development Status (December 2024)
 - **Active Branch**: Working on `cleanup_demo` branch (main branch is `main`)
-- **Recent Focus**: Cache system unification and engine completion
-- **Modified Files**: Cache modules, storage engines, multi-server implementation
-- **Recent Commits**: Cache integration fixes, Mermaid syntax corrections, documentation improvements
+- **Recent Focus**: Test failure fixes, build optimization, benchmark improvements
+- **Key Fixes Applied**:
+  - Systematically resolved all test failures from test_error.log
+  - Fixed storage engine bugs in query vector lookup and VIPER schema
+  - Updated Criterion benchmark configuration for better control
+  - Resolved graph and event_log module compilation errors
 
 ### Key Recent Changes
+- Test infrastructure improvements and systematic error resolution
+- Benchmark suite optimization with consistent Criterion settings
+- Storage engine stability fixes across all 7 engines
+- Documentation compliance with CLAUDE.md specifications
 - Unified cache system implementation in `src/storage/cache/`
-- VectorCache specialization added for optimized vector operations
-- All storage engines now integrated with CacheOrchestrator
-- Documentation migrated to AsciiDoc format with Mermaid diagrams
 
 ## Troubleshooting
 
