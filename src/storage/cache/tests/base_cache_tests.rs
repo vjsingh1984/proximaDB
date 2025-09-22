@@ -115,8 +115,8 @@ async fn test_metrics_recording() {
     let _ = cache.get_with_hooks(&key1).await; // Hit
     let _ = cache.get_with_hooks(&key2).await; // Miss
 
-    let metrics = cache.metrics().snapshot();
-    assert_eq!(metrics.total_gets, 2);
-    assert_eq!(metrics.misses, 1);
-    assert!(metrics.l1_hits > 0);
+    let snapshot = cache.metrics().get_snapshot().await;
+    assert_eq!(snapshot.total_operations, 2);
+    assert_eq!(snapshot.cache_misses, 1);
+    assert!(snapshot.cache_hits > 0);
 }

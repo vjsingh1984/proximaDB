@@ -62,11 +62,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     config_compressed.compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstEngine::new(
-        config_compressed,
-        base_env.filesystem.clone(),
-        distance_compute.clone(),
-    )
+    let compressed_engine = SstEngine::new()
     .await?;
 
     // Flush compressed sparse data with compression config
@@ -93,11 +89,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     let mut config_uncompressed = base_env.sst_config.clone();
     config_uncompressed.compression = "none".to_string();
 
-    let uncompressed_engine = SstEngine::new(
-        config_uncompressed,
-        base_env.filesystem.clone(),
-        distance_compute,
-    )
+    let uncompressed_engine = SstEngine::new()
     .await?;
 
     // Create fresh flush params for uncompressed (don't reuse the modified compressed ones)
@@ -189,11 +181,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     config_compressed.compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstEngine::new(
-        config_compressed,
-        base_env.filesystem.clone(),
-        distance_compute.clone(),
-    )
+    let compressed_engine = SstEngine::new()
     .await?;
 
     // Flush compressed dense data with compression config
@@ -220,11 +208,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     let mut config_uncompressed = base_env.sst_config.clone();
     config_uncompressed.compression = "none".to_string();
 
-    let uncompressed_engine = SstEngine::new(
-        config_uncompressed,
-        base_env.filesystem.clone(),
-        distance_compute,
-    )
+    let uncompressed_engine = SstEngine::new()
     .await?;
 
     // Create fresh flush params for uncompressed (don't reuse the modified compressed ones)

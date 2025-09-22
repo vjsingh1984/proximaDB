@@ -5,7 +5,7 @@ mod tests {
     use super::super::*;
     use crate::core::hardware_capabilities::get_hardware_capabilities;
     use std::time::Instant;
-    use tracing::{debug, error, info};
+    use tracing::debug;
 
     #[test]
     fn benchmark_simd_performance() {

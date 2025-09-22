@@ -91,7 +91,7 @@ async fn test_base_cache_trait_template_method() {
             }
         }
 
-        fn metrics(&self) -> &CacheMetrics {
+        fn metrics(&self) -> &UnifiedMetricsCollector {
             &self.metrics
         }
     }
@@ -181,9 +181,9 @@ async fn test_eviction_policies() {
     tracker.track_access("key1".to_string()).await;
     tracker.track_access("key2".to_string()).await;
 
-    // Verify tracker records access patterns
-    let stats = tracker.get_access_stats("key1").await;
-    assert!(stats.is_some());
+    // Verify tracker records access patterns - using LRU items as get_access_stats not available
+    let lru_items = tracker.get_lru_items(2).await;
+    assert!(!lru_items.is_empty());
 }
 
 /// Test storage backends
@@ -220,11 +220,11 @@ async fn test_metrics_collection() {
 
     // Record some operations
     use crate::storage::traits::MetricsOperationType;
-    metrics.record(MetricsOperationType::CacheHit, true, None);
-    metrics.record(MetricsOperationType::CacheHit, true, None);
-    metrics.record(MetricsOperationType::CacheHit, true, None);
-    metrics.record(MetricsOperationType::CacheMiss, false, None);
-    metrics.record(MetricsOperationType::CacheMiss, false, None);
+    metrics.record(MetricsOperationType::CacheHit, 1, true, None);
+    metrics.record(MetricsOperationType::CacheHit, 1, true, None);
+    metrics.record(MetricsOperationType::CacheHit, 1, true, None);
+    metrics.record(MetricsOperationType::CacheMiss, 1, false, None);
+    metrics.record(MetricsOperationType::CacheMiss, 1, false, None);
 
     // Check hit rate
     let snapshot = metrics.get_snapshot().await;
@@ -237,8 +237,8 @@ async fn test_metrics_collection() {
     assert_eq!(snapshot.cache_misses, 2);
 
     // Record additional operations to test latency
-    metrics.record(MetricsOperationType::Read, true, Some(1));
-    metrics.record(MetricsOperationType::Write, true, Some(3));
+    metrics.record(MetricsOperationType::Read, 1, true, Some(100));
+    metrics.record(MetricsOperationType::Write, 3, true, Some(200));
     // Check that we have recorded some latency
     let snapshot = metrics.get_snapshot().await;
     assert!(snapshot.total_operations > 0);

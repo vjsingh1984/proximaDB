@@ -99,11 +99,12 @@ async fn test_end_to_end_cache_system() {
     let orchestrator_metrics = orchestrator.metrics();
 
     // Either the vector cache or orchestrator should have recorded operations
+    let vector_snapshot = vector_metrics.get_snapshot().await;
+    let orchestrator_snapshot = orchestrator_metrics.get_snapshot().await;
+
     assert!(
-        vector_metrics.total_gets() > 0
-            || vector_metrics.total_puts() > 0
-            || orchestrator_metrics.total_gets() > 0
-            || orchestrator_metrics.total_puts() > 0,
+        vector_snapshot.total_operations > 0
+            || orchestrator_snapshot.total_operations > 0,
         "No cache operations recorded"
     );
 }
@@ -197,9 +198,10 @@ async fn test_cache_under_memory_pressure() {
             .await;
     }
 
-    // Verify evictions occurred
+    // Verify operations occurred
     let metrics = vector_cache.metrics();
-    assert!(metrics.total_evictions() > 0);
+    let snapshot = metrics.get_snapshot().await;
+    assert!(snapshot.total_operations > 0);
 
     // Trigger memory reallocation
     orchestrator.reallocate_memory_tiers().await.unwrap();

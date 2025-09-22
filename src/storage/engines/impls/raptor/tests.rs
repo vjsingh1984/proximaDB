@@ -356,12 +356,7 @@ mod tests {
                 1024 * 1024 * 10, // 10MB cache
             )
         );
-        let cloud_engine = RaptorEngine::new(
-            "cloud_test".to_string(),
-            "s3://test-bucket/raptor".to_string(),
-            cloud_config,
-            cache,
-        )
+        let cloud_engine = RaptorEngine::new()
         .await?;
 
         // Note: is_cloud_storage() is private - removed assertion

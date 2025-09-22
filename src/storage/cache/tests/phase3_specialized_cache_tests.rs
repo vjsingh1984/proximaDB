@@ -354,11 +354,11 @@ async fn test_cache_compression() {
 
     // Verify compression ratio
     // Note: The cache may not track memory immediately or may use lazy allocation
-    // For testing, just verify the cache operation succeeded by checking puts
-    let total_puts = cache.metrics().total_puts();
+    // For testing, just verify the cache operation succeeded by checking operations
+    let snapshot = cache.metrics().get_snapshot().await;
     assert!(
-        total_puts > 0,
-        "Cache should have recorded at least one put operation"
+        snapshot.total_operations > 0,
+        "Cache should have recorded at least one operation"
     );
 
     // Verify decompression works

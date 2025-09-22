@@ -269,11 +269,12 @@ async fn test_cache_orchestrator_integration() {
     let orchestrator_metrics = orchestrator.metrics();
 
     // Either the vector cache or orchestrator should have recorded operations
+    let vector_snapshot = vector_metrics.get_snapshot().await;
+    let orchestrator_snapshot = orchestrator_metrics.get_snapshot().await;
+
     assert!(
-        vector_metrics.total_gets() > 0
-            || vector_metrics.total_puts() > 0
-            || orchestrator_metrics.total_gets() > 0
-            || orchestrator_metrics.total_puts() > 0,
+        vector_snapshot.total_operations > 0
+            || orchestrator_snapshot.total_operations > 0,
         "No cache operations recorded"
     );
 }
