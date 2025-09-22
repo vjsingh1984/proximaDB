@@ -480,13 +480,7 @@ impl SharedServices {
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
         let sst_engine = Arc::new(
-            crate::storage::engines::impls::sst::SstStorage::new(
-                storage_config.sst_config.clone().unwrap_or_default(),
-                filesystem_factory.clone(),
-                Arc::new(
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-                ),
-            )
+            crate::storage::engines::impls::sst::SstEngine::new()
             .await?,
         );
         debug!("✅ SharedServices::new - SST engine created successfully");

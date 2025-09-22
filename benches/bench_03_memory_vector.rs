@@ -4,6 +4,9 @@
 //! 1. Original approach with Vec<f32> cloning
 //! 2. Optimized approach with Arc<Vec<f32>> sharing
 
+mod common;
+use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,9 +31,11 @@ struct OptimizedSearchResult {
 
 /// Simulate creating search results from a batch of vectors
 fn bench_original_result_creation(c: &mut Criterion) {
+    print_system_info("Memory Vector Optimization");
     let mut group = c.benchmark_group("result_creation");
 
-    for dimension in [128, 512, 1536].iter() {
+    // Use subset of standard dimensions for memory tests
+    for dimension in [384, 768, 1536].iter() {
         let vector = vec![0.1_f32; *dimension];
         let metadata: HashMap<String, serde_json::Value> = HashMap::new();
 
@@ -75,8 +80,9 @@ fn bench_original_result_creation(c: &mut Criterion) {
 fn bench_batch_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_processing");
 
-    for batch_size in [100, 1000, 10000].iter() {
-        let dimension = 512;
+    // Use standard batch sizes
+    for batch_size in STANDARD_BATCH_SIZES {
+        let dimension = 768; // Use BERT dimension
         let vectors: Vec<Vec<f32>> = (0..*batch_size)
             .map(|i| vec![i as f32 / 100.0; dimension])
             .collect();
@@ -173,8 +179,8 @@ fn bench_memory_pressure(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_pressure");
 
     // Simulate a large result set
-    let num_results = 10000;
-    let dimension = 512;
+    let num_results = 5000; // Use standard large batch size
+    let dimension = 768; // BERT dimension
 
     group.bench_function("original_memory", |b| {
         b.iter(|| {

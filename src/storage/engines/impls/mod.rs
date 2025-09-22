@@ -16,6 +16,6 @@ pub use helix::HelixEngine;
 pub use nova::NovaEngine;
 pub use prism::PrismEngine;
 pub use raptor::RaptorEngine;
-pub use sst::SstStorage;
+pub use sst::SstEngine;
 pub use swift::SwiftEngine;
 pub use viper::ViperEngine;

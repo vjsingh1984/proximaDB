@@ -22,7 +22,7 @@ use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::{
     VectorRecord, StorageEngine, SqlValue, sql_value,
 };
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -117,7 +117,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     let distance_compute = std::sync::Arc::new(
         proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::default()
     );
-    let sst_storage = proximadb::storage::engines::impls::sst::SstStorage::new(
+    let sst_storage = proximadb::storage::engines::impls::sst::SstEngine::new(
         config,
         env.filesystem.clone(),
         distance_compute,
@@ -178,7 +178,7 @@ async fn test_sst_engine_flush_with_compression_integration() -> anyhow::Result<
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let engine = SstStorage::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+    let engine = SstEngine::new(sst_config, env.filesystem.clone(), distance_compute).await?;
 
     // Create test vectors
     let vectors = env.create_test_vectors_with_dimension(1000, 256);
@@ -233,7 +233,7 @@ async fn test_sst_compaction_preserves_compression_integrity() -> anyhow::Result
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let engine = SstStorage::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+    let engine = SstEngine::new(sst_config, env.filesystem.clone(), distance_compute).await?;
 
     info!("🚀 Testing SST compaction with compression integrity");
 
@@ -332,7 +332,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let engine = SstStorage::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+    let engine = SstEngine::new(sst_config, env.filesystem.clone(), distance_compute).await?;
 
     // Create diverse test data - sparse and dense vectors
     let mut all_vectors = Vec::new();
@@ -468,7 +468,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         .compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstStorage::new(
+    let compressed_engine = SstEngine::new(
         config_compressed,
         env_compressed.filesystem.clone(),
         distance_compute.clone(),
@@ -496,7 +496,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     config_uncompressed.compression = "none".to_string();
     config_uncompressed.compression_level = 0;
 
-    let uncompressed_engine = SstStorage::new(
+    let uncompressed_engine = SstEngine::new(
         config_uncompressed,
         env_uncompressed.filesystem.clone(),
         distance_compute,
@@ -612,7 +612,7 @@ async fn test_all_compression_algorithms_sst() -> anyhow::Result<()> {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
-        let engine = SstStorage::new(sst_config, env.filesystem.clone(), distance_compute).await?;
+        let engine = SstEngine::new(sst_config, env.filesystem.clone(), distance_compute).await?;
 
         // Create test vectors with good compression patterns
         let vectors = create_compressible_test_vectors(&env, 100, 256, algo);
@@ -704,7 +704,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
         let engine =
-            SstStorage::new(config, env.filesystem.clone(), distance_compute.clone()).await?;
+            SstEngine::new(config, env.filesystem.clone(), distance_compute.clone()).await?;
 
         let start = std::time::Instant::now();
 

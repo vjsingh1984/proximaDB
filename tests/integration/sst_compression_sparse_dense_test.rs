@@ -14,7 +14,7 @@ use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::StorageEngine;
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::collections::HashMap;
@@ -62,7 +62,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     config_compressed.compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstStorage::new(
+    let compressed_engine = SstEngine::new(
         config_compressed,
         base_env.filesystem.clone(),
         distance_compute.clone(),
@@ -93,7 +93,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     let mut config_uncompressed = base_env.sst_config.clone();
     config_uncompressed.compression = "none".to_string();
 
-    let uncompressed_engine = SstStorage::new(
+    let uncompressed_engine = SstEngine::new(
         config_uncompressed,
         base_env.filesystem.clone(),
         distance_compute,
@@ -189,7 +189,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     config_compressed.compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstStorage::new(
+    let compressed_engine = SstEngine::new(
         config_compressed,
         base_env.filesystem.clone(),
         distance_compute.clone(),
@@ -220,7 +220,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     let mut config_uncompressed = base_env.sst_config.clone();
     config_uncompressed.compression = "none".to_string();
 
-    let uncompressed_engine = SstStorage::new(
+    let uncompressed_engine = SstEngine::new(
         config_uncompressed,
         base_env.filesystem.clone(),
         distance_compute,

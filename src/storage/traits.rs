@@ -529,9 +529,15 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
     /// Retrieve a specific vector by ID from storage (required)
     /// This method should search across all storage layers (memtable, SSTables, Parquet files)
+    ///
+    /// # Parameters
+    /// - `collection_id`: The collection to search in
+    /// - `base_path`: The base storage path (from collection.storage_assignment.base_location)
+    /// - `vector_id`: The ID of the vector to retrieve
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>>;
 
@@ -1242,6 +1248,72 @@ pub trait UnifiedStorageEngine: Send + Sync {
             warnings,
             metrics: stats.engine_specific,
         })
+    }
+
+    // =============================================================================
+    // COLLECTION HELPERS - Common collection and path utilities
+    // =============================================================================
+
+    /// Extract collection ID from parameters or collection config
+    ///
+    /// This helper method provides a consistent way for all engines to get the collection ID
+    /// from either explicit parameters or the collection configuration.
+    fn get_collection_id_from_params(&self, params: &FlushParameters) -> Result<String> {
+        params.get_collection_id()
+    }
+
+    /// Extract collection ID from compaction parameters or collection config
+    fn get_collection_id_from_compaction_params(&self, params: &CompactionParameters) -> Result<String> {
+        params.get_collection_id()
+    }
+
+    /// Construct data directory path from collection config
+    ///
+    /// Returns: {base_location}/{collection_id}/data
+    ///
+    /// This method provides a unified way for all engines to construct the data directory
+    /// path without duplicating logic. The path follows the standard pattern:
+    /// - {base_location} comes from collection.storage_assignment.base_location
+    /// - {collection_id} is the collection identifier
+    /// - /data is the standard data subdirectory
+    fn get_data_dir_from_collection_config(&self, collection_config: &Collection) -> Result<String> {
+        let collection_id = &collection_config.id;
+
+        if let Some(ref storage_assignment) = collection_config.storage_assignment {
+            let base_location = &storage_assignment.base_location;
+            Ok(format!("{}/{}/data", base_location, collection_id))
+        } else {
+            Err(anyhow::anyhow!(
+                "No storage assignment found in collection config for collection '{}'",
+                collection_id
+            ))
+        }
+    }
+
+    /// Construct data directory path from flush parameters
+    ///
+    /// Convenience method that extracts collection config from FlushParameters
+    /// and constructs the data directory path.
+    fn get_data_dir_from_flush_params(&self, params: &FlushParameters) -> Result<String> {
+        if let Some(ref collection_config) = params.collection_config {
+            self.get_data_dir_from_collection_config(collection_config)
+        } else {
+            // Fallback to helper methods for backward compatibility
+            params.get_data_dir()
+        }
+    }
+
+    /// Construct data directory path from compaction parameters
+    ///
+    /// Convenience method that extracts collection config from CompactionParameters
+    /// and constructs the data directory path.
+    fn get_data_dir_from_compaction_params(&self, params: &CompactionParameters) -> Result<String> {
+        if let Some(ref collection_config) = params.collection_config {
+            self.get_data_dir_from_collection_config(collection_config)
+        } else {
+            // Fallback to helper methods for backward compatibility
+            params.get_data_dir()
+        }
     }
 
     // =============================================================================
@@ -1964,6 +2036,37 @@ impl FlushParameters {
         self
     }
 
+    /// Get collection ID from explicit field or collection_config
+    pub fn get_collection_id(&self) -> Result<String> {
+        if let Some(ref collection_id) = self.collection_id {
+            Ok(collection_id.clone())
+        } else if let Some(ref collection_config) = self.collection_config {
+            Ok(collection_config.id.clone())
+        } else {
+            Err(anyhow::anyhow!("No collection_id provided and no collection_config available"))
+        }
+    }
+
+    /// Get base path from collection_config.storage_assignment
+    pub fn get_base_path(&self) -> Result<String> {
+        if let Some(ref collection_config) = self.collection_config {
+            if let Some(ref storage_assignment) = collection_config.storage_assignment {
+                Ok(storage_assignment.base_location.clone())
+            } else {
+                Err(anyhow::anyhow!("No storage assignment found in collection config"))
+            }
+        } else {
+            Err(anyhow::anyhow!("No collection_config available to extract base_path"))
+        }
+    }
+
+    /// Get data directory path: {base_path}/{collection_id}/data
+    pub fn get_data_dir(&self) -> Result<String> {
+        let collection_id = self.get_collection_id()?;
+        let base_path = self.get_base_path()?;
+        Ok(format!("{}/{}/data", base_path, collection_id))
+    }
+
     pub fn hint(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.hints.insert(key.into(), value);
         self
@@ -2004,6 +2107,37 @@ impl CompactionParameters {
     pub fn hint(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.hints.insert(key.into(), value);
         self
+    }
+
+    /// Get collection ID from explicit field or collection_config
+    pub fn get_collection_id(&self) -> Result<String> {
+        if let Some(ref collection_id) = self.collection_id {
+            Ok(collection_id.clone())
+        } else if let Some(ref collection_config) = self.collection_config {
+            Ok(collection_config.id.clone())
+        } else {
+            Err(anyhow::anyhow!("No collection_id provided and no collection_config available"))
+        }
+    }
+
+    /// Get base path from collection_config.storage_assignment
+    pub fn get_base_path(&self) -> Result<String> {
+        if let Some(ref collection_config) = self.collection_config {
+            if let Some(ref storage_assignment) = collection_config.storage_assignment {
+                Ok(storage_assignment.base_location.clone())
+            } else {
+                Err(anyhow::anyhow!("No storage assignment found in collection config"))
+            }
+        } else {
+            Err(anyhow::anyhow!("No collection_config available to extract base_path"))
+        }
+    }
+
+    /// Get data directory path: {base_path}/{collection_id}/data
+    pub fn get_data_dir(&self) -> Result<String> {
+        let collection_id = self.get_collection_id()?;
+        let base_path = self.get_base_path()?;
+        Ok(format!("{}/{}/data", base_path, collection_id))
     }
 }
 

@@ -7,6 +7,9 @@
 //! - Sparse vs dense vector operations
 //! - Batch processing optimizations
 
+mod common;
+use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use proximadb::core::search::results::OptimizedSearchRecord;
 use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord};
@@ -98,10 +101,12 @@ fn create_optimized_record(id: &str, vector: Vec<f32>, score: f32) -> OptimizedS
 
 /// Benchmark record cloning with different sizes and sparsity
 fn bench_record_cloning(c: &mut Criterion) {
+    print_system_info("System Optimization Benchmarks");
     let mut group = c.benchmark_group("record_cloning");
     group.measurement_time(Duration::from_secs(10));
 
-    let dimensions = vec![128, 512, 768, 1536];
+    // Use subset of standard dimensions for cloning tests
+    let dimensions = vec![384, 768, 1536];  // MiniLM, BERT, OpenAI
     let sparsities = vec![0.0, 0.3, 0.7, 0.9];
 
     for dimension in dimensions {
@@ -446,9 +451,10 @@ fn bench_batch_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_processing");
     group.measurement_time(Duration::from_secs(10));
 
-    let dimension = 512;
-    let total_vectors = 10000;
-    let batch_sizes = vec![1, 10, 50, 100, 500, 1000];
+    let dimension = 768;  // BERT dimension
+    let total_vectors = 5000;  // Use standard large batch size
+    // Use standard batch sizes plus small sizes for comparison
+    let batch_sizes = vec![10, 250, 1000, 5000];
 
     let all_vectors = generate_test_vectors(total_vectors, dimension, 0.1);
 

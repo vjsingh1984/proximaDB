@@ -106,7 +106,7 @@ impl Default for UnifiedSearchConfig {
     }
 }
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
-use crate::storage::engines::impls::sst::SstStorage;
+use crate::storage::engines::impls::sst::SstEngine;
 
 /// Optional debug/explain hints for vector planning and pruning.
 #[derive(Debug, Clone, Default)]
@@ -123,7 +123,7 @@ pub struct SearchPlanHints {
 /// Updated Vector Operations Service using consolidated optimizer
 pub struct VectorOperationsService {
     /// Storage engine - using concrete type for now due to trait object safety
-    storage_engine: Arc<SstStorage>,
+    storage_engine: Arc<SstEngine>,
 
     /// WAL/Memtable for unflushed vectors (required for two-stage search)
     wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
@@ -153,7 +153,7 @@ pub struct VectorOperationsService {
 impl VectorOperationsService {
     /// Create service with a shared context for cross-cutting concerns
     pub fn new_with_context(
-        storage_engine: Arc<SstStorage>,
+        storage_engine: Arc<SstEngine>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
         axis_index_manager: Arc<crate::index::AxisManager>,
         collection_service: Arc<crate::services::collection::manager::CollectionService>,
@@ -410,7 +410,7 @@ impl VectorOperationsService {
     }
     /// Create new service with consolidated optimizer and WAL manager for two-stage search
     pub fn new(
-        storage_engine: Arc<SstStorage>,
+        storage_engine: Arc<SstEngine>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
         axis_index_manager: Arc<crate::index::AxisManager>,
         collection_service: Arc<crate::services::collection::manager::CollectionService>,

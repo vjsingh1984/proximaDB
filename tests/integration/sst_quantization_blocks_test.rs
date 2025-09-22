@@ -8,7 +8,7 @@ use proximadb::compute::quantization::{
 };
 use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::VectorRecord;
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use rand::rngs::StdRng;
@@ -62,7 +62,7 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
         let mut sst_storage =
-            SstStorage::new(sst_config.clone(), filesystem, distance_compute).await?;
+            SstEngine::new(sst_config.clone(), filesystem, distance_compute).await?;
 
         // Calculate how many vectors fit per block
         let vector_bytes = dimension * 4; // FP32
@@ -231,7 +231,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     let distance_compute = Arc::new(proximadb::compute::distance_computation::UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let mut sst_storage = SstStorage::new(sst_config, filesystem, distance_compute).await?;
+    let mut sst_storage = SstEngine::new(sst_config, filesystem, distance_compute).await?;
 
     // Flush with vectors
     let flush_params = FlushParameters {

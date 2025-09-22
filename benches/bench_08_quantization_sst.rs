@@ -23,8 +23,7 @@ fn init_hardware() {
 
 use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb::compute::quantization::unified::{
-    InMemoryCodebookStore, ProductQuantization, UnifiedQuantizationEngine,
-    UnifiedQuantizationLevel,
+    InMemoryCodebookStore, UnifiedQuantizationEngine,
 };
 use proximadb::compute::quantization::{
     StorageQuantizationConfig, StorageQuantizationEngine,
@@ -215,7 +214,7 @@ fn bench_pq_distance_tables(c: &mut Criterion) {
 
         // Setup: Create engine with PQ configuration
         let (engine, quantized) = futures::executor::block_on(async {
-            let mut config = StorageQuantizationConfig::default();
+            let config = StorageQuantizationConfig::default();
             // Note: QuantizationLevelType not available, using default config
             // config.primary_level = Some(UnifiedQuantizationLevel {
             //     level_type: Some(QuantizationLevelType::Pq(ProductQuantization {

@@ -2,7 +2,7 @@ use crate::core::{SstConfig, StorageConfig, String, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
-    engines::impls::sst::{Compaction, SstStorage},
+    engines::impls::sst::{Compaction, SstEngine},
     persistence::disk_manager::DiskManager,
     traits::InternalCollectionProvider,
 };
@@ -64,7 +64,7 @@ fn calculate_dot_product(a: &[f32], b: &[f32]) -> f32 {
 
 pub struct StorageEngine {
     config: StorageConfig,
-    sst_storages: Arc<DashMap<String, Arc<SstStorage>>>,
+    sst_storages: Arc<DashMap<String, Arc<SstEngine>>>,
     disk_manager: Arc<DiskManager>,
     write_ahead_log_manager: Arc<WriteAheadLogManager>,
     axis_index_manager: Arc<AxisManager>,
@@ -80,7 +80,7 @@ pub struct StorageEngine {
 
 impl StorageEngine {
     // 🔴 REMOVED - SST is now collection-agnostic singleton pattern
-    // fn get_sst_storage(&self) -> Arc<SstStorage> {
+    // fn get_sst_storage(&self) -> Arc<SstEngine> {
     //     self.sst_storage.clone()
     // }
     /// Get storage configuration
@@ -185,16 +185,10 @@ impl StorageEngine {
             .clone()
             .unwrap_or_else(|| SstConfig::default());
         let _sst_storage = Arc::new(
-            SstStorage::new(
-                sst_config_for_storage,
-                filesystem.clone(),
-                Arc::new(
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-                ),
-            )
+            SstEngine::new()
             .await
             .map_err(|e| {
-                crate::core::error::StorageError::SstStorage(format!(
+                crate::core::error::StorageError::SstEngine(format!(
                     "Failed to create SST storage: {}",
                     e
                 ))
@@ -547,7 +541,7 @@ impl StorageEngine {
                 }
                 Err(e) => {
                     tracing::error!("❌ Failed to get collections from metadata: {}", e);
-                    return Err(crate::core::StorageError::SstStorage(format!(
+                    return Err(crate::core::StorageError::SstEngine(format!(
                         "Failed to load collections from metadata: {}",
                         e
                     )));

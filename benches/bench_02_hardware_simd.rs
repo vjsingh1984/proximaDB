@@ -8,10 +8,11 @@
 //! Benchmarks for SIMD-accelerated distance computation with realistic embeddings
 
 mod common;
+use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::{
-    DistanceMetric, DistanceMode, UnifiedDistanceCompute,
+    DistanceMetric, UnifiedDistanceCompute,
 };
 use proximadb::core::hardware_capabilities;
 use common::{EmbeddingGenerator, EmbeddingModel};
@@ -25,19 +26,20 @@ fn generate_embedding_vectors(count: usize, dimension: usize, model: EmbeddingMo
 
 /// Benchmark different vector dimensions
 fn benchmark_dimensions(c: &mut Criterion) {
-    // Initialize global hardware capabilities
+    // Print system info and initialize hardware
+    print_system_info("Hardware SIMD Benchmarks");
     let _ = hardware_capabilities::initialize_hardware_capabilities_default();
     let mut group = c.benchmark_group("simd_distance_dimensions");
 
-    // Test different dimensions with appropriate embedding models
-    let test_configs = vec![
-        (64, EmbeddingModel::Normalized),
-        (128, EmbeddingModel::Normalized),
-        (256, EmbeddingModel::Normalized),
-        (512, EmbeddingModel::Normalized),
-        (768, EmbeddingModel::Bert),      // BERT embeddings
-        (1536, EmbeddingModel::OpenAIAda), // OpenAI embeddings
-    ];
+    // Test standard dimensions with appropriate embedding models
+    let test_configs: Vec<(usize, EmbeddingModel)> = STANDARD_DIMENSIONS.iter()
+        .map(|&dim| match dim {
+            384 => (dim, EmbeddingModel::Normalized),   // MiniLM
+            768 => (dim, EmbeddingModel::Bert),          // BERT
+            1536 => (dim, EmbeddingModel::OpenAIAda),    // OpenAI Ada
+            _ => (dim, EmbeddingModel::Normalized),      // Others
+        })
+        .collect();
 
     for (dimension, model) in test_configs {
         let vec_a = generate_embedding_vectors(1, dimension, model)[0].clone();
@@ -95,8 +97,8 @@ fn benchmark_batch_processing(c: &mut Criterion) {
     let model = EmbeddingModel::Bert;
     let query = generate_embedding_vectors(1, dimension, model)[0].clone();
 
-    // Test different batch sizes
-    for batch_size in [100, 500, 1000, 5000, 10000].iter() {
+    // Use standard batch sizes
+    for batch_size in STANDARD_BATCH_SIZES {
         let vectors = generate_embedding_vectors(*batch_size, dimension, model);
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
@@ -124,7 +126,7 @@ fn benchmark_batch_processing(c: &mut Criterion) {
             BenchmarkId::new("gpu_enabled", batch_size),
             batch_size,
             |b, _| {
-                let mut calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+                let calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
                 // GPU acceleration enabled by default in UnifiedDistanceCompute
                 b.iter(|| {
                     let results = calculator.calculate_distance_batch(
@@ -153,7 +155,7 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("hardware_backends");
 
-    let dimension = 1024; // Large dimension to show SIMD benefits
+    let dimension = 1536; // OpenAI embedding dimension to show SIMD benefits
     let vec_a = generate_embedding_vectors(1, dimension, EmbeddingModel::Normalized)[0].clone();
     let vec_b = generate_embedding_vectors(1, dimension, EmbeddingModel::Normalized)[0].clone();
 
@@ -161,7 +163,7 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
 
     // CPU backend
     group.bench_function("cpu", |b| {
-        let mut calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         // CPU-only mode: create with CPU backend
         b.iter(|| {
             let result = calc.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);
@@ -171,7 +173,7 @@ fn benchmark_hardware_backends(c: &mut Criterion) {
 
     // GPU backend (if available)
     group.bench_function("gpu", |b| {
-        let mut calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
         // GPU acceleration enabled by default
         b.iter(|| {
             let result = calc.calculate_distance(&vec_a, &vec_b, &DistanceMetric::Cosine);

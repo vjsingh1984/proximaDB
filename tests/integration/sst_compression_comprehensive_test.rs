@@ -15,7 +15,7 @@ use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::StorageEngine;
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -98,7 +98,7 @@ async fn test_compression_for_data(
     config_uncompressed.compression_level = 0;
     config_uncompressed.block_size_kb = 256; // Use 256KB blocks for better quantization clustering
 
-    let uncompressed_engine = SstStorage::new(
+    let uncompressed_engine = SstEngine::new(
         config_uncompressed,
         env_uncompressed.filesystem.clone(),
         distance_compute.clone(),
@@ -139,7 +139,7 @@ async fn test_compression_for_data(
     config_compressed.compression_level = level;
     config_compressed.block_size_kb = 256; // Use 256KB blocks to see vector grouping with quantization
 
-    let compressed_engine = SstStorage::new(
+    let compressed_engine = SstEngine::new(
         config_compressed,
         env_compressed.filesystem.clone(),
         distance_compute,

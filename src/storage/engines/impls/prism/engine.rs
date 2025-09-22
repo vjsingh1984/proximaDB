@@ -189,8 +189,15 @@ pub struct PrismEngine {
 }
 
 impl PrismEngine {
-    /// Create a new PRISM engine (async initialization)
-    pub async fn new(config: Config) -> Result<Self> {
+    /// Create a new PRISM engine instance (stateless)
+    /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    pub async fn new() -> Result<Self> {
+        let config = Config::default();
+        Self::new_with_config(config).await
+    }
+
+    /// Create PRISM engine with specific config (internal use)
+    pub async fn new_with_config(config: Config) -> Result<Self> {
         Self::new_with_bandwidth_optimizer(config, None).await
     }
 
@@ -1072,10 +1079,7 @@ impl UnifiedStorageEngine for PrismEngine {
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow!("Collection ID required for flush"))?;
+        let collection_id = self.get_collection_id_from_params(params)?;
         let start_time = std::time::Instant::now();
 
         info!(
@@ -1134,10 +1138,7 @@ impl UnifiedStorageEngine for PrismEngine {
     }
 
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow!("Collection ID required for compaction"))?;
+        let collection_id = self.get_collection_id_from_compaction_params(params)?;
         let start_time = std::time::Instant::now();
 
         info!("PRISM compaction: collection={}", collection_id);
@@ -1185,18 +1186,44 @@ impl UnifiedStorageEngine for PrismEngine {
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        // Access global unified cache through CrossCacheOrchestrator
+        let cache_key = format!("vector:{}:{}", collection_id, vector_id);
+        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            // Try to get from query cache first
+            if let Some(query_cache) = orchestrator.get_query_cache() {
+                if let Ok(Some(cached_vector)) = query_cache.get(&cache_key).await {
+                    // Track cache hit for access pattern learning
+                    orchestrator.pattern_tracker().track_access_async(
+                        cache_key.clone(),
+                        crate::storage::cache::orchestrator::CacheType::Query,
+                    );
+                    return Ok(Some(cached_vector));
+                }
+            }
+
+            // Track cache miss
+            orchestrator.pattern_tracker().track_access_async(
+                cache_key.clone(),
+                crate::storage::cache::orchestrator::CacheType::Query,
+            );
+        }
+
         debug!(
-            "PRISM get vector: collection={}, id={}",
-            collection_id, vector_id
+            "PRISM get vector: collection={}, base_path={}, id={}",
+            collection_id, base_path, vector_id
         );
+
+        // Construct data directory from base_path and collection_id
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
 
         // TODO: Implement actual lookup from memory cache
         // For now, return None as placeholder
         // In production, would:
         // 1. Check memory cache first
-        // 2. Fall back to storage if not in cache
+        // 2. Fall back to storage at data_dir if not in cache
         Ok(None)
     }
 

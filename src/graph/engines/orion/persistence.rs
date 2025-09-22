@@ -119,11 +119,11 @@ impl OrionPersistence {
     ) -> Result<Self> {
         // Create filesystem factory with default configuration and initialize filesystems
         let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?);
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?);
 
         // Get the underlying filesystem from the factory
         let underlying_fs = filesystem_factory.get_filesystem(&base_url)
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
         // Wrap with UnifiedCachingFilesystem
         let filesystem = Arc::new(UnifiedCachingFilesystem::new(
@@ -137,7 +137,7 @@ impl OrionPersistence {
 
         // Create graph directory
         filesystem_factory.create_dir_all(&graph_path).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
         // Store WAL path and initialize WAL writer
         let (wal_path, wal_writer) = if enable_wal {
@@ -145,7 +145,7 @@ impl OrionPersistence {
 
             // Create WAL directory
             filesystem_factory.create_dir_all(wal_path.to_str().unwrap()).await
-                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+                .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
             // Initialize WAL writer
             let wal_writer = UnifiedWALWriter::new(wal_path.to_string_lossy().to_string())
@@ -226,11 +226,11 @@ impl OrionPersistence {
         let snapshots_dir = format!("{}/graphs/{}/snapshots",
             self.base_url.trim_end_matches('/'), self.graph_id);
         self.filesystem_factory.create_dir_all(&snapshots_dir).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
         // Write compressed snapshot
         self.filesystem_factory.write(&snapshot_url, &compressed, None).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
         info!("ORION graph {} snapshot saved: {} ({}MB compressed)",
               self.graph_id, filename, compressed.len() / 1_048_576);
@@ -251,7 +251,7 @@ impl OrionPersistence {
 
         // Read compressed snapshot
         let compressed = self.filesystem_factory.read(snapshot_path.as_ref().to_str().unwrap()).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
         // Decompress data
         let decompressed = self.decompress_data(&compressed)?;
@@ -517,7 +517,7 @@ impl OrionPersistence {
         // List all snapshot files
         let mut snapshots = Vec::new();
         let entries = self.filesystem_factory.list(&snapshots_dir).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
         for entry in entries {
             if entry.url.ends_with(".bin.zst") {
@@ -533,7 +533,7 @@ impl OrionPersistence {
             let to_remove = snapshots.len() - self.max_snapshots;
             for snapshot in snapshots.iter().take(to_remove) {
                 self.filesystem_factory.delete(snapshot).await
-                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+                    .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
                 debug!("Removed old snapshot: {:?}", snapshot);
             }
         }
@@ -577,7 +577,7 @@ impl OrionPersistence {
         let export_url = path.as_ref().to_str()
             .ok_or_else(|| ProximaDBError::InvalidInput("Invalid export path".to_string()))?;
         self.filesystem_factory.write(export_url, json.as_bytes(), None).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
         info!("Graph {} exported to {:?}", self.graph_id, path.as_ref());
 
         Ok(())
@@ -592,7 +592,7 @@ impl OrionPersistence {
         let import_url = path.as_ref().to_str()
             .ok_or_else(|| ProximaDBError::InvalidInput("Invalid import path".to_string()))?;
         let data = self.filesystem_factory.read(import_url).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstStorage(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
         let import_data: serde_json::Value = serde_json::from_slice(&data)
             .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;

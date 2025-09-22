@@ -10,7 +10,7 @@ mod common;
 
 use anyhow::Result;
 use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, CompressionConfig};
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::core::SstConfig;
@@ -73,7 +73,7 @@ async fn test_sst_quantization_compression() -> Result<()> {
         let distance_compute = Arc::new(
             proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::new()
         );
-        let sst_storage = SstStorage::new(
+        let sst_storage = SstEngine::new(
             sst_config.clone(),
             filesystem,
             distance_compute,
@@ -274,7 +274,7 @@ async fn test_compression_with_different_block_sizes() -> Result<()> {
         let distance_compute = Arc::new(
             proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::new()
         );
-        let sst_storage = SstStorage::new(
+        let sst_storage = SstEngine::new(
             sst_config.clone(),
             filesystem,
             distance_compute,

@@ -29,7 +29,7 @@ use proximadb::proto::proximadb_v1::{
 // SearchResult moved to different location - using Vec<VectorRecord> for results
 // Note: Some imports like MetadataItem may have changed or been removed
 use proximadb::services::vector_operations_service::VectorOperationsService;
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::engines::impls::viper::engine::ViperEngine;
 use proximadb::storage::metadata::store::MetadataCacheConfig;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -125,7 +125,7 @@ impl UnifiedTestEnvironment {
     }
 
     /// Create an SST storage engine for this environment
-    pub async fn create_sst_engine(&self) -> Result<SstStorage> {
+    pub async fn create_sst_engine(&self) -> Result<SstEngine> {
         info!(
             "🏭 Creating SST engine for collection: {}",
             self.collection_id
@@ -135,7 +135,7 @@ impl UnifiedTestEnvironment {
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
 
-        SstStorage::new(
+        SstEngine::new(
             self.sst_config.clone(),
             self.filesystem.clone(),
             distance_compute,
@@ -723,7 +723,7 @@ pub mod operations {
 
     /// Search vectors in SST engine
     pub async fn search_vectors_sst(
-        engine: &SstStorage,
+        engine: &SstEngine,
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
@@ -956,7 +956,7 @@ pub async fn flush_sst_with_block_stats(
     block_size_kb: usize,
 ) -> Result<FlushBlockStatsResult> {
     use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, CompressionConfig};
-    use proximadb::storage::engines::impls::sst::SstStorage;
+    use proximadb::storage::engines::impls::sst::SstEngine;
     use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
     // Create SST config with specified block size
@@ -975,7 +975,7 @@ pub async fn flush_sst_with_block_stats(
         proximadb::compute::distance_computation::DistanceMetric::Euclidean,
     ));
 
-    let sst_storage = SstStorage::new(sst_config.clone(), filesystem, distance_compute).await?;
+    let sst_storage = SstEngine::new(sst_config.clone(), filesystem, distance_compute).await?;
 
     // Create collection config with compression
     let compression_config = CompressionConfig {
@@ -1113,7 +1113,7 @@ pub async fn create_test_vector_operations_service() -> Result<VectorOperationsS
 
 /// Create VectorOperationsService with custom storage for testing
 pub async fn create_test_vector_operations_service_with_storage(
-    storage: Arc<SstStorage>,
+    storage: Arc<SstEngine>,
 ) -> Result<VectorOperationsService> {
     setup_hardware_capabilities();
 

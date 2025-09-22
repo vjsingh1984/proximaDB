@@ -1,24 +1,24 @@
 //! Real distance computation benchmarks
 
+mod common;
+use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::{
     DistanceMetric,
     engine::UnifiedDistanceCompute,
 };
-use std::sync::Once;
-
-static INIT: Once = Once::new();
 
 fn init_hardware() {
-    INIT.call_once(|| {
-        // Initialize hardware capabilities once
-        let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
-    });
+    print_system_info("Core Distance Computation");
+    // Initialize hardware capabilities
+    let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
 }
 
 fn benchmark_distance_computation(c: &mut Criterion) {
     init_hardware();
-    let dimensions = vec![128, 256, 512, 1024, 2048];
+    // Use standard dimensions from common module
+    let dimensions = STANDARD_DIMENSIONS.to_vec();
 
     for dim in dimensions {
         let mut group = c.benchmark_group(format!("distance_dim_{}", dim));
@@ -56,12 +56,14 @@ fn benchmark_batch_operations(c: &mut Criterion) {
     init_hardware();
     let mut group = c.benchmark_group("batch_operations");
 
-    let query: Vec<f32> = (0..256).map(|i| (i as f32).sin()).collect();
-    let batch_sizes = vec![100, 1000, 10000];
+    // Use standard BERT dimension for batch tests
+    let query: Vec<f32> = (0..768).map(|i| (i as f32).sin()).collect();
+    // Use standard batch sizes from common module
+    let batch_sizes = STANDARD_BATCH_SIZES.to_vec();
 
     for batch_size in batch_sizes {
         let vectors: Vec<Vec<f32>> = (0..batch_size)
-            .map(|j| (0..256).map(|i| ((i + j) as f32).cos()).collect())
+            .map(|j| (0..768).map(|i| ((i + j) as f32).cos()).collect())
             .collect();
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 

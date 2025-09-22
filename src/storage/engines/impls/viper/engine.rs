@@ -222,24 +222,26 @@ impl ViperEngine {
         let config = ViperEngineConfig::from_core_config(&core_config);
         Self::new_internal(config, core_config, filesystem, filesystem_factory).await
     }
-    /// Standard constructor matching SST engine interface
-    /// This provides consistency across storage engines
-    ///
-    /// Note: While VIPER can handle multiple collections, it still needs
-    /// collection metadata for compression, filterable fields, dimensions, etc.
-    /// The collection_id here is used for initial setup if needed.
-    pub async fn new(
-        collection_id: String, // Used for logging and initial setup
+    /// Create a new VIPER engine instance (stateless)
+    /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    pub async fn new() -> Result<Self> {
+        let core_config = crate::core::config::ViperConfig::default();
+        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+
+        Self::new_with_config(core_config, filesystem, distance_compute).await
+    }
+
+    /// Create VIPER engine with specific config (internal use)
+    pub async fn new_with_config(
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
         _distance_compute: Arc<
             crate::compute::distance_computation::engine::UnifiedDistanceCompute,
         >, // VIPER creates its own internally
     ) -> Result<Self> {
-        info!(
-            "🔧 Creating VIPER engine with initial collection: {}",
-            collection_id
-        );
+        info!("🔧 Creating stateless VIPER engine");
 
         // Create VIPER metadata serializer
         let metadata_serializer = Arc::new(
@@ -249,11 +251,12 @@ impl ViperEngine {
         // Get the base filesystem from factory
         let base_fs = filesystem.get_filesystem("file://")?;
 
-        // Create UnifiedCachingFilesystem with VIPER serializer
+        // Create UnifiedCachingFilesystem without collection_id
+        // Collection ID will come from runtime parameters
         let unified_fs = Arc::new(
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
                 base_fs,
-                collection_id.clone(),
+                String::new(), // No collection_id - gets from parameters
                 "viper".to_string(),
                 metadata_serializer,
             )
@@ -263,44 +266,21 @@ impl ViperEngine {
         Self::from_unified_filesystem_and_factory(core_config, unified_fs, filesystem).await
     }
 
-    /// Constructor with explicit base location (for consistency with SST)
-    /// Note: VIPER manages storage locations per-collection through collection metadata,
-    /// but this constructor is provided for interface consistency with SST engine.
+    /// Deprecated: Use new() instead - engines should be stateless
+    #[deprecated(note = "Use new() - engines should be stateless")]
     pub async fn new_with_location(
         collection_id: String,
         core_config: crate::core::config::ViperConfig,
         filesystem: Arc<FilesystemFactory>,
-        _distance_compute: Arc<
+        distance_compute: Arc<
             crate::compute::distance_computation::engine::UnifiedDistanceCompute,
         >,
-        base_location: String, // Can be used to override default storage paths
+        _base_location: String, // Ignored
     ) -> Result<Self> {
-        info!(
-            "🔧 Creating VIPER engine for collection: {} with base location: {}",
-            collection_id, base_location
-        );
-
-        // Create VIPER metadata serializer
-        let metadata_serializer = Arc::new(
-            super::unified_metadata_serializer::ViperMetadataSerializer::new()
-        );
-
-        // Get the base filesystem from factory
-        let base_fs = filesystem.get_filesystem(&base_location)?;
-
-        // Create UnifiedCachingFilesystem with VIPER serializer
-        let unified_fs = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
-                base_fs,
-                collection_id,
-                "viper".to_string(),
-                metadata_serializer,
-            )
-        );
-
-        // VIPER gets per-collection storage locations from collection metadata
-        // The base_location here could be used as a fallback or override
-        Self::from_unified_filesystem_and_factory(core_config, unified_fs, filesystem).await
+        // Just call the stateless new() method
+        _ = collection_id; // Ignore collection_id
+        _ = _base_location; // Ignore base_location
+        Self::new_with_config(core_config, filesystem, distance_compute).await
     }
 
     /// Internal constructor with both configs
@@ -816,10 +796,26 @@ impl ViperEngine {
         Ok(result.output_files)
     }
 
-    /// Search for vectors by ID (internal implementation)
-    pub async fn internal_vector_by_id(
+    /// List Parquet files in a directory
+    async fn list_parquet_files_in_dir(&self, data_dir: &str) -> Result<Vec<String>> {
+        let fs = self.filesystem_factory.get_filesystem(data_dir)?;
+        let entries = fs.list(data_dir).await?;
+
+        let mut parquet_files = Vec::new();
+        for entry in entries {
+            if entry.name.ends_with(".parquet") {
+                parquet_files.push(format!("{}/{}", data_dir, entry.name));
+            }
+        }
+
+        Ok(parquet_files)
+    }
+
+    /// Search for vectors by ID (internal implementation with base_path)
+    pub async fn internal_vector_by_id_with_path(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
         use arrow_array::{
@@ -827,13 +823,37 @@ impl ViperEngine {
             StructArray,
         };
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+        // Access global unified cache through CrossCacheOrchestrator
+        let cache_key = format!("vector:{}:{}", collection_id, vector_id);
+        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            // Try to get from query cache first
+            if let Some(query_cache) = orchestrator.get_query_cache() {
+                if let Ok(Some(cached_vector)) = query_cache.get(&cache_key).await {
+                    // Track cache hit for access pattern learning
+                    orchestrator.pattern_tracker().track_access_async(
+                        cache_key.clone(),
+                        crate::storage::cache::orchestrator::CacheType::Query,
+                    );
+                    return Ok(Some(cached_vector));
+                }
+            }
+
+            // Track cache miss
+            orchestrator.pattern_tracker().track_access_async(
+                cache_key.clone(),
+                crate::storage::cache::orchestrator::CacheType::Query,
+            );
+        }
+
         // use bytes::Bytes; // Commented out due to compilation issue
         info!(
-            "🔍 VIPER Engine: Looking up vector {} in collection {}",
-            vector_id, collection_id
+            "🔍 VIPER Engine: Looking up vector {} in collection {} at {}",
+            vector_id, collection_id, base_path
         );
-        // Get all Parquet files for the collection
-        let parquet_files = self.parquet_files_for_collection(collection_id).await?;
+        // Get all Parquet files from {base_path}/{collection_id}/data
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let parquet_files = self.list_parquet_files_in_dir(&data_dir).await?;
         if parquet_files.is_empty() {
             debug!("📁 No Parquet files found for collection {}", collection_id);
             return Ok(None);
@@ -1061,6 +1081,16 @@ impl ViperEngine {
                 } // End for row_idx
             } // End while let Some(batch)
         } // End for parquet_file in parquet_files
+
+        // Update global cache with found vector before returning
+        if let Some((ref record, _, _)) = best_match {
+            if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                if let Some(query_cache) = orchestrator.get_query_cache() {
+                    let _ = query_cache.put(cache_key, record.clone()).await;
+                }
+            }
+        }
+
         // Return the best match (highest version/newest timestamp)
         Ok(best_match.map(|(record, _, _)| record))
     }
@@ -1510,10 +1540,7 @@ impl UnifiedStorageEngine for ViperEngine {
         &self,
         params: &crate::storage::traits::FlushParameters,
     ) -> Result<FlushResult> {
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER flush"))?;
+        let collection_id = self.get_collection_id_from_params(params)?;
         debug!("🔍 VIPER DO_FLUSH: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
             if let Some(ref config) = collection_config.config {
@@ -1614,10 +1641,7 @@ impl UnifiedStorageEngine for ViperEngine {
             params.collection_id, params.force, params.synchronous, params.timeout_ms
         );
         debug!("🔍 VIPER DO_COMPACT: Checking compression configuration");
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for VIPER compaction_info"))?;
+        let collection_id = self.get_collection_id_from_compaction_params(params)?;
         debug!("🗜️ VIPER compaction collection ID: {}", collection_id);
         // Get input files from hints or use default empty list
         let input_files = params
@@ -1723,10 +1747,11 @@ impl UnifiedStorageEngine for ViperEngine {
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
-        // Delegate to internal implementation to avoid recursion
-        self.internal_vector_by_id(collection_id, vector_id).await
+        // Delegate to internal implementation with base_path
+        self.internal_vector_by_id_with_path(collection_id, base_path, vector_id).await
     }
 
     async fn search_vectors_unified(

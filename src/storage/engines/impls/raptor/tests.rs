@@ -106,8 +106,8 @@ mod tests {
         };
         engine.do_flush(&flush_params).await?;
 
-        // Retrieve vector
-        let retrieved = engine.vector_by_id("test_collection", "test_vec_1").await?;
+        // Retrieve vector - provide base_path for storage location
+        let retrieved = engine.vector_by_id("test_collection", "file:///tmp", "test_vec_1").await?;
 
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();

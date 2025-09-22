@@ -79,8 +79,15 @@ pub struct SwiftEngine {
 }
 
 impl SwiftEngine {
-    /// Create new SWIFT engine instance with service dependencies
-    pub async fn new(
+    /// Create a new SWIFT engine instance (stateless)
+    /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    pub async fn new() -> Result<Self> {
+        let distance_engine = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        Self::new_with_config(distance_engine, None).await
+    }
+
+    /// Create SWIFT engine with specific config (internal use)
+    pub async fn new_with_config(
         distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
         axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
     ) -> Result<Self> {
@@ -457,10 +464,7 @@ impl UnifiedStorageEngine for SwiftEngine {
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         let start_time = std::time::Instant::now();
 
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow!("Collection ID required for flush"))?;
+        let collection_id = self.get_collection_id_from_params(params)?;
         info!(
             "SWIFT flush: collection={}, vectors={}",
             collection_id,
@@ -575,10 +579,7 @@ impl UnifiedStorageEngine for SwiftEngine {
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         let start_time = std::time::Instant::now();
 
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow!("Collection ID required for compaction"))?;
+        let collection_id = self.get_collection_id_from_compaction_params(params)?;
         info!("SWIFT compaction: collection={}", collection_id);
 
         // Load files from storage for compaction
@@ -688,20 +689,45 @@ impl UnifiedStorageEngine for SwiftEngine {
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
+        // Access global unified cache through CrossCacheOrchestrator
+        let cache_key = format!("vector:{}:{}", collection_id, vector_id);
+        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            // Try to get from query cache first
+            if let Some(query_cache) = orchestrator.get_query_cache() {
+                if let Ok(Some(cached_vector)) = query_cache.get(&cache_key).await {
+                    // Track cache hit for access pattern learning
+                    orchestrator.pattern_tracker().track_access_async(
+                        cache_key.clone(),
+                        crate::storage::cache::orchestrator::CacheType::Query,
+                    );
+                    return Ok(Some(cached_vector));
+                }
+            }
+
+            // Track cache miss
+            orchestrator.pattern_tracker().track_access_async(
+                cache_key.clone(),
+                crate::storage::cache::orchestrator::CacheType::Query,
+            );
+        }
+
         let _timer = self.start_operation_timer("get_by_id");
         debug!(
-            "SWIFT get vector: collection={}, id={}",
-            collection_id, vector_id
+            "SWIFT get vector: collection={}, base_path={}, id={}",
+            collection_id, base_path, vector_id
         );
 
-        // TODO: Load actual files from storage based on collection_id
+        // Construct data directory from base_path and collection_id
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
+
+        // TODO: Load actual SST files from data_dir
         // For now, return None as placeholder
         // In production, would:
-        // 1. Get storage path from collection metadata
-        // 2. Load SST files from that path
-        // 3. Search through ID indexes
+        // 1. Load SST files from data_dir
+        // 2. Search through ID indexes
         Ok(None)
     }
 

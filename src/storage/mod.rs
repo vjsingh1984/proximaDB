@@ -245,7 +245,7 @@ pub use traits::{
 };
 
 // Engine exports
-pub use engines::impls::sst::SstStorage;
+pub use engines::impls::sst::SstEngine;
 // Arrow integration re-enabled - compilation conflicts resolved
 // pub use engines::viper::ViperEngine;
 

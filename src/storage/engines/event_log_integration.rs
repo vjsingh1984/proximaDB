@@ -222,11 +222,16 @@ impl EventLogNotifierFactory {
     pub fn create_notifier(
         engine_type: &str,
         event_log: Arc<dyn EventLogService>,
-    ) -> Box<dyn EventLogNotifier + Send + Sync> {
+    ) -> Result<Box<dyn EventLogNotifier + Send + Sync>, anyhow::Error> {
         match engine_type.to_lowercase().as_str() {
-            "sst" => Box::new(Self::create_sst_notifier(event_log)),
-            "viper" => Box::new(Self::create_viper_notifier(event_log)),
-            _ => Box::new(Self::create_sst_notifier(event_log)), // Default to SST
+            "sst" => Ok(Box::new(Self::create_sst_notifier(event_log))),
+            "viper" => Ok(Box::new(Self::create_viper_notifier(event_log))),
+            "nova" | "swift" | "raptor" | "prism" | "helix" => {
+                // For now, use SST notifier for engines without specific implementations
+                // TODO: Implement specific notifiers for each engine
+                Ok(Box::new(Self::create_sst_notifier(event_log)))
+            }
+            _ => Err(anyhow::anyhow!("Unknown storage engine type '{}' for event notifier", engine_type)),
         }
     }
 }

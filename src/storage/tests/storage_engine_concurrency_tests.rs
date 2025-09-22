@@ -224,7 +224,7 @@ mod tests {
                         .await
                         .map(|_| "write")
                         .map_err(|_| {
-                            crate::core::StorageError::SstStorage("write failed".to_string())
+                            crate::core::StorageError::SstEngine("write failed".to_string())
                         })
                 });
             } else {

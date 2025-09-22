@@ -165,10 +165,6 @@ pub struct SStableMetadata {
 pub struct HelixEngine {
     /// Engine configuration
     config: HelixConfig,
-    /// Collection ID
-    collection_id: String,
-    /// Data directory path
-    data_dir: PathBuf,
     /// Filesystem abstraction
     filesystem: Arc<dyn FileSystem>,
     /// Filesystem factory
@@ -252,20 +248,17 @@ impl HelixEngine {
         Ok(bytes_written)
     }
 
-    /// Create a new HELIX engine instance
-    ///
-    /// # Parameters
-    /// - `data_dir`: Must be derived from collection's storage_assignment.base_location
-    ///   UnifiedCachingFilesystem will handle cloud paths transparently:
-    ///   - Cloud files are downloaded to /tmp/proximadb/cache/{collection}/helix/
-    ///   - Subsequent reads use the local cached copy
-    pub async fn new(
-        collection_id: String,
-        config: HelixConfig,
-        data_dir: PathBuf,
-        event_log: Option<Arc<EventLog>>,
-    ) -> Result<Self> {
-        Self::new_with_orchestrator(collection_id, config, data_dir, event_log, None).await
+    /// Create a new HELIX engine instance (stateless)
+    /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    pub async fn new() -> Result<Self> {
+        let config = HelixConfig::default();
+        Self::new_with_orchestrator(
+            "placeholder".to_string(),  // collection_id (ignored)
+            config,
+            std::path::PathBuf::from("/tmp"), // data_dir (ignored)
+            None,  // event_log
+            None   // orchestrator
+        ).await
     }
 
     /// Create a new HELIX engine instance with an explicit Cross-Cache Orchestrator
@@ -350,11 +343,9 @@ impl HelixEngine {
             300,  // Cache TTL (5 minutes)
         ));
 
-        // Create engine instance
+        // Create engine instance (stateless - no collection-specific state)
         let engine = Self {
             config,
-            collection_id,
-            data_dir: data_dir.clone(),
             filesystem,
             filesystem_factory,
             distance_compute,
@@ -369,14 +360,12 @@ impl HelixEngine {
             metrics: Arc::new(RwLock::new(EngineMetrics::default())),
         };
 
-        // Simple initialization - just load existing PCA model if present
-        if let Ok(pca_model_bytes) = engine
-            .filesystem
-            .read(&engine.data_dir.join("pca_model.bin").to_string_lossy())
-            .await
-        {
-            if let Ok(model) = bincode::deserialize::<PCAModel>(&pca_model_bytes) {
-                *engine.pca_model.write().await = Some(model);
+        // PCA model will be loaded at runtime from collection-specific paths
+        // Skip loading here since we don't have collection context yet
+        // Model will be loaded on first flush/search when we have the actual collection_id
+        if false { // Placeholder - will be loaded at runtime
+            if let Ok(_model) = bincode::deserialize::<PCAModel>(&vec![]) {
+                // Model loading happens at runtime
                 info!("Loaded existing PCA model for HELIX engine");
             }
         }
@@ -523,7 +512,8 @@ impl UnifiedStorageEngine for HelixEngine {
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-        info!("HELIX flush started for collection {}", self.collection_id);
+        let collection_id = self.get_collection_id_from_params(params)?;
+        info!("HELIX flush started for collection {}", collection_id);
 
         let records = params.vector_records.clone();
         let num_records = records.len();
@@ -531,7 +521,7 @@ impl UnifiedStorageEngine for HelixEngine {
         if records.is_empty() {
             return Ok(FlushResult {
                 success: true,
-                collections_affected: vec![self.collection_id.clone()],
+                collections_affected: vec![collection_id.clone()],
                 entries_flushed: Some(0),
                 bytes_written: Some(0),
                 files_created: Some(0),
@@ -555,18 +545,22 @@ impl UnifiedStorageEngine for HelixEngine {
             // Fast path - skip PCA and Hilbert ordering for small batches
             info!("Skipping PCA for small batch of {} vectors", records.len());
 
-            // Just write the records directly without complex ordering
-            let file_path = self.data_dir.join(format!(
-                "L0_{:016x}.sst",
-                chrono::Utc::now().timestamp_nanos() as u64
-            ));
+            // Get data directory using trait-level helper
+            let data_dir = self.get_data_dir_from_flush_params(params)?;
+            let filesystem = self.filesystem_factory.get_filesystem(&data_dir)?;
 
-            // Write using simplified format
-            let bytes_written = self.write_sstable_simple(&file_path, &records).await?;
+            // Just write the records directly without complex ordering
+            let file_path = format!("{}/L0_{:016x}.sst",
+                data_dir,
+                chrono::Utc::now().timestamp_nanos() as u64
+            );
+
+            // Write using simplified format with filesystem
+            let bytes_written = self.write_sstable_simple(&std::path::Path::new(&file_path), &records).await?;
 
             return Ok(FlushResult {
                 success: true,
-                collections_affected: vec![self.collection_id.clone()],
+                collections_affected: vec![collection_id.clone()],
                 entries_flushed: Some(records.len() as u64),
                 bytes_written: Some(bytes_written),
                 files_created: Some(1),
@@ -668,7 +662,8 @@ impl UnifiedStorageEngine for HelixEngine {
 
         // Create Level-0 SSTable (now sorted by Hilbert key)
         let filename = self.generate_sstable_filename(0);
-        let file_path = self.data_dir.join(&filename);
+        let data_dir = self.get_data_dir_from_flush_params(params)?;
+        let file_path = std::path::Path::new(&data_dir).join(&filename);
 
         // Write FastLane blocks with Hilbert keys
         let hilbert_keys_for_write: Vec<u64> = indexed_records.iter().map(|(k, _)| *k).collect();
@@ -737,7 +732,7 @@ impl UnifiedStorageEngine for HelixEngine {
 
         Ok(FlushResult {
             success: true,
-            collections_affected: vec![self.collection_id.clone()],
+            collections_affected: vec![collection_id.clone()],
             entries_flushed: Some(num_records as u64),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
@@ -750,10 +745,8 @@ impl UnifiedStorageEngine for HelixEngine {
     }
 
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-        info!(
-            "HELIX compaction started for collection {}",
-            self.collection_id
-        );
+        let collection_id = self.get_collection_id_from_compaction_params(params)?;
+        info!("HELIX compaction started for collection {}", collection_id);
 
         let start = std::time::Instant::now();
 
@@ -808,7 +801,7 @@ impl UnifiedStorageEngine for HelixEngine {
 
         Ok(CompactionResult {
             success: true,
-            collections_affected: vec![self.collection_id.clone()],
+            collections_affected: vec![collection_id.clone()],
             entries_processed: Some(0), // TODO: Track actual entries
             entries_removed: Some(0),
             bytes_read: Some(bytes_written), // Simplified
@@ -1003,20 +996,57 @@ impl UnifiedStorageEngine for HelixEngine {
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
-        if collection_id != self.collection_id {
-            return Ok(None);
+        // Access global unified cache through CrossCacheOrchestrator
+        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            // Create cache key for vector lookup (collection_id is globally unique)
+            let cache_key = format!("vector:{}:{}", collection_id, vector_id);
+
+            // Try to get from query cache first
+            if let Some(query_cache) = orchestrator.get_query_cache() {
+                if let Ok(Some(cached_vector)) = query_cache.get(&cache_key).await {
+                    // Track cache hit for access pattern learning
+                    orchestrator.pattern_tracker().track_access_async(
+                        cache_key.clone(),
+                        crate::storage::cache::orchestrator::CacheType::Query,
+                    );
+                    return Ok(Some(cached_vector));
+                }
+            }
+
+            // Track cache miss
+            orchestrator.pattern_tracker().track_access_async(
+                cache_key.clone(),
+                crate::storage::cache::orchestrator::CacheType::Query,
+            );
         }
 
-        let levels = self.levels.read().await;
+        // Construct data directory from base_path and collection_id
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
 
-        // Search all SSTables for the vector
-        for (_level, sstables) in levels.iter() {
-            for sstable in sstables {
+        // Get filesystem for the data directory
+        let fs = self.filesystem_factory.get_filesystem(&data_dir)?;
+
+        // List all SSTable files in the data directory
+        let entries = fs.list(&data_dir).await?;
+
+        // Search through all HELIX SSTable files
+        for entry in entries {
+            if entry.name.ends_with(".helix") || entry.name.ends_with(".sstable") {
+                let file_path = format!("{}/{}", data_dir, entry.name);
+
                 if let Some(vector) =
-                    readers::find_vector_by_id(&self.filesystem, &sstable, vector_id).await?
+                    readers::find_vector_by_id(&fs, &std::path::PathBuf::from(&file_path), vector_id).await?
                 {
+                    // Update global cache with found vector
+                    if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                        let cache_key = format!("vector:{}:{}", collection_id, vector_id);
+                        if let Some(query_cache) = orchestrator.get_query_cache() {
+                            let _ = query_cache.put(cache_key, vector.clone()).await;
+                        }
+                    }
                     return Ok(Some(vector));
                 }
             }

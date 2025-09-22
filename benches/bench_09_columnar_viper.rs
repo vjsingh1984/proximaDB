@@ -2,7 +2,7 @@
 //!
 //! This version properly handles async initialization without runtime conflicts
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use proximadb::{
     proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageEngine, StorageAssignment, QuantizationConfig},
     storage::{
@@ -103,7 +103,7 @@ async fn create_viper_engine() -> Arc<dyn UnifiedStorageEngine> {
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
     let engine = ViperEngine::new(
-        "bench_collection".to_string(),
+        "bench-viper".to_string(),
         viper_config,
         filesystem,
         distance_compute,
@@ -144,9 +144,9 @@ fn bench_viper_flush(c: &mut Criterion) {
                 b.iter(|| {
                     runtime.block_on(async {
                         let collection = Collection {
-                            id: "bench_collection".to_string(),
+                            id: "bench-viper".to_string(),
                             config: Some(CollectionConfig {
-                                name: "bench_collection".to_string(),
+                                name: "bench-viper".to_string(),
                                 dimension: 768,
                                 distance_metric: DistanceMetric::Euclidean as i32,
                                 storage_engine: StorageEngine::Viper as i32,
@@ -157,17 +157,17 @@ fn bench_viper_flush(c: &mut Criterion) {
                             updated_at: 0,
                             stats: None,
                             storage_assignment: Some(StorageAssignment {
-                                primary_path: "/tmp/proximadb_bench".to_string(),
+                                primary_path: "/tmp/proximadb-bench/viper".to_string(),
                                 backup_paths: vec![],
                                 engine: StorageEngine::Viper as i32,
                                 engine_config: HashMap::new(),
-                                base_location: "/tmp/proximadb_bench".to_string(),
+                                base_location: "/tmp/proximadb-bench/viper".to_string(),
                                 assigned_at: 0,
                             }),
                         };
 
                         let params = FlushParameters {
-                            collection_id: Some("bench_collection".to_string()),
+                            collection_id: Some("bench-viper".to_string()),
                             vector_records: vectors.clone(),
                             force: true,
                             synchronous: true,

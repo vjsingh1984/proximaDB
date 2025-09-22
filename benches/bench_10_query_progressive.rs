@@ -4,6 +4,7 @@
 //! with realistic BERT and OpenAI embeddings for accurate performance measurements.
 
 mod common;
+use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::{
@@ -20,7 +21,6 @@ use proximadb::{
 };
 use common::{EmbeddingGenerator, EmbeddingModel};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::runtime::Runtime;
 
 /// Generate realistic embedding vectors for benchmarking
@@ -88,7 +88,7 @@ async fn progressive_search_real(
     // Create search context with proper structure
     use proximadb::core::search::SearchParams;
     use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, CollectionStats};
-    use std::collections::HashMap;
+    
 
     let search_params = Arc::new(SearchParams {
         vector: Some(query.to_vec()),
@@ -103,9 +103,9 @@ async fn progressive_search_real(
     });
 
     let collection = Arc::new(Collection {
-        id: "bench_collection".to_string(),
+        id: "bench-nova".to_string(),
         config: Some(CollectionConfig {
-            name: "bench_collection".to_string(),
+            name: "bench-nova".to_string(),
             dimension: query.len() as u32,
             distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
             storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
@@ -147,12 +147,14 @@ async fn progressive_search_real(
 
 /// Benchmark progressive search vs brute force
 fn bench_progressive_vs_brute_force(c: &mut Criterion) {
+    print_system_info("Progressive Query Search");
     let mut group = c.benchmark_group("progressive_search_comparison");
 
     // Initialize runtime for async operations
     let runtime = Runtime::new().unwrap();
 
-    let database_sizes = vec![1000, 5000, 10000];
+    // Use standard batch sizes
+    let database_sizes = STANDARD_BATCH_SIZES.to_vec(); // [250, 1000, 5000]
     let dimension = 768; // BERT embeddings
     let model = EmbeddingModel::Bert;
     let k = 10;

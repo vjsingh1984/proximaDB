@@ -14,7 +14,7 @@ use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
 use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageEngine, DistanceMetric, SqlValue, sql_value};
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -218,7 +218,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
     let sst_engine =
-        SstStorage::new((*sst_config).clone(), filesystem.clone(), distance_compute).await?;
+        SstEngine::new((*sst_config).clone(), filesystem.clone(), distance_compute).await?;
 
     // Create VIPER engine
     let viper_engine = ViperEngine::from_core_config(viper_config, filesystem.clone()).await?;

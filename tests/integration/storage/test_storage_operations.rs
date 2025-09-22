@@ -31,7 +31,7 @@ use proximadb::storage::persistence::write_ahead_log::{WriteBufferManager, Write
 use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferStrategyType;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::engines::impls::viper::ViperEngine;
-use proximadb::storage::engines::impls::sst::SstStorage as LsmEngine;
+use proximadb::storage::engines::impls::sst::SstEngine as LsmEngine;
 
 /// Test setup helper
 async fn create_test_setup() -> (

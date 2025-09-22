@@ -8,7 +8,7 @@ use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use std::sync::Arc;

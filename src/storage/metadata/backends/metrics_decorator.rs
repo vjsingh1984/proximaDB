@@ -156,6 +156,9 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Some("test-uuid".to_string()));
 
+        // Wait for async metrics recording to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
         // Verify metrics were recorded
         let snapshot = metrics.get_snapshot().await;
         assert_eq!(snapshot.successful_operations, 1);
@@ -170,6 +173,9 @@ mod tests {
 
         let result = decorated.get_uuid("test-collection").await;
         assert!(result.is_err());
+
+        // Wait for async metrics recording to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Verify failure metrics were recorded
         let snapshot = metrics.get_snapshot().await;

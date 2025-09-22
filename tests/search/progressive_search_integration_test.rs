@@ -16,7 +16,7 @@ use proximadb::core::search::{
 };
 use proximadb::core::VectorRecord;
 use proximadb::services::vector_operations_service::VectorOperationsService;
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use std::sync::Arc;
 
 #[tokio::test]

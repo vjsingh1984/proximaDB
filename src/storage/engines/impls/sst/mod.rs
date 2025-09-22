@@ -108,9 +108,9 @@
 //! ## Usage Example
 //!
 //! ```rust
-//! use proximadb::storage::engines::sst::SstStorage;
+//! use proximadb::storage::engines::sst::SstEngine;
 //!
-//! let sst = SstStorage::new(config)?;
+//! let sst = SstEngine::new(config)?;
 //!
 //! // Insert with automatic compression
 //! sst.insert_batch(vectors).await?;
@@ -1548,7 +1548,7 @@ impl BatchExtractionStats {
 // Debug derive removed - CrossCacheOrchestrator doesn't implement Debug
 // SST-specific optimization structures removed - now using universal module
 
-pub struct SstStorage {
+pub struct SstEngine {
     config: SstConfig,
     // NO collection_id - passed in parameters
     // NO data_dir - derived from parameters
@@ -1575,8 +1575,20 @@ pub struct SstStorage {
     orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 }
 
-impl SstStorage {
-    pub async fn new(
+impl SstEngine {
+    /// Create a new SST engine instance (stateless)
+    /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    pub async fn new() -> Result<Self> {
+        let config = SstConfig::default();
+        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        let distance_compute = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+
+        Self::new_with_config(config, filesystem, distance_compute).await
+    }
+
+    /// Create SST engine with specific config (internal use)
+    pub async fn new_with_config(
         config: SstConfig,
         filesystem: Arc<FilesystemFactory>,
         distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
@@ -1874,7 +1886,7 @@ impl SstStorage {
 // ============================================================================
 
 #[async_trait]
-impl UniversallyOptimized for SstStorage {
+impl UniversallyOptimized for SstEngine {
     fn universal_optimizer(&self) -> &UniversalPerformanceOptimizer {
         &self.universal_optimizer
     }
@@ -2257,7 +2269,7 @@ impl UniversallyOptimized for SstStorage {
 }
 
 #[async_trait]
-impl UnifiedStorageEngine for SstStorage {
+impl UnifiedStorageEngine for SstEngine {
     fn engine_name(&self) -> &'static str {
         "sst"
     }
@@ -2521,9 +2533,8 @@ impl UnifiedStorageEngine for SstStorage {
     /// SST-specific compaction using level-based merge strategy with vector tracking
     async fn do_compact(&self, params: &CompactionParameters) -> anyhow::Result<CompactionResult> {
         let compact_start = std::time::Instant::now();
-        let collection_id = params.collection_id.as_ref().ok_or_else(|| {
-            SstError::InvalidArgument("Collection ID required for SST compaction".into())
-        })?;
+        let collection_id = self.get_collection_id_from_compaction_params(params)
+            .map_err(|e| SstError::InvalidArgument(format!("Collection ID required for SST compaction: {}", e)))?;
 
         info!(
             "🗜️ SST COMPACTION START: Collection {} (force: {}, priority: {:?})",
@@ -2830,23 +2841,41 @@ impl UnifiedStorageEngine for SstStorage {
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        // Access global unified cache through CrossCacheOrchestrator
+        let cache_key = format!("vector:{}:{}", collection_id, vector_id);
+        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            // Try to get from query cache first
+            if let Some(query_cache) = orchestrator.get_query_cache() {
+                if let Ok(Some(cached_vector)) = query_cache.get(&cache_key).await {
+                    // Track cache hit for access pattern learning
+                    orchestrator.pattern_tracker().track_access_async(
+                        cache_key.clone(),
+                        crate::storage::cache::orchestrator::CacheType::Query,
+                    );
+                    return Ok(Some(cached_vector));
+                }
+            }
+
+            // Track cache miss
+            orchestrator.pattern_tracker().track_access_async(
+                cache_key.clone(),
+                crate::storage::cache::orchestrator::CacheType::Query,
+            );
+        }
+
         debug!(
-            "🔍 SST: Looking up vector {} in collection {} using manifest",
-            vector_id, collection_id
+            "🔍 SST: Looking up vector {} in collection {} at base_path {}",
+            vector_id, collection_id, base_path
         );
 
-        // Note: In a real implementation, we'd get the storage location from a metadata service
-        // For now, we'll just log and return None if we can't determine the location
-        warn!(
-            "⚠️ SST: vector_by_id needs collection metadata service integration for collection {}",
-            collection_id
-        );
+        // Construct the data directory path
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
 
-        // Get SSTable files that might contain this key
-        // Direct directory scan for overlapping files (simplified for now)
-        let overlapping_files: Vec<String> = vec![];
+        // Get SSTable files from the data directory
+        let overlapping_files = self.get_overlapping_sstables(&data_dir, vector_id).await?;
 
         if overlapping_files.is_empty() {
             debug!("📂 SST: No SSTable files overlap with key {}", vector_id);
@@ -2907,6 +2936,14 @@ impl UnifiedStorageEngine for SstStorage {
                             sstables_checked,
                             bloom_filter_hits
                         );
+
+                        // Update global cache with found vector
+                        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                            if let Some(query_cache) = orchestrator.get_query_cache() {
+                                let _ = query_cache.put(cache_key, record.clone()).await;
+                            }
+                        }
+
                         return Ok(Some(record));
                     }
                 } else {
@@ -3360,7 +3397,7 @@ impl UnifiedStorageEngine for SstStorage {
     }
 }
 
-impl SstStorage {
+impl SstEngine {
     /// Get the unified caching filesystem if available
     pub fn get_unified_caching_filesystem(&self) -> Option<Arc<dyn crate::storage::persistence::filesystem::FileSystem>> {
         self.unified_fs.clone()

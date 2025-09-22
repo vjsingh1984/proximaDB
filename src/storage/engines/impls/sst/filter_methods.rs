@@ -35,7 +35,7 @@ pub struct BloomFilterConfig {
     pub enabled: bool,
 }
 
-impl crate::storage::engines::impls::sst::SstStorage {
+impl crate::storage::engines::impls::sst::SstEngine {
     /// Configure scan filter for metadata filtering during storage scans
     /// 
     /// This method integrates UnifiedMetadataFilter with SST's three-stage filtering:

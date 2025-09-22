@@ -291,26 +291,16 @@ name = "bench_03_memory_vector"
 harness = false
 path = "benches/bench_03_memory_vector.rs"
 
-# 2. STORAGE ENGINE BENCHMARKS (04-09)
+# 2. STORAGE ENGINE BENCHMARKS (04 - Unified)
+# Consolidated storage benchmark combining all storage tests:
+# - Compression efficiency with immediate search testing
+# - Engine lifecycle and creation overhead
+# - Large-scale search performance
+# - Insertion performance
 [[bench]]
-name = "bench_04_storage_comparison"
+name = "bench_04_storage_unified"
 harness = false
-path = "benches/bench_04_storage_comparison.rs"
-
-[[bench]]
-name = "bench_05_storage_lifecycle"
-harness = false
-path = "benches/bench_05_storage_lifecycle.rs"
-
-[[bench]]
-name = "bench_06_storage_sparsity"
-harness = false
-path = "benches/bench_06_storage_sparsity.rs"
-
-[[bench]]
-name = "bench_07_storage_flush"
-harness = false
-path = "benches/bench_07_storage_flush.rs"
+path = "benches/bench_04_storage_unified.rs"
 
 [[bench]]
 name = "bench_08_quantization_sst"
@@ -328,11 +318,8 @@ name = "bench_10_query_progressive"
 harness = false
 path = "benches/bench_10_query_progressive.rs"
 
-# 4. UNIFIED & CROSS-ENGINE BENCHMARKS (11)
-[[bench]]
-name = "bench_11_cross_engine"
-harness = false
-path = "benches/bench_11_cross_engine.rs"
+# 4. UNIFIED & CROSS-ENGINE BENCHMARKS
+# Note: Cross-engine comparisons now included in bench_storage_engines
 
 # 5. SYSTEM & COMPREHENSIVE BENCHMARKS (12-13)
 [[bench]]

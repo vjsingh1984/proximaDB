@@ -4,7 +4,7 @@
 use anyhow::Result;
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
 use proximadb::proto::proximadb_v1::{MetadataItem, VectorRecord, SqlValue};
-use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata, SstStorage};
+use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata, SstEngine};
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use proximadb::storage::engines::core::formats::fastlanes_blocks::block_structures::{

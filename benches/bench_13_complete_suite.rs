@@ -8,6 +8,9 @@
 //!
 //! Run with: cargo bench --bench proximadb_consolidated_bench
 
+mod common;
+use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use proximadb::{
     compute::distance_computation::{engine::UnifiedDistanceCompute, DistanceMetric},
@@ -66,13 +69,15 @@ fn generate_vector_records(count: usize, dimension: usize) -> Vec<VectorRecord> 
 
 /// Benchmark distance computation algorithms
 fn bench_distance_metrics(c: &mut Criterion) {
+    print_system_info("Complete Suite Benchmarks");
     init_hardware();
 
     let mut group = c.benchmark_group("distance_computation");
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(5));
 
-    let dimensions = vec![128, 256, 512, 768, 1536];
+    // Use standard dimensions
+    let dimensions = STANDARD_DIMENSIONS.to_vec();
     let metrics = vec![
         DistanceMetric::Cosine,
         DistanceMetric::Euclidean,
@@ -112,8 +117,9 @@ fn bench_vector_operations(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(3));
 
-    let dimensions = vec![128, 512, 1536];
-    let vector_counts = vec![100, 1000, 10000];
+    // Use subset of standard dimensions and batch sizes
+    let dimensions = vec![384, 768, 1536];  // MiniLM, BERT, OpenAI
+    let vector_counts = STANDARD_BATCH_SIZES.to_vec();  // [250, 1000, 5000]
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -188,8 +194,9 @@ fn bench_hnsw_index(c: &mut Criterion) {
     group.sample_size(10);
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let dimensions = vec![128, 256, 512];
-    let vector_counts = vec![100, 500, 1000];
+    // Use subset of standard dimensions for index tests
+    let dimensions = vec![384, 768];  // MiniLM, BERT (smaller for index tests)
+    let vector_counts = vec![250, 1000];  // Smaller batch sizes for index operations
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -268,8 +275,9 @@ fn bench_lsh_index(c: &mut Criterion) {
     group.sample_size(10);
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let dimensions = vec![128, 256, 512];
-    let vector_counts = vec![100, 500, 1000];
+    // Use subset of standard dimensions for index tests
+    let dimensions = vec![384, 768];  // MiniLM, BERT (smaller for index tests)
+    let vector_counts = vec![250, 1000];  // Smaller batch sizes for index operations
 
     for dimension in dimensions {
         for &count in &vector_counts {
@@ -348,7 +356,7 @@ fn bench_concurrent_operations(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(3));
 
-    let dimension = 256;
+    let dimension = 768;  // BERT dimension
     let num_threads = vec![1, 2, 4, 8];
     let operations_per_thread = 100;
 

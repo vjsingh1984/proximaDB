@@ -552,6 +552,8 @@ mod tests {
     async fn test_migration_progress_tracking() {
         let mut progress = MigrationProgress::new();
 
+        // Set start time in the past to ensure elapsed time > 0
+        progress.start_time = chrono::Utc::now() - chrono::Duration::seconds(1);
         progress.total_records = 1000;
         progress.update_progress(250);
 
@@ -560,13 +562,10 @@ mod tests {
         assert!(progress.estimated_completion.is_some());
     }
 
-    #[test]
-    fn test_resource_requirements_calculation() {
+    #[tokio::test]
+    async fn test_resource_requirements_calculation() {
         let config = MigrationConfig::default();
-        let migrator_result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { EngineMigrator::new(config).await });
-        let migrator = migrator_result.unwrap();
+        let migrator = EngineMigrator::new(config).await.unwrap();
 
         let requirements = migrator.calculate_resource_requirements(10 * 1024 * 1024 * 1024); // 10GB
 
@@ -575,8 +574,8 @@ mod tests {
         assert!(requirements.min_storage_gb > 10.0);
     }
 
-    #[test]
-    fn test_risk_assessment() {
+    #[tokio::test]
+    async fn test_risk_assessment() {
         let collections = vec![CollectionMigrationPlan {
             collection_id: "small_collection".to_string(),
             record_count: 1000,
@@ -588,14 +587,11 @@ mod tests {
         }];
 
         let config = MigrationConfig {
-            // strategy removed -  MigrationStrategy::InPlace,
+            strategy: MigrationStrategy::InPlace,
             ..Default::default()
         };
 
-        let migrator_result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { EngineMigrator::new(config).await });
-        let migrator = migrator_result.unwrap();
+        let migrator = EngineMigrator::new(config).await.unwrap();
 
         let risk = migrator.assess_migration_risks(&collections);
 

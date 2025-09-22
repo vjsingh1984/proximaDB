@@ -45,7 +45,7 @@ impl BenchmarkSetup {
     fn new() -> Self {
         init_hardware();
         Self {
-            collection_id: "benchmark_collection".to_string(),
+            collection_id: "bench-cross".to_string(),
         }
     }
 

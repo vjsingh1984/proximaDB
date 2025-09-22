@@ -118,7 +118,7 @@ pub use crate::storage::traits::{
 
 // Re-export main engine types
 pub use impls::{
-    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstStorage,
+    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstEngine,
     swift::SwiftEngine, viper::ViperEngine,
 };
 

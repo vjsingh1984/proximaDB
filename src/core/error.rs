@@ -51,8 +51,8 @@ impl From<crate::storage::persistence::filesystem::FilesystemError> for VectorDB
 
 #[derive(Error, Debug)]
 pub enum StorageError {
-    #[error("SST storage error: {0}")]
-    SstStorage(String),
+    #[error("SST engine error: {0}")]
+    SstEngine(String),
 
     #[error("MMAP error: {0}")]
     Mmap(String),

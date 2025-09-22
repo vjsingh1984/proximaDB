@@ -11,7 +11,7 @@ use proximadb::compute::quantization::{
 };
 use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::VectorRecord;
-use proximadb::storage::engines::impls::sst::SstStorage;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::local::LocalConfig;
 use proximadb::storage::persistence::filesystem::{FileOptions, FilesystemPerformanceConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -150,7 +150,7 @@ async fn run_quantization_test(
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let mut sst_storage = SstStorage::new(sst_config.clone(), filesystem, distance_compute).await?;
+    let mut sst_storage = SstEngine::new(sst_config.clone(), filesystem, distance_compute).await?;
 
     // Calculate baseline (uncompressed) size
     let baseline_size = vectors.len() * dimension * 4; // FP32 = 4 bytes per float

@@ -17,7 +17,7 @@ classDiagram
         +collect_engine_metrics() Result~HashMap~String, Value~~
     }
     
-    class SstStorage {
+    class SstEngine {
         -write_buffer: WriteBuffer
         -bloom_filters: BloomFilterManager
         -compaction_manager: CompactionManager
@@ -353,7 +353,7 @@ classDiagram
     %% RELATIONSHIPS AND IMPLEMENTATIONS
     %% ==============================================
     
-    UnifiedStorageEngine <|-- SstStorage : implements
+    UnifiedStorageEngine <|-- SstEngine : implements
     UnifiedStorageEngine <|-- ViperEngine : implements
     UnifiedStorageEngine <|-- NovaEngine : implements
     UnifiedStorageEngine <|-- SwiftEngine : implements
@@ -379,7 +379,7 @@ classDiagram
     CrossCacheOrchestrator --> BitmapFilterCache : manages
     DistanceTableCache --> CrossCacheOrchestrator : uses
     
-    SstStorage --> UnifiedQuantizationEngine : uses
+    SstEngine --> UnifiedQuantizationEngine : uses
     ViperEngine --> UnifiedQuantizationEngine : uses
     NovaEngine --> UnifiedQuantizationEngine : uses
     SwiftEngine --> UnifiedQuantizationEngine : uses

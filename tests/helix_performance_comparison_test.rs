@@ -9,7 +9,7 @@ mod performance_comparison_tests {
     use proximadb::proto::proximadb_v1::VectorRecord;
     
     use proximadb::storage::engines::impls::helix::{HelixConfig, HelixEngine};
-    use proximadb::storage::engines::impls::sst::SstStorage;
+    use proximadb::storage::engines::impls::sst::SstEngine;
     use proximadb::storage::engines::impls::viper::engine::ViperEngine;
     use proximadb::storage::traits::StorageQueryMetadata;
     use proximadb::storage::traits::{
@@ -360,7 +360,7 @@ mod performance_comparison_tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone())
+            SstEngine::new(sst_config, filesystem.clone(), distance_compute.clone())
                 .await
                 .unwrap(),
         ) as Arc<dyn UnifiedStorageEngine>;
@@ -448,7 +448,7 @@ mod performance_comparison_tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone())
+            SstEngine::new(sst_config, filesystem.clone(), distance_compute.clone())
                 .await
                 .unwrap(),
         ) as Arc<dyn UnifiedStorageEngine>;
@@ -530,7 +530,7 @@ mod performance_comparison_tests {
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 let engine = Arc::new(
-                    SstStorage::new(sst_config, filesystem, distance_compute)
+                    SstEngine::new(sst_config, filesystem, distance_compute)
                         .await
                         .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>;
@@ -752,7 +752,7 @@ mod performance_comparison_tests {
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 Arc::new(
-                    SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone())
+                    SstEngine::new(sst_config, filesystem.clone(), distance_compute.clone())
                         .await
                         .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>

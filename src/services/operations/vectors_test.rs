@@ -17,7 +17,7 @@ mod tests {
         VectorRecord as ProtoVectorRecord,
     };
     use crate::services::operations::vectors::VectorOperationsService;
-    use crate::storage::engines::impls::sst::SstStorage;
+    use crate::storage::engines::impls::sst::SstEngine;
     use crate::storage::engines::impls::viper::ViperEngine;
     use crate::storage::persistence::write_ahead_log::WALConfig;
 
@@ -88,7 +88,7 @@ mod tests {
         );
 
         let sst_engine = Arc::new(
-            SstStorage::new(
+            SstEngine::new(
                 crate::core::SstConfig::default(),
                 filesystem.clone(),
                 distance_compute,

@@ -276,13 +276,13 @@ mod write_ahead_log_batch_strategy_tests {
         }
 
         fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
-            // Mock serialization using bincode
-            bincode::serialize(vectors).map_err(|e| anyhow::anyhow!("Serialization failed: {}", e))
+            // Use JSON serialization instead of bincode for compatibility with custom serde impls
+            serde_json::to_vec(vectors).map_err(|e| anyhow::anyhow!("Serialization failed: {}", e))
         }
 
         fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
-            // Mock deserialization using bincode
-            bincode::deserialize(data).map_err(|e| anyhow::anyhow!("Deserialization failed: {}", e))
+            // Use JSON deserialization instead of bincode for compatibility with custom serde impls
+            serde_json::from_slice(data).map_err(|e| anyhow::anyhow!("Deserialization failed: {}", e))
         }
 
         async fn close(&self) -> Result<()> {
@@ -517,8 +517,8 @@ mod write_ahead_log_batch_strategy_tests {
         let strategy = MockWALBatchStrategy::new("test_serialization_errors");
 
         // Test deserialization with invalid data
-        let invalid_data = vec![0x00, 0xFF, 0xAA]; // Invalid bincode data
-        let result = strategy.deserialize_vectors_from_disk(&invalid_data);
+        let invalid_data = b"{ invalid json ]"; // Invalid JSON data
+        let result = strategy.deserialize_vectors_from_disk(invalid_data);
         assert!(result.is_err());
         assert!(
             result
@@ -746,28 +746,28 @@ mod write_ahead_log_batch_strategy_tests {
     // Unified write method tests
 
     #[tokio::test]
-    async fn test_write_vector_batch_unified_bincode() {
-        let mut strategy = MockWALBatchStrategy::new("test_unified_bincode");
+    async fn test_write_vector_batch_unified_json() {
+        let mut strategy = MockWALBatchStrategy::new("test_unified_json");
         let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
         let config = WALConfig::default();
         strategy.initialize(&config, filesystem).await.unwrap();
 
-        // Create test vectors and serialize with bincode
+        // Create test vectors and serialize with JSON for compatibility
         let vectors = vec![
             create_test_vector_record("unified1", vec![1.0, 2.0]),
             create_test_vector_record("unified2", vec![3.0, 4.0]),
         ];
-        let payload = bincode::serialize(&vectors).unwrap();
+        let payload = serde_json::to_vec(&vectors).unwrap();
 
         // Test unified write
         let result = strategy
-            .write_vector_batch_unified("unified_collection", &payload, "bincode")
+            .write_vector_batch_unified("unified_collection", &payload, "json")
             .await;
         assert!(result.is_ok());
 
         let operation = result.unwrap();
         assert_eq!(operation.operation_type, "upsert_batch");
-        assert_eq!(operation.payload_format, "test_unified_bincode");
+        assert_eq!(operation.payload_format, "test_unified_json");
         assert_eq!(operation.vector_count, 2);
     }
 

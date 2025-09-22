@@ -12,7 +12,7 @@ mod tests {
     fn test_vector_db_error_display() {
         // Test each error variant's display formatting
 
-        let storage_err = VectorDBError::Storage(StorageError::SstStorage(
+        let storage_err = VectorDBError::Storage(StorageError::SstEngine(
             "SST compaction failed".to_string(),
         ));
         assert_eq!(
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn test_storage_error_variants() {
-        let sst_err = StorageError::SstStorage("Compaction failed".to_string());
+        let sst_err = StorageError::SstEngine("Compaction failed".to_string());
         assert!(sst_err.to_string().contains("SST storage error"));
 
         let mmap_err = StorageError::Mmap("Memory mapping failed".to_string());

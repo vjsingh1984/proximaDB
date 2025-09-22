@@ -13,9 +13,9 @@ use anyhow::Result;
 use proximadb::{
     compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute},
     core::{hardware_capabilities, VectorRecord},
-    proto::proximadb_v1::{StorageEngine, SqlValue, sql_value},
+    proto::proximadb_v1::{SqlValue, sql_value},
     storage::{
-        engines::impls::{sst::SstStorage, viper::ViperEngine},
+        engines::impls::{sst::SstEngine, viper::ViperEngine},
         persistence::filesystem::FilesystemFactory,
         traits::{FlushParameters, CompactionParameters, UnifiedStorageEngine},
     },
@@ -26,7 +26,6 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 use tempfile::TempDir;
-use tracing::{info, debug};
 
 /// Benchmark configuration
 #[derive(Clone)]
@@ -136,7 +135,7 @@ async fn benchmark_engine_configuration(
             sst_config.compression_level = config.level;
             sst_config.data_directory = temp_dir.path().to_str().unwrap().to_string();
 
-            let engine = SstStorage::new(
+            let engine = SstEngine::new(
                 sst_config.clone(),
                 filesystem_factory.clone(),
                 distance_compute.clone(),

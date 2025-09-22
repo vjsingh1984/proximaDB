@@ -11,7 +11,7 @@ use proximadb::{
         StorageEngine, VectorRecord, SqlValue, sql_value,
     },
     storage::{
-        engines::impls::sst::SstStorage,
+        engines::impls::sst::SstEngine,
         engines::impls::viper::engine::ViperEngine,
         traits::{
             FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
@@ -23,7 +23,7 @@ use tempfile::tempdir;
 
 /// Test fixture for storage engine testing
 struct StorageTestFixture {
-    sst_engine: Arc<SstStorage>,
+    sst_engine: Arc<SstEngine>,
     viper_engine: Arc<ViperEngine>,
     test_vectors: Vec<VectorRecord>,
     dimension: usize,
@@ -77,7 +77,7 @@ impl StorageTestFixture {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone()).await?,
+            SstEngine::new(sst_config, filesystem.clone(), distance_compute.clone()).await?,
         );
 
         // Create VIPER engine

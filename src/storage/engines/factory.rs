@@ -34,7 +34,7 @@ use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
 use super::impls::{
-    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstStorage,
+    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstEngine,
     swift::SwiftEngine, viper::ViperEngine,
 };
 
@@ -45,7 +45,7 @@ use super::impls::{
 /// 1. **Engine Creation**: Instantiate appropriate engine based on config
 /// 2. **Dependency Injection**: Provide filesystem, distance compute, caches
 /// 3. **Async Bridging**: Handle async engine initialization in sync context
-/// 4. **Fallback Logic**: Provide SST as default for unimplemented engines
+/// 4. **Error Reporting**: Return explicit errors for unimplemented/misconfigured engines
 ///
 /// ## Thread Safety:
 ///
@@ -118,7 +118,7 @@ impl StorageEngineFactory {
             StorageEngineStrategy::Hybrid => {
                 // RAPTOR uses hybrid strategy (row-aligned with columnar benefits)
                 info!("Creating RAPTOR engine for hybrid strategy");
-                Self::create_raptor_default()
+                Self::create_raptor()
             }
             StorageEngineStrategy::Swift => {
                 info!("Creating SWIFT engine");
@@ -130,7 +130,7 @@ impl StorageEngineFactory {
             }
             StorageEngineStrategy::Raptor => {
                 info!("Creating RAPTOR engine");
-                Self::create_raptor_default()
+                Self::create_raptor()
             }
             StorageEngineStrategy::Helix => {
                 info!("Creating HELIX engine");
@@ -139,7 +139,7 @@ impl StorageEngineFactory {
         }
     }
 
-    /// Create VIPER engine
+    /// Create VIPER engine with default configuration
     ///
     /// ## VIPER Initialization:
     ///
@@ -152,35 +152,15 @@ impl StorageEngineFactory {
     /// In production, prefer async factory methods.
     pub fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
-        // VIPER needs async initialization, block on it for now
-        // TODO: Consider making factory methods async
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            let filesystem_config =
-                crate::storage::persistence::filesystem::FilesystemConfig::default();
-            let filesystem = Arc::new(
-                crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
-                    .await
-                    .map_err(|e| {
-                        SstError::Internal(format!("Failed to create filesystem: {}", e))
-                    })?,
-            );
-            let viper_config = crate::core::config::ViperConfig::default();
-            let distance_compute = Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-            );
-            ViperEngine::new(
-                "default".to_string(), // Default collection ID
-                viper_config,
-                filesystem,
-                distance_compute,
-            )
-            .await
+            ViperEngine::new().await
         })?;
         Ok(Arc::new(engine))
     }
 
-    /// Create SST engine
+
+    /// Create SST engine with default configuration
     ///
     /// ## SST Initialization:
     ///
@@ -193,26 +173,13 @@ impl StorageEngineFactory {
     /// general-purpose nature and production stability.
     pub fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
-        // SST needs async initialization, block on it for now
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            let sst_config = crate::core::config::SstConfig::default();
-            let filesystem_config =
-                crate::storage::persistence::filesystem::FilesystemConfig::default();
-            let filesystem = Arc::new(
-                crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
-                    .await
-                    .map_err(|e| {
-                        SstError::Internal(format!("Failed to create filesystem: {}", e))
-                    })?,
-            );
-            let distance_compute = Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-            );
-            SstStorage::new(sst_config, filesystem, distance_compute).await
+            SstEngine::new().await
         })?;
         Ok(Arc::new(engine))
     }
+
 
     /// Create SWIFT engine (Storage With Instant Fast Traversal)
     ///
@@ -229,13 +196,11 @@ impl StorageEngineFactory {
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            let distance_compute = Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-            );
-            SwiftEngine::new(distance_compute, None).await
+            SwiftEngine::new().await
         })?;
         Ok(Arc::new(engine))
     }
+
 
     /// Create HELIX engine (Hierarchical Euclidean Layout with Indexed eXtensions)
     ///
@@ -250,26 +215,14 @@ impl StorageEngineFactory {
     /// while preserving 95%+ of variance.
     pub fn create_helix() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating HELIX storage engine");
-        // HELIX needs async initialization
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            use crate::storage::engines::impls::helix::{HelixConfig, HelixEngine};
-
-            let config = HelixConfig::default();
-            let data_dir = std::path::PathBuf::from("/tmp/helix_data");
-
-            let orch = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global();
-            HelixEngine::new_with_orchestrator(
-                "default".to_string(),
-                config,
-                data_dir,
-                None, // No EventLog for now
-                orch,
-            )
-            .await
+            use crate::storage::engines::impls::helix::HelixEngine;
+            HelixEngine::new().await
         })?;
         Ok(Arc::new(engine))
     }
+
 
     /// Create NOVA engine (Next-gen Optimized Vector Analytics)
     ///
@@ -289,6 +242,7 @@ impl StorageEngineFactory {
         Ok(Arc::new(engine))
     }
 
+
     /// Create RAPTOR engine (Row-Aligned Predicated Tensor Optimized Repository)
     ///
     /// ## RAPTOR Architecture:
@@ -301,46 +255,14 @@ impl StorageEngineFactory {
     /// This provides 3x faster navigation with 50% less memory than HNSW.
     ///
     /// Note: Requires async initialization with collection metadata.
-    pub fn create_raptor_default() -> Result<Arc<dyn UnifiedStorageEngine>> {
-        warn!("RAPTOR engine requires async initialization with collection info");
-        // For now, return SST as fallback
-        // RAPTOR needs collection dimensions for Matrix Trinity setup
-        Self::create_sst()
-    }
-
-    /// Create RAPTOR engine with specific configuration (async)
-    ///
-    /// ## Async RAPTOR Creation:
-    ///
-    /// RAPTOR requires collection-specific information:
-    /// - Dimensions for Matrix Trinity configuration
-    /// - Distance metric for clustering
-    /// - Expected dataset size for bloom filter sizing
-    ///
-    /// ### Components Initialized:
-    /// 1. Matrix Trinity navigation structure
-    /// 2. Artus bloom filters (180KB per 1M vectors)
-    /// 3. Cross-cache orchestrator for hot data
-    /// 4. Consolidated reader/writer for I/O
-    ///
-    /// This async method should be preferred over create_raptor_default()
-    /// when collection information is available.
-    pub async fn create_raptor(
-        collection_id: String,
-        base_path: String,
-        config: Option<raptor::RaptorConfig>,
-    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
-        info!(
-            "Creating RAPTOR (Row-Aligned Predicated Tensor Optimized Repository) storage engine"
-        );
-
-        let config = config.unwrap_or_else(raptor::RaptorConfig::default);
-        // Create shared cache for RAPTOR
-        use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-        let cache = Arc::new(CrossCacheOrchestrator::new(1000)); // Default history size
-        let engine = RaptorEngine::new(collection_id, base_path, config, cache).await?;
+    pub fn create_raptor() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        let engine = runtime.block_on(async {
+            RaptorEngine::new().await
+        })?;
         Ok(Arc::new(engine))
     }
+
 
     /// Create PRISM engine (Progressive Retrieval through Indexed Storage Management)
     pub fn create_prism() -> Result<Arc<dyn UnifiedStorageEngine>> {
@@ -348,15 +270,13 @@ impl StorageEngineFactory {
             "Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine"
         );
 
-        // Use default configuration for now
-        let config = prism::engine::Config::default();
-
-        // TODO: This needs to be updated when the PRISM engine constructor is fixed
-        // For now, return an error indicating PRISM needs additional setup
-        Err(anyhow!(
-            "PRISM engine requires async initialization - use create_prism_async()"
-        ))
+        let runtime = tokio::runtime::Runtime::new()?;
+        let engine = runtime.block_on(async {
+            PrismEngine::new().await
+        })?;
+        Ok(Arc::new(engine))
     }
+
 
     /// Create PRISM engine (async version)
     pub async fn create_prism_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
@@ -368,7 +288,7 @@ impl StorageEngineFactory {
         let config = prism::engine::Config::default();
 
         // Create PRISM engine with async initialization
-        let engine = PrismEngine::new(config).await?;
+        let engine = PrismEngine::new().await?;
         Ok(Arc::new(engine))
     }
 

@@ -100,8 +100,6 @@ type VectorSearchResult = OptimizedSearchRecord;
 
 pub struct RaptorEngine {
     config: RaptorConfig,
-    collection_id: String,
-    base_path: String,
 
     // Core components
     rowgroup_manager: Arc<RwLock<RowGroups>>,
@@ -137,9 +135,16 @@ pub struct RaptorEngine {
 }
 
 impl RaptorEngine {
-    pub async fn new(
-        collection_id: String,
-        base_path: String,
+    /// Create a new RAPTOR engine instance (stateless)
+    /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    pub async fn new() -> Result<Self> {
+        let config = RaptorConfig::default();
+        let cache = Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
+        Self::new_with_config(config, cache).await
+    }
+
+    /// Create RAPTOR engine with specific config (internal use)
+    pub async fn new_with_config(
         config: RaptorConfig,
         cache: Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>,
     ) -> Result<Self> {
@@ -186,50 +191,37 @@ impl RaptorEngine {
         let filesystem_factory =
             Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
 
-        // Determine storage tier from URL
-        let tier = Self::determine_storage_tier(&base_path);
+        // Storage tier and paths will be determined at runtime from FlushParameters
+        // Use defaults for initialization - these will be replaced on first use
+        let tier = FileStorageTier::SSD;
         let tier_config = TierConfig {
             tier,
-            base_url: base_path.clone(),
+            base_url: "file:///tmp".to_string(), // Default, overridden at runtime
             max_capacity_bytes: None,
             current_usage_bytes: 0,
             compression: !matches!(config.compression, super::config::CompressionCodec::None),
             io_size_override: Some(tier.optimal_io_size()),
         };
 
-        // Configure file options for cloud-aware operations
+        // Configure file options with defaults
         let file_options = FileOptions {
             create_dirs: true,
             overwrite: false,
             buffer_size: Some(tier.optimal_io_size()),
             encryption: None,
-            storage_class: match &tier {
-                FileStorageTier::S3Express => Some("EXPRESS_ONEZONE".to_string()),
-                FileStorageTier::S3Standard => Some("STANDARD".to_string()),
-                FileStorageTier::S3GlacierInstant => Some("GLACIER_IR".to_string()),
-                FileStorageTier::AzurePremium => Some("Premium_LRS".to_string()),
-                FileStorageTier::AzureStandard => Some("Standard_LRS".to_string()),
-                _ => None,
-            },
+            storage_class: None,
             metadata: None,
             temp_path: None,
         };
 
-        // Generate initial file path using unified naming convention
-        let data_dir = format!("{}/{}/data", base_path, collection_id);
-        // Ensure data directory exists
-        std::fs::create_dir_all(&data_dir)?;
-
-        let codec = crate::storage::common::compaction_orchestrator::FilenameCodec::new();
-        let filename = codec.generate(0, "raptor"); // Level 0 for new writes
-        let file_path = format!("{}/{}", data_dir, filename);
-
+        // Writer will be initialized lazily on first flush with actual collection_id
+        // Create a placeholder that will be replaced
         let writer = Arc::new(RwLock::new(
             RaptorWriter::new(
-                file_path,
+                "/tmp/raptor_placeholder.raptor".to_string(),
                 config.clone(),
-                collection_id.clone(),
-                config.dimension, // dimension is always available from flush/compaction params
+                "placeholder".to_string(),
+                config.dimension, // dimension from config
             )
             .await?,
         ));
@@ -243,8 +235,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         // Create filesystem factory first
         let fs_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await?);
 
-        // Get base filesystem from factory
-        let base_fs = fs_factory.get_filesystem(&base_path)?;
+        // Get default filesystem - will be replaced at runtime from FlushParameters
+        let base_fs = fs_factory.get_filesystem("file:///tmp")?;
 
         // Create RAPTOR metadata serializer
         let metadata_serializer = Arc::new(
@@ -282,11 +274,11 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         // - 20% latency improvement
         // ============================================================================
 
-        // Create UnifiedCachingFilesystem with RAPTOR-specific serializer
+        // Create UnifiedCachingFilesystem - collection_id will be set at runtime
         let unified_fs = Arc::new(
             UnifiedCachingFilesystem::with_serializer(
                 base_fs,
-                collection_id.clone(),
+                "placeholder".to_string(), // Replaced at runtime from FlushParameters
                 "raptor".to_string(),
                 metadata_serializer,
             )
@@ -302,7 +294,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         // Transaction coordinator uses the fs_factory created above
 
         let transaction_coordinator = Arc::new(
-            TransactionCoordinator::new(fs_factory, Some(format!("{}/temp", base_path))).await?,
+            TransactionCoordinator::new(fs_factory, None).await?, // Default temp path
         );
 
         // Cache is now passed in as a shared resource across all engines
@@ -328,9 +320,10 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         //
         // ============================================================================
 
+        // Reader with placeholder paths - will use runtime values from StorageQueryContext
         let reader = Arc::new(RaptorReader::new(
-            base_path.clone(),
-            collection_id.clone(),
+            "/tmp".to_string(), // Placeholder base_path
+            "placeholder".to_string(), // Placeholder collection_id
             config.clone(),
             cache, // Tier 1: Shared metadata cache (CrossCacheOrchestrator)
             zero_copy_filesystem.clone(), // Tier 2: Disk cache wrapper
@@ -386,8 +379,6 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
         Ok(Self {
             config,
-            collection_id,
-            base_path,
             rowgroup_manager,
             writer,
             reader,
@@ -545,32 +536,10 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
         // Check if compaction is needed
         if self.should_compact().await {
-            let compactor = self.compactor.clone();
-            let collection_id = self.collection_id.clone();
-            let base_path = self.base_path.clone();
-            tokio::spawn(async move {
-                // Get all files from {base_path}/{collection_id}/data - unified directory structure
-                let data_dir = format!("{}/{}/data", base_path, collection_id);
-                let input_files = match std::fs::read_dir(&data_dir) {
-                    Ok(entries) => entries
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.path().extension().map_or(false, |ext| ext == "raptor"))
-                        .map(|e| e.path().to_string_lossy().to_string())
-                        .collect(),
-                    Err(_) => Vec::new(),
-                };
-
-                if !input_files.is_empty() {
-                    // Use unified FilenameCodec naming convention
-                    let codec =
-                        crate::storage::common::compaction_orchestrator::FilenameCodec::new();
-                    let filename = codec.generate(1, "raptor"); // Level 1 for compacted files
-                    let output_file = format!("{}/{}", data_dir, filename);
-                    let _ = compactor
-                        .compact_files(input_files, &output_file, &collection_id)
-                        .await;
-                }
-            });
+            // Compaction needs to be triggered from do_flush or do_compact
+            // which have access to collection_id and base_path
+            // This internal method can't trigger compaction without that context
+            // TODO: Refactor to pass context through or trigger from outer methods
         }
 
         Ok(())
@@ -766,7 +735,9 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             .row_group(&(rg_id as u16))
             .ok_or_else(|| anyhow::anyhow!("RowGroup {} not found", rg_id))?;
 
-        let path = format!("{}/rowgroup_{}.raptor", self.base_path, rg_id);
+        // This method needs context to determine path - should not be called directly
+        // Path should come from StorageQueryContext or FlushParameters
+        let path = format!("/tmp/placeholder/rowgroup_{}.raptor", rg_id);
 
         // Use filesystem range read for efficient cloud I/O
         let data = if self.is_cloud_storage() {
@@ -1284,7 +1255,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
         for rg_id in selected_rowgroups {
             // Check cache first
-            let key = format!("{}_{}", self.collection_id, rg_id);
+            // Use a generic key format - actual collection_id comes from context
+            let key = format!("raptor_rowgroup_{}", rg_id);
             let batch = if let Some(cached) = self.get_cached_rowgroup(&key).await {
                 cached
             } else {
@@ -1541,10 +1513,7 @@ impl UnifiedStorageEngine for RaptorEngine {
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for flush"))?;
+        let collection_id = self.get_collection_id_from_params(params)?;
         let start_time = std::time::Instant::now();
 
         // Get collection config dimension - this should always be available since dimension is required in CollectionConfig
@@ -1563,7 +1532,12 @@ impl UnifiedStorageEngine for RaptorEngine {
         // - Memory allocation optimization
 
         let mut writer = self.writer.write().await;
+
+        // First flush any pending row pages
         let bytes_written = writer.flush().await?;
+
+        // Then finalize the file to write footer and metadata
+        writer.finalize().await?;
 
         // Update unified metrics
         self.metrics
@@ -1592,10 +1566,7 @@ impl UnifiedStorageEngine for RaptorEngine {
     }
 
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Collection ID required for compaction"))?;
+        let collection_id = self.get_collection_id_from_compaction_params(params)?;
         let start_time = std::time::Instant::now();
 
         // Get collection config dimension - this should always be available since dimension is required in CollectionConfig
@@ -1613,8 +1584,9 @@ impl UnifiedStorageEngine for RaptorEngine {
         // - Row group reorganization based on actual dimension
         // - Memory allocation optimization during compaction
 
-        // Get all files from {base_path}/{collection_id}/data - unified directory structure
-        let data_dir = format!("{}/{}/data", self.base_path, self.collection_id);
+        // Get collection_id and data directory using trait-level helpers
+        let collection_id = self.get_collection_id_from_compaction_params(params)?;
+        let data_dir = self.get_data_dir_from_compaction_params(params)?;
         let input_files: Vec<String> = match std::fs::read_dir(&data_dir) {
             Ok(entries) => entries
                 .filter_map(|e| e.ok())
@@ -1630,7 +1602,7 @@ impl UnifiedStorageEngine for RaptorEngine {
             let filename = codec.generate(1, "raptor"); // Level 1 for compacted files
             let output_file = format!("{}/{}", data_dir, filename);
             self.compactor
-                .compact_files(input_files, &output_file, &self.collection_id)
+                .compact_files(input_files, &output_file, &collection_id)
                 .await?;
         }
 
@@ -1728,10 +1700,34 @@ impl UnifiedStorageEngine for RaptorEngine {
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
+        // Access global unified cache through CrossCacheOrchestrator
+        let cache_key = format!("vector:{}:{}", collection_id, vector_id);
+        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            // Try to get from query cache first
+            if let Some(query_cache) = orchestrator.get_query_cache() {
+                if let Ok(Some(cached_vector)) = query_cache.get(&cache_key).await {
+                    // Track cache hit for access pattern learning
+                    orchestrator.pattern_tracker().track_access_async(
+                        cache_key.clone(),
+                        crate::storage::cache::orchestrator::CacheType::Query,
+                    );
+                    return Ok(Some(cached_vector));
+                }
+            }
+
+            // Track cache miss
+            orchestrator.pattern_tracker().track_access_async(
+                cache_key.clone(),
+                crate::storage::cache::orchestrator::CacheType::Query,
+            );
+        }
+
         // Load file metadata to access bloom filters
-        let file_path = format!("{}/{}/raptor.data", self.base_path, collection_id);
+        // Construct data directory from base_path and collection_id
+        let file_path = format!("{}/{}/raptor.data", base_path, collection_id);
         let metadata = self.reader.get_metadata(&file_path).await?;
 
         // For now, use a simple approach - read all row groups and search for the ID

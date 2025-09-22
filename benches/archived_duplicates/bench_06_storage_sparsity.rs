@@ -12,7 +12,7 @@ use proximadb::{
     core::hardware_capabilities,
     proto::proximadb_v1::{VectorRecord, StorageEngine},
     storage::{
-        engines::impls::{sst::SstStorage, viper::ViperEngine},
+        engines::impls::{sst::SstEngine, viper::ViperEngine},
         persistence::filesystem::{FilesystemFactory, FilesystemConfig},
         traits::{FlushParameters, UnifiedStorageEngine},
     },
@@ -110,7 +110,7 @@ fn bench_sst_sparsity_compression(c: &mut Criterion) {
                     sst_config.data_directory = temp_dir.path().to_str().unwrap().to_string();
 
                     // Create SST engine
-                    let engine = SstStorage::new(
+                    let engine = SstEngine::new(
                         sst_config,
                         filesystem_factory,
                         distance_compute,
@@ -254,7 +254,7 @@ fn bench_compression_ratio_by_sparsity(c: &mut Criterion) {
                     sst_config.compression_level = 3;
                     sst_config.data_directory = temp_dir.path().to_str().unwrap().to_string();
 
-                    let engine = SstStorage::new(
+                    let engine = SstEngine::new(
                         sst_config,
                         filesystem_factory,
                         distance_compute,

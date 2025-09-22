@@ -1,8 +1,9 @@
 //! Common benchmark utilities and initialization
 
 pub mod embedding_generator;
+pub mod benchmark_utils;
 
-pub use embedding_generator::{EmbeddingGenerator, EmbeddingModel, generate_sparse_embeddings};
+pub use embedding_generator::{EmbeddingGenerator, EmbeddingModel};
 
 use std::sync::Once;
 
