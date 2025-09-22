@@ -549,6 +549,9 @@ impl UnifiedStorageEngine for HelixEngine {
             let data_dir = self.get_data_dir_from_flush_params(params)?;
             let filesystem = self.filesystem_factory.get_filesystem(&data_dir)?;
 
+            // Create directory if it doesn't exist
+            filesystem.create_dir_all(&data_dir).await?;
+
             // Just write the records directly without complex ordering
             let file_path = format!("{}/L0_{:016x}.sst",
                 data_dir,
@@ -663,6 +666,10 @@ impl UnifiedStorageEngine for HelixEngine {
         // Create Level-0 SSTable (now sorted by Hilbert key)
         let filename = self.generate_sstable_filename(0);
         let data_dir = self.get_data_dir_from_flush_params(params)?;
+
+        // Create directory if it doesn't exist
+        self.filesystem.create_dir_all(&data_dir).await?;
+
         let file_path = std::path::Path::new(&data_dir).join(&filename);
 
         // Write FastLane blocks with Hilbert keys

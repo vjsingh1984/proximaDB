@@ -447,8 +447,15 @@ fn bench_compression_with_search(c: &mut Criterion) {
                     // Validate and log search results
                     if let Ok(ref results) = result {
                         if results.is_empty() {
-                            eprintln!("    ⚠️  WARNING: Pure search returned no results for {} with {}",
-                                     engine_name, compress_name);
+                            // Only log first warning to avoid spam
+                            static mut PURE_EMPTY_LOGGED: bool = false;
+                            unsafe {
+                                if !PURE_EMPTY_LOGGED {
+                                    eprintln!("    ⚠️  WARNING: Pure search returned no results for {} with {}",
+                                             engine_name, compress_name);
+                                    PURE_EMPTY_LOGGED = true;
+                                }
+                            }
                         } else {
                             eprintln!("    ✓ Pure search returned {} results for {} with {}",
                                      results.len(), engine_name, compress_name);
@@ -568,8 +575,15 @@ fn bench_compression_with_search(c: &mut Criterion) {
                     // Validate and log filtered search results
                     if let Ok(ref results) = result {
                         if results.is_empty() {
-                            eprintln!("    ⚠️  WARNING: Filtered search returned no results for {} with {}",
-                                     engine_name, compress_name);
+                            // Only log first warning to avoid spam
+                            static mut EMPTY_RESULTS_LOGGED: bool = false;
+                            unsafe {
+                                if !EMPTY_RESULTS_LOGGED {
+                                    eprintln!("    ⚠️  WARNING: Filtered search returned no results for {} with {}",
+                                             engine_name, compress_name);
+                                    EMPTY_RESULTS_LOGGED = true;
+                                }
+                            }
                         } else {
                             eprintln!("    ✓ Filtered search returned {} results for {} with {} (filter: category=cat_5 AND price<500)",
                                      results.len(), engine_name, compress_name);
