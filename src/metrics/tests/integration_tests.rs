@@ -129,6 +129,7 @@ mod tests {
         async fn vector_by_id(
             &self,
             _collection_id: &str,
+            _base_path: &str,
             _vector_id: &str,
         ) -> Result<Option<VectorRecord>> {
             Ok(None)

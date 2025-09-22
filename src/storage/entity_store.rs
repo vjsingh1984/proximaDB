@@ -1042,7 +1042,7 @@ mod tests {
         async fn do_flush(&self, _p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult> { Ok(Default::default()) }
         async fn do_compact(&self, _p: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult> { Ok(Default::default()) }
         async fn collect_engine_metrics(&self) -> Result<std::collections::HashMap<String, serde_json::Value>> { Ok(Default::default()) }
-        async fn vector_by_id(&self, _c:&str, _v:&str) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> { Ok(None) }
+        async fn vector_by_id(&self, _c:&str, _b:&str, _v:&str) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> { Ok(None) }
         async fn search_vectors_unified(&self, _ctx:&crate::storage::traits::StorageQueryContext) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> { Ok(vec![]) }
         fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
             &self.filesystem_factory

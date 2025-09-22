@@ -1664,7 +1664,7 @@ mod executor_tests {
             async fn do_flush(&self, _:&crate::storage::traits::FlushParameters)->anyhow::Result<crate::storage::traits::FlushResult>{ Ok(Default::default()) }
             async fn do_compact(&self, _:&crate::storage::traits::CompactionParameters)->anyhow::Result<crate::storage::traits::CompactionResult>{ Ok(Default::default()) }
             async fn collect_engine_metrics(&self)->anyhow::Result<std::collections::HashMap<String, serde_json::Value>>{ Ok(Default::default()) }
-            async fn vector_by_id(&self,_:&str,_:&str)->anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>>{ Ok(None) }
+            async fn vector_by_id(&self,_:&str,_:&str,_:&str)->anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>>{ Ok(None) }
             async fn search_vectors_unified(&self,_:&crate::storage::traits::StorageQueryContext)->anyhow::Result<Vec<crate::core::search::results::OptimizedSearchRecord>>{ Ok(vec![]) }
             fn get_filesystem_factory(&self) -> &crate::storage::persistence::filesystem::FilesystemFactory {
                 // TODO: Placeholder for test - FilesystemFactory::new is async

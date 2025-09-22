@@ -42,12 +42,7 @@ async fn test_helix_engine_creation() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -62,12 +57,7 @@ async fn test_flush_operation() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -100,12 +90,7 @@ async fn test_vector_search() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -164,12 +149,7 @@ async fn test_vector_by_id() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -188,7 +168,7 @@ async fn test_vector_by_id() {
 
     // Find specific vector
     let result = engine
-        .vector_by_id("test_collection", "vec_5")
+        .vector_by_id("test_collection", "/data/test", "vec_5")
         .await
         .unwrap();
 
@@ -204,12 +184,7 @@ async fn test_compaction() {
     let mut config = HelixConfig::default();
     config.level0_file_num_compaction_trigger = 2;
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -347,12 +322,7 @@ async fn test_metrics_collection() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 

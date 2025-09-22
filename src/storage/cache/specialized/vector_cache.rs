@@ -190,7 +190,7 @@ mod tests {
         // Create test vector
         let mut vector = VectorRecord::default();
         vector.id = "test_vector".to_string();
-        vector.values = vec![1.0, 2.0, 3.0];
+        vector.vector = vec![1.0, 2.0, 3.0];
 
         // Test put and get
         cache.put("key1".to_string(), vector.clone()).await.unwrap();

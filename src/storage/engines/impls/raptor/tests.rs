@@ -45,12 +45,7 @@ mod tests {
             )
         );
 
-        let engine = RaptorEngine::new(
-            "test_collection".to_string(),
-            "/tmp/raptor_test".to_string(),
-            config,
-            cache,
-        )
+        let engine = RaptorEngine::new()
         .await?;
 
         Ok(engine)

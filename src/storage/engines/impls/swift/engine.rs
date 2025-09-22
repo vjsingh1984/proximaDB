@@ -1115,7 +1115,7 @@ mod tests {
                 crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
         );
-        let engine = SwiftEngine::new(distance_engine, None).await.unwrap();
+        let engine = SwiftEngine::new().await.unwrap();
         assert_eq!(engine.engine_name(), "SWIFT");
         assert_eq!(engine.engine_version(), "1.0.0");
     }
@@ -1129,7 +1129,7 @@ mod tests {
                 crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
         );
-        let engine = SwiftEngine::new(distance_engine, None).await.unwrap();
+        let engine = SwiftEngine::new().await.unwrap();
 
         assert!(engine.supports_feature("id_lookup"));
         assert!(engine.supports_feature("similarity_search"));

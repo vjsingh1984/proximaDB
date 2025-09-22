@@ -59,12 +59,7 @@ async fn test_helix_engine_initialization() {
     let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    ).await.unwrap();
+    let engine = HelixEngine::new().await.unwrap();
 
     assert_eq!(engine.engine_name(), "helix");
     assert_eq!(engine.engine_version(), "1.0.0");
@@ -141,12 +136,7 @@ async fn test_flush_and_compaction() {
     let mut config = HelixConfig::default();
     config.level0_file_num_compaction_trigger = 2; // Trigger compaction after 2 files
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    ).await.unwrap();
+    let engine = HelixEngine::new().await.unwrap();
 
     // Create and flush test vectors
     let vectors = create_test_vectors(500, 64);
@@ -411,12 +401,7 @@ async fn test_end_to_end_search() {
     let filesystem_factory = Arc::new(FilesystemFactory::new(crate::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap());
     let filesystem = filesystem_factory.get_filesystem("file://").unwrap();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    ).await.unwrap();
+    let engine = HelixEngine::new().await.unwrap();
 
     // Flush test vectors
     let vectors = create_test_vectors(1000, 64);

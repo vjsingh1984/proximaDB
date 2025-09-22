@@ -505,6 +505,7 @@ mod integration_tests {
         async fn vector_by_id(
             &self,
             _collection_id: &str,
+            _base_path: &str,
             _vector_id: &str,
         ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
             Ok(None)

@@ -322,7 +322,7 @@ async fn test_recovery_skips_corrupted_checksum() {
         async fn do_flush(&self, p: &crate::storage::traits::FlushParameters) -> Result<crate::storage::traits::FlushResult, anyhow::Error> { let mut g = self.cnt.lock().await; *g += p.vector_records.len() as u64; Ok(Default::default()) }
         async fn do_compact(&self, _: &crate::storage::traits::CompactionParameters) -> Result<crate::storage::traits::CompactionResult, anyhow::Error> { Ok(Default::default()) }
         async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>, anyhow::Error> { Ok(HashMap::new()) }
-        async fn vector_by_id(&self, _: &str, _: &str) -> Result<Option<VectorRecord>, anyhow::Error> { Ok(None) }
+        async fn vector_by_id(&self, _: &str, _: &str, _: &str) -> Result<Option<VectorRecord>, anyhow::Error> { Ok(None) }
         async fn search_vectors_unified(&self, _: &crate::storage::traits::StorageQueryContext) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, anyhow::Error> { Ok(vec![]) }
     }
 

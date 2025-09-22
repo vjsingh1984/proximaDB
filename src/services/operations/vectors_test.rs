@@ -88,11 +88,7 @@ mod tests {
         );
 
         let sst_engine = Arc::new(
-            SstEngine::new(
-                crate::core::SstConfig::default(),
-                filesystem.clone(),
-                distance_compute,
-            )
+            SstEngine::new()
             .await
             .expect("Failed to create SST engine"),
         );
