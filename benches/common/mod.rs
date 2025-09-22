@@ -2,8 +2,14 @@
 
 pub mod embedding_generator;
 pub mod benchmark_utils;
+pub mod validation;
 
 pub use embedding_generator::{EmbeddingGenerator, EmbeddingModel};
+pub use validation::{
+    validate_flush_result, validate_search_results, validate_metadata_filter,
+    validate_filesystem_write, calculate_compression_metrics,
+    BenchmarkValidation, BenchmarkStatus, CompressionMetrics,
+};
 
 use std::sync::Once;
 

@@ -135,11 +135,7 @@ async fn benchmark_engine_configuration(
             sst_config.compression_level = config.level;
             sst_config.data_directory = temp_dir.path().to_str().unwrap().to_string();
 
-            let engine = SstEngine::new(
-                sst_config.clone(),
-                filesystem_factory.clone(),
-                distance_compute.clone(),
-            )
+            let engine = SstEngine::new()
             .await?;
 
             // Flush batches
@@ -161,7 +157,14 @@ async fn benchmark_engine_configuration(
                 let result = engine.do_flush(&flush_params).await?;
                 flush_times.push(start_flush.elapsed().as_millis() as u64);
 
+                // Validate flush results
                 assert!(result.success, "Flush should succeed");
+                if result.vectors_written == 0 {
+                    eprintln!("WARNING: No vectors written in batch {}", batch_id);
+                }
+                if result.bytes_written == 0 {
+                    eprintln!("WARNING: No bytes written in batch {}", batch_id);
+                }
             }
 
             // Measure compaction
@@ -181,18 +184,8 @@ async fn benchmark_engine_configuration(
             (uncompressed_size as u64, compressed_size as u64, compaction_time)
         }
         "VIPER" => {
-            // Similar implementation for VIPER
-            let mut viper_config = proximadb::core::config::ViperConfig::default();
-            viper_config.compression = config.algorithm.clone();
-            viper_config.compression_level = config.level;
-            viper_config.data_directory = temp_dir.path().to_str().unwrap().to_string();
-            viper_config.row_group_size = 50_000;
-
-            let engine = ViperEngine::from_core_config(
-                viper_config,
-                filesystem_factory.clone(),
-            )
-            .await?;
+            // Create VIPER engine with singleton pattern
+            let engine = ViperEngine::new().await?;
 
             // Flush batches
             for batch_id in 0..config.batch_count {
@@ -213,7 +206,14 @@ async fn benchmark_engine_configuration(
                 let result = engine.flush(flush_params).await?;
                 flush_times.push(start_flush.elapsed().as_millis() as u64);
 
+                // Validate flush results
                 assert!(result.success, "Flush should succeed");
+                if result.vectors_written == 0 {
+                    eprintln!("WARNING: No vectors written in batch {}", batch_id);
+                }
+                if result.bytes_written == 0 {
+                    eprintln!("WARNING: No bytes written in batch {}", batch_id);
+                }
             }
 
             // Measure compaction

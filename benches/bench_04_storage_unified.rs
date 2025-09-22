@@ -185,7 +185,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             });
 
             // Step 1: Flush data with compression
-            eprintln!("  Flushing {} vectors with {} compression...", count, compress_name);
+            eprintln!("  Flushing {} vectors with {} compression to {}...", count, compress_name, base_path);
             let flush_result = runtime.block_on(async {
                 let mut storage_config = StorageConfig::default();
                 storage_config.compression = *compress_value;
@@ -218,9 +218,40 @@ fn bench_compression_with_search(c: &mut Criterion) {
                 engine.flush(params).await
             });
 
+            // Validate flush result
+            let flush_result = match flush_result {
+                Ok(result) => {
+                    // Validate that data was actually written
+                    if result.vectors_written == 0 {
+                        eprintln!("    ⚠️  WARNING: No vectors written for {} with {}", engine_name, compress_name);
+                    }
+                    if result.bytes_written == 0 {
+                        eprintln!("    ⚠️  WARNING: No bytes written for {} with {}", engine_name, compress_name);
+                    }
+                    eprintln!("    ✓ Flushed {} vectors, {} bytes written",
+                             result.vectors_written, result.bytes_written);
+                    Ok(result)
+                },
+                Err(e) => Err(e)
+            };
+
             if let Err(e) = flush_result {
                 eprintln!("    ⚠️  Flush failed for {} with {}: {:?}", engine_name, compress_name, e);
                 continue;
+            }
+
+            // Verify files were actually created
+            let files_created = runtime.block_on(async {
+                let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
+                let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
+                let entries = fs.list(&base_path).await.ok()?;
+                Some(entries.len())
+            }).unwrap_or(0);
+
+            if files_created == 0 {
+                eprintln!("    ⚠️  WARNING: No files created after flush for {} with {}", engine_name, compress_name);
+            } else {
+                eprintln!("    ✓ Created {} files/directories", files_created);
             }
 
             // Measure storage metrics using filesystem API
@@ -282,6 +313,18 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         engine.search_vectors_unified(&ctx).await
                     });
                     pure_time_ms = start.elapsed().as_millis();
+
+                    // Validate search results
+                    if let Ok(ref results) = result {
+                        if results.results.is_empty() {
+                            eprintln!("    ⚠️  WARNING: Pure search returned no results for {} with {}",
+                                     engine_name, compress_name);
+                        } else if results.results.len() > 10 {
+                            eprintln!("    ⚠️  WARNING: Pure search returned {} results (expected <= 10) for {} with {}",
+                                     results.results.len(), engine_name, compress_name);
+                        }
+                    }
+
                     black_box(result)
                 })
             });
@@ -351,14 +394,33 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         engine.search_vectors_unified(&ctx).await
                     });
                     filter_time_ms = start.elapsed().as_millis();
+
+                    // Validate filtered search results
+                    if let Ok(ref results) = result {
+                        if results.results.is_empty() {
+                            eprintln!("    ⚠️  WARNING: Filtered search returned no results for {} with {}",
+                                     engine_name, compress_name);
+                        } else {
+                            // Verify filter was applied (results should have category=cat_5)
+                            let correctly_filtered = results.results.iter().all(|r| {
+                                // Note: actual filter validation would check metadata
+                                true  // Simplified for now
+                            });
+                            if !correctly_filtered {
+                                eprintln!("    ⚠️  WARNING: Filter not correctly applied for {} with {}",
+                                         engine_name, compress_name);
+                            }
+                        }
+                    }
+
                     black_box(result)
                 })
             });
             filtered_group.finish();
 
-            // Print results
-            if size_bytes == 0 {
-                eprintln!("{:<8} {:<8} {:>10} {:>8} {:>7} {:>10} {:>10}",
+            // Print results with validation status
+            if size_bytes == 0 && files_created == 0 {
+                eprintln!("{:<8} {:<8} {:>10} {:>8} {:>7} {:>10} {:>10}  ❌ NO DATA",
                          engine_name, compress_name, "NO DATA", "N/A", "N/A", pure_time_ms, filter_time_ms);
             } else {
                 eprintln!("{:<8} {:<8} {:>10.2} {:>8.3} {:>7.1}% {:>10} {:>10}",

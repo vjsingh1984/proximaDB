@@ -102,12 +102,7 @@ async fn create_viper_engine() -> Arc<dyn UnifiedStorageEngine> {
     let viper_config = ViperConfig::default();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
 
-    let engine = ViperEngine::new(
-        "bench-viper".to_string(),
-        viper_config,
-        filesystem,
-        distance_compute,
-    ).await.expect("Failed to create VIPER engine");
+    let engine = ViperEngine::new().await.expect("Failed to create VIPER engine");
 
     Arc::new(engine) as Arc<dyn UnifiedStorageEngine>
 }
