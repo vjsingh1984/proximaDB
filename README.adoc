@@ -6,8 +6,8 @@
 :source-highlighter: highlight.js
 
 [.lead]
-**Stop paying $500K+ for fragmented AI tools. Get vector search, graph analytics, and AI intelligence in one platform for 95% less.** +
-_5.1M operations/sec • 1-week deployment • 7 storage engines • Open source_
+**Stop paying $500K+ for fragmented AI tools. Get vector search, graph analytics, and semantic intelligence in one platform for 95% less.** +
+_8.5M operations/sec • 1-week deployment • 7 storage engines • Open source_
 
 image:https://img.shields.io/badge/Performance-5.1M%20ops%2Fsec-success[Performance] image:https://img.shields.io/badge/Cost%20Savings-95%25%20reduction-brightgreen[Cost Savings] image:https://img.shields.io/badge/Deployment-1%20week-blue[Deployment] image:https://img.shields.io/badge/License-Apache%202.0-orange[License]
 
@@ -31,7 +31,7 @@ image:https://img.shields.io/badge/Performance-5.1M%20ops%2Fsec-success[Performa
 
 == The Solution: One Platform, Everything Included
 
-**ProximaDB replaces your entire AI stack for $25K/year total.**
+**ProximaDB is an open-source platform that replaces your entire AI stack.**
 
 [source,mermaid]
 ----
@@ -52,7 +52,7 @@ graph TB
         subgraph AI["AI INTELLIGENCE LAYER"]
             H[Vector Search<br/>8.5M+ ops/sec<br/>Sub-10μs latency]
             I[Graph Analytics<br/>Relationship Discovery]
-            J[8 AI Providers<br/>OpenAI • Anthropic • Azure]
+            J[Semantic Search<br/>Vector & Graph Analytics]
             K[Business Intelligence<br/>Natural Language Queries]
         end
 
@@ -185,17 +185,17 @@ print(results.insights)
 == Features That Matter for Startups
 
 === Performance That Scales With You
-* **8.5M operations/sec** for 384D vectors with hardware acceleration (NEON/AVX)
-* **Sub-10 microsecond latency** across all storage engines (validated December 2024)
-* **2.46M vectors/second** sustained throughput on standard hardware
+* **8.54M operations/sec** for 384D vectors with hardware acceleration (ARM NEON)
+* **Sub-microsecond latency** (117-432ns) across dimensions (validated December 2024)
+* **2.39M operations/sec** for 1024D vectors on ARM Silicon
 * **Automatic optimization** for ARM (NEON) and x86 (AVX2/AVX512) architectures
 
 === Everything You Need, Nothing You Don't
-* **Vector search** for semantic similarity and RAG
-* **Graph analytics** for relationship discovery
-* **8 AI providers** including OpenAI, Anthropic, Azure
+* **Vector search** for semantic similarity and RAG applications
+* **Graph analytics** for relationship discovery and network analysis
+* **Hardware acceleration** with automatic SIMD optimization (AVX2/AVX512/NEON)
 * **7 storage engines** that auto-optimize for your workload
-* **SQL interface** so your team can query like a database
+* **SQL interface** for familiar database-like querying
 
 === Startup-Friendly Operations
 * **1-week deployment** vs 6+ months for alternatives
@@ -225,7 +225,7 @@ curl http://localhost:5678/health
 === Your First AI-Powered Collection
 [source,python]
 ----
-from proximadb import ProximaClient
+from proximadb import ProximaDBClient
 
 # Connect (Python client auto-installs: pip install proximadb)
 client = ProximaDBClient("localhost:5678")
@@ -277,9 +277,9 @@ flowchart TD
     F -->|Cache Hit| G[Return Cached Result<br/>Sub-millisecond Response]
     F -->|Cache Miss| H{Engine Selection}
 
-    H -->|Real-time| I[SST Engine<br/>365ps Query]
-    H -->|Analytics| J[VIPER Engine<br/>366ps Query + Compression]
-    H -->|Low Latency| K[SWIFT Engine<br/>Ultra-fast Access]
+    H -->|Real-time| I[SST Engine<br/>Row-based OLTP]
+    H -->|Analytics| J[VIPER Engine<br/>Columnar + Compression]
+    H -->|Low Latency| K[SWIFT Engine<br/>FastLanes Encoding]
     H -->|Mixed Workload| L[NOVA Engine<br/>Progressive Search]
 
     I --> M[SIMD Computation<br/>20M+ ops/sec]
@@ -496,7 +496,7 @@ gantt
 * ✅ Production-ready Docker deployment
 
 === Q1 2025 - Scale & Intelligence
-* 🔄 Distributed clustering for 100M+ vectors
+* 🔄 Distributed clustering for horizontal scaling
 * 🔄 Advanced graph analytics and visualization
 * 🔄 Custom model fine-tuning pipelines
 * 🔄 Enterprise SSO and compliance (SOC 2)
