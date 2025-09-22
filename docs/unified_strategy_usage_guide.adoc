@@ -36,6 +36,38 @@ ProximaDB's Unified Strategy Pattern provides a consistent, intelligent way to o
 |Each engine maps strategies to its optimal internal implementations
 |===
 
+== Strategy Selection Decision Tree
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+flowchart TD
+    A[Choose Read Strategy] --> B{Access Pattern?}
+
+    B -->|Sequential Full Scan| C[DirectStream Strategy<br/>Best Performance: No caching overhead<br/>Use case: Compaction, AXIS indexing]
+
+    B -->|Random Search Queries| D{Repeated Access?}
+    D -->|Yes, same data| E[CachedSearch Strategy<br/>Best Performance: 5.1M ops/sec<br/>Use case: Vector searches, metadata filtering]
+    D -->|No, different data| F[DirectStream Strategy<br/>Avoid cache pollution<br/>Use case: One-time scans]
+
+    B -->|Mixed Workload| G{Cache Size Available?}
+    G -->|Large cache available| H[CachedSearch Strategy<br/>Optimize for frequent access<br/>Use case: Production workloads]
+    G -->|Limited memory| I[DirectStream Strategy<br/>Preserve memory for operations<br/>Use case: Resource-constrained environments]
+
+    B -->|Analytical Processing| J[DirectStream Strategy<br/>Best Performance: 98.2% faster compaction<br/>Use case: VIPER analytics, batch processing]
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style E fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style J fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style D fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+    style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#ffffff
+----
+
 == Core Strategy Types
 
 === DirectStream Strategy

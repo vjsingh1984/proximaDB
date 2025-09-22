@@ -12,6 +12,73 @@ Security guide for ProximaDB, covering authentication, authorization, encryption
 
 ProximaDB implements multiple layers of security to protect data and ensure secure operations. This guide covers the security features available and best practices for secure deployment.
 
+=== Security Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "CLIENT LAYER"
+        A[REST Client<br/>🔐 TLS 1.3]
+        B[gRPC Client<br/>🔐 TLS 1.3]
+        C[Web Dashboard<br/>🔐 HTTPS]
+    end
+
+    subgraph "AUTHENTICATION LAYER"
+        D[API Gateway<br/>🔑 Auth Validation]
+        E[JWT Validator<br/>📋 Token Verification]
+        F[API Key Manager<br/>🗝️ Key Validation]
+        G[RBAC Engine<br/>👥 Role Authorization]
+    end
+
+    subgraph "APPLICATION LAYER"
+        H[REST API Server<br/>Port 5678]
+        I[gRPC API Server<br/>Port 5679]
+        J[Collection Service<br/>🏢 Multi-tenant]
+        K[Vector Operations<br/>🔒 Resource ACL]
+    end
+
+    subgraph "DATA LAYER"
+        L[Encrypted Storage<br/>🔐 AES-256]
+        M[WAL Encryption<br/>📝 Transaction Log]
+        N[Metadata Store<br/>🗄️ Secured Keys]
+        O[Backup Storage<br/>💾 Encrypted Backup]
+    end
+
+    A --> D
+    B --> D
+    C --> D
+    D --> E
+    D --> F
+    E --> G
+    F --> G
+    G --> H
+    G --> I
+    H --> J
+    I --> J
+    J --> K
+    K --> L
+    K --> M
+    K --> N
+    L --> O
+
+    style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style B fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style C fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style F fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style G fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style H fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style I fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style J fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style K fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style L fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style M fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style N fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style O fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+----
+
 == Current Security Features
 
 === Authentication

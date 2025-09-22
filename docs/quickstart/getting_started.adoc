@@ -36,6 +36,50 @@ _Complete vector database, graph analytics, and AI integration with enterprise s
 | Firewall configured for API access
 |===
 
+== Setup Process Overview
+
+The following sequence diagram shows the complete ProximaDB setup and first query process:
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "actorBkg": "#e3f2fd", "actorBorder": "#1976d2", "actorTextColor": "#0d47a1", "activationBkgColor": "#bbdefb", "activationBorderColor": "#1976d2"}}}%%
+sequenceDiagram
+    participant User as Developer
+    participant Docker as Docker Runtime
+    participant Server as ProximaDB Server
+    participant Dashboard as Web Dashboard
+    participant API as REST/gRPC API
+
+    User->>Docker: docker-compose up -d
+    Docker->>Server: Start ProximaDB services
+    Server->>Server: Initialize storage engines
+    Server->>Server: Start REST API (5678) & gRPC (5679)
+    Server->>Dashboard: Launch web dashboard
+    Server-->>Docker: Services ready
+    Docker-->>User: ✅ Deployment complete
+
+    User->>Dashboard: Open http://localhost:5678/dashboard
+    Dashboard-->>User: Interactive UI loaded
+
+    User->>API: Create collection via REST
+    API->>Server: Process collection request
+    Server->>Server: Initialize NOVA engine
+    Server-->>API: Collection created
+    API-->>User: ✅ Collection ready
+
+    User->>API: Insert vectors
+    API->>Server: Store vector data
+    Server->>Server: Write to storage + WAL
+    Server-->>API: Vectors stored
+    API-->>User: ✅ Data ingested
+
+    User->>API: Search query
+    API->>Server: Execute similarity search
+    Server->>Server: SIMD-accelerated search
+    Server-->>API: Search results
+    API-->>User: ✅ Results in <10ms
+----
+
 == Option 1: Docker Quick Start (Recommended)
 
 === **Step 1: One-Command Deployment**

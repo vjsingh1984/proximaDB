@@ -31,6 +31,68 @@ _Organized by use case and technical depth_
 
 == Documentation Structure
 
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2", "sectionBkgColor": "#e3f2fd", "altSectionBkgColor": "#bbdefb", "gridColor": "#90caf9", "tertiaryColor": "#f5f5f5"}}}%%
+graph TB
+    subgraph "Getting Started"
+        A[Getting Started Guide<br/>Installation & Setup]
+        B[Main README<br/>Project Overview]
+    end
+
+    subgraph "Performance & Benchmarks"
+        C[Benchmark Overview<br/>Performance Suite]
+        D[Detailed Analysis<br/>XY Charts & Matrices]
+        E[Core Benchmarks<br/>SIMD & Distance]
+        F[Storage Benchmarks<br/>Engine Comparisons]
+        G[Optimization Guide<br/>Tuning Strategies]
+    end
+
+    subgraph "Technical Architecture"
+        H[Platform Architecture<br/>System Design]
+        I[Storage Engine Layouts<br/>Engine Internals]
+        J[AI Intelligence Platform<br/>LLM & NLP]
+        K[Graph Architecture<br/>Storage Design]
+    end
+
+    subgraph "Implementation & Operations"
+        L[Engine Selection<br/>Optimal Storage]
+        M[Unified Strategy<br/>Access Patterns]
+        N[Production Deployment<br/>Enterprise Setup]
+        O[Operations Runbook<br/>Day-to-day Ops]
+    end
+
+    subgraph "Security & Business"
+        P[Security Overview<br/>Framework]
+        Q[Authentication<br/>Auth Flows]
+        R[Executive Overview<br/>Business Case]
+        S[Competitive Analysis<br/>Market Position]
+    end
+
+    subgraph "API Reference"
+        T[Graph API<br/>Operations]
+        U[Technical Reference<br/>Advanced Specs]
+    end
+
+    A --> C
+    B --> H
+    C --> H
+    H --> L
+    L --> N
+    N --> P
+    P --> R
+    R --> T
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style H fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#ffffff
+    style L fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style N fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style P fill:#f44336,stroke:#c62828,stroke-width:2px,color:#ffffff
+    style R fill:#795548,stroke:#5d4037,stroke-width:2px,color:#ffffff
+    style T fill:#607d8b,stroke:#455a64,stroke-width:2px,color:#ffffff
+----
+
 === 🚀 Getting Started
 * link:quickstart/getting_started.adoc[**Getting Started**] - Installation and first steps
 * link:../README.adoc[**Main README**] - Project overview and quick start
