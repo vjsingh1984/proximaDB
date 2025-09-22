@@ -339,9 +339,7 @@ mod performance_comparison_tests {
         let helix_engine = {
             let config = HelixConfig::default();
             Arc::new(
-                HelixEngine::new(
-                    None,
-                )
+                HelixEngine::new()
                 .await
                 .unwrap(),
             ) as Arc<dyn UnifiedStorageEngine>
@@ -419,9 +417,7 @@ mod performance_comparison_tests {
         let helix_engine = {
             let config = HelixConfig::default();
             Arc::new(
-                HelixEngine::new(
-                    None,
-                )
+                HelixEngine::new()
                 .await
                 .unwrap(),
             ) as Arc<dyn UnifiedStorageEngine>
@@ -487,9 +483,7 @@ mod performance_comparison_tests {
                 let temp_dir = TempDir::new().unwrap();
                 let config = HelixConfig::default();
                 let engine = Arc::new(
-                    HelixEngine::new(
-                        None,
-                    )
+                    HelixEngine::new()
                     .await
                     .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>;
@@ -577,12 +571,7 @@ mod performance_comparison_tests {
         };
 
         let engine = Arc::new(
-            HelixEngine::new(
-                "test_collection".to_string(),
-                config,
-                temp_dir.path().to_path_buf(),
-                None,
-            )
+            HelixEngine::new()
             .await
             .unwrap(),
         );
@@ -713,9 +702,7 @@ mod performance_comparison_tests {
                 let temp_dir = TempDir::new().unwrap();
                 let config = HelixConfig::default();
                 Arc::new(
-                    HelixEngine::new(
-                        None,
-                    )
+                    HelixEngine::new()
                     .await
                     .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>
@@ -814,12 +801,7 @@ mod performance_comparison_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
         let engine = Arc::new(
-            HelixEngine::new(
-                "test_collection".to_string(),
-                config,
-                temp_dir.path().to_path_buf(),
-                None,
-            )
+            HelixEngine::new()
             .await
             .unwrap(),
         );

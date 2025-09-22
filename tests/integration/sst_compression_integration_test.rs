@@ -117,11 +117,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     let distance_compute = std::sync::Arc::new(
         proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::default()
     );
-    let sst_storage = proximadb::storage::engines::impls::sst::SstEngine::new(
-        config,
-        env.filesystem.clone(),
-        distance_compute,
-    ).await?;
+    let sst_storage = proximadb::storage::engines::impls::sst::SstEngine::new().await?;
 
     // Test SST compression through flush operation
     let flush_params = proximadb::storage::FlushParameters {
@@ -468,11 +464,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
         .compression = "zstd".to_string();
     config_compressed.compression_level = 3;
 
-    let compressed_engine = SstEngine::new(
-        config_compressed,
-        env_compressed.filesystem.clone(),
-        distance_compute.clone(),
-    )
+    let compressed_engine = SstEngine::new()
     .await?;
 
     // Flush with compression
@@ -496,11 +488,7 @@ async fn test_compression_algorithm_vs_disabled() -> anyhow::Result<()> {
     config_uncompressed.compression = "none".to_string();
     config_uncompressed.compression_level = 0;
 
-    let uncompressed_engine = SstEngine::new(
-        config_uncompressed,
-        env_uncompressed.filesystem.clone(),
-        distance_compute,
-    )
+    let uncompressed_engine = SstEngine::new()
     .await?;
 
     // Flush without compression
@@ -704,7 +692,7 @@ async fn test_compression_levels() -> anyhow::Result<()> {
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
         let engine =
-            SstEngine::new()).await?;
+            SstEngine::new().await?;
 
         let start = std::time::Instant::now();
 

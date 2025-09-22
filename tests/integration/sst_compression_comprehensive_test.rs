@@ -98,11 +98,7 @@ async fn test_compression_for_data(
     config_uncompressed.compression_level = 0;
     config_uncompressed.block_size_kb = 256; // Use 256KB blocks for better quantization clustering
 
-    let uncompressed_engine = SstEngine::new(
-        config_uncompressed,
-        env_uncompressed.filesystem.clone(),
-        distance_compute.clone(),
-    )
+    let uncompressed_engine = SstEngine::new()
     .await?;
 
     let vectors_uncompressed = vectors.clone();
@@ -139,11 +135,7 @@ async fn test_compression_for_data(
     config_compressed.compression_level = level;
     config_compressed.block_size_kb = 256; // Use 256KB blocks to see vector grouping with quantization
 
-    let compressed_engine = SstEngine::new(
-        config_compressed,
-        env_compressed.filesystem.clone(),
-        distance_compute,
-    )
+    let compressed_engine = SstEngine::new()
     .await?;
 
     // Save dimensions before vectors is moved
