@@ -38,6 +38,10 @@ toc::[]
 |**Full validation**
 |link:CORE_BENCHMARKS.adoc#_complete_system_validation[Complete Suite]
 |`cargo bench --bench complete_benchmark_suite`
+
+|**Troubleshoot issues**
+|link:TROUBLESHOOTING.adoc[Troubleshooting Guide]
+|See guide for diagnostics
 |===
 
 == Comprehensive Analysis

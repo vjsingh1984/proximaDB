@@ -286,7 +286,7 @@ The results demonstrate ProximaDB's readiness for demanding production workloads
 ====
 For detailed analysis and raw data, see:
 
-* link:../BENCHMARK_RESULTS.md[Complete Benchmark Results]
-* link:../BENCHMARK_ANALYSIS.md[Benchmark Analysis Report]
+* link:TROUBLESHOOTING.adoc[Benchmark Troubleshooting Guide]
+* link:BENCHMARK_ANALYSIS.adoc[Benchmark Analysis]
 * link:../PERFORMANCE.adoc[Performance Reference]
 ====
