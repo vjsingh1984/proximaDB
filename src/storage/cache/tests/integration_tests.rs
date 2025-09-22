@@ -100,11 +100,12 @@ async fn test_end_to_end_cache_system() {
 
     // Either the vector cache or orchestrator should have recorded operations
     let vector_snapshot = vector_metrics.get_snapshot().await;
-    let orchestrator_snapshot = orchestrator_metrics.get_snapshot().await;
+    let orchestrator_snapshot = orchestrator_metrics.snapshot();
 
     assert!(
         vector_snapshot.total_operations > 0
-            || orchestrator_snapshot.total_operations > 0,
+            || orchestrator_snapshot.total_gets > 0
+            || orchestrator_snapshot.total_puts > 0,
         "No cache operations recorded"
     );
 }
