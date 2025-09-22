@@ -12,6 +12,72 @@ toc::[]
 
 ProximaDB follows a quarterly release cycle with major feature releases and continuous improvements. Our roadmap focuses on performance, scalability, and enterprise capabilities.
 
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+gantt
+    title ProximaDB Strategic Development Roadmap
+    dateFormat YYYY-MM-DD
+    axisFormat %Q %Y
+
+    section Foundation (Q4 2024)
+    7 Storage Engines        :done, engines, 2024-10-01, 2024-12-31
+    8 AI Provider Integration :done, ai-providers, 2024-10-01, 2024-12-31
+    Hardware Acceleration    :done, simd, 2024-11-01, 2024-12-31
+    Multi-tenant Architecture :done, multitenancy, 2024-10-15, 2024-12-31
+    Enterprise Caching       :done, caching, 2024-11-15, 2024-12-31
+
+    section Scale & Intelligence (Q1 2025)
+    Distributed Clustering   :active, clustering, 2025-01-01, 2025-03-31
+    Graph Analytics         :active, graph, 2025-01-15, 2025-03-31
+    Model Fine-tuning       :active, fine-tune, 2025-02-01, 2025-03-31
+    Enterprise SSO & SOC2   :active, security, 2025-02-15, 2025-03-31
+    Search Optimizer        :active, search-opt, 2025-01-01, 2025-03-31
+
+    section Platform & Ecosystem (Q2 2025)
+    Multi-modal Support     :multi-modal, 2025-04-01, 2025-06-30
+    Real-time Streaming     :streaming, 2025-04-15, 2025-06-30
+    BI Dashboards          :bi-dash, 2025-05-01, 2025-06-30
+    Kubernetes Operator    :k8s-op, 2025-05-15, 2025-06-30
+    Cloud Marketplace      :marketplace, 2025-04-01, 2025-06-30
+
+    section AI-Native Platform (Q3 2025)
+    Autonomous Optimization :auto-opt, 2025-07-01, 2025-09-30
+    Natural Language Admin  :nl-admin, 2025-07-15, 2025-09-30
+    Predictive Scaling     :pred-scale, 2025-08-01, 2025-09-30
+    Advanced Security      :adv-security, 2025-08-15, 2025-09-30
+----
+
+=== Development Phases Overview
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+flowchart LR
+    A[Q4 2024<br/>Foundation] --> B[Q1 2025<br/>Scale & Intelligence]
+    B --> C[Q2 2025<br/>Platform & Ecosystem]
+    C --> D[Q3 2025<br/>AI-Native Platform]
+
+    A1[7 Storage Engines<br/>Hardware Acceleration<br/>Multi-tenant Architecture]
+    B1[Distributed Clustering<br/>Graph Analytics<br/>Enterprise Security]
+    C1[Multi-modal Support<br/>Real-time Streaming<br/>BI Dashboards]
+    D1[Autonomous Optimization<br/>NL Administration<br/>Predictive Scaling]
+
+    A -.-> A1
+    B -.-> B1
+    C -.-> C1
+    D -.-> D1
+
+    style A fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#ffffff
+    style B fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#ffffff
+    style C fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#ffffff
+    style D fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#ffffff
+    style A1 fill:#e8f5e8,stroke:#4caf50,stroke-width:1px,color:#2e7d32
+    style B1 fill:#e3f2fd,stroke:#2196f3,stroke-width:1px,color:#1565c0
+    style C1 fill:#fff3e0,stroke:#ff9800,stroke-width:1px,color:#f57c00
+    style D1 fill:#f3e5f5,stroke:#9c27b0,stroke-width:1px,color:#7b1fa2
+----
+
 == Current Quarter: Q4 2024
 
 === Foundation Complete ✅

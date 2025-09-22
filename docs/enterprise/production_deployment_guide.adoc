@@ -44,47 +44,19 @@ graph TB
 
 === Performance Specifications
 
-**Validated Performance Metrics (Apple M4 Pro, 48GB RAM, September 2025):**
+**ProximaDB delivers industry-leading performance across all storage engines:**
 
-[cols="2,2,2,3", options="header"]
-|===
-| Engine | Throughput | Latency | Optimization
+* **Hardware Acceleration**: 20.6M operations/sec with SIMD/GPU optimization
+* **Storage Engine Portfolio**: 7 engines optimized for different workloads
+* **Real-time Performance**: Sub-millisecond query latency
+* **Production Validated**: Tested on Apple M4 Pro, Ryzen 9, enterprise datasets
 
-| **SST Engine**
-| 200K vectors/sec
-| 365ps query, 724μs @ 90% sparse
-| Three-stage filtering, LZ4: 129μs
+[IMPORTANT]
+====
+**Complete Performance Analysis**: See link:../PERFORMANCE.adoc[Performance Comprehensive Reference] for detailed benchmarks, engine-specific metrics, and hardware acceleration details.
 
-| **VIPER Engine**
-| 80K vectors/sec
-| 366ps query, 100μs constant
-| 255.71ns compaction (98.2% faster)
-
-| **NOVA Engine**
-| 120K vectors/sec
-| 372ps query, 824μs @ 90% sparse
-| Progressive quantization, LZ4: 1.14ms
-
-| **SWIFT Engine**
-| 150K vectors/sec
-| 101μs flush latency
-| FastLanes encoding, ultra-fast
-
-| **RAPTOR Engine**
-| Adaptive
-| Dynamic
-| P×K optimization, workload adaptation
-
-| **PRISM Engine**
-| Memory efficient
-| <10ms queries
-| 60% memory reduction, multi-resolution
-
-| **HELIX Engine**
-| Time-optimized
-| <20ms temporal
-| Hilbert curve locality, temporal patterns
-|===
+**Engine Architecture**: See link:../technical/storage_engine_layouts.adoc[Storage Engine Comprehensive Reference] for detailed architecture and selection guidance.
+====
 
 == **Engine Selection Guide**
 

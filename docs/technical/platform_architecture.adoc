@@ -1,4 +1,5 @@
 = ProximaDB Platform Architecture - Technical Overview
+:sectnums:
 :toc: left
 :toclevels: 3
 :icons: font
@@ -845,75 +846,6 @@ src/
 
 == Future Enhancements
 
-=== Q1 2025: Advanced Search Optimization
-
-==== AdvancedSearchOptimizer Integration
-The platform will integrate intelligent search routing across all storage engines through the AdvancedSearchOptimizer component, providing:
-
-.Search Optimization Benefits
-[cols="2,3,2"]
-|===
-|Feature |Description |Expected Impact
-
-|**Cost-Based Routing**
-|Dynamically selects optimal search path based on query selectivity and data distribution
-|2-10x performance improvement
-
-|**HNSW Index Integration**
-|Intelligent routing between AXIS indexes and direct scans
-|100x speedup for low-selectivity queries
-
-|**Progressive Quantization**
-|Multi-stage search with increasing precision levels
-|3-15x speedup on large datasets
-
-|**Filter Pushdown**
-|Optimizes filter application timing based on selectivity
-|10-50x I/O reduction
-
-|**Hybrid Strategies**
-|Combines index and scan approaches for optimal performance
-|Adaptive to workload patterns
-|===
-
-.Engine-Specific Optimizations
-[cols="1,3,2"]
-|===
-|Engine |Optimization Strategy |Key Benefit
-
-|**SST**
-|Bloom filter optimization with selective scanning
-|Fast filtered queries
-
-|**VIPER**
-|Columnar predicate pushdown with Parquet statistics
-|100x pruning on selective queries
-
-|**NOVA**
-|Progressive refinement with multi-level quantization
-|Early termination optimization
-
-|**SWIFT**
-|FastLanes encoding with hardware-aware SIMD paths
-|Ultra-low latency operations
-
-|**RAPTOR**
-|Adaptive tier selection based on access patterns
-|Dynamic workload optimization
-
-|**PRISM**
-|Multi-resolution search with memory constraints
-|Efficient memory utilization
-
-|**HELIX**
-|Temporal pattern optimization for time-series
-|Time-aware query routing
-|===
-
-==== Implementation Requirements
-1. **Service Infrastructure**: AXIS manager and cost estimator availability in engine context
-2. **Calibration**: Cost model tuning for each storage engine
-3. **Benchmarking**: Performance validation across diverse workloads
-4. **Integration**: Unified API for search orchestration
+See link:../09-roadmap/future/advanced_search_optimization.adoc[Advanced Search Optimization Roadmap] for detailed implementation plans and timelines for Q1 2025 performance enhancements.
 
 This technical overview provides comprehensive understanding of ProximaDB's enterprise platform architecture for technical evaluation and implementation planning.

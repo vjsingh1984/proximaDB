@@ -1,5 +1,5 @@
 = ProximaDB Quick Start Guide - Production Ready in 5 Minutes
-:toc: left
+:sectnums:\n:toc: left
 :toclevels: 3
 :icons: font
 :source-highlighter: highlight.js

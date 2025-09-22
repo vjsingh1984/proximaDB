@@ -1,5 +1,6 @@
 = ProximaDB Production Operations Runbook
-:toc: macro
+:sectnums:
+:toc: left
 :toclevels: 3
 :icons: font
 :source-highlighter: highlight.js
@@ -7,7 +8,6 @@
 [.lead]
 **Enterprise Production Guide** - Comprehensive operational procedures for ProximaDB enterprise deployments.
 
-toc::[]
 
 == Quick Reference
 

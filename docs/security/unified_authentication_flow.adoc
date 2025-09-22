@@ -56,6 +56,53 @@ sequenceDiagram
     Middleware-->>Client: Authenticated request proceeds
 ----
 
+=== Authentication State Machine
+
+[source,mermaid]
+----
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1e88e5", "primaryTextColor": "#ffffff", "primaryBorderColor": "#0d47a1", "lineColor": "#1976d2"}}}%%
+stateDiagram-v2
+    [*] --> RequestReceived
+    RequestReceived --> CredentialExtraction
+
+    CredentialExtraction --> MissingCredentials : No auth header
+    CredentialExtraction --> SSOValidation : Bearer token
+    CredentialExtraction --> APIKeyValidation : API key format
+    CredentialExtraction --> mTLSValidation : Client certificate
+
+    MissingCredentials --> Unauthorized : Auth required
+    MissingCredentials --> DefaultUser : Auth disabled
+
+    SSOValidation --> ValidSSO : Valid token
+    SSOValidation --> InvalidSSO : Invalid/expired
+
+    APIKeyValidation --> ValidAPIKey : Key found
+    APIKeyValidation --> InvalidAPIKey : Key not found
+
+    mTLSValidation --> ValidmTLS : Valid certificate
+    mTLSValidation --> InvalidmTLS : Invalid certificate
+
+    ValidSSO --> RBACCheck
+    ValidAPIKey --> RBACCheck
+    ValidmTLS --> RBACCheck
+    DefaultUser --> RBACCheck
+
+    RBACCheck --> Authorized : Permissions granted
+    RBACCheck --> Forbidden : Insufficient permissions
+
+    InvalidSSO --> Unauthorized
+    InvalidAPIKey --> Unauthorized
+    InvalidmTLS --> Unauthorized
+
+    Authorized --> AuditLog
+    Forbidden --> AuditLog
+    Unauthorized --> AuditLog
+
+    AuditLog --> [*]
+----
+
+*Authentication State Flow: Comprehensive credential validation and authorization pipeline*
+
 === Authentication Components
 
 #### 1. Authentication Middleware (`src/network/middleware/auth.rs`)
