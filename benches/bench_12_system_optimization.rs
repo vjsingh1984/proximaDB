@@ -616,13 +616,18 @@ fn bench_metadata_handling(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_record_cloning,
-    bench_arc_memory_patterns,
-    bench_result_aggregation,
-    bench_sparsity_impact,
-    bench_batch_processing,
-    bench_metadata_handling
-);
+// Configure with consistent settings across all benchmarks
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(30)
+        .measurement_time(std::time::Duration::from_secs(5))
+        .warm_up_time(std::time::Duration::from_millis(500));
+    targets = bench_record_cloning,
+              bench_arc_memory_patterns,
+              bench_result_aggregation,
+              bench_sparsity_impact,
+              bench_batch_processing,
+              bench_metadata_handling
+}
 criterion_main!(benches);

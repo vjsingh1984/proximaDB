@@ -336,12 +336,17 @@ fn bench_stage_performance(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_progressive_vs_brute_force,
-    bench_search_scenarios,
-    bench_dimension_scaling,
-    bench_stage_performance
-);
+// Configure with consistent settings across all benchmarks
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(30)
+        .measurement_time(std::time::Duration::from_secs(5))
+        .warm_up_time(std::time::Duration::from_millis(500));
+    targets = bench_progressive_vs_brute_force,
+              bench_search_scenarios,
+              bench_dimension_scaling,
+              bench_stage_performance
+}
 
 criterion_main!(benches);

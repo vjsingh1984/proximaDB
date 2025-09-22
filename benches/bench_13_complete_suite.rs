@@ -396,12 +396,17 @@ fn bench_concurrent_operations(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_distance_metrics,
-    bench_vector_operations,
-    bench_hnsw_index,
-    bench_lsh_index,
-    bench_concurrent_operations
-);
+// Configure with consistent settings across all benchmarks
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(30)
+        .measurement_time(std::time::Duration::from_secs(5))
+        .warm_up_time(std::time::Duration::from_millis(500));
+    targets = bench_distance_metrics,
+              bench_vector_operations,
+              bench_hnsw_index,
+              bench_lsh_index,
+              bench_concurrent_operations
+}
 criterion_main!(benches);

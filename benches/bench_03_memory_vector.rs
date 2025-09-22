@@ -222,11 +222,16 @@ fn bench_memory_pressure(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_original_result_creation,
-    bench_batch_processing,
-    bench_result_sharing,
-    bench_memory_pressure
-);
+// Configure with consistent settings across all benchmarks
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(30)
+        .measurement_time(std::time::Duration::from_secs(5))
+        .warm_up_time(std::time::Duration::from_millis(500));
+    targets = bench_original_result_creation,
+              bench_batch_processing,
+              bench_result_sharing,
+              bench_memory_pressure
+}
 criterion_main!(benches);

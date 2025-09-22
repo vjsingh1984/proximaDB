@@ -457,13 +457,18 @@ fn bench_shortest_path(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_node_creation,
-    bench_edge_creation,
-    bench_node_queries,
-    bench_traversal,
-    bench_shortest_path
-);
+// Configure with consistent settings across all benchmarks
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(30)
+        .measurement_time(std::time::Duration::from_secs(5))
+        .warm_up_time(std::time::Duration::from_millis(500));
+    targets = bench_node_creation,
+              bench_edge_creation,
+              bench_node_queries,
+              bench_traversal,
+              bench_shortest_path
+}
 
 criterion_main!(benches);

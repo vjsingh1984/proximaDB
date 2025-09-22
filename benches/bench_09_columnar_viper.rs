@@ -180,5 +180,13 @@ fn bench_viper_flush(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_viper_flush);
+// Configure with consistent settings across all benchmarks
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(30)
+        .measurement_time(std::time::Duration::from_secs(5))
+        .warm_up_time(std::time::Duration::from_millis(500));
+    targets = bench_viper_flush
+}
 criterion_main!(benches);

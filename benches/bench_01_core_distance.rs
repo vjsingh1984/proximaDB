@@ -94,9 +94,14 @@ fn benchmark_batch_operations(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    benchmark_distance_computation,
-    benchmark_batch_operations
-);
+// Configure with consistent settings across all benchmarks
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .sample_size(30)
+        .measurement_time(std::time::Duration::from_secs(5))
+        .warm_up_time(std::time::Duration::from_millis(500));
+    targets = benchmark_distance_computation,
+              benchmark_batch_operations
+}
 criterion_main!(benches);
