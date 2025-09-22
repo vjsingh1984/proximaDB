@@ -159,7 +159,30 @@ impl Default for ParquetWriterConfig {
             enable_dictionary: true,      // DEFAULT ON: String compression
             dictionary_threshold: 0.7,    // Use dictionary if <70% unique values
             enable_delta_encoding: true,  // DEFAULT ON: Integer compression
-            quantization: QuantizationConfig::default(),
+            quantization: QuantizationConfig {
+                enabled: false,
+                strategy: 0, // SMART_DEFAULTS
+                custom_levels: vec![],
+                enable_progressive_search: false,
+                binary_filter_selectivity: 0.3,
+                int8_ranking_selectivity: 0.1,
+                pq_ranking_selectivity: 0.05,
+                training_sample_size: 10000,
+                quality_threshold: 0.95,
+                enable_adaptive_training: false,
+                optimize_for_storage: false,
+                optimize_for_memory: false,
+                enable_simd_acceleration: false,
+                enable_binary: false,
+                enable_int8: false,
+                enable_pq: false,
+                pq_segments: 32,
+                pq_bits: 8,
+                pq_codebooks: 256,
+                binary_threshold: 0.5,
+                int8_threshold: 0.3,
+                pq_threshold: 0.1,
+            },
             id_less_storage: false, // KEEP ID COLUMN FOR CUSTOMER APIs
             write_batch_size: 1000,
             enable_byte_stream_split: true, // DEFAULT ON: Float compression

@@ -508,38 +508,39 @@ impl Flush {
             Field::new("expires_at", DataType::Int64, true), // Only keep expires_at for TTL
         ];
 
-        // Phase 2: Add quantized vector columns for compression + fast approximation
-        if let Some(quant_config) = quantization {
-            if quant_config.enabled {
-                debug!(
-                    "🗜️ VIPER: Adding quantized vector columns for collection {}",
-                    collection_id
-                );
+        // Phase 2: Determine if quantization is enabled (using consistent logic)
+        let has_quantization = quantization.as_ref().map(|q| q.enabled).unwrap_or(false);
 
-                // Add INT8 quantized column (highest quality quantization)
-                schema_fields.push(Field::new(
-                    "vector_int8",
-                    DataType::List(Arc::new(Field::new("item", DataType::Int8, true))),
-                    true,
-                ));
+        // Add quantized vector columns for compression + fast approximation
+        if has_quantization {
+            debug!(
+                "🗜️ VIPER: Adding quantized vector columns for collection {}",
+                collection_id
+            );
 
-                // Add PQ8 (Product Quantization 8-bit) column for high compression
-                schema_fields.push(Field::new(
-                    "vector_pq8",
-                    DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
-                    true,
-                ));
+            // Add INT8 quantized column (highest quality quantization)
+            schema_fields.push(Field::new(
+                "vector_int8",
+                DataType::List(Arc::new(Field::new("item", DataType::Int8, true))),
+                true,
+            ));
 
-                // Add PQ4 (Product Quantization 4-bit) column for maximum compression
-                // Stored as UInt8 but each byte contains two 4-bit values
-                schema_fields.push(Field::new(
-                    "vector_pq4",
-                    DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
-                    true,
-                ));
+            // Add PQ8 (Product Quantization 8-bit) column for high compression
+            schema_fields.push(Field::new(
+                "vector_pq8",
+                DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
+                true,
+            ));
 
-                info!("✅ VIPER: Dual storage enabled - FP32 + INT8 + PQ8 + PQ4 quantized columns");
-            }
+            // Add PQ4 (Product Quantization 4-bit) column for maximum compression
+            // Stored as UInt8 but each byte contains two 4-bit values
+            schema_fields.push(Field::new(
+                "vector_pq4",
+                DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
+                true,
+            ));
+
+            info!("✅ VIPER: Dual storage enabled - FP32 + INT8 + PQ8 + PQ4 quantized columns");
         }
 
         // 🎯 DYNAMIC FILTERABLE METADATA: Use proto filterable_columns directly

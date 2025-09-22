@@ -182,9 +182,9 @@ impl EventLogQueue {
     }
 
     /// Add event to queue (fire-and-forget for producers)
-    pub fn add_event(&self, event: IndexEvent) {
-        // Add to in-memory queue immediately (non-blocking)
-        self.active_events.blocking_write().push_back(event.clone());
+    pub async fn add_event(&self, event: IndexEvent) {
+        // Add to in-memory queue immediately (async)
+        self.active_events.write().await.push_back(event.clone());
 
         // Track file status
         for file_path in &event.file_paths {
@@ -263,14 +263,14 @@ impl EventLogQueue {
     }
 
     /// Clean up after compaction
-    pub fn cleanup_compacted_files(&self, deleted_files: Vec<String>) {
+    pub async fn cleanup_compacted_files(&self, deleted_files: Vec<String>) {
         for file in &deleted_files {
             self.file_status.remove(file);
         }
 
         // Remove events for deleted files
         self.active_events
-            .blocking_write()
+            .write().await
             .retain(|e| !e.file_paths.iter().any(|f| deleted_files.contains(f)));
 
         // Persist changes
@@ -353,18 +353,18 @@ impl EventLogQueue {
     }
 
     /// Find event by ID
-    fn find_event(&self, event_id: &str) -> Option<IndexEvent> {
+    async fn find_event(&self, event_id: &str) -> Option<IndexEvent> {
         self.active_events
-            .blocking_read()
+            .read().await
             .iter()
             .find(|e| e.event_id == event_id)
             .cloned()
     }
 
     /// Find event offset by ID
-    fn find_event_offset(&self, event_id: &str) -> Option<usize> {
+    async fn find_event_offset(&self, event_id: &str) -> Option<usize> {
         self.active_events
-            .blocking_read()
+            .read().await
             .iter()
             .position(|e| e.event_id == event_id)
     }

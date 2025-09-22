@@ -538,9 +538,12 @@ impl SstableWriter {
         // Accumulate all data to write atomically
         let mut output_data = Vec::new();
 
-        // Write magic bytes for SSTable format
+        // Write SST1 magic bytes at the beginning
         output_data.extend_from_slice(b"SST1");
 
+        // Write header length placeholder (will be updated after header is built)
+        let header_len_pos = output_data.len();
+        output_data.extend_from_slice(&0u32.to_le_bytes());
         // Use shared FastLanes serialization for data blocks
         debug!("📦 Writing {} data blocks using FastLanes serialization", data_blocks.len());
         for block in &data_blocks {
@@ -597,6 +600,11 @@ impl SstableWriter {
         // Serialize variable data size and data
         footer_bytes.extend_from_slice(&0u32.to_le_bytes()); // No variable data
         output_data.extend_from_slice(&footer_bytes);
+
+        // Update header length at the reserved position
+        let header_len = footer_bytes.len() as u32;
+        let header_len_bytes = header_len.to_le_bytes();
+        output_data[header_len_pos..header_len_pos + 4].copy_from_slice(&header_len_bytes);
 
         // Write all data atomically
         atomic_writer
@@ -1054,6 +1062,43 @@ impl SstableWriter {
         });
         self.write_sorted_vector_records(sorted_with_keys, record_count)
             .await
+    }
+
+    /// Finalize the SSTable file with proper headers and footers
+    async fn finalize_sstable(&self, sorted_records: Vec<(String, VectorRecord)>) -> Result<()> {
+        // Create a proper SSTable file structure
+        let mut file_content = Vec::new();
+
+        // Write SST1 magic bytes
+        file_content.extend_from_slice(b"SST1");
+
+        // Write header length (4 bytes, little-endian)
+        let header = serde_json::json!({
+            "version": 1,
+            "block_size": self.block_size,
+            "record_count": sorted_records.len(),
+            "compression": "none"
+        });
+        let header_bytes = serde_json::to_vec(&header)?;
+        let header_len = header_bytes.len() as u32;
+        file_content.extend_from_slice(&header_len.to_le_bytes());
+
+        // Write header
+        file_content.extend_from_slice(&header_bytes);
+
+        // Write data blocks (simplified - just serialize records)
+        for (key, record) in sorted_records {
+            let record_data = serde_json::to_vec(&record)?;
+            let record_len = record_data.len() as u32;
+            file_content.extend_from_slice(&record_len.to_le_bytes());
+            file_content.extend_from_slice(&record_data);
+        }
+
+        // Write to file using filesystem
+        let fs = self.filesystem.get_filesystem("file://")?;
+        fs.write(self.path.to_str().unwrap(), &file_content, None).await?;
+
+        Ok(())
     }
 
     // MIGRATION: Removed legacy quantization methods - universal adapters are always used

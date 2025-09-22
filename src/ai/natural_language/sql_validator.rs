@@ -94,6 +94,7 @@ impl SQLValidator {
             r"(?i)(\s|^)(DROP|DELETE|UPDATE|INSERT|ALTER|CREATE|TRUNCATE)\s".to_string(),
             r"(?i)--\s*.*".to_string(), // SQL comments
             r"(?i)/\*.*\*/".to_string(), // Block comments
+            r"(?i)(\s|^)OR\s+\d+=\d+".to_string(), // Classic SQL injection OR 1=1, OR 2=2, etc.
             r"(?i)(\s|^)EXEC(\s|\(|$)".to_string(),
             r"(?i)(\s|^)EXECUTE(\s|\(|$)".to_string(),
             r"(?i)(\s|^)xp_".to_string(),

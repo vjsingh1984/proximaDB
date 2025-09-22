@@ -17,7 +17,7 @@ mod tests {
         ));
         assert_eq!(
             storage_err.to_string(),
-            "Storage error: SST storage error: SST compaction failed"
+            "Storage error: SST engine error: SST compaction failed"
         );
 
         let consensus_err =
@@ -46,7 +46,7 @@ mod tests {
     #[test]
     fn test_storage_error_variants() {
         let sst_err = StorageError::SstEngine("Compaction failed".to_string());
-        assert!(sst_err.to_string().contains("SST storage error"));
+        assert!(sst_err.to_string().contains("SST engine error"));
 
         let mmap_err = StorageError::Mmap("Memory mapping failed".to_string());
         assert!(mmap_err.to_string().contains("MMAP error"));

@@ -591,7 +591,7 @@ RECOMMENDATIONS:",
             "Customer Intelligence".to_string()
         } else if question_lower.contains("performance") || question_lower.contains("speed") || question_lower.contains("response") {
             "Performance Analysis".to_string()
-        } else if question_lower.contains("growth") || question_lower.contains("trend") || question_lower.contains("increasing") {
+        } else if question_lower.contains("growth") || question_lower.contains("growing") || question_lower.contains("trend") || question_lower.contains("increasing") {
             "Growth Analysis".to_string()
         } else if question_lower.contains("risk") || question_lower.contains("security") || question_lower.contains("anomaly") {
             "Risk Assessment".to_string()
@@ -663,7 +663,7 @@ mod tests {
             "Customer Intelligence".to_string()
         } else if question_lower.contains("performance") || question_lower.contains("speed") || question_lower.contains("response") {
             "Performance Analysis".to_string()
-        } else if question_lower.contains("growth") || question_lower.contains("trend") || question_lower.contains("increasing") {
+        } else if question_lower.contains("growth") || question_lower.contains("growing") || question_lower.contains("trend") || question_lower.contains("increasing") {
             "Growth Analysis".to_string()
         } else if question_lower.contains("risk") || question_lower.contains("security") || question_lower.contains("anomaly") {
             "Risk Assessment".to_string()

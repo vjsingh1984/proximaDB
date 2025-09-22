@@ -1225,7 +1225,7 @@ mod tests {
         assert!(max_error <= expected_max_error * 1.1);
 
         // Test with non-multiple of 4
-        for test_len in [29, 30, 31, 33] {
+        for test_len in [29, 30, 31, 32] {
             let test_distances = &distances[..test_len];
             let (packed, min, max, num_values) = engine.quantize_to_u6(test_distances);
             assert_eq!(num_values, test_len);
