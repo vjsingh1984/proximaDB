@@ -29,8 +29,7 @@ graph TB
 
     subgraph "SPECIALIZED ENGINES"
         E[RAPTOR Engine<br/>✓ Adaptive Workloads<br/>P×K optimization<br/>Dynamic adaptation]
-        F[PRISM Engine<br/>✓ Memory Optimized<br/>Multi-resolution quantization<br/>60% memory reduction]
-        G[HELIX Engine<br/>✓ Time-series Data<br/>Hilbert curve locality<br/>Temporal optimization]
+        F[HELIX Engine<br/>✓ Spatial Locality<br/>Hilbert curve optimization<br/>Spatial data patterns]
     end
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
@@ -47,7 +46,7 @@ graph TB
 **ProximaDB delivers industry-leading performance across all storage engines:**
 
 * **Hardware Acceleration**: 20.6M operations/sec with SIMD/GPU optimization
-* **Storage Engine Portfolio**: 7 engines optimized for different workloads
+* **Storage Engine Portfolio**: 6 engines optimized for different workloads
 * **Real-time Performance**: Sub-millisecond query latency
 * **Production Validated**: Tested on Apple M4 Pro, Ryzen 9, enterprise datasets
 
@@ -79,8 +78,7 @@ flowchart TD
     C -->|Standard analytics| H[VIPER Engine<br/>Columnar analytics]
     C -->|Advanced analytics| I[NOVA Engine<br/>Complex research]
 
-    D -->|Memory limited| J[PRISM Engine<br/>Memory optimized]
-    D -->|Variable workloads| K[RAPTOR Engine<br/>Adaptive optimization]
+    D -->|Variable workloads| J[RAPTOR Engine<br/>Adaptive optimization]
 
     E -->|Yes| L[HELIX Engine<br/>Temporal optimization]
 
@@ -118,23 +116,17 @@ flowchart TD
 | High
 | 372ps query latency
 
-| **Memory-Constrained**
-| PRISM
-| SST
-| Low
-| 60% reduction
-
 | **Variable Workloads**
 | RAPTOR
 | SST
 | Adaptive
 | Dynamic
 
-| **Time-Series**
+| **Spatial Data**
 | HELIX
 | SST
 | Medium
-| Temporal optimized
+| Spatial locality optimized
 
 | **Ultra-Low Latency**
 | SWIFT
@@ -169,7 +161,7 @@ log_level = "info"
 
 [storage]
 # Choose your primary engine
-default_engine = "SST"  # Options: SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX
+default_engine = "SST"  # Options: SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX
 metadata_url = "local:///var/lib/proximadb/metadata"
 enable_write_ahead_log = true
 
@@ -238,19 +230,11 @@ workload_adaptation_interval_ms = 5000
 row_group_auto_sizing = true
 ```
 
-**PRISM Engine (Memory Optimized):**
-```toml
-[storage.engines.prism]
-memory_pressure_threshold = 0.8
-quantization_aggressiveness = "adaptive"
-enable_memory_pooling = true
-```
-
-**HELIX Engine (Time-series):**
+**HELIX Engine (Spatial Locality):**
 ```toml
 [storage.engines.helix]
 hilbert_curve_order = 8
-temporal_grouping_window_hours = 24
+spatial_grouping_threshold = 0.85
 enable_liquid_clustering = true
 ```
 

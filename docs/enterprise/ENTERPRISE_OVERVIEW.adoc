@@ -169,15 +169,10 @@ graph TB
 | 800MB/1M vectors
 | **Dynamic workloads, adaptive optimization**
 
-| **PRISM Engine**
-| 200K vectors/sec
-| 500MB/1M vectors
-| **Memory-constrained environments**
-
 | **HELIX Engine**
 | 110K vectors/sec
 | 700MB/1M vectors
-| **Time-series data, IoT applications**
+| **Spatial locality optimization, geographic data**
 |===
 
 == Enterprise AI Capabilities

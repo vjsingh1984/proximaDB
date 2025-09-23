@@ -262,12 +262,6 @@ prefetch_distance = 8
 |2.46M vec/s
 |Low Latency
 
-|**PRISM**
-|7.70-7.94 μs
-|LZ4
-|2.46M vec/s
-|Memory-Constrained
-
 |**HELIX**
 |7.69-7.83 μs
 |None/ZSTD
@@ -293,8 +287,7 @@ flowchart LR
     B -->|Ultra-low Latency| E[SWIFT Engine<br/>150K vectors/sec<br/>101μs flush]
     B -->|Mixed Workload| F[NOVA Engine<br/>120K vectors/sec<br/>372ps query]
     B -->|Dynamic Optimization| G[RAPTOR Engine<br/>Adaptive Performance<br/>P×K optimization]
-    B -->|Memory Constrained| H[PRISM Engine<br/>Memory Efficient<br/>60% reduction]
-    B -->|Time-series Data| I[HELIX Engine<br/>Time-optimized<br/>Temporal patterns]
+    B -->|Spatial Data| H[HELIX Engine<br/>Spatial optimization<br/>Geographic patterns]
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
     style B fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#000
@@ -304,7 +297,6 @@ flowchart LR
     style F fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#333333
     style G fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#333333
     style H fill:#e3f2fd,stroke:#1976d2,stroke-width:2px,color:#333333
-    style I fill:#f5f5f5,stroke:#1976d2,stroke-width:2px,color:#333333
 ----
 
 *Engine Selection: Automatic workload detection routes queries to optimal storage engine*
@@ -343,17 +335,11 @@ flowchart LR
 |Adaptive
 |P×K optimization, workload adaptation
 
-|**PRISM Engine**
-|Memory efficient
-|<10ms queries
-|Excellent
-|60% memory reduction, multi-resolution
-
 |**HELIX Engine**
-|Time-optimized
-|<20ms temporal
+|Spatial optimization
+|<20ms spatial
 |Good
-|Hilbert curve locality, temporal patterns
+|Hilbert curve locality, spatial patterns
 |===
 
 === Query Performance Scaling by Engine
@@ -392,11 +378,6 @@ flowchart LR
 |3.2ms (adaptive)
 |7.8ms (adaptive)
 
-|**PRISM**
-|1.0ms
-|2.5ms
-|6.0ms
-|15.0ms
 
 |**HELIX**
 |0.7ms
