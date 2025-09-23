@@ -73,8 +73,9 @@ pub mod viper;
 // Nova engine integration tests
 pub mod nova_engine_test;
 
-// Prism engine integration tests
-pub mod prism_engine_test;
+// Helix engine integration tests
+// Note: Helix tests are in tests/helix_integration_test.rs (standalone file)
+// pub mod helix_engine_test;
 
 // Swift engine integration tests
 pub mod swift_engine_test;
