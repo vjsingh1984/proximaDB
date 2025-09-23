@@ -481,11 +481,11 @@ fn bench_compression_with_search(c: &mut Criterion) {
                                 eprintln!("       Result {}: ID={}, score={:.6}, similarity={:.6}, metadata_keys={}",
                                          i+1, result.id, result.score,
                                          result.similarity.unwrap_or(0.0),
-                                         result.metadata.as_ref().map(|m| m.len()).unwrap_or(0));
+                                         result.metadata.len());
 
                                 // Show metadata if present
-                                if let Some(ref metadata) = result.metadata {
-                                    for (key, val) in metadata.iter().take(3) {
+                                if !result.metadata.is_empty() {
+                                    for (key, val) in result.metadata.iter().take(3) {
                                         eprintln!("         - {}: {:?}", key, val);
                                     }
                                 }
