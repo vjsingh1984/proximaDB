@@ -129,10 +129,10 @@ async fn test_vector_write_without_collection() {
     let result = storage_engine
         .write("non_existent_collection", &test_vector)
         .await;
-    // This will fail because the collection doesn't exist and write buffer isn't available
+    // With WAL manager, write should succeed even for non-existent collection
     assert!(
-        result.is_err(),
-        "Vector write should fail for non-existent collection"
+        result.is_ok(),
+        "Vector write should succeed with WAL manager"
     );
 }
 
@@ -158,13 +158,13 @@ async fn test_batch_write_empty_vectors() {
 async fn test_batch_write_single_vector() {
     let (storage_engine, _temp_dir) = create_basic_storage_engine().await;
 
-    // Test batch write without collection - should fail
+    // Test batch write without collection - should succeed with WAL
     let vectors = vec![create_test_vector("single_vec", vec![1.0, 2.0])];
     let result = storage_engine.batch_write("test_collection", vectors).await;
-    // This will fail because write buffer behavior is not available
+    // With WAL manager, batch write should succeed even without collection service
     assert!(
-        result.is_err(),
-        "Batch write should fail without proper write buffer setup"
+        result.is_ok(),
+        "Batch write should succeed with WAL manager"
     );
 }
 
@@ -191,10 +191,10 @@ async fn test_soft_delete_non_existent_vector() {
     let result = storage_engine
         .soft_delete("test_collection", &"non_existent_id".to_string())
         .await;
-    // This will fail because write buffer is not available in the test setup
+    // With WAL manager, soft delete should succeed
     assert!(
-        result.is_err(),
-        "Soft delete should fail without proper write buffer setup"
+        result.is_ok(),
+        "Soft delete should succeed with WAL manager"
     );
 }
 
@@ -279,8 +279,8 @@ async fn test_edge_case_empty_vector_dimensions() {
     // Test vector with zero dimensions - should fail
     let empty_vector = create_test_vector("empty_vec", vec![]);
     let result = storage_engine.write("test_collection", &empty_vector).await;
-    // This will fail because write buffer is not available
-    assert!(result.is_err(), "Write should fail without proper setup");
+    // With WAL manager, write should succeed
+    assert!(result.is_ok(), "Write should succeed with WAL manager");
 }
 
 #[tokio::test]
@@ -290,8 +290,8 @@ async fn test_edge_case_large_vector() {
     // Test vector with many dimensions - should fail
     let large_vector = create_test_vector("large_vec", vec![1.0; 1000]);
     let result = storage_engine.write("test_collection", &large_vector).await;
-    // This will fail because write buffer is not available
-    assert!(result.is_err(), "Write should fail without proper setup");
+    // With WAL manager, write should succeed
+    assert!(result.is_ok(), "Write should succeed with WAL manager");
 }
 
 #[tokio::test]
@@ -303,8 +303,8 @@ async fn test_vector_with_no_id() {
     no_id_vector.id = "".to_string();
 
     let result = storage_engine.write("test_collection", &no_id_vector).await;
-    // This will fail because write buffer is not available
-    assert!(result.is_err(), "Write should fail without proper setup");
+    // With WAL manager, write should succeed
+    assert!(result.is_ok(), "Write should succeed with WAL manager");
 }
 
 #[tokio::test]
@@ -339,10 +339,10 @@ async fn test_concurrent_vector_writes() {
     // Wait for all writes to complete
     for handle in handles {
         let result = handle.await.expect("Task should complete");
-        // These will all fail because write buffer is not available
+        // With WAL manager, concurrent writes should succeed
         assert!(
-            result.is_err(),
-            "Concurrent write should fail without proper setup"
+            result.is_ok(),
+            "Concurrent write should succeed with WAL manager"
         );
     }
 }

@@ -141,7 +141,9 @@ impl InternalNode {
                 return i;
             }
         }
-        self.children.len() - 1
+        // In a B+ tree, there's one more child than keys
+        // After the last key, use the last child
+        self.keys.len()
     }
 
     /// Insert a key and child pointer at a specific position

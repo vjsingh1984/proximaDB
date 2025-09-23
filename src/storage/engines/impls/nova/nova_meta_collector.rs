@@ -150,6 +150,35 @@ impl NovaMetadataCollector {
     fn build_superblock(&self, row_groups: Range<u32>) -> SuperBlock {
         let start = row_groups.start as usize;
         let end = row_groups.end as usize;
+
+        // Handle empty stats case
+        if self.row_group_stats.is_empty() || start >= self.row_group_stats.len() {
+            return SuperBlock {
+                id: 0,
+                row_groups: row_groups.clone(),
+                vector_count: 0,
+                zone_map: ZoneMap {
+                    min_values: vec![],
+                    max_values: vec![],
+                    centroid: vec![],
+                    variance: vec![],
+                    norm_bounds: (0.0, 0.0),
+                    dimension: 0,
+                },
+                quantization_stats: Default::default(),
+                selectivity_hints: Default::default(),
+                storage_stats: StorageStats {
+                    compressed_size: 0,
+                    uncompressed_size: 0,
+                    total_pages: 0,
+                    avg_page_size: 0,
+                    bloom_filter_size: 0,
+                },
+                last_updated: chrono::Utc::now(),
+            };
+        }
+
+        let end = end.min(self.row_group_stats.len());
         let rg_stats = &self.row_group_stats[start..end];
 
         // Aggregate zone maps

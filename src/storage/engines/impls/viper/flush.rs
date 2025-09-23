@@ -700,7 +700,9 @@ impl Flush {
             enable_pq_sorting: false,
             pq_sorting_segments: 16,
             pq_sorting_codebook_size: 256,
-            enable_native_metadata: true,
+            // TODO: Re-enable native metadata after fixing schema update logic
+            // Currently disabled due to schema mismatch when metadata fields are dynamically added
+            enable_native_metadata: false,
             metadata_inference_samples: 100,
         };
 

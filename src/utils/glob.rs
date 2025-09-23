@@ -135,20 +135,13 @@ impl GlobPattern {
                 '*' => {
                     // Check for ** pattern
                     if i + 1 < chars.len() && chars[i + 1] == '*' {
-                        elements.push(PatternElement::Star); // First *
-                        elements.push(PatternElement::Star); // Second *
+                        // ** matches zero or more directories
+                        // We'll use a special double-star pattern that the matcher can handle
+                        elements.push(PatternElement::Star);
                         i += 1; // Skip the second *
 
-                        // If followed by '/', make it optional for zero-directory matching
+                        // If followed by '/', consume it as part of the pattern
                         if i + 1 < chars.len() && chars[i + 1] == '/' {
-                            // Add an alternative: either match the slash or skip it
-                            let with_slash = CompiledPattern {
-                                elements: vec![PatternElement::Literal('/')]
-                            };
-                            let without_slash = CompiledPattern {
-                                elements: vec![]
-                            };
-                            elements.push(PatternElement::Alternatives(vec![with_slash, without_slash]));
                             i += 1; // Skip the '/'
                         }
                     } else {

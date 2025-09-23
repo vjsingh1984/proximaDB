@@ -43,11 +43,15 @@ impl UnifiedStorageEngine for MockStorageEngine {
         let mut count = self.flush_count.lock().await;
         *count += 1;
 
+        // Get the actual number of vectors from params
+        let entries_count = params.vector_records.len() as u64;
+        let bytes_written = entries_count * 100; // 100 bytes per entry for mock
+
         Ok(FlushResult {
             success: true,
             collections_affected: vec![],
-            entries_flushed: Some(100),
-            bytes_written: Some(1000),
+            entries_flushed: Some(entries_count),
+            bytes_written: Some(bytes_written),
             files_created: Some(1),
             duration_ms: Some(10),
             completed_at: chrono::Utc::now(),

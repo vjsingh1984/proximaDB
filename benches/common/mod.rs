@@ -5,6 +5,9 @@ pub mod benchmark_utils;
 pub mod validation;
 
 pub use embedding_generator::{EmbeddingGenerator, EmbeddingModel};
+// Re-export validation functions if needed by other benchmarks
+// Currently unused in bench_04_storage_unified
+#[allow(unused_imports)]
 pub use validation::{
     validate_flush_result, validate_search_results, validate_metadata_filter,
     validate_filesystem_write, calculate_compression_metrics,

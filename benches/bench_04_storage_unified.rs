@@ -2,7 +2,7 @@
 // Combines: compression, search, lifecycle, and cross-engine comparisons
 
 mod common;
-use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_BATCH_SIZES};
+use common::benchmark_utils::{print_system_info, STANDARD_BATCH_SIZES};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
@@ -168,7 +168,21 @@ fn bench_compression_with_search(c: &mut Criterion) {
              "Engine", "Compress", "Size(MB)", "Ratio", "Save%", "Flush(ms)", "Pure(ms)", "Filter(ms)");
     eprintln!("{}", "-".repeat(80));
     let vectors = generate_test_vectors(count, dimension);
-    let query_vector = generate_random_vector(dimension);
+    // Use the first vector as query for deterministic results
+    let query_vector = vectors.first()
+        .map(|v| v.vector.clone())
+        .unwrap_or_else(|| generate_random_vector(dimension));
+
+    // Debug: Show we're searching for the first vector
+    eprintln!("\n   🔍 Query vector: Using vec_0 (first stored vector) for deterministic results");
+    eprintln!("   📊 First 5 values of query vector: {:?}", &query_vector[..5.min(query_vector.len())]);
+    if let Some(first_vec) = vectors.first() {
+        eprintln!("   📝 Full first vector record:");
+        eprintln!("      ID: {}", first_vec.id);
+        eprintln!("      Vector dimensions: {}", first_vec.vector.len());
+        eprintln!("      First 5 values: {:?}", &first_vec.vector[..5.min(first_vec.vector.len())]);
+        eprintln!("      Metadata: {:?}", first_vec.metadata);
+    }
 
     let uncompressed_size = count * dimension * std::mem::size_of::<f32>();
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -444,23 +458,45 @@ fn bench_compression_with_search(c: &mut Criterion) {
                     });
                     pure_time_ms = start.elapsed().as_millis();
 
-                    // Validate and log search results
+                    // Validate and log search results with detailed metrics
                     if let Ok(ref results) = result {
                         if results.is_empty() {
                             // Only log first warning to avoid spam
                             static mut PURE_EMPTY_LOGGED: bool = false;
                             unsafe {
                                 if !PURE_EMPTY_LOGGED {
-                                    eprintln!("    ⚠️  WARNING: Pure search returned no results for {} with {}",
+                                    eprintln!("    ⚠️  WARNING: Pure search returned no results for {} with {} (expected to find vec_0)",
                                              engine_name, compress_name);
+                                    eprintln!("       Debug: Searched with vector starting with {:?}", &query_clone[..5.min(query_clone.len())]);
+                                    eprintln!("       Debug: Collection={}, Base path={}", collection_id, base_path);
+                                    eprintln!("       Debug: Search took {}ms", pure_time_ms);
                                     PURE_EMPTY_LOGGED = true;
                                 }
                             }
                         } else {
-                            eprintln!("    ✓ Pure search returned {} results for {} with {}",
-                                     results.len(), engine_name, compress_name);
+                            eprintln!("    ✅ FOUND: Pure search returned {} results for {} with {} in {}ms",
+                                     results.len(), engine_name, compress_name, pure_time_ms);
+                            // Print detailed results with all metrics
+                            for (i, result) in results.iter().take(5).enumerate() {
+                                eprintln!("       Result {}: ID={}, score={:.6}, similarity={:.6}, metadata_keys={}",
+                                         i+1, result.id, result.score,
+                                         result.similarity.unwrap_or(0.0),
+                                         result.metadata.as_ref().map(|m| m.len()).unwrap_or(0));
+
+                                // Show metadata if present
+                                if let Some(ref metadata) = result.metadata {
+                                    for (key, val) in metadata.iter().take(3) {
+                                        eprintln!("         - {}: {:?}", key, val);
+                                    }
+                                }
+                            }
                             if results.len() > 10 {
-                                eprintln!("      ⚠️  WARNING: Expected <= 10 results");
+                                eprintln!("      ⚠️  WARNING: Expected <= 10 results, got {}", results.len());
+                            }
+
+                            // Verify we found the expected vector
+                            if !results.iter().any(|r| r.id == "vec_0") {
+                                eprintln!("      ⚠️  WARNING: Did not find expected vec_0 in results!");
                             }
                         }
                     } else if let Err(ref e) = result {
@@ -579,16 +615,22 @@ fn bench_compression_with_search(c: &mut Criterion) {
                             static mut EMPTY_RESULTS_LOGGED: bool = false;
                             unsafe {
                                 if !EMPTY_RESULTS_LOGGED {
-                                    eprintln!("    ⚠️  WARNING: Filtered search returned no results for {} with {}",
+                                    eprintln!("    ⚠️  WARNING: Filtered search returned no results for {} with {} (expected vec_0 with category=cat_0)",
                                              engine_name, compress_name);
+                                    eprintln!("       Debug: Filter was category='cat_0', searched with vector starting with {:?}", &query_clone[..5.min(query_clone.len())]);
                                     EMPTY_RESULTS_LOGGED = true;
                                 }
                             }
                         } else {
-                            eprintln!("    ✓ Filtered search returned {} results for {} with {} (filter: category=cat_5 AND price<500)",
+                            eprintln!("    ✅ FOUND: Filtered search returned {} results for {} with {}",
                                      results.len(), engine_name, compress_name);
+                            // Print top 3 results with details
+                            for (i, result) in results.iter().take(3).enumerate() {
+                                eprintln!("       Result {}: ID={}, score={:.6}, similarity={:.6}",
+                                         i+1, result.id, result.score, result.similarity.unwrap_or(0.0));
+                            }
                             if results.len() > 10 {
-                                eprintln!("      ⚠️  WARNING: Expected <= 10 results");
+                                eprintln!("      ⚠️  WARNING: Expected <= 10 results, got {}", results.len());
                             }
                             // Verify filter was applied (results should have category=cat_5)
                             let correctly_filtered = results.iter().all(|_r| {
@@ -666,7 +708,7 @@ fn bench_engine_lifecycle(c: &mut Criterion) {
     group.sample_size(40);
     group.warm_up_time(Duration::from_secs(1));
 
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let _runtime = tokio::runtime::Runtime::new().unwrap();
 
     // Benchmark engine creation
     group.bench_function("sst_create", |b| {

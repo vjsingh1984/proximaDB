@@ -244,7 +244,7 @@ impl OptimizedFlushCoordinator {
 
         // Check cache first
         let cache_key = format!("{}:{}", collection_id, vectors.len());
-        if let Some(cached) = self.result_cache.get(&collection_id).await {
+        if let Some(cached) = self.result_cache.get(&cache_key).await {
             self.metrics
                 .cache_hits
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);

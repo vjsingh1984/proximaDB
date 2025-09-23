@@ -773,11 +773,13 @@ mod tests {
             create_test_managers().await;
         let collection_id = "test_collection";
 
-        // Create WriteBuffer directory for collection (simulating collection creation)
-        let write_buffer_dir = temp_dir.path().join(collection_id).join("write_buffer");
-        tokio::fs::create_dir_all(&write_buffer_dir)
+        // Create WAL directory structure for collection
+        // Use slug_for to match the actual directory structure used by disk_manager
+        let slug = crate::storage::persistence::write_ahead_log::collection_path::slug_for(collection_id);
+        let wal_dir = temp_dir.path().join(&slug).join("wal");
+        tokio::fs::create_dir_all(&wal_dir)
             .await
-            .expect("Failed to create WriteBuffer directory");
+            .expect("Failed to create WAL directory");
 
         // Create a mock storage engine
         let storage_engine = create_mock_storage_engine();

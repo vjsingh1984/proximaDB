@@ -21,7 +21,9 @@
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
+use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Unified WAL operation supporting both vector and graph operations
@@ -173,14 +175,17 @@ pub struct UnifiedWALWriter {
     /// Current sequence number
     sequence_number: std::sync::atomic::AtomicU64,
 
-    /// File handle for current WAL segment
-    current_file: Option<std::fs::File>,
+    /// Filesystem factory for file operations
+    filesystem: Arc<FilesystemFactory>,
+
+    /// Current segment path
+    current_segment_path: Option<String>,
+
+    /// Current segment data buffer
+    current_segment_data: Vec<u8>,
 
     /// Maximum size per WAL segment
     max_segment_size: usize,
-
-    /// Current segment size
-    current_segment_size: usize,
 
     /// Segment counter
     segment_counter: u32,
@@ -189,14 +194,26 @@ pub struct UnifiedWALWriter {
 impl UnifiedWALWriter {
     /// Create a new unified WAL writer
     pub fn new(base_path: String) -> anyhow::Result<Self> {
-        std::fs::create_dir_all(&base_path)?;
+        // Create filesystem factory with default config
+        let filesystem = Arc::new(
+            tokio::runtime::Handle::current()
+                .block_on(FilesystemFactory::new(FilesystemConfig::default()))
+                .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?
+        );
+
+        // Ensure base directory exists
+        let base_url = format!("file://{}", base_path);
+        let fs = filesystem.get_filesystem(&base_url)?;
+        tokio::runtime::Handle::current()
+            .block_on(fs.create_dir_all(&base_url))?;
 
         Ok(Self {
             base_path,
             sequence_number: std::sync::atomic::AtomicU64::new(0),
-            current_file: None,
+            filesystem,
+            current_segment_path: None,
+            current_segment_data: Vec::new(),
             max_segment_size: 64 * 1024 * 1024, // 64MB segments
-            current_segment_size: 0,
             segment_counter: 0,
         })
     }
@@ -205,6 +222,8 @@ impl UnifiedWALWriter {
     pub async fn append(&mut self, operation: UnifiedWALOperation) -> anyhow::Result<u64> {
         use std::sync::atomic::Ordering;
 
+        // fetch_add returns the old value before incrementing
+        // So first call returns 0, then increments to 1
         let seq = self.sequence_number.fetch_add(1, Ordering::SeqCst);
         let entry = UnifiedWALEntry::new(seq, operation);
 
@@ -213,30 +232,24 @@ impl UnifiedWALWriter {
         let size = serialized.len();
 
         // Check if we need to rotate the segment
-        if self.current_segment_size + size > self.max_segment_size {
+        if self.current_segment_data.len() + size + 4 > self.max_segment_size {
             self.rotate_segment().await?;
         }
 
-        // Write to current segment
-        if let Some(ref mut file) = self.current_file {
-            use std::io::Write;
+        // If no current segment, create one
+        if self.current_segment_path.is_none() {
+            self.open_new_segment().await?;
+        }
 
-            // Write size header
-            file.write_all(&(size as u32).to_le_bytes())?;
+        // Append to buffer
+        // Write size header (4 bytes)
+        self.current_segment_data.extend_from_slice(&(size as u32).to_le_bytes());
+        // Write serialized entry
+        self.current_segment_data.extend_from_slice(&serialized);
 
-            // Write serialized entry
-            file.write_all(&serialized)?;
-
-            // Optionally fsync for durability
-            if entry.metadata.as_ref().map(|m| m.requires_fsync).unwrap_or(false) {
-                file.sync_all()?;
-            }
-
-            self.current_segment_size += size + 4; // Include size header
-        } else {
-            // Open first segment
-            self.open_new_segment()?;
-            return Box::pin(self.append(entry.operation)).await;
+        // If requires immediate fsync, flush to disk
+        if entry.metadata.as_ref().map(|m| m.requires_fsync).unwrap_or(false) {
+            self.flush_current_segment().await?;
         }
 
         Ok(seq)
@@ -244,37 +257,67 @@ impl UnifiedWALWriter {
 
     /// Rotate to a new WAL segment
     async fn rotate_segment(&mut self) -> anyhow::Result<()> {
-        if let Some(mut file) = self.current_file.take() {
-            use std::io::Write;
-            file.flush()?;
+        // Flush current segment if exists
+        if self.current_segment_path.is_some() {
+            self.flush_current_segment().await?;
         }
 
         self.segment_counter += 1;
-        self.current_segment_size = 0;
-        self.open_new_segment()?;
+        self.current_segment_data.clear();
+        self.open_new_segment().await?;
 
+        Ok(())
+    }
+
+    /// Flush current segment to disk
+    async fn flush_current_segment(&mut self) -> anyhow::Result<()> {
+        if let Some(ref path) = self.current_segment_path {
+            if !self.current_segment_data.is_empty() {
+                let url = format!("file://{}", path);
+                let fs = self.filesystem.get_filesystem(&url)?;
+
+                // Read existing data if file exists
+                let mut full_data = if fs.exists(&url).await? {
+                    fs.read(&url).await?
+                } else {
+                    Vec::new()
+                };
+
+                // Append new data
+                full_data.extend_from_slice(&self.current_segment_data);
+
+                // Write back atomically
+                fs.write(&url, &full_data, None).await?;
+                fs.sync_file(&url).await?;
+
+                // Clear buffer after successful write
+                self.current_segment_data.clear();
+            }
+        }
         Ok(())
     }
 
     /// Open a new WAL segment file
-    fn open_new_segment(&mut self) -> anyhow::Result<()> {
+    async fn open_new_segment(&mut self) -> anyhow::Result<()> {
         let filename = format!("{}/wal_{:08}.log", self.base_path, self.segment_counter);
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .append(true)
-            .open(filename)?;
+        self.current_segment_path = Some(filename.clone());
+        self.current_segment_data.clear();
 
-        self.current_file = Some(file);
+        // Ensure the file exists
+        let url = format!("file://{}", filename);
+        let fs = self.filesystem.get_filesystem(&url)?;
+        if !fs.exists(&url).await? {
+            // Create empty file
+            fs.write(&url, &[], None).await?;
+        }
+
         Ok(())
     }
 
     /// Sync all pending writes
-    pub fn sync(&mut self) -> anyhow::Result<()> {
-        if let Some(ref mut file) = self.current_file {
-            
-            file.sync_all()?;
-        }
+    pub async fn sync(&mut self) -> anyhow::Result<()> {
+        // Flush any pending data to disk
+        self.flush_current_segment().await?;
         Ok(())
     }
 }
@@ -282,23 +325,33 @@ impl UnifiedWALWriter {
 /// WAL reader for recovery
 pub struct UnifiedWALReader {
     base_path: String,
+    filesystem: Arc<FilesystemFactory>,
 }
 
 impl UnifiedWALReader {
     /// Create a new WAL reader
-    pub fn new(base_path: String) -> Self {
-        Self { base_path }
+    pub fn new(base_path: String) -> anyhow::Result<Self> {
+        // Create filesystem factory with default config
+        let filesystem = Arc::new(
+            tokio::runtime::Handle::current()
+                .block_on(FilesystemFactory::new(FilesystemConfig::default()))
+                .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?
+        );
+
+        Ok(Self { base_path, filesystem })
     }
 
     /// Read all WAL entries from a segment
-    pub fn read_segment(&self, segment_number: u32) -> anyhow::Result<Vec<UnifiedWALEntry>> {
+    pub async fn read_segment(&self, segment_number: u32) -> anyhow::Result<Vec<UnifiedWALEntry>> {
         let filename = format!("{}/wal_{:08}.log", self.base_path, segment_number);
+        let url = format!("file://{}", filename);
+        let fs = self.filesystem.get_filesystem(&url)?;
 
-        if !std::path::Path::new(&filename).exists() {
+        if !fs.exists(&url).await? {
             return Ok(Vec::new());
         }
 
-        let data = std::fs::read(&filename)?;
+        let data = fs.read(&url).await?;
         let mut entries = Vec::new();
         let mut cursor = 0;
 
@@ -344,12 +397,12 @@ impl UnifiedWALReader {
     }
 
     /// Read all WAL entries for recovery
-    pub fn read_all(&self) -> anyhow::Result<Vec<UnifiedWALEntry>> {
+    pub async fn read_all(&self) -> anyhow::Result<Vec<UnifiedWALEntry>> {
         let mut all_entries = Vec::new();
         let mut segment = 0;
 
         loop {
-            let entries = self.read_segment(segment)?;
+            let entries = self.read_segment(segment).await?;
             if entries.is_empty() {
                 break;
             }
@@ -410,11 +463,11 @@ mod tests {
         assert_eq!(seq2, 1);
 
         // Sync to disk
-        writer.sync().unwrap();
+        writer.sync().await.unwrap();
 
         // Read back
-        let reader = UnifiedWALReader::new(path);
-        let entries = reader.read_all().unwrap();
+        let reader = UnifiedWALReader::new(path).unwrap();
+        let entries = reader.read_all().await.unwrap();
 
         assert_eq!(entries.len(), 2);
         assert!(entries[0].is_graph_operation());

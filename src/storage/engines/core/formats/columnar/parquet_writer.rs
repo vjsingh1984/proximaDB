@@ -1103,11 +1103,19 @@ impl StreamingParquetWriter {
             collector.finalize(file_metadata.row_groups.len())?;
         }
 
+        // Get actual file size
+        let file_size = std::fs::metadata(&self.file_path)
+            .map(|m| m.len())
+            .unwrap_or_else(|e| {
+                warn!("Failed to get file size for {}: {}", self.file_path, e);
+                0
+            });
+
         let stats = StreamingParquetWriterStats {
             file_path: self.file_path,
             total_records: self.total_records_written,
             total_row_groups: file_metadata.row_groups.len() as i32,
-            file_size: 0,           // Would need to get actual file size from filesystem
+            file_size,
             compression_ratio: 1.0, // Default ratio, would need actual calculation
             bloom_filter_count: self.id_bloom_filters.len() + self.metadata_bloom_filters.len(),
         };
