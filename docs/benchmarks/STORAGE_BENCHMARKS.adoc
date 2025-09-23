@@ -6,7 +6,7 @@
 [abstract]
 .Storage Layer Performance Analysis
 --
-Comprehensive benchmarks for all 7 storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX), including comparison, optimization, lifecycle, and specialized features. **Uses realistic embedding generators** that simulate:
+Comprehensive benchmarks for all 6 storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX), including comparison, optimization, lifecycle, and specialized features. **Uses realistic embedding generators** that simulate:
 
 * **BERT embeddings** (768D): Normal distribution with mean=0, std=1.5, range [-5, 5]
 * **OpenAI Ada embeddings** (1536D): Positive-skewed distribution, >80% positive values, mean ~0.3

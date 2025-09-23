@@ -419,7 +419,7 @@ Full end-to-end system performance validation.
 
 === Test Sequence
 1. **Core Performance** (5 min): Distance, memory, hardware
-2. **Storage Engines** (10 min): All 7 engines comparison
+2. **Storage Engines** (10 min): All 6 engines comparison
 3. **Quantization** (8 min): Compression vs accuracy
 4. **Query Pipeline** (7 min): Progressive search, cross-engine
 5. **System Integration** (5 min): Overall optimization

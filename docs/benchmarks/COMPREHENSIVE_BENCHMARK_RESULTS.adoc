@@ -327,7 +327,7 @@ BENCHMARK: Storage Engine Search Performance (Comprehensive)
 ==============================================================================
 
 === Purpose
-Complete evaluation of all 7 storage engines across all compression algorithms and data sizes.
+Complete evaluation of all 6 storage engines across all compression algorithms and data sizes.
 
 === Heat Map: Search Latency (μs)
 

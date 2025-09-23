@@ -5,7 +5,7 @@
 :source-highlighter: highlight.js
 
 [.lead]
-**Canonical storage engine reference for ProximaDB's 7 production-ready engines** +
+**Canonical storage engine reference for ProximaDB's 6 production-ready engines** +
 _Complete architecture, performance specifications, and selection guidance_
 
 [IMPORTANT]
@@ -19,7 +19,7 @@ For performance metrics and benchmarks, see link:../PERFORMANCE.adoc[Performance
 
 === Production-Ready Engine Collection
 
-**ProximaDB provides 7 specialized storage engines, each optimized for specific workloads:**
+**ProximaDB provides 6 specialized storage engines, each optimized for specific workloads:**
 
 [cols="2,2,3,3", options="header"]
 |===
@@ -49,11 +49,6 @@ For performance metrics and benchmarks, see link:../PERFORMANCE.adoc[Performance
 |Adaptive Optimization
 |Dynamic workloads, variable patterns
 |P×K optimization, adaptive sizing, matrix trinity
-
-|**PRISM Engine**
-|Memory Optimization
-|Memory-constrained environments
-|60% memory reduction, multi-resolution quantization
 
 |**HELIX Engine**
 |Temporal Optimization
@@ -153,11 +148,14 @@ graph TB
 
 == Engine-Specific Layout Diagrams
 
-=== SST Engine: Linear Sequential Layout
+=== SST Engine: Real-Time OLTP Optimization
 
-**Format**: Custom binary with LSM-tree structure
-**Complexity**: Medium (Hierarchical blocks)
-**Tool**: Mermaid Block Diagram
+**⚡ BATTLE-TESTED REAL-TIME ENGINE - PRODUCTION-READY IMPLEMENTATION**
+
+**Format**: Advanced LSM-tree with three-stage filtering pipeline
+**Complexity**: Medium-High (Sophisticated filtering with hierarchical bloom filters)
+**Specialization**: Real-time OLTP workloads, frequent updates, low-latency requirements
+**Use Cases**: Financial trading, real-time recommendations, live chat moderation, IoT monitoring
 
 [source,mermaid]
 ----
@@ -214,11 +212,14 @@ Query → Bloom Filter (95% reduction) → Quantized Search → Full Precision �
 - Write Optimization: **Three-stage filtering** with 95% Bloom filter reduction
 - Use Cases: Real-time search, OLTP workloads, frequent updates
 
-=== VIPER Engine: Parquet Columnar Layout
+=== VIPER Engine: Production Columnar Analytics
 
-**Format**: Apache Parquet with quantization extensions
-**Complexity**: Low-Medium (Standard columnar)
-**Tool**: Mermaid Flowchart
+**📊 BATTLE-TESTED COLUMNAR ENGINE - PRODUCTION-READY IMPLEMENTATION**
+
+**Format**: Apache Parquet with advanced quantization and cloud optimization
+**Complexity**: Medium (Columnar analytics with intelligent compression)
+**Specialization**: High-throughput production workloads, analytics, and cloud-first deployment
+**Use Cases**: E-commerce platforms, media analytics, financial processing, IoT data
 
 [source,mermaid]
 ----
@@ -261,11 +262,14 @@ flowchart TD
 - Compression Speed: LZ4 **111μs**, ZSTD **111μs**
 - Use Cases: Analytics workloads, data warehousing, batch processing
 
-=== NOVA Engine: Hierarchical Statistics Layout with Sidecar Metadata
+=== NOVA Engine: Advanced Analytics with Hierarchical Statistics
 
-**Format**: Standard Parquet + NOVA Sidecar (.nova_meta files)
-**Complexity**: High (Two-tier pruning with SuperBlocks)
-**Tool**: Mermaid Flowchart + File Structure
+**🚀 SOPHISTICATED ANALYTICS ENGINE - PRODUCTION-READY IMPLEMENTATION**
+
+**Format**: Enhanced Parquet with intelligent sidecar metadata (.nova_meta files)
+**Complexity**: High (Multi-tier hierarchical pruning with SuperBlock optimization)
+**Specialization**: Advanced analytics, research workloads, and complex multi-dimensional filtering
+**Use Cases**: Financial analytics, scientific research, large-scale data mining
 
 ==== NOVA File Structure
 
@@ -414,11 +418,14 @@ Total: ~100-500ms (no overhead)
 - Progressive Search: **Multi-tier deduplication** with early termination
 - Use Cases: Research workloads, complex analytics, mixed query patterns
 
-=== SWIFT Engine: Deep Hierarchical Layout
+=== SWIFT Engine: Hierarchical Enterprise Storage
 
-**Format**: Custom hierarchical with hardware adaptation
-**Complexity**: High (Hardware-adaptive encoding)
-**Tool**: Mermaid Block Diagram
+**🏗️ PRODUCTION-READY HIERARCHICAL ENGINE - COMPREHENSIVE IMPLEMENTATION**
+
+**Format**: Advanced three-tier hierarchy with intelligent organization (SuperBlock → DataBlock → Records)
+**Complexity**: High (Multi-level hierarchical management with hardware optimization)
+**Specialization**: Large-scale organized data, multi-tenant systems, version-controlled content
+**Use Cases**: Enterprise content management, multi-tenant SaaS, geographic data organization
 
 [source,mermaid]
 ----
@@ -460,107 +467,180 @@ CPU Detection → Encoding Selection → SuperBlock Layout → DataBlock Optimiz
 
 === RAPTOR Engine: Matrix Trinity Architecture
 
-**Format**: Custom adaptive with matrix storage
-**Complexity**: Very High (Complex matrix relationships)
-**Tool**: Enhanced Mermaid + ASCII Detail
+**🏆 SOPHISTICATED ADAPTIVE ENGINE - PRODUCTION-READY IMPLEMENTATION**
+
+**Format**: Revolutionary Matrix Trinity (P²+K²+P×K) with adaptive optimization
+**Complexity**: Very High (Advanced matrix relationships and workload adaptation)
+**Specialization**: Dynamic workloads with changing query patterns and multi-tenant systems
+**Use Cases**: E-commerce recommendations, SaaS platforms, research workloads
+
+==== Matrix Trinity Architecture Overview
 
 [source,mermaid]
 ----
-%%{init: {"theme": "neutral"}}}%%
+%%{init: {"theme": "neutral"}}%%
 graph TB
-    A[RAPTOR Row Group<br/>Adaptive Size: 32K-256K] --> B[Matrix Trinity Architecture]
+    subgraph "ADAPTIVE WORKLOAD LAYER"
+        A[Workload Pattern Analyzer<br/>Real-time pattern detection]
+        B[Smart Row Group Sizer<br/>32K-256K adaptive sizing]
+        C[Performance Monitor<br/>Continuous optimization]
+    end
 
-    B --> C[P² Matrix<br/>Intra-RowGroup<br/>Nearby Vectors]
-    B --> D[K² Matrix<br/>Centroid Storage<br/>Cluster Centers]
-    B --> E[P×K Matrix<br/>Spillover Detection<br/>Boundary Vectors]
+    subgraph "MATRIX TRINITY CORE"
+        D[P² Matrix<br/>Intra-RowGroup Navigation<br/>O(1) local search]
+        E[K² Matrix<br/>Inter-Centroid Distances<br/>Global cluster navigation]
+        F[P×K Matrix<br/>Vector-to-Centroid<br/>Boundary detection & adaptation]
+    end
 
-    F[Workload Pattern<br/>Analyzer] --> G[Adaptive Sizing<br/>Algorithm]
-    G --> A
+    subgraph "OPTIMIZATION ENGINES"
+        G[FastLanes SIMD<br/>Transposed vector storage]
+        H[Multi-Level Bloom Filters<br/>10% coverage floor]
+        I[Boundary Detection<br/>Smart spillover management]
+    end
 
-    C --> H[FastLanes Encoded<br/>Transposed Vectors<br/>SIMD Optimized]
-    D --> I[Bloom Filters<br/>Multi-granularity<br/>10% Coverage Floor]
-    E --> J[Boundary Detection<br/>Smart Vector Selection<br/>Importance Scoring]
+    A --> B
+    B --> D
+    A --> E
+    C --> F
+
+    D --> G
+    E --> H
+    F --> I
 
     style A fill:#e91e63,stroke:#c2185b,stroke-width:2px,color:#000
-    style B fill:#f06292,stroke:#e91e63,stroke-width:2px,color:#000
-    style C fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
-    style D fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
-    style E fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
+    style D fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
+    style E fill:#ff9800,stroke:#f57c00,stroke-width:2px,color:#000
+    style F fill:#9c27b0,stroke:#7b1fa2,stroke-width:2px,color:#000
 ----
 
-**Matrix Layout Detail (ASCII):**
+==== Adaptive Learning Process
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+sequenceDiagram
+    participant QP as Query Pattern
+    participant WA as Workload Analyzer
+    participant MT as Matrix Trinity
+    participant RGS as Row Group Sizer
+    participant PM as Performance Monitor
+
+    QP->>WA: Incoming query patterns
+    WA->>MT: Analyze access patterns
+    MT->>RGS: Recommend size adjustments
+    RGS->>MT: Apply new configuration
+    MT->>PM: Report performance metrics
+    PM->>WA: Feedback optimization hints
+
+    Note over WA,PM: Continuous learning cycle
+    Note over MT: P×K coverage adaptation
+    Note over RGS: 32K-256K variable sizing
+----
+
+==== Matrix Implementation Details
+
+**P² Matrix (Intra-RowGroup Local Navigation):**
+- **Purpose**: Pairwise distances within row groups for efficient local search
+- **Implementation**: SIMD-accelerated symmetric matrix with FastLanes compression
+- **Optimization**: Delta encoding and sparse storage for distant vectors
+- **Performance**: O(1) neighbor lookup within clusters
+
+**K² Matrix (Inter-Centroid Global Navigation):**
+- **Purpose**: Centroid-to-centroid distances for global cluster navigation
+- **Implementation**: Sparse matrix with intelligent pruning thresholds
+- **Optimization**: Adaptive coverage based on cluster distribution
+- **Performance**: Efficient cluster-to-cluster traversal across row groups
+
+**P×K Matrix (Adaptive Vector-to-Centroid Mapping):**
+- **Purpose**: Vector-to-centroid distances with workload-adaptive coverage
+- **Implementation**: Dynamic sparsity (10% minimum, workload-adaptive maximum)
+- **Optimization**: Boundary detection with importance scoring
+- **Performance**: Learned query pattern optimization with resource allocation
+
+==== Technical File Layout Specification
+
 ```
-RAPTOR Matrix Trinity Layout:
+RAPTOR Matrix Trinity File Format:
 ┌─────────────────────────────────────────────────────────────┐
-│ Row Group Header: Magic [RPTR] + Adaptive Parameters       │
+│ File Header: Magic [RPTR] + Workload Fingerprint           │
+│ - Learned parameters and optimization hints                │
+│ - Matrix coverage ratios and adaptation state              │
+│ - Performance metrics and tuning metadata                  │
 ├─────────────────────────────────────────────────────────────┤
-│ P² Matrix (Intra-RowGroup Navigation)                      │
-│ ┌─────┬─────┬─────┬─────┐                                   │
-│ │ V₁  │ V₂  │ V₃  │ ... │  Nearby vector relationships     │
-│ │ V₅  │ V₆  │ V₇  │ ... │  for efficient local search      │
-│ └─────┴─────┴─────┴─────┘                                   │
-├─────────────────────────────────────────────────────────────┤
-│ K² Matrix (Centroid Storage)                               │
-│ ┌─────┬─────┬─────┐                                         │
-│ │ C₁  │ C₂  │ C₃  │  Cluster centers for quick routing     │
-│ └─────┴─────┴─────┘                                         │
-├─────────────────────────────────────────────────────────────┤
-│ P×K Matrix (Spillover Boundary Detection)                  │
-│ ┌─────┬─────┬─────┬─────┬─────┐                             │
-│ │ B₁  │ B₂  │ B₃  │ B₄  │ ... │  Boundary vectors with     │
-│ │ B₆  │ B₇  │ B₈  │ B₉  │ ... │  spillover detection info  │
-│ └─────┴─────┴─────┴─────┴─────┘                             │
+│ Adaptive Row Group (Variable Size: 32K-256K vectors)       │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ P² Matrix (Intra-RowGroup Local Search)                │ │
+│ │ ┌─────┬─────┬─────┬─────┐  SIMD-Optimized Storage:      │ │
+│ │ │ V₁↔₂│ V₁↔₃│ V₁↔₄│ ... │  • FastLanes compression      │ │
+│ │ │ V₂↔₃│ V₂↔₄│ V₂↔₅│ ... │  • Delta encoding             │ │
+│ │ │ V₃↔₄│ V₃↔₅│ V₃↔₆│ ... │  • Symmetric matrix layout    │ │
+│ │ └─────┴─────┴─────┴─────┘                               │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ K² Matrix (Inter-Centroid Global Navigation)           │ │
+│ │ ┌─────┬─────┬─────┐  Sparse Global Navigation:          │ │
+│ │ │ C₁↔₂│ C₁↔₃│ C₁↔₄│  • Intelligent pruning             │ │
+│ │ │     │ C₂↔₃│ C₂↔₄│  • Adaptive thresholds              │ │
+│ │ │     │     │ C₃↔₄│  • Cluster distribution aware      │ │
+│ │ └─────┴─────┴─────┘                                     │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ P×K Matrix (Adaptive Boundary Detection)               │ │
+│ │ ┌─────┬─────┬─────┬─────┬─────┐  Dynamic Coverage:      │ │
+│ │ │ V₁→C│ V₁→C│ V₁→C│ ... │ ... │  • 10% minimum floor     │ │
+│ │ │ V₂→C│ V₂→C│ V₂→C│ ... │ ... │  • Workload adaptation   │ │
+│ │ │ V₃→C│ V₃→C│ V₃→C│ ... │ ... │  • Boundary detection    │ │
+│ │ └─────┴─────┴─────┴─────┴─────┘                         │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│ FastLanes Vector Storage (SIMD-Optimized)                  │
+│ Multi-Level Bloom Filters (95% elimination)                │
+│ Adaptive Metadata (Performance tracking)                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-=== PRISM Engine: Multi-Resolution Progressive Layout
+==== Enterprise Use Case Applications
 
-**Format**: Progressive quantization with memory optimization
-**Complexity**: Very High (Multiple resolution levels)
-**Tool**: Mermaid + Progressive Detail
-
-[source,mermaid]
-----
-%%{init: {"theme": "neutral"}}}%%
-graph LR
-    A[Memory Pressure<br/>Monitor] --> B{Memory<br/>Threshold}
-
-    B -->|> 90%| C[Aggressive Mode<br/>Binary + PQ4]
-    B -->|60-90%| D[Balanced Mode<br/>INT8 + PQ8]
-    B -->|< 60%| E[Conservative Mode<br/>PQ16 + FP32]
-
-    C --> F[Progressive Storage<br/>Resolution Levels]
-    D --> F
-    E --> F
-
-    F --> G[Level 1: Binary<br/>Marker 0xB0]
-    F --> H[Level 2: INT8<br/>Marker 0xB2]
-    F --> I[Level 3: PQ4<br/>Marker 0xB4]
-    F --> J[Level 4: PQ8<br/>Marker 0xB6]
-    F --> K[Level 5: FP16<br/>Marker 0xB8]
-    F --> L[Level 6: FP32<br/>Marker 0xBA]
-
-    style A fill:#795548,stroke:#5d4037,stroke-width:2px,color:#000
-    style F fill:#8d6e63,stroke:#6d4c41,stroke-width:2px,color:#000
-----
-
-**Progressive Resolution Detail:**
+**✅ Dynamic E-commerce Recommendations:**
 ```
-PRISM Multi-Resolution Storage:
-Progressive Marker: [0xB0-0xBF] + Resolution Count
-
-Resolution 1 (Binary):    [0xB0] [1-bit per dimension]
-Resolution 2 (INT8):      [0xB2] [8-bit quantized]
-Resolution 3 (PQ4):       [0xB4] [4-bit product codes]
-Resolution 4 (PQ8):       [0xB6] [8-bit product codes]
-Resolution 5 (FP16):      [0xB8] [16-bit half precision]
-Resolution 6 (FP32):      [0xBA] [32-bit full precision]
-
-Memory Adaptation:
-High Pressure → Load only Resolution 1-2 (Binary + INT8)
-Medium Press. → Load Resolution 1-4 (up to PQ8)
-Low Pressure  → Load all resolutions (full quality)
+Seasonal Pattern Recognition:
+Winter queries → Fashion accessories → Matrix adapts for seasonal clustering
+Summer queries → Outdoor gear → Row groups resize for different category sizes
+Holiday spikes → Gift categories → P×K coverage expands for popular items
 ```
+
+**✅ Multi-Tenant SaaS Optimization:**
+```
+Per-Tenant Adaptation:
+Small tenant → 32K row groups → Efficient resource utilization
+Enterprise tenant → 256K row groups → High-throughput optimization
+Variable workload → Dynamic sizing → Real-time adaptation
+```
+
+**✅ Research and Development Workloads:**
+```
+Experimental Dataset Learning:
+Unknown patterns → Initial broad coverage → Matrix learns optimal structure
+Emerging clusters → Adaptive boundaries → P×K matrix evolves
+Research evolution → Continuous tuning → Performance improvement over time
+```
+
+==== Performance Optimization Features
+
+**Real-Time Adaptation:**
+- Learns optimal patterns within 1000s of queries
+- Continuous matrix coverage adjustment
+- Dynamic row group sizing based on workload characteristics
+
+**Memory Efficiency:**
+- Intelligent matrix storage with compression
+- Adaptive sparsity to reduce memory footprint
+- FastLanes encoding for SIMD optimization
+
+**Query Performance:**
+- O(1) local navigation through P² matrix
+- Efficient global routing via K² sparse matrix
+- Boundary-aware search with P×K adaptive coverage
+
 
 === HELIX Engine: Spatial-Temporal Clustering Layout
 

@@ -5,7 +5,7 @@
 :source-highlighter: highlight.js
 
 [.lead]
-**Complete production deployment guide** for ProximaDB's 7 storage engines with performance optimization and enterprise configuration.
+**Complete production deployment guide** for ProximaDB's 6 storage engines with performance optimization and enterprise configuration.
 
 == **Production Architecture Overview**
 

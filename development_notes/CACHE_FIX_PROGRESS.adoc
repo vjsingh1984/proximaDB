@@ -230,7 +230,7 @@ pub fn start_rebalancing_service(&self) {
 . **Eviction Services**: Background eviction tasks running with LRU and TTL
 . **Memory Rebalancing**: Periodic rebalancing every 5 minutes
 . **Unified Metrics**: Single metrics system across entire codebase
-. **Storage Engine Integration**: All 7 engines properly using VectorCache
+. **Storage Engine Integration**: All 6 engines properly using VectorCache
 . **Test Suite**: Updated tests for new architecture
 . **Configuration**: Full cache configuration exposed in config.toml
 

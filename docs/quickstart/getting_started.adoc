@@ -381,9 +381,9 @@ Performance Results:
 %%{init: {"theme": "neutral"}}}%%
 xychart-beta
     title "Storage Engine Performance by Workload Type"
-    x-axis [SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX]
+    x-axis [SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX]
     y-axis "Throughput (K ops/sec)" 0 --> 250
-    bar [200, 80, 120, 150, 90, 200, 110]
+    bar [200, 80, 120, 150, 90, 110]
 ----
 
 [cols="2,2,2,3", options="header"]
@@ -415,15 +415,10 @@ xychart-beta
 | 800MB/1M vectors
 | Dynamic adaptive workloads
 
-| **PRISM**
-| 200K ops/sec
-| 500MB/1M vectors
-| Memory-constrained environments
-
 | **HELIX**
 | 110K ops/sec
 | 700MB/1M vectors
-| Time-series and IoT data
+| Spatial locality optimization
 |===
 
 == Enterprise Security Setup
@@ -726,4 +721,4 @@ journey
 
 [.text-center]
 **ProximaDB: From Zero to AI Intelligence Platform in 5 Minutes** +
-_20M+ ops/sec • 7 storage engines • 8 LLM providers • Enterprise security_
+_20M+ ops/sec • 6 storage engines • 8 LLM providers • Enterprise security_

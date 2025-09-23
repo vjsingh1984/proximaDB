@@ -358,7 +358,7 @@ popularity_threshold = 10
 
 == Storage Engine Integration
 
-All 7 storage engines properly integrate with the cache system:
+All 6 storage engines properly integrate with the cache system:
 
 [source,mermaid]
 ----
@@ -533,7 +533,7 @@ mod tests {
 |Test Category |Description |Coverage
 
 |**Storage Engines**
-|All 7 engines properly use VectorCache
+|All 6 engines properly use VectorCache
 |100%
 
 |**Concurrent Access**

@@ -7,7 +7,7 @@
 
 [.lead]
 **Stop paying $500K+ for fragmented AI tools. Get vector search, graph analytics, and semantic intelligence in one platform for 95% less.** +
-_8.5M operations/sec • 1-week deployment • 7 storage engines • Open source_
+_8.5M operations/sec • 1-week deployment • 6 storage engines • Open source_
 
 image:https://img.shields.io/badge/Performance-5.1M%20ops%2Fsec-success[Performance] image:https://img.shields.io/badge/Cost%20Savings-95%25%20reduction-brightgreen[Cost Savings] image:https://img.shields.io/badge/Deployment-1%20week-blue[Deployment] image:https://img.shields.io/badge/License-Apache%202.0-orange[License]
 
@@ -56,12 +56,12 @@ graph TB
             K[Business Intelligence<br/>Natural Language Queries]
         end
 
-        subgraph STORAGE["7 STORAGE ENGINES - AUTO-OPTIMIZED"]
+        subgraph STORAGE["6 STORAGE ENGINES - AUTO-OPTIMIZED"]
             L[SST Engine<br/>Real-time OLTP]
-            M[VIPER Engine<br/>Analytics & Compression]
-            N[SWIFT Engine<br/>Ultra-low Latency]
-            O[NOVA Engine<br/>Mixed Workloads]
-            P[RAPTOR Engine<br/>Dynamic Optimization]
+            M[VIPER Engine<br/>Production Analytics]
+            N[SWIFT Engine<br/>Hierarchical Enterprise]
+            O[NOVA Engine<br/>Advanced Analytics]
+            P[RAPTOR Engine<br/>Adaptive Workloads]
             Q[HELIX Engine<br/>Spatial Locality]
         end
 
@@ -99,7 +99,6 @@ graph TB
     H --> O
     H --> P
     H --> Q
-    H --> R
 
     L --> S
     M --> S
@@ -107,7 +106,6 @@ graph TB
     O --> S
     P --> S
     Q --> S
-    R --> S
 
     S --> T
     T --> U
@@ -129,7 +127,6 @@ graph TB
     style O fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
     style P fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
     style Q fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
-    style R fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
     style S fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
     style T fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
     style U fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
@@ -193,7 +190,7 @@ print(results.insights)
 * **Vector search** for semantic similarity and RAG applications
 * **Graph analytics** for relationship discovery and network analysis
 * **Hardware acceleration** with automatic SIMD optimization (AVX2/AVX512/NEON)
-* **7 storage engines** that auto-optimize for your workload
+* **6 storage engines** that auto-optimize for your workload
 * **SQL interface** for familiar database-like querying
 
 === Startup-Friendly Operations
@@ -264,7 +261,7 @@ print(insights.answer)
 ----
 %%{init: {"theme": "neutral"}}%%
 flowchart TD
-    A[Business Question<br/>"What's driving our growth?"] --> B{Query Type Detection}
+    A[Business Question<br/>What's driving our growth?] --> B{Query Type Detection}
     B -->|Vector Search| C[Embed Query<br/>OpenAI/Anthropic]
     B -->|SQL Query| D[Parse SQL<br/>Collection Operations]
     B -->|Graph Query| E[Analyze Relationships<br/>Connected Data]
@@ -277,9 +274,9 @@ flowchart TD
     F -->|Cache Miss| H{Engine Selection}
 
     H -->|Real-time| I[SST Engine<br/>Row-based OLTP]
-    H -->|Analytics| J[VIPER Engine<br/>Columnar + Compression]
-    H -->|Low Latency| K[SWIFT Engine<br/>FastLanes Encoding]
-    H -->|Mixed Workload| L[NOVA Engine<br/>Progressive Search]
+    H -->|Analytics| J[VIPER Engine<br/>Production Columnar]
+    H -->|Hierarchical| K[SWIFT Engine<br/>Enterprise Organization]
+    H -->|Advanced Analytics| L[NOVA Engine<br/>Hierarchical Intelligence]
 
     I --> M[SIMD Computation<br/>20M+ ops/sec]
     J --> M
@@ -373,28 +370,28 @@ quantization = "auto"   # Automatic compression
 |Engine |Best For |Performance
 
 |**SST**
-|Real-time updates, OLTP
-|365ps query, high write throughput
+|Real-time OLTP, frequent updates
+|Three-stage filtering, sub-5ms queries
 
 |**VIPER**
-|Analytics, compression
-|366ps query, 16-32x compression
+|Production analytics, batch processing
+|Columnar optimization, cloud-native
 
 |**SWIFT**
-|Ultra-low latency
-|<500μs, minimal overhead
+|Hierarchical enterprise data
+|Multi-tenant isolation, organized storage
 
 |**NOVA**
-|Mixed workloads
-|Progressive search, balanced
+|Advanced analytics, research
+|Hierarchical pruning, 70-97% I/O reduction
 
 |**RAPTOR**
-|Dynamic workloads
-|Adaptive optimization
+|Adaptive workloads, dynamic patterns
+|Matrix Trinity, workload learning
 
 |**HELIX**
-|Time-series data
-|Temporal patterns, IoT
+|Spatial locality optimization
+|Hilbert clustering, locality-aware search
 |===
 
 == Use Cases That Drive Revenue
@@ -459,7 +456,7 @@ gantt
     axisFormat %Q %Y
 
     section Foundation
-    7 Storage Engines           :done, foundation, 2024-07-01, 2024-12-31
+    6 Storage Engines           :done, foundation, 2024-07-01, 2024-12-31
     8 AI Provider Integrations  :done, ai-integrations, 2024-08-01, 2024-12-31
     Hardware Acceleration       :done, simd-gpu, 2024-09-01, 2024-12-31
     Docker Production Ready     :done, docker, 2024-10-01, 2024-12-31
@@ -485,7 +482,7 @@ gantt
 ----
 
 === Q4 2024 - Foundation ✅
-* ✅ 7 storage engines with auto-optimization
+* ✅ 6 storage engines with auto-optimization
 * ✅ 8 AI provider integrations
 * ✅ Hardware acceleration (SIMD, GPU)
 * ✅ Production-ready Docker deployment
@@ -535,7 +532,7 @@ gantt
 * **Cost Efficiency**: 95% reduction in AI infrastructure costs compared to fragmented solutions
 * **Performance Leadership**: 20M+ operations/sec with hardware acceleration outperforms leading alternatives
 * **Rapid Deployment**: Production-ready Docker deployment in minutes, not months
-* **Future-Proof Architecture**: 7 specialized storage engines auto-optimize for your specific workload patterns
+* **Future-Proof Architecture**: 6 specialized storage engines auto-optimize for your specific workload patterns
 
 **Technical Excellence:**
 * **Proven Performance**: Benchmarked on production hardware with reproducible results
