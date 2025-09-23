@@ -13,10 +13,22 @@ ProximaDB delivers exceptional performance with hardware-accelerated SIMD optimi
 
 === Key Performance Achievements
 
-- **Ultra-Low Latency**: Sub-microsecond response times for distance computations
+- **Ultra-Low Latency**: SWIFT engine achieves 340ns search latency
 - **High Throughput**: 20M+ operations per second with SIMD acceleration
-- **Scalable Architecture**: Performance scales linearly with vector dimensions
+- **Excellent Compression**: SST/SWIFT/HELIX achieve 93-94% compression ratios
 - **Hardware Adaptive**: Automatic optimization for available CPU/GPU features
+
+=== Current Status (September 2024)
+
+**Working Engines**:
+- **SWIFT**: Best performance (340ns latency, 94% compression)
+- **SST**: Stable with 93% compression ratio
+- **HELIX**: Good compression (93.7%) with variable performance
+
+**Issues Being Addressed**:
+- **NOVA**: File size reporting fixed, now writes correctly
+- **RAPTOR**: Requires Product Quantization codebook initialization
+- **VIPER**: File size 15-25x larger than expected (negative compression)
 
 == December 2024 Benchmark Results
 

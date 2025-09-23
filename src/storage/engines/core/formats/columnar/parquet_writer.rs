@@ -1103,12 +1103,16 @@ impl StreamingParquetWriter {
             collector.finalize(file_metadata.row_groups.len())?;
         }
 
-        // Get actual file size
+        // Get actual file size (use std::fs since writer already wrote locally)
+        // For cloud storage, the file is written locally first then uploaded
         let file_size = std::fs::metadata(&self.file_path)
             .map(|m| m.len())
             .unwrap_or_else(|e| {
                 warn!("Failed to get file size for {}: {}", self.file_path, e);
-                0
+                // Try to calculate from row group metadata as fallback
+                file_metadata.row_groups.iter()
+                    .map(|rg| rg.total_byte_size as u64)
+                    .sum()
             });
 
         let stats = StreamingParquetWriterStats {
