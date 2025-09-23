@@ -173,7 +173,7 @@ xychart-beta
 ----
 
 **X-axis**: 1=1K, 2=10K, 3=100K, 4=1M, 5=10M vectors +
-**Legend**: SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX
+**Legend**: SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX
 === Engine Selection Decision Tree
 
 [source,mermaid]
@@ -190,7 +190,7 @@ graph TD
     Q2 -->|Low <100/s| SWIFT[SWIFT Engine<br/>Read-optimized]
 
     Q3 -->|Maximum| VIPER[VIPER Engine<br/>32x compression]
-    Q3 -->|Balanced| RAPTOR[RAPTOR Engine<br/>Adaptive compression]
+    Q3 -->|Adaptive| RAPTOR[RAPTOR Engine<br/>Adaptive workloads]
 
     style SST fill:#4caf50
     style VIPER fill:#2196f3
