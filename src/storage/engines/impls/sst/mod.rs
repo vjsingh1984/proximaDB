@@ -3977,6 +3977,7 @@ impl SstEngine {
         &self,
         records: &[VectorRecord], // OPTIMIZED: Accept VectorRecord directly
         level: u8,
+        compression_config: Option<&crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<Vec<u8>> {
         let serialization_start = std::time::Instant::now();
 
@@ -4034,7 +4035,7 @@ impl SstEngine {
 
         // Step 3: Organize records into blocks for better cache performance
         let data_blocks = self
-            .organize_records_into_blocks(records, header.block_size as usize)
+            .organize_records_into_blocks(records, header.block_size as usize, compression_config)
             .await?;
 
         // Step 4: Engine-optimized index with block pointers
@@ -4229,6 +4230,7 @@ impl SstEngine {
     async fn serialize_records_to_sstable_row_format(
         &self,
         vector_records: &[VectorRecord],
+        compression_config: Option<&crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<Vec<u8>> {
         info!(
             "📦 SST: Serializing {} vector records to row-based SSTable format",
@@ -4259,7 +4261,7 @@ impl SstEngine {
         sorted_records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
 
         // Serialize to row-based SSTable format (Level 0 by default for new data)
-        self.serialize_sst_records_to_sstable(&sorted_records, 0)
+        self.serialize_sst_records_to_sstable(&sorted_records, 0, compression_config)
             .await
     }
 
@@ -4477,11 +4479,17 @@ impl SstEngine {
         &self,
         records: &[VectorRecord], // OPTIMIZED: Accept VectorRecord directly
         block_size: usize,
+        compression_config: Option<&crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<Vec<FastLanesDataBlock>> {
         let mut blocks = Vec::new();
         let mut current_block_records = Vec::new();
         let mut current_block_size = 0;
         let mut block_id = 0;
+
+        // Use centralized compression config conversion from FastLanes
+        use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
+
+        let block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config);
 
         for record in records {
             let record_size = std::mem::size_of::<VectorRecord>() +
@@ -4492,7 +4500,7 @@ impl SstEngine {
             // If adding this record would exceed block size, finalize current block
             if current_block_size + record_size > block_size && !current_block_records.is_empty() {
                 let records = std::mem::take(&mut current_block_records);
-                let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
+                let compression_config = block_compression_config.clone();
                 let block = FastLanesDataBlock {
                     encoding_marker: 0x00,
                     encoding_metadata: None,
@@ -4524,7 +4532,7 @@ impl SstEngine {
 
         // Add final block if not empty
         if !current_block_records.is_empty() {
-            let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
+            let compression_config = block_compression_config.clone();
             let block = FastLanesDataBlock {
                 encoding_marker: 0x00,
                 encoding_metadata: None,
@@ -4570,14 +4578,11 @@ impl SstEngine {
         let mut index_entries = Vec::new();
         let mut compressed_blocks = Vec::new();
 
-        // Create compression config from SST config
-        let compression_config = BlockCompressionConfig::default();
-
         for block in data_blocks {
-            // Use the new DataBlock serialization with compression
+            // Use the block's own compression config instead of default
             let serialized_block =
                 block
-                    .serialize_with_config(&compression_config)
+                    .serialize_with_config(&block.compression_config)
                     .map_err(|e| {
                         SstError::Internal(format!("Failed to serialize data block: {}", e))
                     })?;

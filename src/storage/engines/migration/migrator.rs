@@ -119,9 +119,9 @@ pub enum RiskLevel {
 impl EngineMigrator {
     /// Create a new migrator
     pub async fn new(config: MigrationConfig) -> Result<Self> {
-        // Create source and target engines
-        let source_engine = StorageEngineFactory::create_from_proto(config.source_engine)?;
-        let target_engine = StorageEngineFactory::create_from_proto(config.target_engine)?;
+        // Create source and target engines using async versions for test compatibility
+        let source_engine = StorageEngineFactory::create_from_proto_async(config.source_engine).await?;
+        let target_engine = StorageEngineFactory::create_from_proto_async(config.target_engine).await?;
 
         let semaphore = Arc::new(Semaphore::new(config.performance.parallel_workers));
 

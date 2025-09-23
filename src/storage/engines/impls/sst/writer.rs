@@ -618,25 +618,10 @@ impl SstableWriter {
         _current_block_size: usize,
     ) -> Result<()> {
         // ✅ STEP 1: Create FastLanesDataBlock - this automatically generates ALL capabilities!
-        let block_compression_config = if let Some(ref comp_config) = self.compression_config {
-            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
-                algorithm: match comp_config.algorithm {
-                    1 => crate::core::compression::CompressionAlgorithm::Zstd,
-                    2 => crate::core::compression::CompressionAlgorithm::Lz4,
-                    3 => crate::core::compression::CompressionAlgorithm::Snappy,
-                    4 => crate::core::compression::CompressionAlgorithm::Gzip,
-                    5 => crate::core::compression::CompressionAlgorithm::Brotli,
-                    _ => crate::core::compression::CompressionAlgorithm::Zstd,
-                },
-                compression_level: comp_config.level.unwrap_or(3) as u8,
-                enable_vector_compression: true,
-                enable_metadata_compression: true,
-                compression_threshold_bytes: 8192,
-                dictionary_compression: false,
-            }
-        } else {
-            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default()
-        };
+        // Use centralized compression config conversion from FastLanes
+        use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
+
+        let block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(self.compression_config.as_ref());
 
         // ✅ FastLanes automatically provides:
         // - 🔍 Automatic Bloom Filter Generation

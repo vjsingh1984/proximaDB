@@ -994,7 +994,12 @@ impl FastLanesDataBlock {
             }
         }
 
-        Ok(result)
+        // For uncompressed data, we need to mark it as such
+        // Use 0x00 as the marker for uncompressed data
+        let mut final_result = Vec::with_capacity(result.len() + 1);
+        final_result.push(0x00); // Uncompressed marker
+        final_result.extend(result);
+        Ok(final_result)
     }
 
     /// Deserialize a block
@@ -1012,9 +1017,9 @@ impl FastLanesDataBlock {
 
         let first_byte = data[0];
 
-        // Check if this is compressed data (0x80-0x8F range)
+        // Check compression/encoding status
         let (decompressed_data, encoding_marker) = if first_byte >= 0x80 && first_byte < 0x90 {
-            // This is compressed data
+            // This is compressed data (0x80-0x8F range)
             let algorithm = match first_byte {
                 0x80 => CompressionAlgorithm::Lz4,
                 0x81 => CompressionAlgorithm::Zstd,
@@ -1034,16 +1039,46 @@ impl FastLanesDataBlock {
                 CompressionContext::Block,
             )?;
 
-            // The decompressed data starts with the actual encoding marker
-            let actual_marker = decompressed[0];
+            // The decompressed data contains: format_version + encoding_marker + data
+            let actual_marker = if decompressed.len() > 1 {
+                decompressed[1] // Skip format version at [0], get encoding marker at [1]
+            } else {
+                0x00
+            };
             (decompressed, actual_marker)
+        } else if first_byte == 0x00 {
+            // Uncompressed data marker - the actual data follows
+            let actual_data = &data[1..];
+            // The uncompressed data starts with format version and encoding marker
+            let actual_marker = if actual_data.len() > 1 {
+                actual_data[1] // Skip format version at [0], get encoding marker at [1]
+            } else {
+                0x00
+            };
+            (actual_data.to_vec(), actual_marker)
         } else {
-            // Not compressed, first byte is the encoding marker
-            (data.to_vec(), first_byte)
+            // Legacy or direct format: check if it's format version
+            if first_byte == 0x01 && data.len() > 1 {
+                // Format version 1, next byte is encoding marker
+                (data.to_vec(), data[1])
+            } else {
+                // Assume first byte is encoding marker directly (very old format)
+                (data.to_vec(), first_byte)
+            }
         };
 
-        // Now process the decompressed data, skipping the first byte (encoding marker)
-        let data = &decompressed_data[1..];
+        // Now process the decompressed data
+        // Skip format version and encoding marker if present
+        let data = if decompressed_data.len() > 2 && decompressed_data[0] == 0x01 {
+            // Has format version, skip both format version and encoding marker
+            &decompressed_data[2..]
+        } else if decompressed_data.len() > 1 {
+            // No format version or old format, skip just the encoding marker
+            &decompressed_data[1..]
+        } else {
+            // Shouldn't happen, but handle gracefully
+            &decompressed_data[..]
+        };
 
         // Data is already decompressed at this point
         let mut cursor = std::io::Cursor::new(data);
