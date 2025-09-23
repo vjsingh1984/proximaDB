@@ -71,8 +71,12 @@ impl CacheMetrics {
 
     /// Record a cache access
     pub fn record_access(&self) {
-        let mut patterns = self.access_patterns.blocking_write();
-        patterns.total_accesses += 1;
+        // Use try_write to avoid blocking in async context
+        if let Ok(mut patterns) = self.access_patterns.try_write() {
+            patterns.total_accesses += 1;
+        }
+        // If we can't get the lock, skip recording this access
+        // This is better than panicking in async context
     }
 
     /// Record a cache hit
@@ -142,20 +146,22 @@ impl CacheMetrics {
 
     /// Record file access for pattern tracking
     pub fn record_file_access(&self, path: &str) {
-        let mut patterns = self.access_patterns.blocking_write();
-        patterns.unique_files_accessed.insert(path.to_string());
+        // Use try_write to avoid blocking in async context
+        if let Ok(mut patterns) = self.access_patterns.try_write() {
+            patterns.unique_files_accessed.insert(path.to_string());
 
-        // Update access distribution
-        if let Some(entry) = patterns.access_distribution.iter_mut().find(|(p, _)| p == path) {
-            entry.1 += 1;
-        } else {
-            patterns.access_distribution.push((path.to_string(), 1));
-        }
+            // Update access distribution
+            if let Some(entry) = patterns.access_distribution.iter_mut().find(|(p, _)| p == path) {
+                entry.1 += 1;
+            } else {
+                patterns.access_distribution.push((path.to_string(), 1));
+            }
 
-        // Keep only top 100 accessed files
-        if patterns.access_distribution.len() > 100 {
-            patterns.access_distribution.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-            patterns.access_distribution.truncate(100);
+            // Keep only top 100 accessed files
+            if patterns.access_distribution.len() > 100 {
+                patterns.access_distribution.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+                patterns.access_distribution.truncate(100);
+            }
         }
     }
 

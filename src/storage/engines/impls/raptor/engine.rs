@@ -1,5 +1,6 @@
 use crate::utils::uuid::Uuid;
 use anyhow::Result;
+use crate::core::errors::ProximaDBError;
 use arrow_array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
@@ -153,10 +154,15 @@ impl RaptorEngine {
             SmartRowGroupSizer::for_s3_standard(config.dimension, 200) // 200 bytes avg metadata
                 .with_query_pattern(super::smart_rowgroup_sizing::QueryPattern::Mixed);
 
+        // Create quantization engine for RAPTOR
+        let quantization_engine = Arc::new(
+            crate::compute::quantization::storage_engine::StorageQuantizationEngine::new_default()
+        );
+
         let rowgroup_manager = Arc::new(RwLock::new(RowGroups::new(
             config.clone(),
             smart_sizer,
-            None, // No quantization engine for now
+            Some(quantization_engine.clone()), // Add quantization engine
         )?));
 
         // ============================================================================
@@ -1436,18 +1442,35 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             .column_by_name("vector")
             .ok_or_else(|| anyhow::anyhow!("Vector column not found"))?;
 
-        // For RAPTOR, vectors are stored as flat Float32Array, not list
-        let float_array = vector_column
+        // Try FixedSizeListArray first (proper Arrow representation)
+        // Fall back to flat Float32Array for backward compatibility
+        let vector = if let Some(list_array) = vector_column
+            .as_any()
+            .downcast_ref::<arrow_array::FixedSizeListArray>()
+        {
+            // Extract vector from FixedSizeListArray
+            let values = list_array.values();
+            let float_values = values
+                .as_any()
+                .downcast_ref::<arrow_array::Float32Array>()
+                .ok_or_else(|| anyhow::anyhow!("Vector list values are not Float32Array"))?;
+
+            let dimension = list_array.value_length() as usize;
+            let start = index * dimension;
+            let end = start + dimension;
+            float_values.values()[start..end].to_vec()
+        } else if let Some(float_array) = vector_column
             .as_any()
             .downcast_ref::<arrow_array::Float32Array>()
-            .ok_or_else(|| anyhow::anyhow!("Vector column is not Float32Array"))?;
-
-        // Assuming fixed dimension for all vectors
-        let dimension = float_array.len() / batch.num_rows();
-        let start = index * dimension;
-        let end = start + dimension;
-
-        let vector = float_array.values()[start..end].to_vec();
+        {
+            // Backward compatibility: flat Float32Array
+            let dimension = float_array.len() / batch.num_rows();
+            let start = index * dimension;
+            let end = start + dimension;
+            float_array.values()[start..end].to_vec()
+        } else {
+            return Err(anyhow::anyhow!("Vector column is neither FixedSizeListArray nor Float32Array"));
+        };
 
         let metadata_str = batch
             .column_by_name("metadata")
@@ -1528,31 +1551,62 @@ impl UnifiedStorageEngine for RaptorEngine {
         let collection_id = self.get_collection_id_from_params(params)?;
         let start_time = std::time::Instant::now();
 
-        // Get collection config dimension - this should always be available since dimension is required in CollectionConfig
+        tracing::debug!("RAPTOR do_flush started for collection: {}", collection_id);
+        tracing::debug!("RAPTOR do_flush: {} vectors to flush", params.vector_records.len());
+
+        // Get collection config dimension - required for proper compaction
         let collection_dimension = params.collection_config.as_ref()
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.dimension)
-            .expect("Collection dimension should always be available since it's required in CollectionConfig");
+            .ok_or_else(|| {
+                ProximaDBError::Config(
+                    crate::core::errors::ConfigError::MissingField {
+                        field: "dimension".to_string()
+                    }
+                )
+            })?;
 
         tracing::debug!(
             "RAPTOR flush: Using collection config dimension: {}",
             collection_dimension
         );
-        // TODO: Update any dimension-dependent components with actual dimension
-        // - Row group sizer optimization based on actual dimension
-        // - HNSW parameter tuning for this dimension
-        // - Memory allocation optimization
 
-        let mut writer = self.writer.write().await;
+        // Determine the proper file path for this collection
+        // Format is: {baseurl}/{collectionid}/data/
+        let data_dir = self.get_data_dir_from_flush_params(params)?;
+
+        tracing::debug!("RAPTOR flush: Data directory: {}", data_dir);
+
+        // Use filesystem API to create directory
+        self.filesystem.create_dir_all(&data_dir).await?;
+        tracing::debug!("RAPTOR flush: Created directory: {}", data_dir);
+
+        // Create a new filename for this flush using FilenameCodec
+        use crate::storage::engines::core::constants;
+        let codec = crate::storage::common::compaction_orchestrator::FilenameCodec::new();
+        let filename = codec.generate(0, constants::raptor::FILE_EXTENSION); // Level 0 for new flushes
+        let file_path = format!("{}/{}", data_dir, filename);
+
+        tracing::debug!("RAPTOR flush: Writing to file {}", file_path);
+
+        // Create a new writer with the proper file path
+        let mut writer = RaptorWriter::new(
+            file_path.clone(),
+            self.config.clone(),
+            collection_id.to_string(),
+            collection_dimension as usize,
+        ).await?;
 
         // Write the vectors from params to the writer first
+        tracing::debug!("RAPTOR flush: Writing {} vectors to writer", params.vector_records.len());
         writer.write_vectors(&params.vector_records).await?;
+        tracing::debug!("RAPTOR flush: Vectors written to writer");
 
-        // Then flush any pending row pages and get count
-        let vectors_flushed = writer.flush().await?;
-
-        // Then finalize the file to write footer and metadata
-        writer.finalize().await?;
+        // Close the writer - this will flush, update metadata, and finalize
+        tracing::debug!("RAPTOR flush: Closing writer");
+        let vectors_flushed = params.vector_records.len(); // Use the input count
+        writer.close().await?;
+        tracing::debug!("RAPTOR flush: Writer closed, {} vectors written to {}", vectors_flushed, file_path);
 
         // Update unified metrics
         self.metrics
@@ -1585,11 +1639,17 @@ impl UnifiedStorageEngine for RaptorEngine {
         let collection_id = self.get_collection_id_from_compaction_params(params)?;
         let start_time = std::time::Instant::now();
 
-        // Get collection config dimension - this should always be available since dimension is required in CollectionConfig
+        // Get collection config dimension - required for proper compaction
         let collection_dimension = params.collection_config.as_ref()
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.dimension)
-            .expect("Collection dimension should always be available since it's required in CollectionConfig");
+            .ok_or_else(|| {
+                ProximaDBError::Config(
+                    crate::core::errors::ConfigError::MissingField {
+                        field: "dimension".to_string()
+                    }
+                )
+            })?;
 
         tracing::debug!(
             "RAPTOR compaction: Using collection config dimension: {}",
@@ -1614,8 +1674,9 @@ impl UnifiedStorageEngine for RaptorEngine {
 
         if !input_files.is_empty() {
             // Use unified FilenameCodec naming convention
+            use crate::storage::engines::core::constants;
             let codec = crate::storage::common::compaction_orchestrator::FilenameCodec::new();
-            let filename = codec.generate(1, "raptor"); // Level 1 for compacted files
+            let filename = codec.generate(1, constants::raptor::FILE_EXTENSION); // Level 1 for compacted files
             let output_file = format!("{}/{}", data_dir, filename);
             self.compactor
                 .compact_files(input_files, &output_file, &collection_id)
@@ -1719,6 +1780,9 @@ impl UnifiedStorageEngine for RaptorEngine {
         base_path: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
+        tracing::info!("RAPTOR vector_by_id: START - Looking for vector '{}' in collection '{}', base_path '{}'",
+            vector_id, collection_id, base_path);
+
         // Access global unified cache through CrossCacheOrchestrator
         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
         if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
@@ -1741,28 +1805,120 @@ impl UnifiedStorageEngine for RaptorEngine {
             );
         }
 
-        // Load file metadata to access bloom filters
+        // Find RAPTOR data files for this collection
         // Construct data directory from base_path and collection_id
-        let file_path = format!("{}/{}/raptor.data", base_path, collection_id);
-        let metadata = self.reader.get_metadata(&file_path).await?;
+        // Format is: {baseurl}/{collectionid}/data/
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        tracing::info!("RAPTOR vector_by_id: Constructed data directory path: {}", data_dir);
 
-        // For now, use a simple approach - read all row groups and search for the ID
-        // TODO: Implement efficient bloom filter lookup
-        let rowgroup_indices: Vec<u16> = (0..metadata.row_groups.len() as u16).collect();
-        let batches = self
-            .reader
-            .read_rowgroups(&file_path, &rowgroup_indices)
-            .await?;
+        // Use filesystem API to list files in the directory
+        let data_files = match self.filesystem.list(&data_dir).await {
+            Ok(files) => {
+                tracing::info!("RAPTOR vector_by_id: Successfully listed directory, found {} entries", files.len());
+                let filtered: Vec<_> = files
+                    .into_iter()
+                    .filter(|entry| {
+                        // Match both old format (raptor_*.data) and new format (L*_*.raptor)
+                        let matches = (entry.name.starts_with("raptor_") && entry.name.ends_with(".data"))
+                                   || (entry.name.starts_with("L") && entry.name.ends_with(".raptor"));
+                        tracing::debug!("RAPTOR vector_by_id: File '{}' matches pattern: {}", entry.name, matches);
+                        matches
+                    })
+                    .map(|entry| format!("{}/{}", data_dir, entry.name))
+                    .collect();
+                tracing::info!("RAPTOR vector_by_id: Found {} RAPTOR data files after filtering", filtered.len());
+                for file in &filtered {
+                    tracing::info!("RAPTOR vector_by_id: Will search in file: {}", file);
+                }
+                filtered
+            },
+            Err(e) => {
+                tracing::error!("RAPTOR vector_by_id: Failed to list directory {}: {:?}", data_dir, e);
+                Vec::new()
+            },
+        };
 
-        // Search through all batches for the vector ID
-        if let Some(batch) = batches.first() {
-            // The lookup_ids_after_hnsw already filtered to just our ID
-            // So we can directly reconstruct the vector record
-            if batch.num_rows() > 0 {
-                return Ok(Some(self.reconstruct_vector_record(&batch, 0)?));
+        if data_files.is_empty() {
+            tracing::warn!("RAPTOR vector_by_id: No RAPTOR data files found in {}", data_dir);
+            return Ok(None);
+        }
+
+        // Search through all RAPTOR data files
+        for file_path_str in data_files {
+            tracing::info!("RAPTOR vector_by_id: Searching in file: {}", file_path_str);
+
+            // Create a reader specifically for this file
+            // The reader expects to be initialized with the file path for single-file operations
+            // Get the global cache orchestrator or create a temporary one
+            let cache_orchestrator = if let Some(global_cache) =
+                crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                global_cache
+            } else {
+                // Create a temporary cache if no global one exists
+                Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(
+                    1024 * 1024 * 10 // 10MB cache
+                ))
+            };
+
+            let file_reader = Arc::new(RaptorReader::new(
+                file_path_str.clone(), // Use the actual file path as base_path
+                collection_id.to_string(),
+                self.config.clone(),
+                cache_orchestrator,
+                self.filesystem.clone(),
+                self.transaction_coordinator.clone(),
+            ));
+
+            // Try to get metadata for this file
+            tracing::debug!("RAPTOR vector_by_id: Attempting to get metadata for file: {}", file_path_str);
+            match file_reader.get_metadata(&file_path_str).await {
+                Ok(metadata) => {
+                    tracing::debug!("RAPTOR vector_by_id: Successfully got metadata, {} row groups", metadata.row_groups.len());
+                    tracing::info!("RAPTOR vector_by_id: Successfully got metadata for file {}, {} row groups",
+                        file_path_str, metadata.row_groups.len());
+                    // For now, use a simple approach - read all row groups and search for the ID
+                    // TODO: Implement efficient bloom filter lookup
+                    let rowgroup_indices: Vec<u16> = (0..metadata.row_groups.len() as u16).collect();
+
+                    tracing::debug!("RAPTOR vector_by_id: Will read {} row groups", rowgroup_indices.len());
+                    tracing::info!("RAPTOR vector_by_id: Will read {} row groups to find vector", rowgroup_indices.len());
+
+                    let batches = file_reader
+                        .read_rowgroups(&file_path_str, &rowgroup_indices)
+                        .await?;
+
+                    // Search through all batches for the vector ID
+                    tracing::debug!("RAPTOR vector_by_id: Read {} batches", batches.len());
+                    tracing::debug!("RAPTOR vector_by_id: Searching through {} batches", batches.len());
+                    for (batch_idx, batch) in batches.iter().enumerate() {
+                        tracing::debug!("RAPTOR vector_by_id: Batch {}: {} rows", batch_idx, batch.num_rows());
+                        // Check each row for matching ID
+                        if let Some(id_array) = batch.column_by_name("id") {
+                            let id_array = id_array.as_any().downcast_ref::<arrow_array::StringArray>();
+                            if let Some(id_array) = id_array {
+                                for i in 0..batch.num_rows() {
+                                    // StringArray value() method already handles null checking
+                                    let id = id_array.value(i);
+                                    tracing::trace!("RAPTOR vector_by_id: Row {}: id='{}'", i, id);
+                                    if id == vector_id {
+                                        // Found the vector, reconstruct and return
+                                        tracing::debug!("RAPTOR vector_by_id: Found vector '{}' at row {}", vector_id, i);
+                                        return Ok(Some(self.reconstruct_vector_record(&batch, i)?));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    tracing::debug!("RAPTOR vector_by_id: Failed to read metadata from {}: {}", file_path_str, e);
+                    tracing::error!("RAPTOR vector_by_id: Failed to read metadata from {}: {:?}", file_path_str, e);
+                    tracing::error!("RAPTOR vector_by_id: Error details: {}", e);
+                }
             }
         }
 
+        tracing::warn!("RAPTOR vector_by_id: Vector '{}' not found in any files for collection '{}'", vector_id, collection_id);
         Ok(None)
     }
 

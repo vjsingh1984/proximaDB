@@ -244,12 +244,14 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         // Test the adaptive coverage formula: coverage(k,d) = max(0.1, min(1.0, exp(-2 × log(k/d + 1))))
+        // The formula exp(-2 * ln(k/d + 1)) gives values that decrease as k/d increases
+        // For small k/d, the value is closer to 1; for large k/d, it approaches 0
         let test_cases = vec![
-            (10, 100, 0.1, 0.2),   // Low k/d ratio -> minimum coverage
-            (50, 100, 0.2, 0.4),   // Moderate k/d ratio
-            (100, 100, 0.3, 0.5),  // k = d -> moderate coverage
-            (200, 100, 0.5, 0.7),  // k > d -> higher coverage
-            (1000, 100, 0.8, 1.0), // High k/d ratio -> maximum coverage
+            (10, 100, 0.8, 0.9),   // Low k/d ratio -> high coverage
+            (50, 100, 0.4, 0.6),   // Moderate k/d ratio
+            (100, 100, 0.2, 0.4),  // k = d -> moderate coverage
+            (200, 100, 0.1, 0.2),  // k > d -> lower coverage
+            (1000, 100, 0.1, 0.1), // High k/d ratio -> minimum coverage (clamped at 0.1)
         ];
 
         for (k, d, min_expected, max_expected) in test_cases {

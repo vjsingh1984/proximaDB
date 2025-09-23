@@ -120,8 +120,7 @@ mod tests {
 
         for i in 0..vectors.len() {
             for j in (i + 1)..vectors.len() {
-                let dist_result = distance_compute.calculate_distance(&vectors[i], &vectors[j], &crate::compute::distance_computation::DistanceMetric::Euclidean);
-                let dist = dist_result.raw_value;
+                let dist = distance_compute.distance(&vectors[i], &vectors[j]);
                 distances.push(dist);
             }
         }
@@ -164,8 +163,7 @@ mod tests {
 
         for i in 0..vectors.len() {
             for j in (i + 1)..vectors.len() {
-                let dist_result = distance_compute.calculate_distance(&vectors[i], &vectors[j], &crate::compute::distance_computation::DistanceMetric::Euclidean);
-                let dist = dist_result.raw_value;
+                let dist = distance_compute.distance(&vectors[i], &vectors[j]);
                 distances.push(dist);
             }
         }

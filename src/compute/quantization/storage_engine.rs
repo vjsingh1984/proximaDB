@@ -45,15 +45,11 @@ pub struct StorageQuantizationConfig {
 impl Default for StorageQuantizationConfig {
     fn default() -> Self {
         Self {
-            // PQ8 with 32 subvectors as primary
-            primary_level: Some(UnifiedQuantizationLevel::pq8(32)),
-            // Binary sketch for filtering
-            filter_level: Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
-                    threshold: None,
-                    sign_based: false, // Use median-based binary quantization
-                })),
-            }),
+            // INT8 as default primary - fast, no training required, good compression
+            // PQ can be explicitly enabled in collection config when needed
+            primary_level: Some(UnifiedQuantizationLevel::int8()),
+            // Binary sketch for filtering (1-bit per dimension)
+            filter_level: Some(UnifiedQuantizationLevel::binary()),
             // INT8 for fast approximation
             fast_level: Some(UnifiedQuantizationLevel::int8()),
 

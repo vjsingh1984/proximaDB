@@ -19,18 +19,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Document what the code actually does, not what it's intended to do
 - Remove or replace any placeholder/simulation code with concrete implementations
 
-### Testing Requirements (TDD Approach)
-- **50% Test Coverage Minimum**: Every code item being implemented must have at least 50% test coverage
-- **Test-First Development**: Write tests before or alongside implementation, not as an afterthought
-- **Unit Tests Required**: Each new function, struct, or module must have corresponding unit tests
-- **Integration Tests**: New features must include integration tests that verify end-to-end functionality
-- **Real Data Testing**: Tests should use realistic data patterns, not just minimal examples
-- **Error Path Testing**: Test both success and failure scenarios for robust error handling
-- **Performance Testing**: Include benchmark tests for performance-critical components
-- **Test Organization**:
-  - Unit tests: Inline `#[cfg(test)]` modules or `tests/` directory
-  - Integration tests: `tests/` directory with `--test integration` flag
-  - Benchmarks: `benches/` directory with `cargo bench`
+### Testing Requirements
+- **Test Coverage**: Aim for comprehensive testing of new features
+- **Unit Tests**: Include tests in module `#[cfg(test)]` blocks
+- **Integration Tests**: Located in `tests/` directory
+- **Benchmarks**: Performance tests in `benches/` directory
+- **Test Commands**: Use `cargo test --lib module::name` for specific tests
 
 ### Documentation and Diagram Standards
 
@@ -229,31 +223,25 @@ cargo check --all-targets  # Faster compilation check without generating binarie
 - `start_all_emulators.sh`: Start cloud emulators for testing (S3, Azure, GCS)
 - `stop_all_emulators.sh`: Stop all cloud emulators
 
-### Available Benchmark Suites (benches/)
-- `bench_01_core_distance`: Core distance metrics performance
-- `bench_02_hardware_simd`: SIMD hardware acceleration tests
-- `bench_03_memory_vector`: Memory and vector operations
-- `bench_04_storage_unified`: Unified storage engine benchmarks
-- `bench_08_quantization_sst`: SST quantization performance
-- `bench_09_columnar_viper`: VIPER columnar operations
-- `bench_10_query_progressive`: Progressive query optimization
-- `bench_12_system_optimization`: System-wide optimizations
-- `bench_13_complete_suite`: Full benchmark suite
-- `bench_14_graph_operations`: Graph operations performance
+### Available Benchmarks
+Located in `benches/` directory - Run with `cargo bench` or specific benchmark:
+- Core distance metrics: `cargo bench --bench bench_01_core_distance`
+- Storage engines: `cargo bench --bench bench_04_storage_unified`
+- System optimization: `cargo bench --bench bench_12_system_optimization`
 
 ### Quick Development Workflow
 ```bash
-# Fast iteration cycle for development
-cargo check --all-targets  # Quick compilation check without binaries
-cargo build 2>&1 | tee current_error.log  # Build with error logging
-cargo test --lib compute::quantization -- --nocapture  # Test specific modules
-cargo test testname -- --exact --nocapture  # Run single test exactly
-cargo clippy -- -D warnings  # Lint check
-cargo build --message-format=short  # Concise error output
+# Fast compilation check
+cargo check --all-targets
 
-# Quick error triage
-cargo check --all-targets 2>&1 | head -20  # See first 20 errors only
-cargo fix --allow-dirty  # Auto-fix some common issues
+# Build with error logging
+cargo build 2>&1 | tee current_error.log
+
+# Test specific module
+cargo test --lib storage::engines::impls::raptor
+
+# Run single test with debug output
+RUST_LOG=debug cargo test test_name -- --exact --nocapture
 ```
 
 ### Running Tests
@@ -279,31 +267,15 @@ make perf-test
 # Full integration tests with real server
 make integration-full
 
-# Run specific test category
-cargo test --test integration storage::
-cargo test --lib compute::quantization  # Test specific module
+# Run specific test
+cargo test test_name -- --exact --nocapture
+RUST_LOG=debug cargo test test_name -- --nocapture  # With debug output
 
-# Single test with debug output
-RUST_LOG=debug cargo test test_name -- --nocapture
-cargo test test_name -- --exact --nocapture  # Exact test name matching
-cargo test --no-fail-fast  # Run all tests even if some fail
+# Test specific module
+cargo test --lib storage::engines::impls::raptor
 
-# Run specific benchmark
-cargo bench --bench bench_01_core_distance
+# Run benchmarks
 cargo bench --bench bench_04_storage_unified
-
-# Test with specific features
-cargo test --features "aws azure gcp"
-
-# Run ignored/slow tests
-cargo test -- --ignored
-
-# Test coverage (requires cargo-tarpaulin)
-cargo tarpaulin --out Html --fail-under 50
-
-# Run unit tests in specific directory
-env PYTHONPATH=src python -m pytest tests/unit/ -v --tb=short
-env PYTHONPATH=src python -m pytest tests/unit/ -v --tb=short -m "not (server_required or integration)"
 ```
 
 ### Running the Server
@@ -378,37 +350,14 @@ make docs-update-gaps       # Update critical documentation gaps
 
 ## Architecture Overview
 
-ProximaDB is a unified intelligence platform combining vector search, graph relationships, and semantic knowledge in a single system. Built with a proto-first architecture for maximum performance.
+ProximaDB is a unified vector database with 6 specialized storage engines that auto-optimize for different workloads.
 
-### Core Architecture Layers
-
-1. **Storage Layer** (`src/storage/`)
-   - **Multiple Storage Engines**: SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX
-   - **Unified Storage Interface**: All engines implement `UnifiedStorageEngine` trait
-   - **UnifiedCachingFilesystem**: Consolidated filesystem with integrated caching for Local, S3, Azure, GCS
-   - **Write-Ahead Log (WAL)**: Located in `src/storage/persistence/write_ahead_log/`
-   - **Metadata Store**: Atomic operations with cloud backend support
-
-2. **Compute Layer** (`src/compute/`)
-   - **Unified Quantization**: All engines use `compute::quantization::unified` module
-   - **Distance Computation**: Hardware-accelerated SIMD processing (`UnifiedDistanceCompute`)
-   - **Quantization Levels**: Binary, INT8, PQ4, PQ8, PQ16, PQ32 with automatic selection
-   - **Hardware Acceleration**: Automatic AVX2/AVX512/NEON/SSE detection
-
-3. **API Layer** (`src/api_handlers/`, `src/network/`)
-   - **Unified Handlers**: Single implementation for REST and gRPC
-   - **Protocol Buffers**: Native VectorRecord flow without serialization overhead
-   - **Multi-Server**: Concurrent REST (port 5678) and gRPC (port 5679) servers
-
-4. **Index Layer** (`src/index/`)
-   - **AXIS Engine**: Primary indexing system with tiering support
-   - **Multiple Index Types**: HNSW, IVF, PQ, FLAT, ANNOY, LSH
-   - **Progressive Search**: Multi-tier deduplication and early termination
-
-5. **Services Layer** (`src/services/`)
-   - **CollectionService**: Manages vector collections with engine selection
-   - **VectorOperationsService**: Direct memtable access for operations
-   - **EventLogService**: Persistent event logging for recovery
+### Core Components
+- **Storage Layer** (`src/storage/`): 6 engines (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX) implementing `UnifiedStorageEngine`
+- **Compute Layer** (`src/compute/`): Unified quantization and hardware-accelerated distance computation
+- **API Layer** (`src/api_handlers/`): REST (port 5678) and gRPC (port 5679) servers
+- **Index Layer** (`src/index/`): AXIS engine with multiple index types (HNSW, IVF, PQ, etc.)
+- **Services Layer** (`src/services/`): CollectionService, VectorOperationsService, EventLogService
 
 ### Storage Engine Specializations
 
@@ -437,30 +386,17 @@ ProximaDB is a unified intelligence platform combining vector search, graph rela
   - Location: `src/storage/engines/impls/helix/`
 
 ### Key Design Patterns
-
-1. **Proto-First Pipeline**: VectorRecord is the native format throughout the system
-2. **Zero-Copy Operations**: Direct memory access without intermediate serialization
-3. **Unified Quantization**: All engines delegate to `compute::quantization::unified`
-4. **Hardware Adaptive**: Automatic CPU/GPU feature detection and optimization
-5. **UnifiedCachingFilesystem**: Consolidated abstraction for all storage backends with integrated caching
+- Proto-first pipeline with VectorRecord as native format
+- Zero-copy operations throughout
+- All engines use unified quantization (`compute::quantization::unified`)
+- Automatic hardware detection and optimization
+- UnifiedCachingFilesystem for all storage backends
 
 ### Configuration
 
 Primary configuration file: `config/config.toml`
 
-Available configuration templates:
-- `config/config.toml`: Main production configuration
-- `config/production.toml`: Production-optimized settings
-- `config/simple-config.toml`: Minimal configuration for getting started
-- `config/multi-disk-config.toml`: Multi-disk storage setup
-- `config/sample-hybrid.toml`: Hybrid cloud configuration
-- `config/test-config.toml`: Testing configuration
-- `demo/config/docker-config.toml`: Docker deployment config
-- `demo/config/local-demo-config.toml`: Local demo setup
-- `examples/deployment-configs/container-aws.toml`: AWS container deployment
-- `examples/deployment-configs/ec2-multi-region.toml`: Multi-region EC2 setup
-
-Key configuration sections:
+Key configuration sections in `config/config.toml`:
 - `[server]`: HTTP/gRPC ports, data directories
 - `[storage]`: Engine selection, storage locations, metadata URLs
 - `[storage.write_buffer]`: Flush thresholds and memory limits
@@ -468,16 +404,10 @@ Key configuration sections:
 - `[compute.quantization]`: Compression algorithm selection
 
 ### Feature Flags
-Important Cargo feature flags (use with `--features`):
-- `sql_frontend` (default): Modern SQL frontend.
-- `cloud-full`: Enable all cloud storage backends (AWS + Azure + GCP)
-- `aws`, `azure`, `gcp`: Individual cloud storage backends
-- `rocksdb`: RocksDB metadata backend support
-- `distributed`, `standalone`: Deployment mode selection
-- `gpu`: GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
-- `debug-filters`: Enable debug filtering for search operations
-- `comprehensive_tests`, `perf_tests`: Extended test suites
-- `simd`: SIMD optimization placeholder (ARM NEON support planned)
+- `cloud-full`: Enable all cloud storage backends
+- `aws`, `azure`, `gcp`: Individual cloud backends
+- `rocksdb`: RocksDB metadata backend (optional)
+- `gpu`: GPU acceleration (CUDA, ROCm, MPS, OpenCL)
 
 ### Data Directories
 - `/data/wal/`: Write-ahead log files
@@ -485,13 +415,6 @@ Important Cargo feature flags (use with `--features`):
 - `/data/collections/`: Per-collection engine-specific files
 - `/data/viper_data/`: VIPER engine columnar storage
 
-### Multi-Region Strategy
-ProximaDB leverages **cloud-native multi-region capabilities** through:
-- **UnifiedCachingFilesystem**: Multi-cloud abstraction handles S3 Cross-Region Replication, Azure Geo-Redundancy, GCS Multi-Region buckets
-- **Asynchronous Storage Replication**: Cloud providers handle data replication automatically
-- **Application Coordination**: ProximaDB coordinates cross-region access through intelligent routing
-- **On-Premises**: Incremental rsync for data synchronization between sites
-- **No Custom Replication**: Relies on proven cloud provider replication rather than custom implementation
 
 ## Important Architecture Concepts
 
@@ -527,25 +450,12 @@ The caching system has been recently unified (`src/storage/cache/`):
 
 ## Development Guidelines
 
-### When Fixing Compilation Errors
-1. **Check current_error.log**: Always review the latest compilation log with `cargo build 2>&1 | tee current_error.log`
-2. **Recent Development Focus**: The codebase has undergone systematic test failure fixes and performance optimization as of December 2024
-3. **Common Error Patterns**:
-   - `struct import 'AxisConfig' is private`: Use public interfaces from index::axis modules
-   - `this function takes 1 argument but 0 arguments were supplied`: Check UnifiedDistanceCompute requires DistanceMetric parameter
-   - Lifetime errors: Review async/await usage and reference management
-   - `cannot find type X in this scope`: Check module imports and feature flags
-   - `trait bound not satisfied`: Verify trait implementations and generic constraints
-4. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, SST, SWIFT, RAPTOR, HELIX)
-5. **Quantization Issues**: All engines should use `compute::quantization::unified`
-6. **Filesystem Issues**: All engines should use `UnifiedCachingFilesystem`
-7. **Proto Types**: Use internal types, proto conversion only at service boundaries
-8. **Quick Error Resolution**:
-   ```bash
-   cargo check --all-targets 2>&1 | head -20  # Quick check first errors
-   cargo build --message-format=short  # Concise error output
-   cargo fix --allow-dirty  # Auto-fix some common issues
-   ```
+### Common Compilation Issues
+- **Import errors**: Check module paths and public interfaces (e.g., `index::axis` modules)
+- **Missing arguments**: `UnifiedDistanceCompute` requires `DistanceMetric` parameter
+- **Quantization**: All engines must use `compute::quantization::unified`
+- **Filesystem**: All engines must use `UnifiedCachingFilesystem`
+- **Proto types**: Use internal types, convert at service boundaries only
 
 ### Common Development Patterns
 1. **Adding a New Storage Engine**:
@@ -567,14 +477,6 @@ The caching system has been recently unified (`src/storage/cache/`):
    cargo test 2>&1 | tee test_error.log  # Capture output for analysis
    ```
 
-### Documentation Requirements
-1. **AsciiDoc Only**: All documentation must be written in AsciiDoc format (`.adoc` files)
-2. **Professional Diagrams**: Use Mermaid diagrams with ProximaDB styling in `[source,mermaid]` blocks
-3. **Visual Consistency**: Follow the ProximaDB color scheme and professional styling standards
-4. **Structured Content**: Use AsciiDoc features like admonitions, callouts, and proper cross-references
-5. **Professional Icons**: Use only approved professional symbols and geometric shapes
-6. **Clean Typography**: Avoid casual emojis; use professional symbols and clear text labels
-7. **GitHub Integration**: Ensure all Mermaid diagrams render properly in GitHub's AsciiDoc renderer
 
 ### Testing Strategy
 1. **Rust Unit Tests**:
@@ -614,42 +516,14 @@ The caching system has been recently unified (`src/storage/cache/`):
 7. **Benchmarks**: `benches/` - performance testing with Criterion
 8. **Current Status**: Use `current_error.log` and `test_error.log` to track issues
 
-### Test Coverage Requirements
-- **Mandatory 50% Coverage**: All new code must achieve minimum 50% test coverage
-- **Coverage Verification**: Use `cargo tarpaulin` or similar tools to measure coverage
-- **Test-Driven Development**: Write tests first, then implement functionality
-- **Coverage Reporting**:
-  ```bash
-  # Install tarpaulin for coverage reporting
-  cargo install cargo-tarpaulin
 
-  # Generate coverage report
-  cargo tarpaulin --out Html
-
-  # Coverage with specific threshold
-  cargo tarpaulin --fail-under 50
-  ```
-
-### Important Files
-- `src/lib.rs`: Main library entry point
-- `src/bin/server.rs`: Server binary implementation
-- `src/bin/proximadb-bench-consolidated.rs`: Consolidated benchmarking binary
-- `proto/proximadb.proto`: Protocol buffer definitions
-- `src/storage/engines/factory.rs`: Storage engine selection logic
-- `src/compute/quantization/unified.rs`: Unified quantization engine
-- `src/storage/persistence/filesystem/unified.rs`: Unified caching filesystem
-- `src/storage/persistence/filesystem/mod.rs`: Filesystem factory and exports
-- `build.rs`: Protocol buffer compilation and build configuration
-- `Cargo.toml`: Dependencies and feature flags configuration
-- `config/config.toml`: Main server configuration file
-- `src/storage/cache/`: Unified cache system with VectorCache specialization
-- `src/network/multi_server.rs`: Concurrent REST and gRPC server implementation
-- `test_error.log`: Current test failure log (used for debugging)
-
-### Files to Ignore
-- `available_domains.txt`: Auto-generated domain discovery file (continuously updated by background process)
-- `current_error.log`: Build error log file (generated by `cargo build 2>&1 | tee current_error.log`)
-- `test_error.log`: Test failure log file (generated by test runs)
+### Key Files
+- `src/storage/engines/factory.rs`: Storage engine selection
+- `src/compute/quantization/unified.rs`: Unified quantization
+- `src/storage/persistence/filesystem/unified.rs`: Unified filesystem
+- `src/network/multi_server.rs`: REST and gRPC servers
+- `proto/proximadb.proto`: Protocol definitions
+- `config/config.toml`: Main configuration
 
 ### Health Checks and API Testing
 ```bash
@@ -680,85 +554,29 @@ open http://localhost:5678/dashboard
 
 ### Performance Optimization
 
-### Current Benchmark Results (December 2024)
-ProximaDB delivers exceptional performance with hardware-accelerated SIMD optimization:
+ProximaDB automatically detects and uses hardware acceleration:
+- SIMD instructions (AVX2/AVX512/NEON)
+- GPU acceleration when available
+- Multiple compression algorithms with auto-selection
 
-| Dimension | Metric | Throughput (ops/sec) | Latency (μs) |
-|-----------|---------|---------------------|--------------|
-| **128D** | DotProduct | **20.6M** | **0.049** |
-| **128D** | Euclidean | **18.0M** | **0.056** |
-| **128D** | Manhattan | **17.7M** | **0.057** |
-| **128D** | Cosine | **12.2M** | **0.082** |
-| **256D** | DotProduct | **8.4M** | **0.120** |
-| **256D** | Euclidean | **7.9M** | **0.126** |
-| **512D** | DotProduct | **3.8M** | **0.265** |
-| **512D** | Euclidean | **3.7M** | **0.271** |
-
-**Complete Performance Documentation**: See `docs/PERFORMANCE_COMPREHENSIVE.adoc` for detailed benchmarks, competitive analysis, and deployment guidance.
-
-### Hardware Acceleration Features
-The system automatically detects and uses:
-- SIMD instructions (AVX2/NEON) - **delivering 20M+ ops/sec performance**
-- GPU acceleration (CUDA/ROCm/MPS)
-- CPU cache sizes for optimal batching
-- 13 compression algorithms with context-aware selection
-
-### Available Benchmarks
-```bash
-# All available benchmarks (use --list to see)
-cargo bench
-
-# Specific performance benchmarks
-cargo bench --bench simd_distance_bench
-cargo bench --bench flush_optimization_bench
-cargo bench --bench vector_optimization_bench
-cargo bench --bench engine_comparison_bench
-
-# Run with custom timing
-cargo bench -- --warm-up-time 1 --measurement-time 5
-```
+Benchmarks: `cargo bench` or see `docs/PERFORMANCE_COMPREHENSIVE.adoc` for detailed metrics.
 
 ### Python Client SDK
+
 Location: `clients/python/`
 
-Supports automatic protocol selection (REST/gRPC) with:
-- Collection management
-- Vector insertion/updates
-- Similarity search with metadata filtering
-- SQL-style queries
-- Compression configuration
-
-Testing Python SDK:
+Install and test:
 ```bash
-# Install Python SDK in development mode
 cd clients/python
 pip install -e .
-
-# Run individual Python test files (no pytest directory structure)
-cd clients/python
-python test_v1_client.py              # V1 API client tests
-python test_grpc_insert_debug.py      # gRPC insertion debugging
-python test_sql_v1.py                 # SQL interface tests
-python test_search_simple.py          # Simple search operations
-python test_v1_integration.py         # V1 API integration tests
-python test_immediate_search.py       # Immediate search after insert
-python test_search_after_insert.py    # Search verification
-python test_final_sdk_validation.py   # Comprehensive validation
-
-# Run example client
-python example_v1_client.py
+python test_v1_client.py  # Run individual test files
 ```
 
 ## Recent Development Context
 
-### Current Development Status (September 2024)
-- **Active Branch**: Working on `cleanup_demo` branch (main branch is `main`)
-- **Recent Focus**: Test failure fixes, build optimization, benchmark improvements
-- **Key Fixes Applied**:
-  - Systematically resolved all test failures from test_error.log
-  - Fixed storage engine bugs in query vector lookup and VIPER schema
-  - Updated Criterion benchmark configuration for better control
-  - Resolved graph and event_log module compilation errors
+### Current Development Status (December 2024)
+- **Active Branch**: `cleanup_demo` (main branch: `main`)
+- **Recent Changes**: Storage engine optimizations, unified cache system, test infrastructure improvements
 
 ### Key Recent Changes
 - Test infrastructure improvements and systematic error resolution

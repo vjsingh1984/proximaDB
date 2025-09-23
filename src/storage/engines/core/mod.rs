@@ -4,6 +4,7 @@
 //! It provides a clean separation between infrastructure (how things work) and
 //! implementations (what engines do).
 
+pub mod constants; // Centralized constants for all storage engines
 pub mod filter_evaluator;
 pub mod formats; // Storage formats: row-based, columnar
 pub mod io; // I/O operations: zero-copy, filesystem abstractions

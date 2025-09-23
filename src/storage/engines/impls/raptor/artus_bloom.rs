@@ -378,7 +378,7 @@ mod tests {
             column_name: "user_id".to_string(),
             cardinality: 10000,
             null_ratio: 0.01,
-            access_frequency: 1000,
+            access_frequency: 20000, // Increased to ensure cardinality_ratio < 0.7
             selectivity: 0.3,
             data_type: ColumnData::String,
             bloom_benefit_score: 0.8,

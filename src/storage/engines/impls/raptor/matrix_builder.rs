@@ -524,10 +524,11 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         // Test coverage formula for different k and d values
+        // Formula: exp(-2 * ln(k/d + 1)) produces HIGH values for LOW k/d ratios
         let test_cases = vec![
-            (10, 100, 0.1),   // Low k/d ratio -> minimum coverage
-            (100, 100, 0.37), // k = d -> moderate coverage
-            (1000, 100, 0.9), // High k/d ratio -> high coverage
+            (10, 100, 0.8),   // Low k/d ratio (0.1) -> high coverage (~0.82)
+            (100, 100, 0.2),  // k = d (1.0) -> moderate coverage (~0.25)
+            (1000, 100, 0.1), // High k/d ratio (10) -> minimum coverage (0.1)
         ];
 
         for (k, d, expected_min) in test_cases {

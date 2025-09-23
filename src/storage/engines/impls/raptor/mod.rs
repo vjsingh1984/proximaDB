@@ -108,6 +108,9 @@ mod p2_matrix_tests;
 #[cfg(test)]
 mod boundary_spillover_tests;
 
+#[cfg(test)]
+mod compression_tests;
+
 // Re-export commonly used types from common module
 pub use common::{
     BloomFilterMetadata,

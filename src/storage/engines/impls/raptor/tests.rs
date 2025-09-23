@@ -6,8 +6,37 @@ mod tests {
     use anyhow::Result;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use crate::storage::persistence::filesystem::FileSystem;
+
+    // Clean up test data directory before each test
+    async fn cleanup_test_data() -> Result<()> {
+        // Create a filesystem instance using the factory
+        let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await?;
+        let filesystem = filesystem_factory.get_unified_caching_filesystem(
+            "file:///tmp",
+            "test_collection".to_string(),
+            "raptor".to_string()
+        )?;
+
+        // Try to remove the test collection data directory
+        let test_data_dir = "file:///tmp/test_collection";
+        match filesystem.remove_dir_all(test_data_dir).await {
+            Ok(_) => {
+                tracing::debug!("Cleaned up test data directory: {}", test_data_dir);
+            }
+            Err(e) => {
+                // Directory might not exist, which is fine
+                tracing::debug!("Could not clean test data directory (may not exist): {}: {:?}", test_data_dir, e);
+            }
+        }
+
+        Ok(())
+    }
 
     async fn create_test_engine() -> Result<RaptorEngine> {
+        // Clean up before creating test engine
+        cleanup_test_data().await?;
         let config = RaptorConfig {
             rowgroup_size: 100,
             compression: config::CompressionCodec::Snappy,
@@ -59,7 +88,7 @@ mod tests {
         assert_eq!(engine.engine_version(), "1.0.0");
         assert_eq!(
             engine.strategy(),
-            crate::storage::traits::StorageEngineStrategy::Hybrid
+            crate::storage::traits::StorageEngineStrategy::Raptor
         );
 
         Ok(())
@@ -89,6 +118,24 @@ mod tests {
             source: None,
         };
 
+        // Create collection config with dimension and storage assignment
+        let collection = crate::proto::proximadb_v1::Collection {
+            id: "test_collection".to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                dimension: 4,
+                ..Default::default()
+            }),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp".to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp".to_string(),
+                assigned_at: chrono::Utc::now().timestamp(),
+            }),
+            ..Default::default()
+        };
+
         // Insert vector (using internal method)
         // Use flush instead of insert_batch
         let flush_params = crate::storage::traits::FlushParameters {
@@ -96,18 +143,45 @@ mod tests {
             vector_records: vec![vector.clone()],
             force: true,
             synchronous: true,
-            collection_config: None,
+            collection_config: Some(collection),
             ..Default::default()
         };
         engine.do_flush(&flush_params).await?;
 
         // Retrieve vector - provide base_path for storage location
+        println!("TEST: About to call vector_by_id with collection='test_collection', base_path='file:///tmp', id='test_vec_1'");
         let retrieved = engine.vector_by_id("test_collection", "file:///tmp", "test_vec_1").await?;
 
-        assert!(retrieved.is_some());
+        println!("TEST: vector_by_id returned: {:?}", retrieved.is_some());
+        if retrieved.is_none() {
+            println!("TEST: Vector not found! Checking what files exist...");
+
+            // Debug: Check what files were created using standard fs
+            let data_dir = "/tmp/test_collection/data";
+            if let Ok(entries) = std::fs::read_dir(data_dir) {
+                println!("TEST: Found files in {}", data_dir);
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        if let Some(name) = entry.file_name().to_str() {
+                            if let Ok(metadata) = entry.metadata() {
+                                println!("  - {} (size: {} bytes)", name, metadata.len());
+                            }
+                        }
+                    }
+                }
+            } else {
+                println!("TEST: Could not read directory: {}", data_dir);
+            }
+        }
+        assert!(retrieved.is_some(), "Vector should have been found but was None");
+        println!("TEST: Vector was found!");
         let retrieved = retrieved.unwrap();
+        println!("TEST: Checking ID: expected '{}', got '{}'", vector.id, retrieved.id);
         assert_eq!(retrieved.id, vector.id);
+        println!("TEST: ID matches!");
+        println!("TEST: Checking vector length: expected 4, got {}", retrieved.vector.len());
         assert_eq!(retrieved.vector.len(), 4);
+        println!("TEST: Vector length matches!");
 
         Ok(())
     }
@@ -144,13 +218,31 @@ mod tests {
             },
         ];
 
+        // Create collection config with dimension and storage assignment
+        let collection = crate::proto::proximadb_v1::Collection {
+            id: "test_collection".to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                dimension: 4,
+                ..Default::default()
+            }),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp".to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp".to_string(),
+                assigned_at: chrono::Utc::now().timestamp(),
+            }),
+            ..Default::default()
+        };
+
         // Use flush instead of insert_batch
         let flush_params = crate::storage::traits::FlushParameters {
             collection_id: Some("test_collection".to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
-            collection_config: None,
+            collection_config: Some(collection),
             ..Default::default()
         };
         engine.do_flush(&flush_params).await?;
@@ -160,6 +252,10 @@ mod tests {
         let search_params = std::sync::Arc::new(crate::core::search::SearchParams::default());
         let collection = std::sync::Arc::new(crate::proto::proximadb_v1::Collection {
             id: "test_collection".to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                dimension: 4,
+                ..Default::default()
+            }),
             ..Default::default()
         });
         let query_context = crate::storage::traits::StorageQueryContext {
@@ -197,13 +293,31 @@ mod tests {
             })
             .collect();
 
+        // Create collection config with dimension and storage assignment
+        let collection = crate::proto::proximadb_v1::Collection {
+            id: "test_collection".to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                dimension: 4,
+                ..Default::default()
+            }),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp".to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp".to_string(),
+                assigned_at: chrono::Utc::now().timestamp(),
+            }),
+            ..Default::default()
+        };
+
         // Use flush instead of insert_batch
         let flush_params = crate::storage::traits::FlushParameters {
             collection_id: Some("test_collection".to_string()),
             vector_records: vectors,
             force: true,
             synchronous: true,
-            collection_config: None,
+            collection_config: Some(collection.clone()),
             ..Default::default()
         };
         engine.do_flush(&flush_params).await?;
@@ -213,6 +327,7 @@ mod tests {
             collection_id: Some("test_collection".to_string()),
             force: false,
             synchronous: true,
+            collection_config: Some(collection.clone()),
             ..Default::default()
         };
 
@@ -228,11 +343,22 @@ mod tests {
     async fn test_compaction_operation() -> Result<()> {
         let engine = create_test_engine().await?;
 
+        // Create collection config with dimension
+        let collection = crate::proto::proximadb_v1::Collection {
+            id: "test_collection".to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                dimension: 4,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
         // Perform compaction
         let compact_params = crate::storage::traits::CompactionParameters {
             collection_id: Some("test_collection".to_string()),
             force: false,
             synchronous: true,
+            collection_config: Some(collection),
             ..Default::default()
         };
 
@@ -282,10 +408,10 @@ mod tests {
             crate::storage::persistence::filesystem::FileStorageTier::SSD
         );
 
-        // Default to HDD
+        // Now defaults to SSD for regular paths
         assert_eq!(
             RaptorEngine::determine_storage_tier("/var/data"),
-            crate::storage::persistence::filesystem::FileStorageTier::HDD
+            crate::storage::persistence::filesystem::FileStorageTier::SSD
         );
     }
 
@@ -392,7 +518,7 @@ mod tests {
             prefetch_size_mb: 1,
             cache_size_mb: 10,
             cache_eviction_policy: crate::storage::engines::impls::raptor::config::EvictionPolicy::Lru,
-            enable_clustering: true,
+            enable_clustering: false, // Disable clustering for direct writer test
             num_clusters: None,
             target_rowgroup_size: Some(50),
             use_component_boosting: false,

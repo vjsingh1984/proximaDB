@@ -1168,7 +1168,7 @@ impl StreamingParquetWriter {
         // Debug: Log final file statistics
         let total_row_groups = file_metadata.row_groups.len();
         let total_compressed_size: i64 = file_metadata.row_groups.iter()
-            .map(|rg| rg.total_compressed_size)
+            .map(|rg| rg.total_compressed_size.unwrap_or(0))
             .sum();
         let total_uncompressed_size: i64 = file_metadata.row_groups.iter()
             .map(|rg| rg.total_byte_size)
@@ -1201,7 +1201,7 @@ impl StreamingParquetWriter {
             total_records: self.total_records_written,
             total_row_groups: file_metadata.row_groups.len() as i32,
             file_size,
-            compression_ratio,
+            compression_ratio: compression_ratio as f32,
             bloom_filter_count: self.id_bloom_filters.len() + self.metadata_bloom_filters.len(),
         };
 

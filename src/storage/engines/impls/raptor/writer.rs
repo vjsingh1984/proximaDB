@@ -339,6 +339,7 @@ impl IvfClusteringBuilder {
         });
     }
 
+
     /// Advanced k²+p×(k+p) clustering with hardware-aware parameter selection and component boosting
     ///
     /// This method implements sophisticated row group size optimization using multiple constraints:
@@ -736,7 +737,14 @@ impl IvfClusteringBuilder {
                     .raw_value;
 
                 // d₂: Inter-centroid distance (cluster separation, pre-computed from AXIS)
-                let d2 = self.centroid_distances[source_cluster][target_cluster];
+                let d2 = if !self.centroid_distances.is_empty()
+                    && source_cluster < self.centroid_distances.len()
+                    && target_cluster < self.centroid_distances[source_cluster].len()
+                {
+                    self.centroid_distances[source_cluster][target_cluster]
+                } else {
+                    0.0 // Default when clustering is not enabled
+                };
 
                 // d₃: Target vector distance to its own centroid (target cluster cohesion)
                 let d3 = self
@@ -2412,11 +2420,13 @@ impl RaptorWriter {
         );
 
         // Initialize storage quantization engine config
+        // Uses default INT8 quantization (fast, no training required)
+        // PQ can be explicitly enabled in collection config when needed
         let quant_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 enable_hardware_acceleration: config.enable_simd,
                 distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
-                ..Default::default()
+                ..Default::default()  // INT8 by default, PQ requires explicit config
             };
 
         // Initialize quantization engine
@@ -2588,7 +2598,7 @@ impl RaptorWriter {
         // Create compact row with all VectorRecord fields
         let compact_row = CompactRow {
             id: id.clone(),
-            vector: fp32_vector,
+            vector: fp32_vector.clone(), // Clone for CompactRow, original used for IVF
             quantized_vector,
             metadata,
             timestamp: vector.timestamp as u32,
@@ -2621,7 +2631,11 @@ impl RaptorWriter {
             .row_offsets
             .push(offset_in_page as u32);
 
-        // Add to IVF builder with hybrid clustering + edges
+        // Add to IVF builder with vector for clustering
+        // Store vector for clustering and edge building
+        self.ivf_builder.vectors.push(fp32_vector);
+
+        // Add node with location information
         self.ivf_builder.nodes.push(IvfNode {
             vector_id: id.clone(),
             cluster_id: 0, // Will be assigned during clustering
@@ -2630,16 +2644,9 @@ impl RaptorWriter {
             edges: Vec::new(),      // Will be built after clustering
         });
 
-        // Store vector for clustering and edge building
-        // This is essential for k-means and 5-component boosting
-        self.ivf_builder.vectors.push(vector.vector.clone());
-
-        // Add to minimal HNSW builder (memory-efficient)
-        // Note: edges will be populated during graph building phase
-        self.ivf_builder.add_node(
-            id.clone(),
-            Vec::new(), // Edges will be added during build_ivf_clusters()
-        );
+        // Update id mapping
+        let node_id = (self.ivf_builder.nodes.len() - 1) as u32;
+        self.ivf_builder.id_to_node.insert(id.clone(), node_id);
 
         // Update column projections for filtering
         self.update_column_projections(vector, location);
@@ -2722,7 +2729,11 @@ impl RaptorWriter {
                 3,
                 CompressionContext::VectorSerialization,
             )?;
-            let vector_offset = self.filesystem.metadata(&self.file_path).await?.size;
+            // Get current file size, or 0 if file doesn't exist yet
+            let vector_offset = match self.filesystem.metadata(&self.file_path).await {
+                Ok(meta) => meta.size,
+                Err(_) => 0, // File doesn't exist yet, start at offset 0
+            };
             self.filesystem
                 .append(&self.file_path, &vector_compressed)
                 .await?;
@@ -2793,7 +2804,10 @@ impl RaptorWriter {
                     6,
                     CompressionContext::Block, // Metadata is mixed/heterogeneous data
                 )?;
-                let meta_offset = self.filesystem.metadata(&self.file_path).await?.size;
+                let meta_offset = match self.filesystem.metadata(&self.file_path).await {
+                    Ok(meta) => meta.size,
+                    Err(_) => 0,
+                };
                 self.filesystem
                     .append(&self.file_path, &meta_compressed)
                     .await?;
@@ -2822,7 +2836,10 @@ impl RaptorWriter {
                     19,                         // Maximum compression
                     CompressionContext::Block,  // Source content is text/mixed data
                 )?;
-                let source_offset = self.filesystem.metadata(&self.file_path).await?.size;
+                let source_offset = match self.filesystem.metadata(&self.file_path).await {
+                    Ok(meta) => meta.size,
+                    Err(_) => 0,
+                };
                 self.filesystem
                     .append(&self.file_path, &source_compressed)
                     .await?;
@@ -2852,7 +2869,10 @@ impl RaptorWriter {
                 6,
                 CompressionContext::Column, // Matrix data is numeric/homogeneous
             )?;
-            let p2_offset = self.filesystem.metadata(&self.file_path).await?.size;
+            let p2_offset = match self.filesystem.metadata(&self.file_path).await {
+                Ok(meta) => meta.size,
+                Err(_) => 0,
+            };
             self.filesystem
                 .append(&self.file_path, &p2_compressed)
                 .await?;
@@ -3855,10 +3875,16 @@ impl RaptorWriter {
         // Track total vectors flushed
         let mut total_flushed = 0;
 
+        tracing::debug!("RAPTOR flush: Starting with {} nodes", self.ivf_builder.nodes.len());
+
         // Build IVF clusters before flushing (if we have enough vectors)
+        // For small collections (<1000 vectors), skip clustering but still create a single row group
         if self.ivf_builder.nodes.len() >= 1000 {
             // Minimum vectors needed for effective clustering
             self.build_ivf_clusters()?;
+        } else if !self.ivf_builder.nodes.is_empty() {
+            tracing::debug!("RAPTOR flush: Small collection with {} vectors, creating single row group",
+                          self.ivf_builder.nodes.len());
         }
 
         // Flush any pending row page
@@ -4131,7 +4157,9 @@ impl RaptorWriter {
         self.flush().await?;
 
         // Update file metadata with row groups
+        tracing::debug!("RAPTOR finalize: Updating metadata with {} row groups", self.row_groups.len());
         self.file_metadata.row_groups = self.row_groups.clone();
+        self.file_metadata.total_vectors = self.row_groups.iter().map(|rg| rg.vector_count).sum();
 
         // Finalize the file with centralized footer
         self.finalize().await?;
@@ -4682,7 +4710,7 @@ impl RaptorWriter {
                 // Calculate distances to all other nodes in the cluster
                 let mut distances: Vec<(usize, f32)> = cluster_nodes
                     .iter()
-                    .filter(|&&idx| idx != node_idx)
+                    .filter(|&&idx| idx != node_idx && idx < self.ivf_builder.vectors.len())
                     .map(|&other_idx| {
                         let dist = self
                             .distance_compute

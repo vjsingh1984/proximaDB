@@ -618,7 +618,7 @@ impl UnifiedStorageEngine for HelixEngine {
             // Just write the records directly without complex ordering
             let file_path = format!("{}/L0_{:016x}.sst",
                 data_dir,
-                chrono::Utc::now().timestamp_nanos() as u64
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64
             );
 
             // Write using simplified format with filesystem
