@@ -274,9 +274,6 @@ xychart-beta
 |**RAPTOR**
 |Variable workload, need auto-tuning
 
-|**PRISM**
-|Memory constraints, can trade speed for compression
-
 |**HELIX**
 |Spatial locality, temporal access patterns
 |===
@@ -463,11 +460,6 @@ max_size = "10GB"
 |450μs
 |800μs
 
-|PRISM
-|150μs
-|120μs
-|500μs
-|900μs
 |===
 
 **Key Finding**: VIPER maintains constant 100μs regardless of sparsity (7.2x advantage at 90%)
@@ -625,7 +617,7 @@ dictionary_encoding = true
 [source,toml]
 ----
 [storage]
-engine = "prism"
+engine = "viper"
 compression = "aggressive"
 
 [compute.quantization]
@@ -645,7 +637,6 @@ sparse_optimization = true
 |NOVA |405K vec/s |315K vec/s |680K vec/s
 |SWIFT |435K vec/s |340K vec/s |750K vec/s
 |RAPTOR |410K vec/s |320K vec/s |710K vec/s
-|PRISM |380K vec/s |298K vec/s |650K vec/s
 |HELIX |390K vec/s |305K vec/s |670K vec/s
 |===
 

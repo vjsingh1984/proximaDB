@@ -155,12 +155,11 @@ flowchart LR
 
 **Expected Performance Impact**: Sub-millisecond query latency
 
-==== RAPTOR, PRISM, HELIX Integration
+==== RAPTOR, HELIX Integration
 
 **Adaptive Strategies**:
 - RAPTOR: Dynamic tier selection based on access patterns
-- PRISM: Multi-resolution search with memory constraints
-- HELIX: Temporal pattern optimization for time-series data
+- HELIX: Spatial locality optimization for geographic data patterns
 
 === Phase 3: Performance Validation (March 2025)
 

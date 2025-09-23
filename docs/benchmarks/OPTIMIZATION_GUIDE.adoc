@@ -31,7 +31,7 @@ flowchart TD
 
     C --> G[SWIFT/NOVA + Cache + SIMD]
     D --> H[SST + Batching + Parallel]
-    E --> I[PRISM + PQ4/8 + Sparsity]
+    E --> I[VIPER + PQ4/8 + Sparsity]
     F --> J[NOVA + Minimal Quant + All Stages]
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:3px,color:#000
@@ -204,7 +204,7 @@ cargo bench --bench storage_sparsity_compression
 |4x reduction
 
 |Wrong engine
-|Switch to PRISM/VIPER
+|Switch to VIPER
 |2-5x reduction
 
 |Dense storage
@@ -328,7 +328,7 @@ row_group_size = 100000
 ----
 # Optimized for minimal resources
 [storage]
-engine = "prism"
+engine = "viper"
 compression = "aggressive"
 
 [compute.quantization]
