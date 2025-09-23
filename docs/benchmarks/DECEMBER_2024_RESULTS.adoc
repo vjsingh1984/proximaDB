@@ -19,7 +19,7 @@ ProximaDB benchmark suite demonstrates exceptional performance across all storag
 * **Dimensions**: 384, 768, 1024, 1536, 3072
 * **Batch Sizes**: 250, 1000, 5000 vectors
 * **Compression**: none, zstd, lz4, snappy, gzip
-* **Engines**: SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX
+* **Engines**: SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX
 
 == Key Performance Metrics
 
@@ -90,13 +90,6 @@ graph LR
 |7.802
 |**7.685**
 
-|**PRISM**
-|7.754
-|7.721
-|7.698
-|7.707
-|7.944
-
 |**HELIX**
 |**7.691**
 |7.722
@@ -113,7 +106,7 @@ _All values in microseconds (μs). **Bold** = Best in category_
 1. **Absolute Fastest**: RAPTOR + GZIP = 7.685 μs
 2. **Uncompressed**: HELIX + None = 7.691 μs
 3. **Best ZSTD**: RAPTOR + ZSTD = 7.696 μs
-4. **Best LZ4**: PRISM + LZ4 = 7.698 μs
+4. **Best LZ4**: NOVA + LZ4 = 7.71 μs
 
 ==== Compression Impact
 [source,mermaid]
@@ -188,7 +181,6 @@ flowchart TD
 
     style RAPTOR fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
     style VIPER fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
-    style PRISM fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
     style NOVA fill:#9c27b0,stroke:#6a1b9a,stroke-width:2px,color:#000
     style SST fill:#f44336,stroke:#c62828,stroke-width:2px,color:#000
 ----
@@ -247,7 +239,7 @@ flowchart TD
 |**Snappy**
 |7.93 μs
 |0.17
-|PRISM (7.71)
+|HELIX (7.83)
 |SST (8.25)
 
 |**GZIP**

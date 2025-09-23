@@ -84,7 +84,7 @@ link:CORE_BENCHMARKS.adoc[View Details]
 === 2. Storage Engine Benchmarks
 link:STORAGE_BENCHMARKS.adoc[View Details]
 
-* **Engine Comparison**: All 6 engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX)
+* **Engine Comparison**: All 6 engines (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX)
 * **Quantization**: Binary to PQ32, 4-32x compression
 * **Columnar Storage**: VIPER with 98.2% faster compaction
 * **Flush Optimization**: 101μs batched flush
@@ -270,14 +270,14 @@ cargo bench -- --warm-up-time 5 --measurement-time 10
 %%{init: {"theme": "neutral"}}%%
 xychart-beta
     title "Storage Engine Performance Comparison"
-    x-axis ["SST", "VIPER", "NOVA", "SWIFT", "RAPTOR", "PRISM", "HELIX"]
+    x-axis ["SST", "VIPER", "NOVA", "SWIFT", "RAPTOR", "HELIX"]
     y-axis "Write Speed (K vectors/sec)" 0 --> 500
-    bar [500, 100, 300, 400, 350, 200, 250]
+    bar [500, 100, 300, 400, 350, 250]
 ----
 
-**Write Speed Performance**: SST (500K/s), VIPER (100K/s), NOVA (300K/s), SWIFT (400K/s), RAPTOR (350K/s), PRISM (200K/s), HELIX (250K/s)
+**Write Speed Performance**: SST (500K/s), VIPER (100K/s), NOVA (300K/s), SWIFT (400K/s), RAPTOR (350K/s), HELIX (250K/s)
 
-**Memory Usage per Vector**: SST (3KB), VIPER (1KB), NOVA (2KB), SWIFT (2.5KB), RAPTOR (2KB), PRISM (0.5KB), HELIX (1.5KB)
+**Memory Usage per Vector**: SST (3KB), VIPER (1KB), NOVA (2KB), SWIFT (2.5KB), RAPTOR (2KB), HELIX (1.5KB)
 
 == Performance Targets
 

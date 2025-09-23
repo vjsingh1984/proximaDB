@@ -230,19 +230,13 @@ graph TD
 |200K ops/s
 
 |**RAPTOR**
-|Dynamic workloads
-|4-16x adaptive
+|Adaptive workloads
+|4-16x dynamic
 |1-5ms
-|80K ops/s
-
-|**PRISM**
-|Memory-constrained
-|8-12x
-|2-6ms
-|40K ops/s
+|Variable (adaptive)
 
 |**HELIX**
-|Time-series
+|Spatial locality
 |6-10x
 |1-3ms
 |60K ops/s
@@ -486,7 +480,7 @@ graph TD
 |1.3M
 |6KB
 |1K-5K
-|PRISM
+|SST
 
 |**2048D**
 |980K

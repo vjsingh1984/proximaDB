@@ -6,7 +6,7 @@
 [abstract]
 .Storage Layer Performance Analysis
 --
-Comprehensive benchmarks for all 6 storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX), including comparison, optimization, lifecycle, and specialized features. **Uses realistic embedding generators** that simulate:
+Comprehensive benchmarks for all 6 storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX), including comparison, optimization, lifecycle, and specialized features. **Uses realistic embedding generators** that simulate:
 
 * **BERT embeddings** (768D): Normal distribution with mean=0, std=1.5, range [-5, 5]
 * **OpenAI Ada embeddings** (1536D): Positive-skewed distribution, >80% positive values, mean ~0.3
@@ -104,7 +104,7 @@ NOTE: Search functionality has been fixed by properly handling both compressed a
 
 [cols="2,1,1,1,1,1,1,1"]
 |===
-|Metric |SST |VIPER |NOVA |SWIFT |RAPTOR |PRISM |HELIX
+|Metric |SST |VIPER |NOVA |SWIFT |RAPTOR |HELIX
 
 |**Write Speed**
 |Excellent
@@ -189,27 +189,16 @@ NOTE: Search functionality has been fixed by properly handling both compressed a
 |312μs/100
 |Adaptive workloads
 
-|PRISM
-|380K vec/s
-|298K vec/s
-|336μs/100
-|Memory-optimized
-
 |HELIX
 |390K vec/s
 |305K vec/s
 |328μs/100
-|Time-series data
-
-|PRISM
-|200K vec/s
-|5μs
-|Memory-constrained
+|Spatial locality
 
 |HELIX
 |250K vec/s
 |4μs
-|Time-series data
+|Spatial locality
 |===
 
 ==== Read Performance
@@ -217,16 +206,16 @@ NOTE: Search functionality has been fixed by properly handling both compressed a
 ----
 xychart-beta
     title "Storage Engine Read Performance Comparison"
-    x-axis ["SST", "VIPER", "NOVA", "SWIFT", "RAPTOR", "PRISM", "HELIX"]
+    x-axis ["SST", "VIPER", "NOVA", "SWIFT", "RAPTOR", "HELIX"]
     y-axis "Queries per Second (K)" 0 --> 1000
     bar [200, 330, 500, 1000, 400, 250, 285]
 ----
 
-**QPS Performance**: SST (200K), VIPER (330K), NOVA (500K), SWIFT (1M), RAPTOR (400K), PRISM (250K), HELIX (285K)
+**QPS Performance**: SST (200K), VIPER (330K), NOVA (500K), SWIFT (1M), RAPTOR (400K), HELIX (285K)
 
-**P50 Latency**: SST (5ms), VIPER (3ms), NOVA (2ms), SWIFT (1ms), RAPTOR (2.5ms), PRISM (4ms), HELIX (3.5ms)
+**P50 Latency**: SST (5ms), VIPER (3ms), NOVA (2ms), SWIFT (1ms), RAPTOR (2.5ms), HELIX (3.5ms)
 
-**P99 Latency**: SST (15ms), VIPER (10ms), NOVA (8ms), SWIFT (5ms), RAPTOR (9ms), PRISM (12ms), HELIX (11ms)
+**P99 Latency**: SST (15ms), VIPER (10ms), NOVA (8ms), SWIFT (5ms), RAPTOR (9ms), HELIX (11ms)
 
 ==== Resource Usage
 [cols="2,2,2,2"]
@@ -257,11 +246,6 @@ xychart-beta
 |2KB
 |4x
 |Adaptive
-
-|PRISM
-|0.5KB
-|20x
-|Low
 
 |HELIX
 |1.5KB
@@ -294,7 +278,7 @@ xychart-beta
 |Memory constraints, can trade speed for compression
 
 |**HELIX**
-|Time-series data, temporal access patterns
+|Spatial locality, temporal access patterns
 |===
 
 == SST Engine Quantization

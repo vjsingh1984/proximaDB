@@ -464,12 +464,12 @@ Complete evaluation of all 6 storage engines across all compression algorithms a
 |156.74
 
 |**RAPTOR**
-|
-|
-|
-|
-|
-|
+|Adaptive
+|Dynamic
+|Variable
+|P×K Optimization
+|Workload Learning
+|Matrix Trinity
 
 |250 vectors
 |7.75
