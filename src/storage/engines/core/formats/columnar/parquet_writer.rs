@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
