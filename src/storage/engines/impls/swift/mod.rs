@@ -428,7 +428,9 @@ impl SwiftFile {
             // - ⚡ Automatic SIMD Encoding
             // - 🗜️ Automatic Compression
             // - 🚀 Automatic Quantization (if enabled)
-            let compression_config = crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default();
+            // Use centralized compression config conversion from FastLanes
+            use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
+            let compression_config = RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
             let block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
 
             // ❌ REMOVED: Manual quantization processing - FastLanes handles this automatically!
@@ -498,26 +500,9 @@ impl SwiftFile {
         let mut block_id = 0;
 
         for chunk in records.chunks(records_per_block) {
-            // Create compression config from flush parameters
-            let block_compression_config = if let Some(ref comp_config) = compression_config {
-                crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
-                    algorithm: match comp_config.algorithm {
-                        1 => crate::core::compression::CompressionAlgorithm::Zstd,
-                        2 => crate::core::compression::CompressionAlgorithm::Lz4,
-                        3 => crate::core::compression::CompressionAlgorithm::Snappy,
-                        4 => crate::core::compression::CompressionAlgorithm::Gzip,
-                        5 => crate::core::compression::CompressionAlgorithm::Brotli,
-                        _ => crate::core::compression::CompressionAlgorithm::Zstd, // Default
-                    },
-                    compression_level: comp_config.level.unwrap_or(3) as u8,
-                    enable_vector_compression: true,
-                    enable_metadata_compression: true,
-                    compression_threshold_bytes: 8192,
-                    dictionary_compression: false,
-                }
-            } else {
-                crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig::default()
-            };
+            // Use centralized compression config conversion from FastLanes
+            use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
+            let block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config.as_ref());
 
             // ✅ FastLanes automatically handles quantization, bloom filters, and metadata statistics
             let block = FastLanesDataBlock::new(chunk.to_vec(), block_compression_config);

@@ -389,6 +389,39 @@ impl RowBasedCompressionConfig {
             None
         }
     }
+
+    /// Centralized conversion from proto config to BlockCompressionConfig
+    /// Used by all engines (SST, SWIFT, HELIX) to avoid duplication
+    pub fn to_block_compression_config(&self) -> crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+        use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig;
+
+        BlockCompressionConfig {
+            algorithm: self.algorithm,
+            compression_level: self.compression_level,
+            enable_vector_compression: self.enabled && self.algorithm != CompressionAlgorithm::None,
+            enable_metadata_compression: self.metadata_compression.enabled,
+            compression_threshold_bytes: self.compression_thresholds.min_compression_size,
+            dictionary_compression: self.adaptive_compression.enabled,
+        }
+    }
+
+    /// Create BlockCompressionConfig from proto config directly
+    /// Convenience method that combines from_proto_config() and to_block_compression_config()
+    pub fn create_block_config_from_proto(proto_config: Option<&ProtoCompressionConfig>) -> crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+        match proto_config {
+            Some(config) => {
+                let unified_config = Self::from_proto_config(config);
+                unified_config.to_block_compression_config()
+            }
+            None => {
+                // Create config with None compression when no config provided
+                let mut config = Self::default();
+                config.enabled = false;
+                config.algorithm = CompressionAlgorithm::None;
+                config.to_block_compression_config()
+            }
+        }
+    }
 }
 
 impl Default for RowBasedCompressionConfig {
