@@ -6,7 +6,7 @@
 :source-highlighter: highlight.js
 
 [.lead]
-**Complete guide** for selecting and optimizing ProximaDB's 7 production-ready storage engines for maximum performance.
+**Complete guide** for selecting and optimizing ProximaDB's 6 production-ready storage engines for maximum performance.
 
 [IMPORTANT]
 ====
@@ -33,20 +33,18 @@ flowchart TD
     C -->|Analytics queries| H[VIPER Engine<br/>Columnar analytics]
     C -->|Complex research| I[NOVA Engine<br/>Advanced analytics]
 
-    D -->|Memory constrained| J[PRISM Engine<br/>60% memory reduction]
-    D -->|Variable workloads| K[RAPTOR Engine<br/>Adaptive optimization]
+    D -->|Variable workloads| J[RAPTOR Engine<br/>Adaptive optimization]
 
-    E -->|Time-series| L[HELIX Engine<br/>Temporal optimization]
-    E -->|Mixed patterns| K
+    E -->|Time-series| K[HELIX Engine<br/>Spatial locality]
+    E -->|Mixed patterns| J
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
     style F fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
     style G fill:#42a5f5,stroke:#1976d2,stroke-width:2px,color:#000
     style H fill:#64b5f6,stroke:#1976d2,stroke-width:2px,color:#000
     style I fill:#90caf9,stroke:#1976d2,stroke-width:2px,color:#000000
-    style J fill:#bbdefb,stroke:#1976d2,stroke-width:2px,color:#000000
-    style K fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#000
-    style L fill:#0d47a1,stroke:#1976d2,stroke-width:2px,color:#000
+    style J fill:#1565c0,stroke:#0d47a1,stroke-width:2px,color:#000
+    style K fill:#0d47a1,stroke:#1976d2,stroke-width:2px,color:#000
 ----
 
 === Detailed Engine Comparison
@@ -90,19 +88,12 @@ flowchart TD
 | Variable workloads
 | P×K optimization, workload adaptation
 
-| **PRISM**
-| <10ms
-| Memory-efficient
-| 60% less
-| Memory-constrained
-| Multi-resolution quantization
-
 | **HELIX**
 | <20ms
-| Time-optimized
+| Spatial locality
 | Medium
-| Time-series data
-| Hilbert curve locality, temporal patterns
+| Spatial data patterns
+| Hilbert curve optimization, spatial locality
 |===
 
 == **Engine-Specific Optimization**
@@ -553,71 +544,23 @@ RUST_LOG=raptor::pxk=debug proximadb-server 2>&1 | grep "boundary_detection"
 - **Memory usage**: Dynamic based on access patterns
 - **Adaptation latency**: <5 seconds for workload changes
 
-=== PRISM Engine (Memory Optimized)
+
+=== HELIX Engine (Spatial Locality Optimization)
 
 **Optimal Use Cases:**
-- Memory-constrained environments
-- Edge computing deployments
-- Cost-optimized cloud instances
-- Mobile/embedded applications
-
-**Configuration Optimization:**
-```toml
-[storage.engines.prism]
-# Memory pressure handling
-memory_pressure_threshold = 0.8       # Start optimization at 80% usage
-enable_memory_monitoring = true
-memory_check_interval_ms = 1000       # Check every second
-
-# Multi-resolution quantization
-quantization_aggressiveness = "adaptive" # Adapt to memory pressure
-aggressive_threshold = 0.9            # Use aggressive quantization at 90%
-conservative_threshold = 0.6          # Use conservative below 60%
-
-# Memory pooling
-enable_memory_pooling = true
-pool_size_mb = 64                     # Dedicated memory pool
-pool_growth_strategy = "conservative"  # Careful memory growth
-enable_pool_compaction = true
-
-# Compression optimization
-compression_for_memory = true         # Optimize for memory, not speed
-enable_in_memory_compression = true
-```
-
-**Performance Tuning:**
-```bash
-# Monitor PRISM memory optimization
-RUST_LOG=prism=info proximadb-server 2>&1 | grep "memory_pressure"
-
-# Track quantization decisions
-RUST_LOG=prism::quantization=debug proximadb-server 2>&1 | grep "strategy_selected"
-
-# Memory usage monitoring
-cat /proc/$(pgrep proximadb-server)/status | grep VmRSS
-```
-
-**Expected Performance:**
-- **Memory reduction**: 60% less memory usage vs standard engines
-- **Query latency**: <10ms (optimized for memory efficiency)
-- **Throughput**: Memory-constrained optimized
-
-=== HELIX Engine (Time-series Optimization)
-
-**Optimal Use Cases:**
-- IoT sensor data
-- Financial time-series analysis
-- Log analytics
-- Temporal pattern recognition
+- Geographic information systems
+- Computer vision and image processing
+- Multi-dimensional spatial data
+- Scientific simulations with spatial patterns
 
 **Technical Deep Dive:**
-HELIX is a highly specialized engine optimized for temporal and time-series data. It achieves this through a sophisticated multi-stage process:
+HELIX is a highly specialized engine optimized for spatial locality and multi-dimensional data patterns. It achieves this through a sophisticated multi-stage process:
 
 1.  **Dimensionality Reduction with PCA**: High-dimensional vectors are first projected into a lower-dimensional space using Principal Component Analysis (PCA). This captures the most significant variance in the data, making the subsequent locality-preserving steps more effective.
 
 2.  **Locality-Preserving with Hilbert Curve**: The lower-dimensional vectors are then mapped onto a 1D Hilbert curve. This ensures that vectors that are close in the multi-dimensional space are also close on the 1D curve, providing excellent spatial locality.
 
-3.  **Temporal Optimization with Liquid Clustering**: This is the core of HELIX's temporal optimization. The engine monitors query patterns and access frequencies to identify "hot" (frequently and recently accessed) data. The liquid clustering mechanism then adaptively reorganizes the data, grouping these hot vectors together. This ensures that temporally relevant data is physically co-located, leading to significant performance improvements for time-series queries.
+3.  **Spatial Optimization with Liquid Clustering**: This is the core of HELIX's spatial optimization. The engine monitors access patterns and spatial relationships to identify data with strong locality patterns. The liquid clustering mechanism then adaptively reorganizes the data, grouping spatially related vectors together. This ensures that spatially relevant data is physically co-located, leading to significant performance improvements for spatial queries.
 
 **Configuration Optimization:**
 ```toml
@@ -627,14 +570,14 @@ hilbert_curve_order = 8               # 8-bit precision (good balance)
 enable_fast_2d_3d_paths = true        # Optimized low-dimension paths
 curve_cache_size_mb = 32              # Cache curve calculations
 
-# Temporal grouping
-temporal_grouping_window_hours = 24   # Group by day
-enable_temporal_locality = true
-time_based_partitioning = true
+# Spatial grouping
+spatial_grouping_threshold = 0.85     # Locality threshold
+enable_spatial_locality = true
+dimension_based_partitioning = true
 
 # Liquid clustering
 enable_liquid_clustering = true
-clustering_window_size = 86400        # 24 hours in seconds
+clustering_similarity_threshold = 0.9 # Spatial similarity
 query_pattern_learning = true
 cluster_adaptation_frequency = 3600   # Adapt every hour
 
@@ -646,21 +589,21 @@ pca_variance_threshold = 0.95         # Preserve 95% variance
 
 **Performance Tuning:**
 ```bash
-# Monitor HELIX temporal optimization
-RUST_LOG=helix=info proximadb-server 2>&1 | grep "temporal_grouping"
+# Monitor HELIX spatial optimization
+RUST_LOG=helix=info proximadb-server 2>&1 | grep "spatial_grouping"
 
 # Track Hilbert curve efficiency
 RUST_LOG=helix::hilbert=debug proximadb-server 2>&1 | grep "locality_preserved"
 
-# Optimize for your time patterns
-# Shorter windows: Better for fine-grained temporal queries
-# Longer windows: Better for broad temporal analytics
+# Optimize for your spatial patterns
+# Higher threshold: Better for fine-grained spatial queries
+# Lower threshold: Better for broad spatial analytics
 ```
 
 **Expected Performance:**
-- **Temporal query latency**: <20ms for time-range queries
-- **Locality preservation**: 90%+ for temporal data
-- **Space efficiency**: Natural temporal grouping reduces storage
+- **Spatial query latency**: <20ms for spatial range queries
+- **Locality preservation**: 90%+ for spatial data
+- **Space efficiency**: Natural spatial grouping reduces storage
 
 == **Multi-Engine Strategies**
 
@@ -690,7 +633,7 @@ research_queries_engine = "NOVA"      # Advanced algorithms
 ```toml
 # Route by available resources
 high_memory_engine = "NOVA"           # When memory is abundant
-low_memory_engine = "PRISM"           # When memory is constrained
+low_memory_engine = "VIPER"           # When memory is constrained
 adaptive_engine = "RAPTOR"            # Let RAPTOR decide
 ```
 
@@ -705,8 +648,7 @@ flowchart TD
     B -->|Real-time| C[SST/SWIFT Analysis]
     B -->|Analytics| D[VIPER/NOVA Analysis]
     B -->|Variable| E[RAPTOR Analysis]
-    B -->|Memory-constrained| F[PRISM Analysis]
-    B -->|Time-series| G[HELIX Analysis]
+    B -->|Spatial| F[HELIX Analysis]
 
     C --> H{Latency Requirement}
     H -->|<1ms| I[SWIFT Engine<br/>Configure CPU affinity]
@@ -717,8 +659,7 @@ flowchart TD
     K -->|Advanced| M[NOVA Engine<br/>Progressive search]
 
     E --> N[RAPTOR Engine<br/>Enable P×K optimization]
-    F --> O[PRISM Engine<br/>Memory pressure tuning]
-    G --> P[HELIX Engine<br/>Temporal clustering]
+    F --> O[HELIX Engine<br/>Spatial clustering]
 
     I --> Q[Performance Testing]
     J --> Q
@@ -726,7 +667,6 @@ flowchart TD
     M --> Q
     N --> Q
     O --> Q
-    P --> Q
 
     Q --> R{Performance Meets SLA}
     R -->|Yes| S[Deploy to Production]
@@ -785,15 +725,9 @@ curl localhost:5678/metrics | grep raptor_
 # - raptor_workload_adaptation_frequency
 # - raptor_row_group_utilization
 
-# PRISM Engine metrics
-curl localhost:5678/metrics | grep prism_
-# - prism_memory_usage_reduction_percentage
-# - prism_quantization_aggressiveness_level
-# - prism_memory_pressure_level
-
 # HELIX Engine metrics
 curl localhost:5678/metrics | grep helix_
-# - helix_temporal_locality_ratio
+# - helix_spatial_locality_ratio
 # - helix_hilbert_curve_efficiency
 # - helix_cluster_adaptation_frequency
 ```
@@ -891,7 +825,7 @@ def benchmark_engine(engine_name, vector_count=10000):
     print()
 
 if __name__ == "__main__":
-    engines = ["SST", "SWIFT", "VIPER", "NOVA", "RAPTOR", "PRISM", "HELIX"]
+    engines = ["SST", "SWIFT", "VIPER", "NOVA", "RAPTOR", "HELIX"]
 
     for engine in engines:
         print(f"Benchmarking {engine} Engine...")
@@ -915,10 +849,10 @@ if __name__ == "__main__":
 - Enable column-level compression
 
 **For Resource-Constrained Environments:**
-- Use **PRISM** for 60% memory reduction
+- Use **VIPER** for efficient columnar compression
 - Configure aggressive quantization
-- Enable memory pooling and pressure monitoring
-- Monitor memory metrics continuously
+- Optimize row group sizes for memory efficiency
+- Monitor memory usage and compression ratios
 
 **For Variable/Unknown Workloads:**
 - Use **RAPTOR** for adaptive optimization
@@ -926,10 +860,10 @@ if __name__ == "__main__":
 - Configure reasonable adaptation intervals
 - Monitor adaptation metrics
 
-**For Time-Series Data:**
-- Use **HELIX** for temporal optimization
-- Configure appropriate temporal grouping windows
-- Enable liquid clustering for query patterns
+**For Spatial Data:**
+- Use **HELIX** for spatial locality optimization
+- Configure appropriate spatial grouping thresholds
+- Enable liquid clustering for spatial patterns
 - Optimize Hilbert curve order for data dimensionality
 
 === Performance Optimization Principles
@@ -944,4 +878,4 @@ if __name__ == "__main__":
 
 *Engine Selection and Optimization Guide - September 2025*
 *ProximaDB Version: 0.1.4*
-*All 7 Storage Engines Production-Ready*
+*All 6 Storage Engines Production-Ready*

@@ -58,10 +58,10 @@ graph TB
 
         subgraph STORAGE["6 STORAGE ENGINES - AUTO-OPTIMIZED"]
             L[SST Engine<br/>Real-time OLTP]
-            M[VIPER Engine<br/>Analytics & Compression]
-            N[SWIFT Engine<br/>Ultra-low Latency]
-            O[NOVA Engine<br/>Mixed Workloads]
-            P[RAPTOR Engine<br/>Dynamic Optimization]
+            M[VIPER Engine<br/>Production Analytics]
+            N[SWIFT Engine<br/>Hierarchical Enterprise]
+            O[NOVA Engine<br/>Advanced Analytics]
+            P[RAPTOR Engine<br/>Adaptive Workloads]
             Q[HELIX Engine<br/>Spatial Locality]
         end
 
@@ -277,9 +277,9 @@ flowchart TD
     F -->|Cache Miss| H{Engine Selection}
 
     H -->|Real-time| I[SST Engine<br/>Row-based OLTP]
-    H -->|Analytics| J[VIPER Engine<br/>Columnar + Compression]
-    H -->|Low Latency| K[SWIFT Engine<br/>FastLanes Encoding]
-    H -->|Mixed Workload| L[NOVA Engine<br/>Progressive Search]
+    H -->|Analytics| J[VIPER Engine<br/>Production Columnar]
+    H -->|Hierarchical| K[SWIFT Engine<br/>Enterprise Organization]
+    H -->|Advanced Analytics| L[NOVA Engine<br/>Hierarchical Intelligence]
 
     I --> M[SIMD Computation<br/>20M+ ops/sec]
     J --> M
@@ -373,28 +373,28 @@ quantization = "auto"   # Automatic compression
 |Engine |Best For |Performance
 
 |**SST**
-|Real-time updates, OLTP
-|365ps query, high write throughput
+|Real-time OLTP, frequent updates
+|Three-stage filtering, sub-5ms queries
 
 |**VIPER**
-|Analytics, compression
-|366ps query, 16-32x compression
+|Production analytics, batch processing
+|Columnar optimization, cloud-native
 
 |**SWIFT**
-|Ultra-low latency
-|<500μs, minimal overhead
+|Hierarchical enterprise data
+|Multi-tenant isolation, organized storage
 
 |**NOVA**
-|Mixed workloads
-|Progressive search, balanced
+|Advanced analytics, research
+|Hierarchical pruning, 70-97% I/O reduction
 
 |**RAPTOR**
-|Dynamic workloads
-|Adaptive optimization
+|Adaptive workloads, dynamic patterns
+|Matrix Trinity, workload learning
 
 |**HELIX**
-|Time-series data
-|Temporal patterns, IoT
+|Spatial locality optimization
+|Hilbert clustering, locality-aware search
 |===
 
 == Use Cases That Drive Revenue

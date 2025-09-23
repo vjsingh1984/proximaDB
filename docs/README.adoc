@@ -138,13 +138,12 @@ graph TB
 |===
 |Engine |Use Case |Compression |Speed
 
-|SST |High writes |4-8x |Fast
-|VIPER |Analytics |16-32x |Medium
-|NOVA |Mixed |8-16x |Balanced
-|SWIFT |Low latency |2-4x |Fastest
-|RAPTOR |Adaptive |4-16x |Dynamic
-|PRISM |Memory-limited |8-12x |Efficient
-|HELIX |Time-series |6-10x |Optimized
+|SST |Real-time OLTP |4-8x |Fast
+|VIPER |Production Analytics |16-32x |Medium
+|NOVA |Advanced Analytics |8-16x |Balanced
+|SWIFT |Hierarchical Enterprise |2-4x |Fastest
+|RAPTOR |Adaptive Workloads |4-16x |Dynamic
+|HELIX |Spatial Locality |6-10x |Optimized
 |===
 
 === Performance Characteristics
