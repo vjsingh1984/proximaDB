@@ -70,9 +70,8 @@ mindmap
     Column-Based Layouts
       VIPER Parquet
       NOVA Hierarchical
-      PRISM Multi-res
     Hybrid Layouts
-      HELIX Temporal
+      HELIX Spatial
       Cross-Engine Optimization
     Compression Strategies
       Quantization Levels
@@ -99,8 +98,7 @@ flowchart TD
     D -->|Maximum compression| I[VIPER Engine<br/>Parquet columnar]
     D -->|Balanced performance| J[NOVA Engine<br/>Progressive quantization]
 
-    E -->|Memory limited| K[PRISM Engine<br/>Multi-resolution]
-    E -->|Adaptive workload| L[RAPTOR Engine<br/>P×K optimization]
+    E -->|Adaptive workload| K[RAPTOR Engine<br/>P×K optimization]
 
     style G fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
     style H fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
@@ -129,8 +127,7 @@ graph TB
         F[NOVA: Hierarchical Stats]
         G[SWIFT: Deep Hierarchical]
         H[RAPTOR: Matrix Trinity]
-        I[PRISM: Multi-Resolution]
-        J[HELIX: Spatial-Temporal]
+        I[HELIX: Spatial-Locality]
     end
 
     A --> D
@@ -725,10 +722,9 @@ flowchart TD
     C -->|Standard analytics + compression| H[VIPER Engine<br/>Columnar analytics]
     C -->|Advanced research + mixed queries| I[NOVA Engine<br/>Progressive analytics]
 
-    D -->|Memory limited| J[PRISM Engine<br/>60% memory reduction]
-    D -->|Variable/unpredictable| K[RAPTOR Engine<br/>Adaptive optimization]
+    D -->|Variable/unpredictable| J[RAPTOR Engine<br/>Adaptive optimization]
 
-    E -->|Yes, temporal patterns| L[HELIX Engine<br/>Temporal optimization]
+    E -->|Yes, spatial patterns| K[HELIX Engine<br/>Spatial optimization]
 
     style A fill:#1e88e5,stroke:#0d47a1,stroke-width:2px,color:#000
     style F fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
@@ -754,8 +750,7 @@ xychart-beta
     "VIPER (Analytics)" [0.6, 80]
     "NOVA (Advanced)" [0.4, 120]
     "RAPTOR (Adaptive)" [0.8, 140]
-    "PRISM (Memory-opt)" [0.3, 90]
-    "HELIX (Time-series)" [0.7, 110]
+    "HELIX (Spatial)" [0.7, 110]
 ----
 
 === Data Layout Efficiency Comparison
@@ -776,8 +771,7 @@ graph TB
 
     subgraph "SPECIALIZED ENGINES"
         E[RAPTOR: Matrix Trinity<br/>✓ P×K optimization<br/>✓ Adaptive layout<br/>✓ Dynamic workloads<br/>⚠ Memory overhead]
-        F[PRISM: Multi-Resolution<br/>✓ 60% memory reduction<br/>✓ Multiple quantization<br/>✓ Resource efficient<br/>⚠ Lossy compression]
-        G[HELIX: Temporal<br/>✓ Time-series optimization<br/>✓ Hilbert curve locality<br/>✓ Temporal patterns<br/>⚠ Specialized use case]
+        F[HELIX: Spatial Locality<br/>✓ Spatial optimization<br/>✓ Hilbert curve locality<br/>✓ Geographic patterns<br/>⚠ Specialized use case]
     end
 
     style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
@@ -867,11 +861,6 @@ ultra_low_latency = true
 | Matrix complexity requires mixed approach
 | ✅ Mermaid native, ASCII inline
 
-| **PRISM**
-| Mermaid + Progressive
-| Multi-resolution needs layered visualization
-| ✅ Native with detailed sections
-
 | **HELIX**
 | Mermaid Timeline + Graph
 | Temporal aspects benefit from timeline view
@@ -880,7 +869,7 @@ ultra_low_latency = true
 
 === Alternative Tool Options
 
-**For Complex Engines (RAPTOR, PRISM):**
+**For Complex Engines (RAPTOR, HELIX):**
 - **Kroki Service**: External Graphviz/DOT rendering for complex matrices
 - **PlantUML**: Component diagrams for adaptive structures
 - **ASCII Art**: Manual layout for precise control

@@ -209,15 +209,10 @@ graph TB
 | Adaptive optimization
 | **Mixed environments, operational simplicity**
 
-| **PRISM Engine**
-| Memory-constrained
-| 60% memory reduction
-| **Resource efficiency, cost optimization**
-
 | **HELIX Engine**
-| Time-series data
-| Temporal optimization
-| **IoT applications, temporal analytics**
+| Spatial data patterns
+| Spatial locality optimization
+| **Geographic applications, spatial analytics**
 |===
 
 == AI Integration Leadership

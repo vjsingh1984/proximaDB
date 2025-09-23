@@ -495,14 +495,6 @@ Complete evaluation of all 6 storage engines across all compression algorithms a
 |151.9
 |153.40
 
-|**PRISM**
-|
-|
-|
-|
-|
-|
-
 |250 vectors
 |7.75
 |7.72
@@ -738,7 +730,7 @@ flowchart TD
     LATENCY -->|< 8μs| RAPTOR[RAPTOR Engine<br/>No compression<br/>7.68μs]
     LATENCY -->|< 10μs| MEMORY{Memory Limited?}
 
-    MEMORY -->|Yes| PRISM[PRISM Engine<br/>LZ4 compression<br/>7.70μs]
+    MEMORY -->|Yes| VIPER[VIPER Engine<br/>ZSTD compression<br/>8.00μs]
     MEMORY -->|No| ACCURACY{Accuracy Critical?}
 
     ACCURACY -->|Yes| SST[SST Engine<br/>No compression<br/>8.09μs]
@@ -748,7 +740,6 @@ flowchart TD
     BATCH -->|No| NOVA[NOVA Engine<br/>Any compression<br/>7.91μs]
 
     style RAPTOR fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#000
-    style PRISM fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#000
     style SST fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#000
     style VIPER fill:#9c27b0,stroke:#6a1b9a,stroke-width:2px,color:#000
     style NOVA fill:#607d8b,stroke:#37474f,stroke-width:2px,color:#000
@@ -757,7 +748,7 @@ flowchart TD
 === Optimization Priorities
 
 1. **For Speed**: Use RAPTOR with no compression or GZIP
-2. **For Memory**: Use PRISM with LZ4 or VIPER with ZSTD
+2. **For Memory**: Use VIPER with ZSTD for efficient compression
 3. **For Flexibility**: Use NOVA (consistent across all configs)
 4. **For Accuracy**: Use SST with progressive search
 5. **For Scale**: Enable binary filtering + progressive search
