@@ -208,12 +208,20 @@ impl UnifiedSWIFTReader {
             ReadAccessStrategy::CachedSelective { filter } => {
                 // Predicate pushdown: only read blocks that match filter
                 for superblock in &swift_file.superblocks {
-                    // Check bloom filter first (if available) for quick negative lookups
-                    if let Some(ref bloom) = superblock.bloom_filter {
-                        // Early skip if bloom filter says no match possible
-                        if !self.check_bloom_filter(bloom, filter) {
-                            continue;
+                    // ✅ Check FastLanes auto-generated bloom filters for quick negative lookups
+                    // Aggregate bloom filters from all blocks in superblock
+                    let mut should_skip = false;
+                    for block in &superblock.blocks {
+                        if let Some(ref bloom) = block.bloom_filter {
+                            // Early skip if bloom filter says no match possible
+                            if !self.check_bloom_filter(bloom, filter) {
+                                should_skip = true;
+                                break;
+                            }
                         }
+                    }
+                    if should_skip {
+                        continue;
                     }
 
                     // Process blocks that might contain matching records

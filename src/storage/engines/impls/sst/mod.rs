@@ -4827,13 +4827,82 @@ impl SstEngine {
         include_vectors: bool,
         include_metadata: bool,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        warn!("🔄 SST: Falling back to direct search implementation");
+        warn!("🔄 SST: Falling back to simplified direct search implementation");
 
-        // Use the unified search implementation and return OptimizedSearchRecord directly
-        let optimized_results = self
-            .search_vectors_unified(ctx)
-            .await
-            .map_err(|e| SstError::Search(format!("Search failed: {}", e)))?;
+        // Simplified direct search implementation without orchestration overhead
+        let mut all_candidates = Vec::new();
+
+        // Pre-discover SSTable files
+        let sstable_files = {
+            let mut files = Vec::new();
+            let fs = self.filesystem.get_filesystem(&storage_url)?;
+            let entries = fs.list(&storage_url).await?;
+            for entry in entries {
+                if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
+                    files.push(entry.url);
+                }
+            }
+            files
+        };
+
+        debug!(
+            "🔍 SST: Direct search found {} SSTable files for collection {}",
+            sstable_files.len(),
+            collection_id
+        );
+
+        // Process each SSTable file directly
+        for sstable_path in &sstable_files {
+            debug!("🔍 SST: Direct searching SSTable: {}", sstable_path);
+
+            let search_results = self.sstable_reader.search_with_filter(
+                sstable_path,
+                query_vector,
+                filter_expression.cloned(),
+                k * 2, // Get more candidates for better accuracy
+                distance_metric,
+            ).await;
+
+            match search_results {
+                Ok(results) => {
+                    debug!("Direct search found {} candidates in {}", results.len(), sstable_path);
+                    all_candidates.extend(results);
+                }
+                Err(e) => {
+                    warn!("Failed to search SSTable {}: {}", sstable_path, e);
+                    // Continue with other files
+                }
+            }
+        }
+
+        // Sort candidates by score and take top-k
+        all_candidates.sort_by(|a, b| {
+            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_candidates.truncate(k);
+
+        // Convert to OptimizedSearchRecord format
+        let mut optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
+            all_candidates;
+
+        // Filter results based on include_vectors and include_metadata
+        if !include_vectors {
+            for result in &mut optimized_results {
+                result.vector = None;
+            }
+        }
+        if !include_metadata {
+            for result in &mut optimized_results {
+                result.metadata = HashMap::new();
+            }
+        }
+
+        info!(
+            "🏁 SST Direct Search Completed - Collection: {}, Results: {}/{}",
+            collection_id,
+            optimized_results.len(),
+            k
+        );
 
         Ok(optimized_results)
     }

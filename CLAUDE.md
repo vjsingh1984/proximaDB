@@ -215,14 +215,19 @@ cargo check --all-targets  # Faster compilation check without generating binarie
 
 ### Available Binaries
 - `proximadb-server`: Main database server (src/bin/server.rs)
-- `proximadb-bench`: Benchmarking tool (src/bin/proximadb-bench-consolidated.rs)
+- `proximadb-bench-consolidated`: Consolidated benchmarking tool (src/bin/proximadb-bench-consolidated.rs)
+- `test_bloom_filter`: Bloom filter testing utility (src/bin/test_bloom_filter.rs)
+- `test_engine_data_sizes`: Storage engine data size analyzer (src/bin/test_engine_data_sizes.rs)
 
 ### Helper Scripts (scripts/)
 - `build_and_test.sh`: Full build and test pipeline
 - `build_minimal.sh`: Minimal build for quick iteration
 - `build-docker.sh`: Docker image build script
 - `consolidate_docs.sh`: Documentation consolidation utility
-- `test-integration.sh`: Run integration test suite
+- `run_demo.sh`: Run demo application with sample data
+- `deploy_enterprise_release_1.sh`: Enterprise deployment script
+- `start_all_emulators.sh`: Start cloud emulators for testing (S3, Azure, GCS)
+- `stop_all_emulators.sh`: Stop all cloud emulators
 
 ### Available Benchmark Suites (benches/)
 - `bench_01_core_distance`: Core distance metrics performance
@@ -245,6 +250,10 @@ cargo test --lib compute::quantization -- --nocapture  # Test specific modules
 cargo test testname -- --exact --nocapture  # Run single test exactly
 cargo clippy -- -D warnings  # Lint check
 cargo build --message-format=short  # Concise error output
+
+# Quick error triage
+cargo check --all-targets 2>&1 | head -20  # See first 20 errors only
+cargo fix --allow-dirty  # Auto-fix some common issues
 ```
 
 ### Running Tests
@@ -443,6 +452,18 @@ ProximaDB is a unified intelligence platform combining vector search, graph rela
 
 Primary configuration file: `config/config.toml`
 
+Available configuration templates:
+- `config/config.toml`: Main production configuration
+- `config/production.toml`: Production-optimized settings
+- `config/simple-config.toml`: Minimal configuration for getting started
+- `config/multi-disk-config.toml`: Multi-disk storage setup
+- `config/sample-hybrid.toml`: Hybrid cloud configuration
+- `config/test-config.toml`: Testing configuration
+- `demo/config/docker-config.toml`: Docker deployment config
+- `demo/config/local-demo-config.toml`: Local demo setup
+- `examples/deployment-configs/container-aws.toml`: AWS container deployment
+- `examples/deployment-configs/ec2-multi-region.toml`: Multi-region EC2 setup
+
 Key configuration sections:
 - `[server]`: HTTP/gRPC ports, data directories
 - `[storage]`: Engine selection, storage locations, metadata URLs
@@ -560,13 +581,42 @@ The caching system has been recently unified (`src/storage/cache/`):
 7. **GitHub Integration**: Ensure all Mermaid diagrams render properly in GitHub's AsciiDoc renderer
 
 ### Testing Strategy
-1. **Rust Unit Tests**: Located in individual modules and `tests/` directory
-2. **Integration Tests**: `cargo test --test integration` - test system interactions
-3. **Engine-Specific Tests**: Each storage engine has its own test suite
-4. **Python SDK Tests**: `clients/python/tests/` - test SDK functionality
-5. **Python Integration Tests**: `tests/python/` - comprehensive system tests
-6. **Benchmarks**: `benches/` - performance testing with criterion
-7. **Current Status**: Use `current_error.log` to track compilation issues
+1. **Rust Unit Tests**:
+   - Located in individual modules with `#[cfg(test)]`
+   - Directory: `tests/unit/` for standalone unit tests
+
+2. **Integration Tests**:
+   - Main test: `cargo test --test integration`
+   - Files: `tests/integration.rs`, `tests/*_integration_test.rs`
+   - Specialized: `tests/graph_integration_test.rs`, `tests/helix_integration_test.rs`, `tests/sks_integration_test.rs`
+
+3. **Engine-Specific Tests**:
+   - Directory: `tests/engines/`
+   - Each storage engine has dedicated test modules
+
+4. **Python SDK Tests**:
+   - Location: `clients/python/test_*.py` (individual test files)
+   - No pytest directory structure - run files directly
+
+5. **Test Scripts**:
+   - `tests/run_tests.sh`: Comprehensive test runner
+   - `tests/run_vector_tests.sh`: Vector operation tests
+   - `tests/start_and_test.sh`: Start server and run tests
+   - `tests/start_server.sh`: Start server for testing
+
+6. **Specialized Test Categories**:
+   - API consistency: `tests/api_consistency_*.rs`
+   - Compression: `tests/compression/`
+   - Filesystem: `tests/filesystem_*.rs`
+   - Graph operations: `tests/graph_*_test.rs`
+   - SQL: `tests/sql_*.rs`
+   - Security: `tests/security/`
+   - Recovery: `tests/recovery/`
+   - Metrics: `tests/metrics/`
+   - Quantization: `tests/quantization/`
+
+7. **Benchmarks**: `benches/` - performance testing with Criterion
+8. **Current Status**: Use `current_error.log` and `test_error.log` to track issues
 
 ### Test Coverage Requirements
 - **Mandatory 50% Coverage**: All new code must achieve minimum 50% test coverage
@@ -602,6 +652,8 @@ The caching system has been recently unified (`src/storage/cache/`):
 
 ### Files to Ignore
 - `available_domains.txt`: Auto-generated domain discovery file (continuously updated by background process)
+- `current_error.log`: Build error log file (generated by `cargo build 2>&1 | tee current_error.log`)
+- `test_error.log`: Test failure log file (generated by test runs)
 
 ### Health Checks and API Testing
 ```bash
@@ -686,17 +738,24 @@ Testing Python SDK:
 cd clients/python
 pip install -e .
 
-# Run Python SDK tests
-pytest tests/ -v
+# Run individual Python test files (no pytest directory structure)
+cd clients/python
+python test_v1_client.py              # V1 API client tests
+python test_grpc_insert_debug.py      # gRPC insertion debugging
+python test_sql_v1.py                 # SQL interface tests
+python test_search_simple.py          # Simple search operations
+python test_v1_integration.py         # V1 API integration tests
+python test_immediate_search.py       # Immediate search after insert
+python test_search_after_insert.py    # Search verification
+python test_final_sdk_validation.py   # Comprehensive validation
 
-# Run specific Python test files
-python test_v1_client.py
-python test_grpc_simple.py
+# Run example client
+python example_v1_client.py
 ```
 
 ## Recent Development Context
 
-### Current Development Status (December 2024)
+### Current Development Status (September 2024)
 - **Active Branch**: Working on `cleanup_demo` branch (main branch is `main`)
 - **Recent Focus**: Test failure fixes, build optimization, benchmark improvements
 - **Key Fixes Applied**:

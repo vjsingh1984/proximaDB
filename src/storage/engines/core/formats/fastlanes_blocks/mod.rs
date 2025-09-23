@@ -1,7 +1,83 @@
-//! Shared Row-based Storage Infrastructure for SST and SWIFT engines
+//! # FastLanes Block Storage Infrastructure
 //!
-//! This module provides common row-based storage functionality used by both SST and SWIFT engines,
-//! eliminating code duplication and ensuring consistent optimizations across row-based storage engines.
+//! **🚀 HIGH-PERFORMANCE SHARED STORAGE ENGINE INFRASTRUCTURE 🚀**
+//!
+//! This module provides the **unified FastLanes block architecture** used by SST, SWIFT, and HELIX engines,
+//! eliminating code duplication and providing **automatic optimization capabilities** that storage engines
+//! should leverage instead of implementing manually.
+//!
+//! ## 🎯 **Key Benefits for Storage Engine Developers**
+//!
+//! ### **✅ AUTOMATIC CAPABILITIES - Use These Instead of Manual Implementation!**
+//!
+//! FastLanes provides **out-of-the-box** functionality that storage engines often reimplement manually:
+//!
+//! - **🔍 Automatic Bloom Filter Generation**: Creates optimized bloom filters for existence checks
+//! - **📊 Automatic Metadata Statistics**: Calculates min/max/null counts for all columns
+//! - **⚡ Automatic SIMD Encoding**: Chooses optimal encoding based on data characteristics
+//! - **🗜️ Automatic Compression**: Applies best compression algorithm for block content
+//! - **📈 Automatic Quantization**: Integrates seamlessly with unified quantization engine
+//! - **🔗 Automatic Index Generation**: Creates B+ tree indexes for O(log n) lookups
+//! - **📝 Automatic Range Tracking**: Maintains ID and timestamp ranges for pruning
+//! - **🧠 Automatic Delete Detection**: Identifies tombstone records automatically
+//!
+//! ### **🏗️ PROVEN PATTERNS - Follow HELIX's Example!**
+//!
+//! **HELIX engine demonstrates the CORRECT way to use FastLanes:**
+//! ```rust
+//! // ✅ CORRECT: Composition pattern that leverages FastLanes capabilities
+//! pub struct HelixBlockMetadata {
+//!     pub fastlanes_metadata: FastLanesBlockMetadata,  // <- Reuse auto-generated stats!
+//!     pub hilbert_range: Option<(u64, u64)>,           // <- Add engine-specific fields only
+//!     pub pca_stats: Option<PCAStats>,
+//! }
+//! ```
+//!
+//! **❌ ANTI-PATTERN: What SST/SWIFT currently do (manual reimplementation):**
+//! ```rust
+//! // ❌ WRONG: Manual statistics calculation that duplicates FastLanes work
+//! let mut metadata_min_values = HashMap::new();
+//! let mut metadata_max_values = HashMap::new();
+//! for record in current_block {
+//!     // 50+ lines of manual min/max calculation that FastLanes already provides!
+//! }
+//! ```
+//!
+//! ## 📚 **How to Use FastLanes Capabilities (Quick Start)**
+//!
+//! ### **1. Create Blocks with Auto-Features**
+//! ```rust
+//! use crate::storage::engines::core::formats::fastlanes_blocks::*;
+//!
+//! // ✅ FastLanes automatically calculates all metadata
+//! let block = FastLanesDataBlock::new(records, compression_config);
+//!
+//! // ✅ Access auto-generated statistics
+//! let stats = &block.metadata;
+//! let id_range = &block.id_range;           // Auto-calculated
+//! let timestamp_range = &block.timestamp_range; // Auto-calculated
+//! let has_deletes = block.has_deletes;      // Auto-detected
+//! ```
+//!
+//! ### **2. Use Composition Pattern for Engine-Specific Data**
+//! ```rust
+//! // ✅ RECOMMENDED: Wrap FastLanes metadata, don't replace it
+//! pub struct MyEngineBlockMetadata {
+//!     pub fastlanes_metadata: FastLanesBlockMetadata,  // <- All the auto-generated goodness
+//!     pub my_engine_specific_data: MySpecificData,     // <- Your additions only
+//! }
+//! ```
+//!
+//! ### **3. Leverage Auto-Generated Bloom Filters**
+//! ```rust
+//! // ✅ FastLanes can auto-generate bloom filters
+//! let block = FastLanesDataBlock::new_with_bloom_filters(records, compression_config, bloom_config);
+//!
+//! // ✅ Use built-in bloom filter methods
+//! if block.contains_id("some_id") {
+//!     // Efficient bloom filter check
+//! }
+//! ```
 //!
 //! Now includes SharedSstFormatReader for bandwidth-optimized cloud storage access.
 //!
@@ -70,6 +146,7 @@
 //! - **Maintenance**: Single codebase for core functionality
 //! - **Testing**: Unified test suite for common components
 
+pub mod block_reader;  // ✅ NEW: Unified FastLanes block reader with strategies
 pub mod block_structures;
 pub mod bloom_filter; // Row-based bloom filter for SST and Swift
 pub mod compression_config;
