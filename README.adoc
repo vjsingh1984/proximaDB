@@ -7,7 +7,7 @@
 
 [.lead]
 **Stop paying $500K+ for fragmented AI tools. Get vector search, graph analytics, and semantic intelligence in one platform for 95% less.** +
-_8.5M operations/sec • 1-week deployment • 7 storage engines • Open source_
+_8.5M operations/sec • 1-week deployment • 6 storage engines • Open source_
 
 image:https://img.shields.io/badge/Performance-5.1M%20ops%2Fsec-success[Performance] image:https://img.shields.io/badge/Cost%20Savings-95%25%20reduction-brightgreen[Cost Savings] image:https://img.shields.io/badge/Deployment-1%20week-blue[Deployment] image:https://img.shields.io/badge/License-Apache%202.0-orange[License]
 
@@ -56,7 +56,7 @@ graph TB
             K[Business Intelligence<br/>Natural Language Queries]
         end
 
-        subgraph STORAGE["7 STORAGE ENGINES - AUTO-OPTIMIZED"]
+        subgraph STORAGE["6 STORAGE ENGINES - AUTO-OPTIMIZED"]
             L[SST Engine<br/>Real-time OLTP]
             M[VIPER Engine<br/>Analytics & Compression]
             N[SWIFT Engine<br/>Ultra-low Latency]
@@ -193,7 +193,7 @@ print(results.insights)
 * **Vector search** for semantic similarity and RAG applications
 * **Graph analytics** for relationship discovery and network analysis
 * **Hardware acceleration** with automatic SIMD optimization (AVX2/AVX512/NEON)
-* **7 storage engines** that auto-optimize for your workload
+* **6 storage engines** that auto-optimize for your workload
 * **SQL interface** for familiar database-like querying
 
 === Startup-Friendly Operations
@@ -485,7 +485,7 @@ gantt
 ----
 
 === Q4 2024 - Foundation ✅
-* ✅ 7 storage engines with auto-optimization
+* ✅ 6 storage engines with auto-optimization
 * ✅ 8 AI provider integrations
 * ✅ Hardware acceleration (SIMD, GPU)
 * ✅ Production-ready Docker deployment
@@ -535,7 +535,7 @@ gantt
 * **Cost Efficiency**: 95% reduction in AI infrastructure costs compared to fragmented solutions
 * **Performance Leadership**: 20M+ operations/sec with hardware acceleration outperforms leading alternatives
 * **Rapid Deployment**: Production-ready Docker deployment in minutes, not months
-* **Future-Proof Architecture**: 7 specialized storage engines auto-optimize for your specific workload patterns
+* **Future-Proof Architecture**: 6 specialized storage engines auto-optimize for your specific workload patterns
 
 **Technical Excellence:**
 * **Proven Performance**: Benchmarked on production hardware with reproducible results

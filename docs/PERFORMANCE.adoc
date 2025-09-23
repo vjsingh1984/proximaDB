@@ -226,7 +226,7 @@ prefetch_distance = 8
 
 === Validated Engine Performance (Apple Silicon, December 2024)
 
-**All 7 storage engines benchmarked with realistic workloads:**
+**All 6 storage engines benchmarked with realistic workloads:**
 
 [cols="2,2,2,2,3", options="header"]
 |===

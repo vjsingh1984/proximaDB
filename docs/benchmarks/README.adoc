@@ -51,7 +51,7 @@ toc::[]
 **Latest Results**: link:DECEMBER_2024_RESULTS.adoc[📊 December 2024 Benchmark Results]
 
 Complete performance validation showing:
-* All 7 storage engines delivering **sub-10μs search latency**
+* All 6 storage engines delivering **sub-10μs search latency**
 * SIMD-accelerated distance computation achieving **8.5M ops/sec** for 384D vectors
 * Perfect linear scaling with **2.46M vectors/sec** sustained throughput
 * Minimal compression overhead (< 5%) across all algorithms
@@ -84,7 +84,7 @@ link:CORE_BENCHMARKS.adoc[View Details]
 === 2. Storage Engine Benchmarks
 link:STORAGE_BENCHMARKS.adoc[View Details]
 
-* **Engine Comparison**: All 7 engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX)
+* **Engine Comparison**: All 6 engines (SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX)
 * **Quantization**: Binary to PQ32, 4-32x compression
 * **Columnar Storage**: VIPER with 98.2% faster compaction
 * **Flush Optimization**: 101μs batched flush

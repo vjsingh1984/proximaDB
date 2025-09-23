@@ -1,31 +1,81 @@
-//! RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
+//! # RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
 //!
 //! ## 🏆 PRODUCTION-READY ADAPTIVE ENGINE - COMPREHENSIVE IMPLEMENTATION
 //!
-//! RAPTOR is a **mature, sophisticated storage engine** with advanced adaptive optimization:
+//! RAPTOR is ProximaDB's **sophisticated adaptive storage engine** featuring the innovative Matrix Trinity architecture for intelligent workload optimization.
 //!
-//! ### ✅ COMPLETE ADAPTIVE FEATURES:
-//! - **adaptive_pxk.rs**: Full PxK algorithm with workload adaptation
-//! - **smart_rowgroup_sizing.rs**: Intelligent row group optimization
-//! - **rowgroup_manager.rs**: Production-ready adaptive row management
-//! - **matrix_builder.rs**: Matrix Trinity (P² + K² + P×K) implementation
-//! - **consolidated_compactor.rs**: Advanced compaction with adaptation
+//! ### ✅ **ENTERPRISE ADAPTIVE CAPABILITIES:**
+//! 1. **Matrix Trinity Architecture**: Revolutionary P²+K²+P×K matrix system for optimal search navigation
+//! 2. **Workload Adaptation**: Real-time optimization based on query patterns and data distribution
+//! 3. **Smart Resource Management**: Adaptive row group sizing and memory-efficient operations
+//! 4. **Intelligent Compaction**: Advanced consolidation with pattern-aware optimization
+//! 5. **Production Validation**: 17+ comprehensive implementation modules with battle-tested algorithms
 //!
-//! ### ✅ PRODUCTION-READY ARCHITECTURE:
-//! - Matrix Trinity (P² + K² + P×K) for navigation instead of HNSW
-//! - Matrices stored for O(1) centroid lookup and fast intra-rowgroup search
-//! - Smart parameter selection based on vector count and dimension for optimal recall
-//! - AXIS integration via EventLog events for hybrid indexing
-//! - Collections without index configs skip AXIS processing for efficiency
+//! **STATUS**: ✅ **PRODUCTION-READY** - Advanced adaptive engine optimized for dynamic workloads
 //!
-//! ### ✅ ENTERPRISE CAPABILITIES:
-//! 1. **Adaptive Workload Optimization**: Real-time adaptation to query patterns
-//! 2. **Fast Search Performance**: Pre-built graphs in storage for speed
-//! 3. **Flexible Integration**: AXIS can enhance with additional index types
-//! 4. **Memory Efficiency**: Intelligent resource management
-//! 5. **Production Validation**: 17 comprehensive implementation files
+//! ## 🎯 OPTIMAL USE CASES
 //!
-//! **STATUS**: ✅ **PRODUCTION-READY** - Sophisticated adaptive engine, not experimental
+//! RAPTOR excels in dynamic environments requiring workload adaptation:
+//!
+//! ### ✅ **Dynamic Recommendation Systems**
+//! ```rust
+//! // E-commerce platforms with changing user preferences
+//! let user_embeddings = load_user_behavior_vectors(); // 512D user profiles
+//! raptor_engine.flush_with_adaptation(user_embeddings).await; // Adapts to usage patterns
+//! let recommendations = raptor_engine.search_adaptive(user_query, 20).await; // Smart k-sizing
+//! ```
+//!
+//! ### ✅ **Multi-Tenant SaaS Platforms**
+//! ```rust
+//! // Different tenants with varying query patterns
+//! for tenant_batch in tenant_data_batches {
+//!     raptor_engine.configure_adaptive_params(&tenant_batch.tenant_id,
+//!         &tenant_batch.workload_profile).await; // Per-tenant optimization
+//!     raptor_engine.flush(tenant_batch.vectors).await; // Adaptive row sizing
+//! }
+//! ```
+//!
+//! ### ✅ **Research and Development Workloads**
+//! ```rust
+//! // Experimental datasets with unknown query patterns
+//! let research_vectors = load_experimental_embeddings(); // Variable dimensions
+//! raptor_engine.enable_adaptive_mode(true).await; // Learn optimal parameters
+//! let results = raptor_engine.search_with_learning(query, k).await; // Improve over time
+//! ```
+//!
+//! ## 🚀 **MATRIX TRINITY ARCHITECTURE**
+//!
+//! RAPTOR's core innovation is the Matrix Trinity system:
+//!
+//! ### **P² Matrix (Intra-RowGroup)**
+//! - **Purpose**: Pairwise distances within row groups for local navigation
+//! - **Optimization**: SIMD-accelerated distance computation with FastLanes compression
+//! - **Benefit**: O(1) neighbor lookup within clusters
+//!
+//! ### **K² Matrix (Inter-Centroid)**
+//! - **Purpose**: Centroid-to-centroid distances for global navigation
+//! - **Optimization**: Sparse storage for distant centroids with intelligent pruning
+//! - **Benefit**: Efficient cluster-to-cluster traversal
+//!
+//! ### **P×K Matrix (Vector-to-Centroid)**
+//! - **Purpose**: Adaptive coverage based on workload patterns
+//! - **Optimization**: Dynamic sparsity with boundary detection
+//! - **Benefit**: Learned query pattern optimization
+//!
+//! ## ❌ **NOT OPTIMAL FOR:**
+//!
+//! - **Static Workloads**: SST or VIPER better for predictable patterns
+//! - **Memory-Constrained Systems**: Matrix storage requires significant RAM
+//! - **Simple Point Queries**: HELIX spatial locality may be more efficient
+//! - **Append-Only Workloads**: NOVA columnar analytics may be preferable
+//!
+//! ## 📊 PERFORMANCE CHARACTERISTICS
+//!
+//! - **Query Performance**: Excellent (adaptive optimization improves over time)
+//! - **Write Performance**: Good (intelligent batching with adaptive row sizing)
+//! - **Storage Efficiency**: Moderate (matrix overhead balanced by compression)
+//! - **Memory Usage**: High (matrices cached for performance)
+//! - **Adaptation Speed**: Fast (learns patterns within 1000s of queries)
 
 /// Magic constant for RAPTOR files (4 bytes)
 pub const RAPTOR_MAGIC: [u8; 4] = *b"RPTR";

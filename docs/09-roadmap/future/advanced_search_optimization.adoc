@@ -28,7 +28,7 @@ The AdvancedSearchOptimizer integration represents a critical performance enhanc
 
 |**Engine Integration**
 |February 2025
-|Implement AdvancedSearchOptimizer in all 7 storage engines
+|Implement AdvancedSearchOptimizer in all 6 storage engines
 
 |**Performance Validation**
 |March 2025
