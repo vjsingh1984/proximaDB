@@ -92,6 +92,34 @@ impl StorageEngineFactory {
         }
     }
 
+    /// Async version of create_from_proto for use in async contexts (e.g., tests)
+    pub async fn create_from_proto_async(
+        engine_type: ProtoStorageEngine,
+    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+        match engine_type {
+            ProtoStorageEngine::Unspecified => {
+                warn!("Unspecified storage engine, defaulting to SST (VIPER not available)");
+                Self::create_sst_async().await
+            }
+            ProtoStorageEngine::Viper => Self::create_viper_async().await,
+            ProtoStorageEngine::Sst => Self::create_sst_async().await,
+            ProtoStorageEngine::Mmap => {
+                warn!("MMAP engine not yet implemented, using SST");
+                Self::create_sst_async().await
+            }
+            ProtoStorageEngine::Hybrid => {
+                warn!("Hybrid engine not yet implemented, using SST");
+                Self::create_sst_async().await
+            }
+            ProtoStorageEngine::Swift => Self::create_swift_async().await,
+            ProtoStorageEngine::Nova => Self::create_nova_async().await,
+            _ => {
+                warn!("Unknown storage engine type, defaulting to SST");
+                Self::create_sst_async().await
+            }
+        }
+    }
+
     /// Create a storage engine from strategy enum
     ///
     /// ## Strategy Mapping:
@@ -156,6 +184,13 @@ impl StorageEngineFactory {
         Ok(Arc::new(engine))
     }
 
+    /// Async version for use within async contexts (e.g., tests)
+    pub async fn create_viper_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating VIPER storage engine");
+        let engine = ViperEngine::new().await?;
+        Ok(Arc::new(engine))
+    }
+
 
     /// Create SST engine with default configuration
     ///
@@ -177,6 +212,13 @@ impl StorageEngineFactory {
         Ok(Arc::new(engine))
     }
 
+    /// Async version for use within async contexts (e.g., tests)
+    pub async fn create_sst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating SST storage engine");
+        let engine = SstEngine::new().await?;
+        Ok(Arc::new(engine))
+    }
+
 
     /// Create SWIFT engine (Storage With Instant Fast Traversal)
     ///
@@ -195,6 +237,13 @@ impl StorageEngineFactory {
         let engine = runtime.block_on(async {
             SwiftEngine::new().await
         })?;
+        Ok(Arc::new(engine))
+    }
+
+    /// Async version for use within async contexts (e.g., tests)
+    pub async fn create_swift_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating SWIFT storage engine");
+        let engine = SwiftEngine::new().await?;
         Ok(Arc::new(engine))
     }
 
@@ -220,6 +269,14 @@ impl StorageEngineFactory {
         Ok(Arc::new(engine))
     }
 
+    /// Async version for use within async contexts (e.g., tests)
+    pub async fn create_helix_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating HELIX storage engine");
+        use crate::storage::engines::impls::helix::HelixEngine;
+        let engine = HelixEngine::new().await?;
+        Ok(Arc::new(engine))
+    }
+
 
     /// Create NOVA engine (Next-gen Optimized Vector Analytics)
     ///
@@ -236,6 +293,13 @@ impl StorageEngineFactory {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(NovaEngine::new())?;
+        Ok(Arc::new(engine))
+    }
+
+    /// Async version for use within async contexts (e.g., tests)
+    pub async fn create_nova_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating NOVA storage engine");
+        let engine = NovaEngine::new().await?;
         Ok(Arc::new(engine))
     }
 
@@ -257,6 +321,13 @@ impl StorageEngineFactory {
         let engine = runtime.block_on(async {
             RaptorEngine::new().await
         })?;
+        Ok(Arc::new(engine))
+    }
+
+    /// Async version for use within async contexts (e.g., tests)
+    pub async fn create_raptor_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating RAPTOR storage engine");
+        let engine = RaptorEngine::new().await?;
         Ok(Arc::new(engine))
     }
 

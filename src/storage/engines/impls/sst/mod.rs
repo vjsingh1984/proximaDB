@@ -4035,7 +4035,7 @@ impl SstEngine {
 
         // Step 3: Organize records into blocks for better cache performance
         let data_blocks = self
-            .organize_records_into_blocks(records, header.block_size as usize, compression_config.as_ref())
+            .organize_records_into_blocks(records, header.block_size as usize, compression_config)
             .await?;
 
         // Step 4: Engine-optimized index with block pointers

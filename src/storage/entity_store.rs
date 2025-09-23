@@ -780,8 +780,10 @@ impl ProximaEntityStore {
                         break;
                     }
 
-                    if entity_id.starts_with(&format!("{}_", collection_id)) {
-                        let entity_id_only = entity_id.strip_prefix(&format!("{}_", collection_id)).unwrap_or(entity_id);
+                    if entity_id.starts_with(&format!("{}/entity/", collection_id)) {
+                        let entity_id_only = entity_id
+                            .strip_prefix(&format!("{}/entity/", collection_id))
+                            .unwrap_or(entity_id);
 
                         // Convert EntityHeader back to Entity
                         let entity = Entity {
