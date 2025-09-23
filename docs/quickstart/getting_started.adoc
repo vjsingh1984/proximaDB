@@ -418,7 +418,7 @@ xychart-beta
 | **HELIX**
 | 110K ops/sec
 | 700MB/1M vectors
-| Time-series and IoT data
+| Spatial locality optimization
 |===
 
 == Enterprise Security Setup

@@ -99,7 +99,6 @@ graph TB
     H --> O
     H --> P
     H --> Q
-    H --> R
 
     L --> S
     M --> S
@@ -107,7 +106,6 @@ graph TB
     O --> S
     P --> S
     Q --> S
-    R --> S
 
     S --> T
     T --> U
@@ -129,7 +127,6 @@ graph TB
     style O fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
     style P fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
     style Q fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
-    style R fill:#8fc4f9,stroke:#6fa7e0,stroke-width:2px,color:#000
     style S fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
     style T fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
     style U fill:#b8d4f1,stroke:#5a5a5a,stroke-width:2px,color:#000
@@ -264,7 +261,7 @@ print(insights.answer)
 ----
 %%{init: {"theme": "neutral"}}%%
 flowchart TD
-    A[Business Question<br/>"What's driving our growth?"] --> B{Query Type Detection}
+    A[Business Question<br/>What's driving our growth?] --> B{Query Type Detection}
     B -->|Vector Search| C[Embed Query<br/>OpenAI/Anthropic]
     B -->|SQL Query| D[Parse SQL<br/>Collection Operations]
     B -->|Graph Query| E[Analyze Relationships<br/>Connected Data]
@@ -459,7 +456,7 @@ gantt
     axisFormat %Q %Y
 
     section Foundation
-    7 Storage Engines           :done, foundation, 2024-07-01, 2024-12-31
+    6 Storage Engines           :done, foundation, 2024-07-01, 2024-12-31
     8 AI Provider Integrations  :done, ai-integrations, 2024-08-01, 2024-12-31
     Hardware Acceleration       :done, simd-gpu, 2024-09-01, 2024-12-31
     Docker Production Ready     :done, docker, 2024-10-01, 2024-12-31
