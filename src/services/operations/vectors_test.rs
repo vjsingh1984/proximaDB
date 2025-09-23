@@ -81,7 +81,7 @@ mod tests {
                 .await
                 .expect("Failed to create filesystem factory"),
         );
-        let distance_compute = Arc::new(
+        let _distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 DistanceMetric::Cosine,
             ),

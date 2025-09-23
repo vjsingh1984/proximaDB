@@ -28,50 +28,6 @@
 //! 5. **Production Validation**: 17+ comprehensive implementation files
 //!
 //! **STATUS**: ✅ **PRODUCTION-READY** - Advanced locality-optimized engine with sophisticated spatial clustering
-
-use anyhow::Result;
-use async_trait::async_trait;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
-
-// Core modules
-pub mod clustering;
-pub mod compaction;
-pub mod eventlog_integration;
-pub mod fastlane;
-pub mod hilbert_curve;
-pub mod liquid_clustering;
-pub mod pca_impl;
-pub mod pca_manager;
-pub mod progressive_search;
-pub mod query_optimization;
-pub mod readers;
-pub mod unified_metadata_serializer;
-pub mod unified_strategy_reader;
-pub mod zone_maps;
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-#[path = "tests/integration_tests.rs"]
-mod integration_tests;
-
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::services::EventLog;
-use crate::storage::common::compaction_orchestrator::FilenameCodec;
-use crate::storage::engines::constants::{ENGINE_HELIX, HELIX_FILE_EXT, HELIX_MAGIC};
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
-    StorageQueryContext, UnifiedStorageEngine,
-};
-
-use self::clustering::{HilbertKey, PCAModel};
-
 //!
 //! ## 🎯 OPTIMAL USE CASES
 //!
@@ -134,7 +90,50 @@ use self::clustering::{HilbertKey, PCAModel};
 //! - **Write Performance**: Moderate (PCA computation overhead)
 //! - **Storage Efficiency**: Good (FastLane compression + clustering)
 //! - **Memory Usage**: Low (disk-only LSM design)
-//!
+
+use anyhow::Result;
+use async_trait::async_trait;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
+
+// Core modules
+pub mod clustering;
+pub mod compaction;
+pub mod eventlog_integration;
+pub mod fastlane;
+pub mod hilbert_curve;
+pub mod liquid_clustering;
+pub mod pca_impl;
+pub mod pca_manager;
+pub mod progressive_search;
+pub mod query_optimization;
+pub mod readers;
+pub mod unified_metadata_serializer;
+pub mod unified_strategy_reader;
+pub mod zone_maps;
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+#[path = "tests/integration_tests.rs"]
+mod integration_tests;
+
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::services::EventLog;
+use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use crate::storage::engines::constants::{ENGINE_HELIX, HELIX_FILE_EXT, HELIX_MAGIC};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use crate::storage::traits::{
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    StorageQueryContext, UnifiedStorageEngine,
+};
+
+use self::clustering::{HilbertKey, PCAModel};
+
 use self::compaction::LeveledCompactor;
 use self::query_optimization::QueryOptimizer;
 use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata;
