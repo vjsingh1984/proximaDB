@@ -284,6 +284,7 @@ impl StreamingParquetWriter {
         dimension: usize,
         config: &ParquetWriterConfig,
     ) -> Result<Arc<Schema>> {
+        debug!("PARQUET_DEBUG: Creating schema for dimension={}", dimension);
         let mut fields = Vec::new();
 
         // Core fields - ID column is REQUIRED for customer APIs
@@ -445,6 +446,30 @@ impl StreamingParquetWriter {
 
     /// Write a batch of records (streaming interface)
     pub async fn write_batch(&mut self, records: &[VectorRecord]) -> Result<()> {
+        debug!(
+            "PARQUET_DEBUG: write_batch called with {} records, dimension={}",
+            records.len(),
+            if !records.is_empty() { records[0].vector.len() } else { 0 }
+        );
+
+        // Calculate estimated uncompressed size
+        if !records.is_empty() {
+            let dimension = records[0].vector.len();
+            let vector_size = dimension * 4; // f32 = 4 bytes
+            let metadata_size: usize = records.iter()
+                .map(|r| r.metadata.iter()
+                    .map(|(k, v)| k.len() + 8) // key + estimate for value
+                    .sum::<usize>())
+                .sum();
+            let estimated_size = records.len() * (vector_size + 100 + metadata_size / records.len());
+            debug!(
+                "PARQUET_DEBUG: Estimated uncompressed size: {} MB (vector: {} bytes, metadata avg: {} bytes)",
+                estimated_size / (1024 * 1024),
+                vector_size,
+                metadata_size / records.len()
+            );
+        }
+
         // Collect metadata samples for type inference
         if self.config.enable_native_metadata
             && self.metadata_samples.len() < self.config.metadata_inference_samples
@@ -601,6 +626,31 @@ impl StreamingParquetWriter {
 
         // Convert records to Arrow RecordBatch
         let batch = self.create_record_batch(&sorted_records)?;
+
+        // Debug: Track batch size
+        let batch_memory_size: usize = batch.columns().iter()
+            .map(|col| col.get_buffer_memory_size())
+            .sum();
+        debug!(
+            "PARQUET_DEBUG: RecordBatch created - rows: {}, columns: {}, memory size: {} MB",
+            batch.num_rows(),
+            batch.num_columns(),
+            batch_memory_size / (1024 * 1024)
+        );
+
+        // Log column details for large columns
+        for (i, field) in batch.schema().fields().iter().enumerate() {
+            let col = batch.column(i);
+            let col_size = col.get_buffer_memory_size();
+            if col_size > 1024 * 1024 { // Only log columns > 1MB
+                debug!(
+                    "PARQUET_DEBUG: Large column '{}' - type: {:?}, memory: {} MB",
+                    field.name(),
+                    field.data_type(),
+                    col_size / (1024 * 1024)
+                );
+            }
+        }
 
         // Notify collector about batch being written (for statistics collection)
         if let Some(ref mut collector) = self.metadata_collector {
@@ -1115,12 +1165,43 @@ impl StreamingParquetWriter {
                     .sum()
             });
 
+        // Debug: Log final file statistics
+        let total_row_groups = file_metadata.row_groups.len();
+        let total_compressed_size: i64 = file_metadata.row_groups.iter()
+            .map(|rg| rg.total_compressed_size)
+            .sum();
+        let total_uncompressed_size: i64 = file_metadata.row_groups.iter()
+            .map(|rg| rg.total_byte_size)
+            .sum();
+
+        debug!(
+            "PARQUET_DEBUG: Finalized file '{}' - {} records, {} row groups",
+            self.file_path, self.total_records_written, total_row_groups
+        );
+        debug!(
+            "PARQUET_DEBUG: File sizes - actual: {} MB, compressed: {} MB, uncompressed: {} MB",
+            file_size / (1024 * 1024),
+            total_compressed_size / (1024 * 1024),
+            total_uncompressed_size / (1024 * 1024)
+        );
+
+        // Calculate actual compression ratio
+        let compression_ratio = if total_uncompressed_size > 0 {
+            total_compressed_size as f64 / total_uncompressed_size as f64
+        } else {
+            1.0
+        };
+        debug!(
+            "PARQUET_DEBUG: Compression ratio: {:.2}% (smaller is better)",
+            compression_ratio * 100.0
+        );
+
         let stats = StreamingParquetWriterStats {
             file_path: self.file_path,
             total_records: self.total_records_written,
             total_row_groups: file_metadata.row_groups.len() as i32,
             file_size,
-            compression_ratio: 1.0, // Default ratio, would need actual calculation
+            compression_ratio,
             bloom_filter_count: self.id_bloom_filters.len() + self.metadata_bloom_filters.len(),
         };
 
