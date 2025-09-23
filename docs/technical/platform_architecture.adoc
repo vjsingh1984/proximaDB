@@ -293,7 +293,7 @@ flowchart TD
     B -->|Advanced Research| E[NOVA Engine<br/>Multi-resolution]
     B -->|Ultra-low Latency| F[SWIFT Engine<br/>Sub-1ms]
     B -->|Adaptive Workloads| G[RAPTOR Engine<br/>P×K optimization]
-    B -->|Time-series| I[HELIX Engine<br/>Temporal optimization]
+    B -->|Spatial Data| I[HELIX Engine<br/>Spatial locality]
 
     style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
     style D fill:#ea580c,stroke:#c2410c,stroke-width:2px,color:#000
@@ -660,7 +660,7 @@ timeline
 
     section 2025 Q4
         Current State : 20.6M ops/sec achieved
-                      : Full 7-engine portfolio
+                      : Full 6-engine portfolio
                       : Enterprise ready
 ----
 
@@ -697,7 +697,7 @@ graph LR
 
     subgraph "SPECIALIZED ENGINES"
         E[RAPTOR: Adaptive<br/>P×K optimization<br/>Dynamic workloads]
-        G[HELIX: Time-series<br/>Temporal patterns<br/>Hilbert curves]
+        G[HELIX: Spatial locality<br/>Spatial patterns<br/>Hilbert curves]
     end
 
     style A fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
@@ -832,9 +832,9 @@ src/
 |**VIPER** |⚠️ Partial |Parquet columnar, cluster metadata
 |**NOVA** |⚠️ Partial |Quantized columns, advanced compression
 |**SST** |⚠️ Partial |Row-based OLTP, bloom filters
-|**SWIFT** |⚠️ Partial |Ultra-low latency, superblock cache
+|**SWIFT** |⚠️ Partial |Hierarchical enterprise, superblock cache
 |**RAPTOR** |✅ Active |Adaptive workloads, matrix optimization
-|**HELIX** |⚠️ Partial |Time-series optimization, spatial-temporal
+|**HELIX** |⚠️ Partial |Spatial locality optimization, Hilbert curves
 |===
 
 === Performance Characteristics
