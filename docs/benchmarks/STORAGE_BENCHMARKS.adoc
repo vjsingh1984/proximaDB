@@ -68,7 +68,34 @@ NOTE: All compression algorithms are now properly functioning after fixing the c
 * **None** compression still achieves 92.9% savings due to FastLanes encoding optimizations
 * All algorithms benefit from SST's block-based organization and metadata deduplication
 
-WARNING: Search functionality temporarily impacted - decompression issue under investigation
+=== Compression Implementation Details
+
+==== Fix Applied (2025-01-22)
+The compression system has been fixed to properly handle all compression algorithms:
+
+1. **Centralized Configuration**: All engines now use `RowBasedCompressionConfig::create_block_config_from_proto()` from the FastLanes module
+2. **Proper Markers**: Uncompressed data now uses 0x00 marker, compressed data uses 0x80-0x8F range
+3. **Format Versioning**: Correctly handles format version byte in serialization/deserialization
+
+==== Data Format Structure
+[source]
+----
+Compressed Format:
+[0]: Compression marker (0x80-0x8F)
+[1-4]: Original size (u32, little-endian)
+[5+]: Compressed data containing:
+      [0]: Format version (0x01)
+      [1]: Encoding marker
+      [2+]: Actual data
+
+Uncompressed Format:
+[0]: Uncompressed marker (0x00)
+[1]: Format version (0x01)
+[2]: Encoding marker
+[3+]: Actual data
+----
+
+NOTE: Search functionality has been fixed by properly handling both compressed and uncompressed data formats in the deserialize method
 
 == Storage Engine Comparison
 `cargo bench --bench bench_04_storage_comparison`
