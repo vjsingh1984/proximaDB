@@ -95,12 +95,21 @@ impl MvccResolver {
             });
 
             // Validate version continuity and find the latest valid version
-            // Find the starting version (could be 0, 1, or any other number)
+            // Version sequences must start at 0 or 1, otherwise it's a gap from start
             let starting_version = if let Some(first_record) = versions.first() {
                 first_record.version.unwrap_or(1)
             } else {
                 1
             };
+
+            // Check if there's a gap from the beginning (must start with 0 or 1)
+            if starting_version > 1 {
+                debug!(
+                    "MVCC: Version gap from start for ID '{}': starts with version {} instead of 0 or 1",
+                    id, starting_version
+                );
+                continue; // Skip this ID entirely
+            }
 
             let mut expected_version = starting_version;
             let mut last_valid: Option<VectorRecord> = None;

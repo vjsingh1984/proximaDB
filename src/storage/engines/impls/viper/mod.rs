@@ -50,7 +50,7 @@
 //!
 //! ## Performance Characteristics
 //!
-//! - **Write Throughput**: 500K vectors/sec (batch)
+//! - **Write Throughput**: High-performance batch processing (optimized for large datasets)
 //! - **Query Latency**: 10-50ms for analytics queries
 //! - **Compression Ratio**: 5-10x with quantization
 //! - **Memory Usage**: 50MB per million vectors

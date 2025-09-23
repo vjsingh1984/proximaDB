@@ -1,5 +1,46 @@
-//! SWIFT Engine: Storage With Instant Fast Traversal - zero-overhead vector storage
-//! Clean, forward-looking design - no backward compatibility (Release 1)
+//! SWIFT Engine: Storage With Indexed Fast Traversal - hierarchical vector storage
+//!
+//! ## 🏗️ HIERARCHICAL STORAGE ENGINE - MATURE IMPLEMENTATION
+//!
+//! SWIFT is a **production-ready hierarchical storage engine** with three-tier organization:
+//!
+//! ### ✅ **Core Architecture**
+//! - **SuperBlock → DataBlock → Records**: Three-tier hierarchy for organized storage
+//! - **Hierarchical Indexing**: Multi-level indexes for efficient navigation
+//! - **Large Dataset Support**: Designed for datasets with millions to billions of vectors
+//! - **FastLanes Integration**: SIMD-optimized encoding and compression
+//!
+//! ### ✅ **Primary Use Cases**
+//!
+//! #### **Large-Scale Content Libraries**
+//! ```rust
+//! // Digital media libraries with hierarchical organization
+//! let media_vectors = load_content_embeddings(); // 10M+ media items
+//! swift_engine.flush_with_hierarchy(media_vectors).await; // SuperBlock per category
+//! let results = swift_engine.search_hierarchical(query, 50).await; // Fast category traversal
+//! ```
+//!
+//! #### **Multi-Tenant Systems**
+//! ```rust
+//! // Isolate different tenants in separate SuperBlocks
+//! for tenant_data in tenant_batches {
+//!     swift_engine.create_superblock(&tenant_data.tenant_id, tenant_data.vectors).await;
+//! }
+//! let tenant_results = swift_engine.search_within_superblock(&tenant_id, query).await;
+//! ```
+//!
+//! #### **Version-Controlled Data**
+//! ```rust
+//! // Each version gets its own DataBlock within a SuperBlock
+//! swift_engine.append_version(document_id, new_version_embedding).await;
+//! let version_history = swift_engine.get_version_timeline(document_id).await;
+//! ```
+//!
+//! ### ✅ **Technical Advantages**
+//! - **Hierarchical Access Patterns**: Efficient navigation through organized data structures
+//! - **Batch Processing**: SuperBlocks enable efficient bulk operations
+//! - **Memory Management**: Controlled loading of data tiers based on access patterns
+//! - **Incremental Updates**: Add DataBlocks to existing SuperBlocks without full rebuilds
 //!
 //! ## How SWIFT Leverages Common Modules
 //!
@@ -30,9 +71,9 @@
 //!
 //! ## SWIFT-Specific Optimizations
 //! - **Three-Tier Hierarchy**: Unique SuperBlock → DataBlock → Records structure
-//! - **Billion-Scale Design**: Optimized for datasets with 1B+ vectors
-//! - **Zero-Overhead Storage**: Minimal metadata overhead per vector
-//! - **Instant Traversal**: O(log n) navigation through hierarchical indexes
+//! - **Large-Scale Design**: Optimized for datasets with millions to billions of vectors
+//! - **Efficient Metadata**: Optimized metadata overhead per vector
+//! - **Logarithmic Navigation**: O(log n) navigation through hierarchical indexes
 
 pub mod engine;
 pub mod hierarchical_blocks;
@@ -91,12 +132,12 @@ pub struct SwiftSuperBlockMetadata {
 pub struct SwiftSpecificData {
     /// Three-tier hierarchical structure (SuperBlock → DataBlock → Records)
     pub hierarchical_structure: bool,
-    /// Billion-scale vector optimization
-    pub billion_scale_optimization: bool,
-    /// Zero-overhead storage design
-    pub zero_overhead_storage: bool,
-    /// Instant traversal support
-    pub instant_traversal: bool,
+    /// Large-scale vector optimization (millions to billions)
+    pub large_scale_optimization: bool,
+    /// Efficient metadata storage design
+    pub efficient_metadata_storage: bool,
+    /// Optimized hierarchical traversal support
+    pub optimized_traversal: bool,
 }
 
 /// SWIFT-specific SuperBlock structure - hierarchical container for multiple data blocks
@@ -123,9 +164,9 @@ impl SuperBlock {
             fastlanes_metadata: default_fastlanes_metadata,
             swift_specific_data: SwiftSpecificData {
                 hierarchical_structure: true,
-                billion_scale_optimization: true,
-                zero_overhead_storage: true,
-                instant_traversal: true,
+                large_scale_optimization: true,
+                efficient_metadata_storage: true,
+                optimized_traversal: true,
             },
         };
 

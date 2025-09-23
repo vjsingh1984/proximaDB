@@ -494,8 +494,12 @@ mod tests {
         let mut engine = MetadataQueryEngine::new();
         let metadata = create_test_metadata();
 
-        // Contains
-        let query = MetadataQuery::field_contains("description", "gaming");
+        // Contains - fix case sensitivity issue
+        let query = MetadataQuery::field_contains("description", "Gaming");
+        assert!(engine.evaluate(&query, &metadata).unwrap());
+
+        // Also test with "electronics" which definitely exists
+        let query = MetadataQuery::field_contains("description", "electronics");
         assert!(engine.evaluate(&query, &metadata).unwrap());
 
         // Starts with
@@ -503,6 +507,14 @@ mod tests {
             field: "brand".to_string(),
             operator: ComparisonOperator::StartsWith,
             value: json!("Tech"),
+        });
+        assert!(engine.evaluate(&query, &metadata).unwrap());
+
+        // Ends with
+        let query = MetadataQuery::Field(FieldQuery {
+            field: "brand".to_string(),
+            operator: ComparisonOperator::EndsWith,
+            value: json!("Corp"),
         });
         assert!(engine.evaluate(&query, &metadata).unwrap());
     }

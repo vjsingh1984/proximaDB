@@ -84,9 +84,9 @@ type VectorSearchResult = OptimizedSearchRecord;
 ///
 /// 6. PERFORMANCE AT SCALE:
 ///    - 100M vectors: ~400GB file, 100K rowgroups (1K each)
-///    - Search latency: <5ms for top-10, <10ms for top-100
+///    - Search latency: Low-latency search optimized for small k values
 ///    - I/O efficiency: Read only ~1-3 rowgroups for k<10
-///    - Insert throughput: 50K vectors/sec (batched)
+///    - Insert throughput: High-performance batched insertion
 ///    - Memory usage: ~2GB cache + 100MB global graph
 ///
 /// 7. ADAPTIVE ROWGROUP SIZING:

@@ -1,7 +1,7 @@
 //! Unified HELIX Reader with strategy-aware caching
 //!
-//! HELIX (High-Efficiency Locality-Indexed eXecution) implements time-series optimized
-//! storage with Hilbert curve locality preservation and PCA-based clustering.
+//! HELIX (High-Efficiency Locality-Indexed eXecution) implements locality-optimized
+//! storage with Hilbert curve spatial clustering and PCA-based dimensionality reduction.
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use super::SStableMetadata;
 /// Unified HELIX reader that implements strategy-aware reading
 ///
 /// HELIX specializes in:
-/// - Time-series optimized storage with Hilbert curve locality
+/// - Spatial locality optimization with Hilbert curve clustering
 /// - PCA-based clustering for dimensional reduction
 /// - FastLane columnar blocks for SIMD optimization
 /// - Liquid clustering for adaptive query patterns
@@ -106,8 +106,8 @@ impl UnifiedHELIXReader {
         )
     }
 
-    /// Create a reader for time-series queries (cached with liquid clustering)
-    pub fn for_time_series_query(
+    /// Create a reader for spatial locality queries (cached with liquid clustering)
+    pub fn for_spatial_locality_query(
         filesystem_factory: Arc<FilesystemFactory>,
         collection_id: String,
         filter: Option<crate::core::search::FilterExpression>,
@@ -132,15 +132,15 @@ impl UnifiedHELIXReader {
         }
     }
 
-    /// Read using time-series optimized access
-    pub async fn read_time_series(
+    /// Read using spatial locality optimized access
+    pub async fn read_with_locality(
         &self,
         file_path: &str,
         query_hilbert: Option<HilbertKey>,
     ) -> Result<Vec<VectorRecord>> {
         match &self.strategy {
             ReadAccessStrategy::DirectStream => {
-                self.read_direct_temporal(file_path).await
+                self.read_direct_streaming(file_path).await
             }
             _ => {
                 self.read_with_hilbert_pruning(file_path, query_hilbert).await
@@ -148,8 +148,8 @@ impl UnifiedHELIXReader {
         }
     }
 
-    /// Direct temporal read (for full scans and compaction)
-    async fn read_direct_temporal(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    /// Direct streaming read (for full scans and compaction)
+    async fn read_direct_streaming(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         // Use filesystem factory directly for streaming reads
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let _data = fs.read(file_path).await?;
@@ -268,7 +268,7 @@ impl DirectHELIXReader {
 /// Cached HELIX Reader (uses zone maps and FastLane metadata caching)
 ///
 /// Use this for:
-/// - Time-series queries with temporal filtering
+/// - Spatial locality queries with range filtering
 /// - Point queries by ID with Hilbert locality
 /// - Search operations with PCA-based pruning
 /// - Liquid clustering adaptive patterns
@@ -298,16 +298,16 @@ impl CachedHELIXReader {
         })
     }
 
-    /// Read with time-series optimization and Hilbert pruning
-    pub async fn read_with_temporal_pruning(
+    /// Read with spatial locality optimization and Hilbert pruning
+    pub async fn read_with_spatial_pruning(
         &self,
         file_path: &str,
         query_hilbert: Option<HilbertKey>,
-        temporal_range: Option<(i64, i64)>, // (start_timestamp, end_timestamp)
+        range_filter: Option<(f64, f64)>, // (min_value, max_value) for any dimension
     ) -> Result<Vec<VectorRecord>> {
         let _data = self.cached_filesystem.read(file_path).await?;
 
-        // TODO: Apply time-series optimized pruning
+        // TODO: Apply spatial locality optimized pruning
         match self.search_strategy {
             HelixSearchStrategy::NoPruning => {
                 // Read all data for full scans

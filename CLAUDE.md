@@ -432,8 +432,8 @@ ProximaDB is a unified intelligence platform combining vector search, graph rela
   - Best for: Dynamic workloads
   - Location: `src/storage/engines/impls/raptor/`
 
-- **HELIX Engine**: Spiral-pattern storage for time-series data
-  - Best for: Temporal data patterns
+- **HELIX Engine**: Locality-optimized storage with Hilbert curve clustering
+  - Best for: Workloads requiring spatial locality and efficient range queries
   - Location: `src/storage/engines/impls/helix/`
 
 ### Key Design Patterns

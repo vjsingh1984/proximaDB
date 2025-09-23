@@ -62,7 +62,7 @@ use anyhow::Context;
 /// - **Columnar First**: Parquet format for maximum compression
 /// - **Progressive Quantization**: Binary → INT8 → PQ → FP32 refinement
 /// - **Cloud Native**: Optimized for S3/Azure/GCS with footer caching
-/// - **Batch Optimized**: 500K vectors/sec throughput
+/// - **Batch Optimized**: High-performance batch processing throughput
 ///
 /// ### Data Flow:
 /// ```text
