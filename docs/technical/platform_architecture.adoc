@@ -293,7 +293,6 @@ flowchart TD
     B -->|Advanced Research| E[NOVA Engine<br/>Multi-resolution]
     B -->|Ultra-low Latency| F[SWIFT Engine<br/>Sub-1ms]
     B -->|Adaptive Workloads| G[RAPTOR Engine<br/>P×K optimization]
-    B -->|Memory Constrained| H[PRISM Engine<br/>60% memory reduction]
     B -->|Time-series| I[HELIX Engine<br/>Temporal optimization]
 
     style C fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#000
@@ -698,7 +697,6 @@ graph LR
 
     subgraph "SPECIALIZED ENGINES"
         E[RAPTOR: Adaptive<br/>P×K optimization<br/>Dynamic workloads]
-        F[PRISM: Memory opt<br/>60% reduction<br/>Resource constrained]
         G[HELIX: Time-series<br/>Temporal patterns<br/>Hilbert curves]
     end
 
@@ -760,7 +758,7 @@ graph LR
 **Workload-Optimized Performance** through specialized storage engines:
 - **Analytics Workloads**: VIPER and NOVA engines for business intelligence
 - **OLTP Operations**: SST and SWIFT engines for real-time applications
-- **Mixed Workloads**: RAPTOR and PRISM engines for adaptive optimization
+- **Mixed Workloads**: RAPTOR engine for adaptive optimization
 - **Time-Series Data**: HELIX engine for temporal data patterns
 
 === Compute Optimization
@@ -836,7 +834,6 @@ src/
 |**SST** |⚠️ Partial |Row-based OLTP, bloom filters
 |**SWIFT** |⚠️ Partial |Ultra-low latency, superblock cache
 |**RAPTOR** |✅ Active |Adaptive workloads, matrix optimization
-|**PRISM** |⚠️ Partial |Memory optimization, multi-resolution
 |**HELIX** |⚠️ Partial |Time-series optimization, spatial-temporal
 |===
 

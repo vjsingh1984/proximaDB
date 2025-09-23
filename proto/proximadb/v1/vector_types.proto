@@ -30,10 +30,9 @@ enum StorageEngine {
   NOVA = 3;
   HELIX = 4;
   SWIFT = 5;
-  PRISM = 6;
-  RAPTOR = 7;
-  MMAP = 8;
-  HYBRID = 9;
+  RAPTOR = 6;
+  MMAP = 7;
+  HYBRID = 8;
 }
 
 enum IndexingAlgorithm {

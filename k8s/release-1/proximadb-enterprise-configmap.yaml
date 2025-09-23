@@ -80,7 +80,6 @@ data:
     nova_multi_tenant_zones = true
     swift_tenant_superblocks = true
     raptor_domain_adaptation = true
-    prism_tenant_isolation = true
     helix_temporal_domains = true
     
     [cache]

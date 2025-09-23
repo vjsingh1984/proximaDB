@@ -1,7 +1,7 @@
 //! Universal Distance Adapter Demo
 //!
 //! This example demonstrates how to use the Universal Distance Adapter
-//! with all storage engines (PRISM, NOVA, SWIFT, VIPER, SST) and shows
+//! with all storage engines (NOVA, SWIFT, VIPER, SST, RAPTOR, HELIX) and shows
 //! the PQ and INT8 optimized distance computations with progressive refinement.
 
 use proximadb::utils::Uuid;
@@ -94,7 +94,6 @@ async fn demo_basic_distance_computation(adapter: &UniversalDistanceAdapter) -> 
     let candidates = create_demo_candidates(100, 128);
 
     let engines = vec![
-        EngineType::PRISM,
         EngineType::NOVA,
         EngineType::SWIFT,
         EngineType::VIPER,
@@ -161,7 +160,7 @@ async fn demo_progressive_refinement(adapter: &UniversalDistanceAdapter) -> Resu
         enable_acceleration: true,
         quality_threshold: Some(0.85),
         collection_id: proximadb::utils::Uuid::new_v4(),
-        engine_type: EngineType::PRISM,
+        engine_type: EngineType::NOVA,
     };
 
     let result = adapter.compute_progressive_distance(request).await?;
@@ -270,7 +269,7 @@ async fn demo_storage_format_optimization(adapter: &UniversalDistanceAdapter) ->
             dimension, dataset_size, target_recall
         );
 
-        for engine_type in &[EngineType::PRISM, EngineType::NOVA, EngineType::VIPER] {
+        for engine_type in &[EngineType::NOVA, EngineType::VIPER] {
             let optimal_format = adapter
                 .get_optimal_format(engine_type, dimension, dataset_size, target_recall)
                 .await?;

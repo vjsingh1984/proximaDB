@@ -1,5 +1,5 @@
-// Benchmarks comparing all 7 storage engines with realistic embeddings
-// SST, VIPER, HELIX, RAPTOR, SWIFT, NOVA, PRISM
+// Benchmarks comparing all 6 storage engines with realistic embeddings
+// SST, VIPER, HELIX, RAPTOR, SWIFT, NOVA
 //
 // IMPORTANT: PATH MANAGEMENT EXPLANATION
 // =====================================
@@ -18,7 +18,6 @@
 // - VIPER: Wrong config import path + complex filesystem setup unnecessary
 // - SWIFT: Wrong constructor signature (takes 2 params, not 4)
 // - NOVA: Wrong constructor signature (takes 0 params, not 4)
-// - PRISM: Wrong constructor signature (takes Config, not string + config + filesystem)
 //
 // LESSON LEARNED:
 // - Factory methods (StorageEngineFactory::create_*()) are the correct approach
@@ -40,7 +39,6 @@
 // - NovaEngine (NOVA) - Correct
 // - SwiftEngine (SWIFT) - Correct
 // - RaptorEngine (RAPTOR) - Correct
-// - PrismEngine (PRISM) - Correct
 // - HelixEngine (HELIX) - Correct
 //
 // RECOMMENDATION: Rename SstEngine -> SstEngine for consistency
@@ -142,15 +140,6 @@ fn create_engine(engine_type: &str, dimension: usize) -> Arc<dyn UnifiedStorageE
             // LESSON: Factory methods are the right abstraction for engine creation
             StorageEngineFactory::create_raptor_default().unwrap()
         },
-        "prism" => {
-            // PRISM Engine: Progressive Retrieval through Indexed Storage Management
-            // APPROACH: Use async factory method
-            // WHY: Prism has async factory method that's cleaner than manual construction
-            // CONFUSION: Tried manual construction but factory is better
-            rt.block_on(async {
-                StorageEngineFactory::create_prism_async().await.unwrap()
-            })
-        },
         _ => StorageEngineFactory::create_sst().unwrap(),
     }
 }
@@ -168,7 +157,7 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
     for count in [1000, 5000].iter() {
         let vectors = generate_vectors(*count, 768, EmbeddingModel::Bert);
 
-        // Engine order: SST, VIPER, HELIX, RAPTOR, SWIFT, NOVA, PRISM
+        // Engine order: SST, VIPER, HELIX, RAPTOR, SWIFT, NOVA
         let engines = [
             ("SST", "sst"),
             ("VIPER", "viper"),
@@ -176,7 +165,6 @@ fn bench_all_engines_insertion(c: &mut Criterion) {
             ("RAPTOR", "raptor"),
             ("SWIFT", "swift"),
             ("NOVA", "nova"),
-            ("PRISM", "prism"),
         ];
 
         for (engine_name, engine_type) in engines.iter() {
@@ -372,7 +360,6 @@ fn bench_all_engines_search(c: &mut Criterion) {
                                 "raptor" => StorageEngineStrategy::Raptor,
                                 "swift" => StorageEngineStrategy::Swift,
                                 "nova" => StorageEngineStrategy::Nova,
-                                "prism" => StorageEngineStrategy::Prism,
                                 _ => StorageEngineStrategy::Sst,  // Default fallback
                             },
                             ..Default::default()

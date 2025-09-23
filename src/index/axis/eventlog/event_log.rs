@@ -58,7 +58,7 @@ pub enum StorageEngineType {
     NOVA,
     RAPTOR,
     SWIFT,
-    PRISM,
+    HELIX,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

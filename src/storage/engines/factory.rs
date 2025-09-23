@@ -4,7 +4,7 @@
 //!
 //! The StorageEngineFactory is the central point for creating storage engine
 //! instances in ProximaDB. It provides a unified interface for instantiating
-//! any of the 7 storage engines based on configuration or strategy.
+//! any of the 6 storage engines based on configuration or strategy.
 //!
 //! ## Design Pattern:
 //!
@@ -17,14 +17,13 @@
 //! |----------|--------|----------|--------|
 //! | Viper | VIPER | Analytics, batch | Columnar (Parquet) |
 //! | Lsm | SST | OLTP, real-time | Row-based (SSTable) |
-//! | Prism | PRISM | Metadata-first | Hybrid |
 //! | Hybrid | RAPTOR | Graph navigation | Matrix Trinity |
 //! | Swift | SWIFT | Fast traversal | Row-based optimized |
 //! | Nova | NOVA | Advanced analytics | Enhanced columnar |
 //! | Helix | HELIX | PCA+Hilbert | Dimension-reduced |
 
 use crate::storage::engines::impls::sst::error::SstError;
-use crate::storage::engines::impls::{prism, raptor};
+use crate::storage::engines::impls::raptor;
 use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -34,7 +33,7 @@ use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
 use super::impls::{
-    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstEngine,
+    nova::NovaEngine, raptor::RaptorEngine, sst::SstEngine,
     swift::SwiftEngine, viper::ViperEngine,
 };
 
@@ -106,7 +105,6 @@ impl StorageEngineFactory {
     /// - **Hybrid**: RAPTOR for mixed workloads
     /// - **Swift**: Optimized row-based for speed
     /// - **Nova**: Advanced columnar with zone maps
-    /// - **Prism**: Metadata-first for filtering
     /// - **Helix**: PCA+Hilbert for high dimensions
     pub fn create_from_strategy(
         strategy: StorageEngineStrategy,
@@ -114,7 +112,6 @@ impl StorageEngineFactory {
         match strategy {
             StorageEngineStrategy::Viper => Self::create_viper(),
             StorageEngineStrategy::Sst => Self::create_sst(),
-            StorageEngineStrategy::Prism => Self::create_prism(),
             StorageEngineStrategy::Hybrid => {
                 // RAPTOR uses hybrid strategy (row-aligned with columnar benefits)
                 info!("Creating RAPTOR engine for hybrid strategy");
@@ -263,34 +260,6 @@ impl StorageEngineFactory {
         Ok(Arc::new(engine))
     }
 
-
-    /// Create PRISM engine (Progressive Retrieval through Indexed Storage Management)
-    pub fn create_prism() -> Result<Arc<dyn UnifiedStorageEngine>> {
-        info!(
-            "Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine"
-        );
-
-        let runtime = tokio::runtime::Runtime::new()?;
-        let engine = runtime.block_on(async {
-            PrismEngine::new().await
-        })?;
-        Ok(Arc::new(engine))
-    }
-
-
-    /// Create PRISM engine (async version)
-    pub async fn create_prism_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
-        info!(
-            "Creating PRISM (Progressive Retrieval through Indexed Storage Management) storage engine"
-        );
-
-        // Use default configuration
-        let config = prism::engine::Config::default();
-
-        // Create PRISM engine with async initialization
-        let engine = PrismEngine::new().await?;
-        Ok(Arc::new(engine))
-    }
 
     /// Create a storage engine with metrics integration
     pub fn create_with_metrics(

@@ -33,10 +33,7 @@
 //! 4. **SWIFT (SwiftEngine)**: Hierarchical superblock architecture
 //!    - Best for: Fast traversal, hot data caching
 //!    
-//! 5. **PRISM (PrismEngine)**: Memory-optimized with tiered caching
-//!    - Best for: Low-latency, high-throughput scenarios
-//!    
-//! 6. **RAPTOR (RaptorEngine)**: Experimental parallel tiered storage
+//! 5. **RAPTOR (RaptorEngine)**: Experimental parallel tiered storage
 //!    - Best for: Research and development of new storage patterns
 //!
 //! ## Integration Points
@@ -111,7 +108,6 @@ impl Default for PerformanceTier {
 /// ### OLTP Workloads (Real-time):
 /// - **Sst**: Best for frequent updates, point queries
 /// - **Swift**: Optimized for low-latency traversal
-/// - **Prism**: Memory-first for ultra-low latency
 ///
 /// ### OLAP Workloads (Analytics):
 /// - **Viper**: Columnar with 5-10x compression
@@ -140,10 +136,6 @@ pub enum StorageEngineStrategy {
     /// SST: Sorted String Table storage engine
     /// Best for: OLTP, real-time updates, point queries, row-based access
     Sst,
-
-    /// PRISM: Progressive Retrieval through Indexed Storage Management (Memory-optimized)
-    /// Best for: Ultra-low latency, small working sets
-    Prism,
 
     /// SWIFT: Storage With Instant Fast Traversal (Hierarchical superblock architecture)
     /// Best for: Fast sequential access, range queries
@@ -701,22 +693,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 supports_tier_aware_scanning: true,
                 supports_consolidated_reading: false,
             },
-            StorageEngineStrategy::Prism => ScanCapabilities {
-                // PRISM capabilities - tree-based with FastLanes
-                supports_predicate_pushdown: false,
-                supports_column_projection: false,
-                supports_row_group_pruning: false,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: false,
-                supports_block_cache: true,
-                supports_range_scans: true,
-                supports_index_scans: true,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: false,
-                supports_tier_aware_scanning: true,
-                supports_consolidated_reading: false,
-            },
             _ => ScanCapabilities {
                 // Default minimal capabilities
                 supports_predicate_pushdown: false,
@@ -754,7 +730,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Viper => true, // VIPER supports collection-level ops
             StorageEngineStrategy::Sst => false,  // SST operates on entire tree
             StorageEngineStrategy::Hybrid => true, // Hybrid supports collection-level ops
-            StorageEngineStrategy::Prism => true, // Prism supports collection-level ops
             StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
             StorageEngineStrategy::Nova => true,  // NOVA supports collection-level ops
             StorageEngineStrategy::Raptor => true, // RAPTOR supports collection-level ops
@@ -771,7 +746,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Viper => true, // VIPER has atomic staging operations
             StorageEngineStrategy::Sst => false,  // SST has eventual consistency
             StorageEngineStrategy::Hybrid => true, // Hybrid provides atomic guarantees
-            StorageEngineStrategy::Prism => true, // Prism provides atomic guarantees
             StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
             StorageEngineStrategy::Nova => true,  // NOVA provides atomic guarantees
             StorageEngineStrategy::Raptor => false, // RAPTOR uses eventual consistency
@@ -1073,11 +1047,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 100 * 1024 * 1024)
             }
-            StorageEngineStrategy::Prism => {
-                // Prism: use LSM heuristics
-                let stats = self.get_engine_stats().await?;
-                Ok(stats.memory_usage_bytes > 64 * 1024 * 1024)
-            }
             StorageEngineStrategy::Swift => {
                 // SWIFT: use SST-like heuristics
                 let stats = self.get_engine_stats().await?;
@@ -1128,16 +1097,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Hybrid => {
                 // Hybrid: check both strategies
                 self.should_flush(collection_id).await
-            }
-            StorageEngineStrategy::Prism => {
-                // Prism: use LSM compaction strategy
-                let stats = self.get_engine_stats().await?;
-                Ok(stats
-                    .engine_specific
-                    .get("index_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0)
-                    > 10)
             }
             StorageEngineStrategy::Swift => {
                 // SWIFT: compact based on file count
@@ -1726,7 +1685,6 @@ impl StorageQueryContext {
                 .map(|c| match c.storage_engine {
                     0 => StorageEngineStrategy::Viper, // VIPER
                     1 => StorageEngineStrategy::Sst,   // SST
-                    2 => StorageEngineStrategy::Prism, // PRISM
                     3 => StorageEngineStrategy::Nova,   // NOVA
                     4 => StorageEngineStrategy::Swift,   // SWIFT
                     5 => StorageEngineStrategy::Raptor,   // RAPTOR

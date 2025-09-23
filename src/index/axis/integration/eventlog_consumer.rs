@@ -700,7 +700,7 @@ impl AxisEventLogConsumer {
             | StorageEngineType::NOVA
             | StorageEngineType::RAPTOR
             | StorageEngineType::SWIFT
-            | StorageEngineType::PRISM => {
+            | StorageEngineType::HELIX => {
                 debug!(
                     "[AXIS Consumer] Using unified reader for {:?} engine with zero-copy optimization",
                     storage_engine
@@ -1092,81 +1092,6 @@ impl AxisEventLogConsumer {
                                 file_duration.as_secs_f64() * 1000.0
                             );
                         }
-                        all_records
-                    }
-                    StorageEngineType::PRISM => {
-                        // PRISM is metadata-first and memory-optimized
-                        // It uses FastLanes serialization with progressive quantization levels
-                        debug!(
-                            "[AXIS Consumer] Using PRISM reader for metadata-first memory format"
-                        );
-
-                        // PRISM stores data in memory with multiple resolution levels
-                        // For AXIS indexing, we need to read the full-precision vectors
-                        use crate::storage::engines::impls::prism::fastlanes_serializer::PrismFastLanesSerializer;
-
-                        let mut all_records = Vec::new();
-
-                        for (idx, file_path) in files.iter().enumerate() {
-                            debug!(
-                                "[AXIS Consumer] Reading PRISM memory-serialized file {}/{}: {}",
-                                idx + 1,
-                                files.len(),
-                                file_path
-                            );
-                            let file_start = std::time::Instant::now();
-
-                            // Read the serialized PRISM data
-                            let fs = filesystem_factory.get_filesystem(file_path)?;
-                            let file_data = fs.read(file_path).await.map_err(|e| {
-                                error!(
-                                    "[AXIS Consumer] Failed to read PRISM file {}: {}",
-                                    file_path, e
-                                );
-                                e
-                            })?;
-
-                            // PRISM uses FastLanes progressive serialization
-                            // The data contains multiple resolution levels (Binary, INT8, FP32)
-                            use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
-                            let serializer =
-                                PrismFastLanesSerializer::new(StorageQuantizationConfig::default());
-
-                            // Deserialize the progressive format
-                            // For AXIS indexing, we typically want the highest resolution (FP32)
-                            let records = match extraction_mode {
-                                ExtractionMode::Fp32Only => {
-                                    // Extract FP32 resolution level
-                                    let (records, _metadata) =
-                                        serializer.deserialize_resolution(&file_data).await?;
-                                    records
-                                }
-                                ExtractionMode::QuantizedOnly => {
-                                    // Extract quantized resolution level
-                                    let (records, _metadata) =
-                                        serializer.deserialize_resolution(&file_data).await?;
-                                    records
-                                }
-                                ExtractionMode::Both | ExtractionMode::Auto => {
-                                    // Extract all available resolution levels
-                                    let (records, _metadata) =
-                                        serializer.deserialize_resolution(&file_data).await?;
-                                    records
-                                }
-                            };
-
-                            let record_count = records.len();
-                            all_records.extend(records);
-
-                            let file_duration = file_start.elapsed();
-                            debug!(
-                                "[AXIS Consumer] Read {} records from PRISM file {} in {:.2}ms",
-                                record_count,
-                                file_path,
-                                file_duration.as_secs_f64() * 1000.0
-                            );
-                        }
-
                         all_records
                     }
                     _ => {

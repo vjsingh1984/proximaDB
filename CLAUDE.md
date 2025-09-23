@@ -383,7 +383,7 @@ ProximaDB is a unified intelligence platform combining vector search, graph rela
 ### Core Architecture Layers
 
 1. **Storage Layer** (`src/storage/`)
-   - **Multiple Storage Engines**: SST, VIPER, NOVA, SWIFT, RAPTOR, PRISM, HELIX
+   - **Multiple Storage Engines**: SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX
    - **Unified Storage Interface**: All engines implement `UnifiedStorageEngine` trait
    - **UnifiedCachingFilesystem**: Consolidated filesystem with integrated caching for Local, S3, Azure, GCS
    - **Write-Ahead Log (WAL)**: Located in `src/storage/persistence/write_ahead_log/`
@@ -431,10 +431,6 @@ ProximaDB is a unified intelligence platform combining vector search, graph rela
 - **RAPTOR Engine**: Adaptive row-group management with PxK optimization
   - Best for: Dynamic workloads
   - Location: `src/storage/engines/impls/raptor/`
-
-- **PRISM Engine**: Memory-optimized with multi-resolution quantization
-  - Best for: Memory-constrained environments
-  - Location: `src/storage/engines/impls/prism/`
 
 - **HELIX Engine**: Spiral-pattern storage for time-series data
   - Best for: Temporal data patterns
@@ -540,7 +536,7 @@ The caching system has been recently unified (`src/storage/cache/`):
    - Lifetime errors: Review async/await usage and reference management
    - `cannot find type X in this scope`: Check module imports and feature flags
    - `trait bound not satisfied`: Verify trait implementations and generic constraints
-4. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, SST, SWIFT, RAPTOR, PRISM, HELIX)
+4. **Fix by Engine**: Group fixes by storage engine (NOVA, VIPER, SST, SWIFT, RAPTOR, HELIX)
 5. **Quantization Issues**: All engines should use `compute::quantization::unified`
 6. **Filesystem Issues**: All engines should use `UnifiedCachingFilesystem`
 7. **Proto Types**: Use internal types, proto conversion only at service boundaries
@@ -767,7 +763,7 @@ python example_v1_client.py
 ### Key Recent Changes
 - Test infrastructure improvements and systematic error resolution
 - Benchmark suite optimization with consistent Criterion settings
-- Storage engine stability fixes across all 7 engines
+- Storage engine stability fixes across all 6 engines
 - Documentation compliance with CLAUDE.md specifications
 - Unified cache system implementation in `src/storage/cache/`
 

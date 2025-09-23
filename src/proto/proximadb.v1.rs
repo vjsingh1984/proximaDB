@@ -2801,10 +2801,9 @@ pub enum StorageEngine {
     Nova = 3,
     Helix = 4,
     Swift = 5,
-    Prism = 6,
-    Raptor = 7,
-    Mmap = 8,
-    Hybrid = 9,
+    Raptor = 6,
+    Mmap = 7,
+    Hybrid = 8,
 }
 impl StorageEngine {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -2819,7 +2818,6 @@ impl StorageEngine {
             StorageEngine::Nova => "NOVA",
             StorageEngine::Helix => "HELIX",
             StorageEngine::Swift => "SWIFT",
-            StorageEngine::Prism => "PRISM",
             StorageEngine::Raptor => "RAPTOR",
             StorageEngine::Mmap => "MMAP",
             StorageEngine::Hybrid => "HYBRID",
@@ -2834,7 +2832,6 @@ impl StorageEngine {
             "NOVA" => Some(Self::Nova),
             "HELIX" => Some(Self::Helix),
             "SWIFT" => Some(Self::Swift),
-            "PRISM" => Some(Self::Prism),
             "RAPTOR" => Some(Self::Raptor),
             "MMAP" => Some(Self::Mmap),
             "HYBRID" => Some(Self::Hybrid),

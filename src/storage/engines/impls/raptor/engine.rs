@@ -1545,7 +1545,10 @@ impl UnifiedStorageEngine for RaptorEngine {
 
         let mut writer = self.writer.write().await;
 
-        // First flush any pending row pages and get count
+        // Write the vectors from params to the writer first
+        writer.write_vectors(&params.vector_records).await?;
+
+        // Then flush any pending row pages and get count
         let vectors_flushed = writer.flush().await?;
 
         // Then finalize the file to write footer and metadata

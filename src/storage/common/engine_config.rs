@@ -35,7 +35,7 @@ pub enum EngineSpecificConfig {
     VIPER(ViperCompactionConfig),
     NOVA(NovaCompactionConfig),
     SWIFT(SwiftCompactionConfig),
-    PRISM(PrismCompactionConfig),
+    HELIX(HelixCompactionConfig),
     RAPTOR(RaptorCompactionConfig),
 }
 
@@ -149,7 +149,7 @@ impl Default for SwiftCompactionConfig {
 
 /// PRISM engine compaction configuration
 #[derive(Debug, Clone)]
-pub struct PrismCompactionConfig {
+pub struct HelixCompactionConfig {
     /// Memory optimization level
     pub memory_optimization_level: String,
 
@@ -163,7 +163,7 @@ pub struct PrismCompactionConfig {
     pub cache_warmup: bool,
 }
 
-impl Default for PrismCompactionConfig {
+impl Default for HelixCompactionConfig {
     fn default() -> Self {
         Self {
             memory_optimization_level: "aggressive".to_string(),
@@ -217,8 +217,8 @@ impl EngineCompactionConfig {
             StorageEngineType::SWIFT => {
                 EngineSpecificConfig::SWIFT(SwiftCompactionConfig::default())
             }
-            StorageEngineType::PRISM => {
-                EngineSpecificConfig::PRISM(PrismCompactionConfig::default())
+            StorageEngineType::HELIX => {
+                EngineSpecificConfig::HELIX(HelixCompactionConfig::default())
             }
             StorageEngineType::RAPTOR => {
                 EngineSpecificConfig::RAPTOR(RaptorCompactionConfig::default())
@@ -238,7 +238,7 @@ impl EngineCompactionConfig {
             EngineSpecificConfig::VIPER(_) => self.base.l0_file_threshold / 2, // More aggressive for columnar
             EngineSpecificConfig::NOVA(_) => self.base.l0_file_threshold / 2,
             EngineSpecificConfig::SWIFT(_) => self.base.l0_file_threshold,
-            EngineSpecificConfig::PRISM(_) => self.base.l0_file_threshold * 2, // Less aggressive for memory-optimized
+            EngineSpecificConfig::HELIX(_) => self.base.l0_file_threshold * 2, // Less aggressive for memory-optimized
             EngineSpecificConfig::RAPTOR(_) => self.base.l0_file_threshold,
         }
     }
@@ -252,7 +252,7 @@ impl EngineCompactionConfig {
             EngineSpecificConfig::VIPER(_) => self.base.l0_size_threshold_mb,
             EngineSpecificConfig::NOVA(_) => self.base.l0_size_threshold_mb * 2, // Larger for streaming
             EngineSpecificConfig::SWIFT(config) => config.superblock_size_mb,
-            EngineSpecificConfig::PRISM(_) => self.base.l0_size_threshold_mb / 2, // Smaller for memory efficiency
+            EngineSpecificConfig::HELIX(_) => self.base.l0_size_threshold_mb / 2, // Smaller for memory efficiency
             EngineSpecificConfig::RAPTOR(_) => self.base.l0_size_threshold_mb,
         }
     }

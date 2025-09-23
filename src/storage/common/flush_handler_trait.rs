@@ -58,7 +58,7 @@ impl FlushHandlerFactory {
             }
             super::compaction_utils::StorageEngineType::NOVA => Box::new(NovaFlushHandler::new()),
             super::compaction_utils::StorageEngineType::SWIFT => Box::new(SwiftFlushHandler::new()),
-            super::compaction_utils::StorageEngineType::PRISM => Box::new(PrismFlushHandler::new()),
+            super::compaction_utils::StorageEngineType::HELIX => Box::new(HelixFlushHandler::new()),
             super::compaction_utils::StorageEngineType::RAPTOR => {
                 Box::new(RaptorFlushHandler::new())
             }
@@ -245,19 +245,19 @@ impl FlushHandler for SwiftFlushHandler {
     }
 }
 
-// Prism engine handler
-struct PrismFlushHandler;
+// Helix engine handler
+struct HelixFlushHandler;
 
-impl PrismFlushHandler {
+impl HelixFlushHandler {
     fn new() -> Self {
         Self
     }
 }
 
 #[async_trait]
-impl FlushHandler for PrismFlushHandler {
+impl FlushHandler for HelixFlushHandler {
     async fn can_compact_files(&self, _collection_id: &str, _files: &[String]) -> Result<bool> {
-        // Prism uses memory-optimized LSM tree
+        // Helix uses memory-optimized LSM tree
         // For now, all files are compactable
         Ok(true)
     }
@@ -268,7 +268,7 @@ impl FlushHandler for PrismFlushHandler {
         files: &[String],
         output_path: &str,
     ) -> Result<()> {
-        // Implement Prism-specific compaction using unified framework
+        // Implement Helix-specific compaction using unified framework
         let compaction_params = crate::storage::traits::CompactionParameters {
             collection_id: Some(collection_id.to_string()),
             force: false,

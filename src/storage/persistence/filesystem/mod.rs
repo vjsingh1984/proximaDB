@@ -968,7 +968,6 @@ impl FilesystemFactory {
                 "raptor" => Arc::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
                 "nova" => Arc::new(crate::storage::engines::impls::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
                 "swift" => Arc::new(crate::storage::engines::impls::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
-                "prism" => Arc::new(crate::storage::engines::impls::prism::unified_metadata_serializer::PrismUnifiedMetadataSerializer::new()),
                 "helix" => Arc::new(crate::storage::engines::impls::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
                 _ => {
                     // Default serializer for other engines

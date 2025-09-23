@@ -214,19 +214,6 @@ fn bench_all_engine_creation(c: &mut Criterion) {
         })
     });
 
-    // PRISM Engine - Memory-optimized (requires async, handled separately)
-    // Note: PRISM requires async initialization, so we create it once outside the iter
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let prism_engine = runtime.block_on(async {
-        StorageEngineFactory::create_prism_async().await.unwrap()
-    });
-    group.bench_function("prism", |b| {
-        b.iter(|| {
-            // Just measure Arc clone cost since creation requires async
-            let engine = Arc::clone(&prism_engine);
-            black_box(engine)
-        })
-    });
 
     group.finish();
 }
@@ -260,9 +247,6 @@ fn bench_engine_flush_with_compression(c: &mut Criterion) {
 
     // Test each engine
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let prism_engine = runtime.block_on(async {
-        StorageEngineFactory::create_prism_async().await.unwrap()
-    });
 
     let engines = vec![
         ("sst", StorageEngineFactory::create_sst().unwrap()),
@@ -271,7 +255,6 @@ fn bench_engine_flush_with_compression(c: &mut Criterion) {
         ("swift", StorageEngineFactory::create_swift().unwrap()),
         ("raptor", StorageEngineFactory::create_raptor_default().unwrap()),
         ("helix", StorageEngineFactory::create_helix().unwrap()),
-        ("prism", prism_engine),
     ];
 
     // Summary table header
@@ -311,7 +294,6 @@ fn bench_engine_flush_with_compression(c: &mut Criterion) {
                                     "swift" => StorageEngine::Swift as i32,
                                     "raptor" => StorageEngine::Raptor as i32,
                                     "helix" => StorageEngine::Helix as i32,
-                                    "prism" => StorageEngine::Prism as i32,
                                     _ => StorageEngine::Sst as i32,
                                 },
                                 quantization: comp_config.clone(),
@@ -340,7 +322,6 @@ fn bench_engine_flush_with_compression(c: &mut Criterion) {
                                     "swift" => StorageEngine::Swift as i32,
                                     "raptor" => StorageEngine::Raptor as i32,
                                     "helix" => StorageEngine::Helix as i32,
-                                    "prism" => StorageEngine::Prism as i32,
                                     _ => StorageEngine::Sst as i32,
                                 },
                                 engine_config: HashMap::new(),
@@ -395,11 +376,7 @@ fn bench_engine_memory_efficiency(c: &mut Criterion) {
 
     let batch_sizes = vec![100, 500, 1000, 5000];
 
-    // Create PRISM engine once with async initialization
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let prism_engine = runtime.block_on(async {
-        StorageEngineFactory::create_prism_async().await.unwrap()
-    });
 
     for size in batch_sizes {
         let vectors = Arc::new(generate_vectors(size, 768));
@@ -412,7 +389,6 @@ fn bench_engine_memory_efficiency(c: &mut Criterion) {
             ("swift", StorageEngineFactory::create_swift().unwrap()),
             ("raptor", StorageEngineFactory::create_raptor_default().unwrap()),
             ("helix", StorageEngineFactory::create_helix().unwrap()),
-            ("prism", Arc::clone(&prism_engine)),
         ];
 
         for (name, engine) in engines {
@@ -457,10 +433,6 @@ fn bench_engine_query_performance(c: &mut Criterion) {
     // Create runtime for async operations
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Create PRISM engine with async initialization
-    let prism_engine = runtime.block_on(async {
-        StorageEngineFactory::create_prism_async().await.unwrap()
-    });
 
     let engines = vec![
         ("sst", StorageEngineFactory::create_sst().unwrap()),
@@ -469,7 +441,6 @@ fn bench_engine_query_performance(c: &mut Criterion) {
         ("swift", StorageEngineFactory::create_swift().unwrap()),
         ("raptor", StorageEngineFactory::create_raptor_default().unwrap()),
         ("helix", StorageEngineFactory::create_helix().unwrap()),
-        ("prism", prism_engine),
     ];
 
     for (name, engine) in engines {

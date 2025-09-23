@@ -180,7 +180,6 @@ fn bench_compression_with_search(c: &mut Criterion) {
         ("nova", StorageEngineFactory::create_nova().unwrap()),
         ("swift", StorageEngineFactory::create_swift().unwrap()),
         ("raptor", StorageEngineFactory::create_raptor().unwrap()),
-        ("prism", StorageEngineFactory::create_prism().unwrap()),
         ("helix", StorageEngineFactory::create_helix().unwrap()),
     ];
 
@@ -646,7 +645,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
         let base_path = get_base_path();
         let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
         // Remove all test directories
-        for engine in ["sst", "viper", "nova", "swift", "raptor", "prism", "helix"] {
+        for engine in ["sst", "viper", "nova", "swift", "raptor", "helix"] {
             for compression in ["none", "zstd", "lz4", "snappy"] {
                 let test_path = format!("{}/{}_{}", base_path, engine, compression);
                 let _ = fs.remove_dir_all(&test_path).await;
@@ -712,12 +711,6 @@ fn bench_engine_lifecycle(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("prism_create", |b| {
-        b.iter(|| {
-            let engine = StorageEngineFactory::create_prism();
-            black_box(engine)
-        })
-    });
 
     group.finish();
 }
@@ -731,7 +724,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
     eprintln!("\n🔍 LARGE-SCALE SEARCH BENCHMARK");
     eprintln!("   Testing search performance at different scales with compression");
     eprintln!("   Collection ID Format: {{engine}}-{{compression}}-{{batchsize}}");
-    eprintln!("   Engines: sst, viper, nova, swift, raptor, prism, helix");
+    eprintln!("   Engines: sst, viper, nova, swift, raptor, helix");
     eprintln!("   Compressions: none, zstd, lz4, snappy, gzip");
     eprintln!("   Batch Sizes: 250, 1000, 5000");
     eprintln!("   Total Combinations: 105 (7 engines × 5 compressions × 3 batch sizes)");
@@ -772,8 +765,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
             ("nova", StorageEngineFactory::create_nova().unwrap()),
             ("swift", StorageEngineFactory::create_swift().unwrap()),
             ("raptor", StorageEngineFactory::create_raptor().unwrap()),
-            ("prism", StorageEngineFactory::create_prism().unwrap()),
-            ("helix", StorageEngineFactory::create_helix().unwrap()),
+                ("helix", StorageEngineFactory::create_helix().unwrap()),
         ];
 
         for (engine_name, engine) in engines {
@@ -899,7 +891,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
         let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
 
         // Clean up all {engine}-{compression}-{batchsize} directories
-        for engine in ["sst", "viper", "nova", "swift", "raptor", "prism", "helix"] {
+        for engine in ["sst", "viper", "nova", "swift", "raptor", "helix"] {
             for compression in ["none", "zstd", "lz4", "snappy", "gzip"] {
                 for batch_size in ["250", "1000", "5000"] {
                     let test_path = format!("{}/{}-{}-{}", base_path, engine, compression, batch_size);

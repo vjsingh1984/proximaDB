@@ -62,8 +62,7 @@ graph TB
             N[SWIFT Engine<br/>Ultra-low Latency]
             O[NOVA Engine<br/>Mixed Workloads]
             P[RAPTOR Engine<br/>Dynamic Optimization]
-            Q[PRISM Engine<br/>Memory Efficient]
-            R[HELIX Engine<br/>Time-series Data]
+            Q[HELIX Engine<br/>Time-series Data]
         end
 
         subgraph INFRA["UNIFIED INFRASTRUCTURE"]
@@ -392,10 +391,6 @@ quantization = "auto"   # Automatic compression
 |**RAPTOR**
 |Dynamic workloads
 |Adaptive optimization
-
-|**PRISM**
-|Memory-constrained
-|High compression, efficient
 
 |**HELIX**
 |Time-series data

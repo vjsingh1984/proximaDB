@@ -608,10 +608,10 @@ impl NovaEngine {
         // Set metadata collector
         writer.set_metadata_collector(Box::new(nova_collector));
 
-        // Convert VectorRecords to Arrow RecordBatches and write
+        // Write VectorRecords directly - StreamingParquetWriter handles conversion
         let batch_size = 10_000;
         for chunk in params.vector_records.chunks(batch_size) {
-            let batch = self.vectors_to_record_batch(chunk, &nova_file.schema)?;
+            // No conversion needed - StreamingParquetWriter accepts VectorRecords directly
             writer.write_batch(chunk).await?;
         }
 
@@ -1190,9 +1190,9 @@ impl UnifiedStorageEngine for NovaEngine {
             // Get file size for metrics
             bytes_read += file_entry.metadata.size;
 
-            // Convert to batches and write
+            // Write directly without conversion - StreamingParquetWriter handles everything
             for chunk in vectors.chunks(20_000) {
-                let batch = self.vectors_to_record_batch(chunk, &schema)?;
+                // No conversion needed - StreamingParquetWriter accepts VectorRecords directly
                 writer.write_batch(chunk).await?;
             }
         }

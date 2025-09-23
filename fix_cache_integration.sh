@@ -4,7 +4,7 @@
 echo "Fixing cache integration in all storage engines..."
 
 # List of engines to fix
-engines=("viper" "nova" "swift" "raptor" "prism" "helix")
+engines=("viper" "nova" "swift" "raptor" "helix")
 
 for engine in "${engines[@]}"; do
     engine_file="src/storage/engines/impls/$engine/engine.rs"
