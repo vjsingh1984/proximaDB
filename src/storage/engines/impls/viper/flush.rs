@@ -685,7 +685,7 @@ impl Flush {
                 enable_simd_acceleration: true,
                 enable_binary: false,
                 enable_int8: is_quantized,
-                enable_pq: is_quantized,
+                enable_pq: false, // DISABLED: PQ codebook storage causes 15-25x file bloat
                 pq_segments: 32,
                 pq_bits: 8,
                 pq_codebooks: 256,
