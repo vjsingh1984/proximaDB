@@ -2390,29 +2390,43 @@ fn benchmark_encoding_statistical_with_results(
         metadata_algorithm: Some(CompressionAlgorithm::None),  // Add missing field
     };
 
-    // ============ COLUMNAR ENCODING (TransposeFieldEncodedAndCompressedVector) ============
+    // ============ TRANSPOSE FIELD-COMPRESSED (Field-Level Compression) ============
     compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
-    let columnar_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+    let transpose_field_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
 
-    // Measure combined serialization + compression + encoding time
-    let columnar_encode_times = measure_function(
-        || columnar_block.serialize_with_config(&compression_config).unwrap(),
+    let transpose_field_encode_times = measure_function(
+        || transpose_field_block.serialize_with_config(&compression_config).unwrap(),
+        sample_size,
+    );
+    let transpose_field_serialized = transpose_field_block.serialize_with_config(&compression_config)?;
+    let transpose_field_decode_times = measure_function(
+        || FastLanesDataBlock::deserialize(&transpose_field_serialized).unwrap(),
         sample_size,
     );
 
-    // Get serialized data for size measurement
-    let columnar_serialized = columnar_block.serialize_with_config(&compression_config)?;
+    println!("  \x1b[36m[WRITE]\x1b[0m TransposeFieldEncoded:  {:.2} ± {:.2} ms",
+        transpose_field_encode_times.0 / 1000.0, transpose_field_encode_times.1 / 1000.0);
+    println!("  \x1b[35m[READ]\x1b[0m  TransposeFieldEncoded:  {:.2} ± {:.2} ms",
+        transpose_field_decode_times.0 / 1000.0, transpose_field_decode_times.1 / 1000.0);
 
-    // Measure columnar deserialization (decompression + decoding)
-    let columnar_decode_times = measure_function(
-        || FastLanesDataBlock::deserialize(&columnar_serialized).unwrap(),
+    // ============ TRANSPOSE BLOCK-COMPRESSED (Block-Level Compression) ============
+    compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector;
+    let transpose_block_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+
+    let transpose_block_encode_times = measure_function(
+        || transpose_block_block.serialize_with_config(&compression_config).unwrap(),
+        sample_size,
+    );
+    let transpose_block_serialized = transpose_block_block.serialize_with_config(&compression_config)?;
+    let transpose_block_decode_times = measure_function(
+        || FastLanesDataBlock::deserialize(&transpose_block_serialized).unwrap(),
         sample_size,
     );
 
-    println!("  \x1b[36m[WRITE]\x1b[0m Columnar encoding:  {:.2} ± {:.2} ms",
-        columnar_encode_times.0 / 1000.0, columnar_encode_times.1 / 1000.0);
-    println!("  \x1b[35m[READ]\x1b[0m  Columnar decoding:  {:.2} ± {:.2} ms",
-        columnar_decode_times.0 / 1000.0, columnar_decode_times.1 / 1000.0);
+    println!("  \x1b[36m[WRITE]\x1b[0m TransposeBlockCompressed:  {:.2} ± {:.2} ms",
+        transpose_block_encode_times.0 / 1000.0, transpose_block_encode_times.1 / 1000.0);
+    println!("  \x1b[35m[READ]\x1b[0m  TransposeBlockCompressed:  {:.2} ± {:.2} ms",
+        transpose_block_decode_times.0 / 1000.0, transpose_block_decode_times.1 / 1000.0);
 
     // ============ ROW-WISE ENCODING (FullVector) ============
     compression_config.vector_layout = VectorEncodingLayout::FullVector;
@@ -2438,73 +2452,111 @@ fn benchmark_encoding_statistical_with_results(
     println!("  \x1b[35m[READ]\x1b[0m  Row-wise decoding:  {:.2} ± {:.2} ms",
         rowwise_decode_times.0 / 1000.0, rowwise_decode_times.1 / 1000.0);
 
-    // ============ GROUPED VECTOR ENCODING (for high dimensions) ============
-    let grouped_encode_times;
-    let grouped_decode_times;
-    let grouped_serialized;
+    // ============ GROUPED FIELD-COMPRESSED (Field-Level Compression) ============
+    let grouped_field_encode_times;
+    let grouped_field_decode_times;
+    let grouped_field_serialized;
 
     if dimension > 128 {
         compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
-        let grouped_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+        let grouped_field_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
 
-        // Measure combined serialization + compression + encoding time
-        grouped_encode_times = measure_function(
-            || grouped_block.serialize_with_config(&compression_config).unwrap(),
+        grouped_field_encode_times = measure_function(
+            || grouped_field_block.serialize_with_config(&compression_config).unwrap(),
+            sample_size,
+        );
+        grouped_field_serialized = grouped_field_block.serialize_with_config(&compression_config)?;
+        grouped_field_decode_times = measure_function(
+            || FastLanesDataBlock::deserialize(&grouped_field_serialized).unwrap(),
             sample_size,
         );
 
-        // Get serialized data for size measurement
-        grouped_serialized = grouped_block.serialize_with_config(&compression_config)?;
-
-        // Measure grouped deserialization (decompression + decoding)
-        grouped_decode_times = measure_function(
-            || FastLanesDataBlock::deserialize(&grouped_serialized).unwrap(),
-            sample_size,
-        );
-
-        println!("  \x1b[36m[WRITE]\x1b[0m Grouped encoding:   {:.2} ± {:.2} ms",
-            grouped_encode_times.0 / 1000.0, grouped_encode_times.1 / 1000.0);
-        println!("  \x1b[35m[READ]\x1b[0m  Grouped decoding:   {:.2} ± {:.2} ms",
-            grouped_decode_times.0 / 1000.0, grouped_decode_times.1 / 1000.0);
+        println!("  \x1b[36m[WRITE]\x1b[0m GroupedFieldEncoded:   {:.2} ± {:.2} ms",
+            grouped_field_encode_times.0 / 1000.0, grouped_field_encode_times.1 / 1000.0);
+        println!("  \x1b[35m[READ]\x1b[0m  GroupedFieldEncoded:   {:.2} ± {:.2} ms",
+            grouped_field_decode_times.0 / 1000.0, grouped_field_decode_times.1 / 1000.0);
     } else {
-        // For low dimensions, grouped encoding doesn't apply
-        grouped_encode_times = (0.0, 0.0);
-        grouped_decode_times = (0.0, 0.0);
-        grouped_serialized = Vec::new();
+        grouped_field_encode_times = (0.0, 0.0);
+        grouped_field_decode_times = (0.0, 0.0);
+        grouped_field_serialized = Vec::new();
+    }
+
+    // ============ GROUPED BLOCK-COMPRESSED (Block-Level Compression) ============
+    let grouped_block_encode_times;
+    let grouped_block_decode_times;
+    let grouped_block_serialized;
+
+    if dimension > 128 {
+        compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector;
+        let grouped_block_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+
+        grouped_block_encode_times = measure_function(
+            || grouped_block_block.serialize_with_config(&compression_config).unwrap(),
+            sample_size,
+        );
+        grouped_block_serialized = grouped_block_block.serialize_with_config(&compression_config)?;
+        grouped_block_decode_times = measure_function(
+            || FastLanesDataBlock::deserialize(&grouped_block_serialized).unwrap(),
+            sample_size,
+        );
+
+        println!("  \x1b[36m[WRITE]\x1b[0m GroupedBlockCompressed: {:.2} ± {:.2} ms",
+            grouped_block_encode_times.0 / 1000.0, grouped_block_encode_times.1 / 1000.0);
+        println!("  \x1b[35m[READ]\x1b[0m  GroupedBlockCompressed: {:.2} ± {:.2} ms",
+            grouped_block_decode_times.0 / 1000.0, grouped_block_decode_times.1 / 1000.0);
+    } else {
+        grouped_block_encode_times = (0.0, 0.0);
+        grouped_block_decode_times = (0.0, 0.0);
+        grouped_block_serialized = Vec::new();
     }
 
     // ============ SUMMARY ============
     // Calculate sizes and compression ratios
     let original_size = vector_count * dimension * std::mem::size_of::<f32>();
-    let columnar_size = columnar_serialized.len();
+
+    let transpose_field_size = transpose_field_serialized.len();
+    let transpose_block_size = transpose_block_serialized.len();
     let rowwise_size = rowwise_serialized.len();
-    let grouped_size = if !grouped_serialized.is_empty() { grouped_serialized.len() } else { 0 };
+    let grouped_field_size = if !grouped_field_serialized.is_empty() { grouped_field_serialized.len() } else { 0 };
+    let grouped_block_size = if !grouped_block_serialized.is_empty() { grouped_block_serialized.len() } else { 0 };
 
-    let columnar_ratio = original_size as f64 / columnar_size as f64;
+    let transpose_field_ratio = original_size as f64 / transpose_field_size as f64;
+    let transpose_block_ratio = original_size as f64 / transpose_block_size as f64;
     let rowwise_ratio = original_size as f64 / rowwise_size as f64;
-    let grouped_ratio = if grouped_size > 0 { original_size as f64 / grouped_size as f64 } else { 0.0 };
+    let grouped_field_ratio = if grouped_field_size > 0 { original_size as f64 / grouped_field_size as f64 } else { 0.0 };
+    let grouped_block_ratio = if grouped_block_size > 0 { original_size as f64 / grouped_block_size as f64 } else { 0.0 };
 
-    let columnar_size_mb = columnar_size as f64 / (1024.0 * 1024.0);
+    let transpose_field_size_mb = transpose_field_size as f64 / (1024.0 * 1024.0);
+    let transpose_block_size_mb = transpose_block_size as f64 / (1024.0 * 1024.0);
     let rowwise_size_mb = rowwise_size as f64 / (1024.0 * 1024.0);
-    let grouped_size_mb = grouped_size as f64 / (1024.0 * 1024.0);
+    let grouped_field_size_mb = grouped_field_size as f64 / (1024.0 * 1024.0);
+    let grouped_block_size_mb = grouped_block_size as f64 / (1024.0 * 1024.0);
 
     // ============ RESULTS TABLE ============
     println!("\n  ┌──────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
     println!("  │ Strategy             │ Encode (ms)  │ Decode (ms)  │ Size (MB)    │ Compression  │");
     println!("  ├──────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
     println!("  │ TransposeFieldEncoded│ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
-        columnar_encode_times.0 / 1000.0, columnar_encode_times.1 / 1000.0,
-        columnar_decode_times.0 / 1000.0, columnar_decode_times.1 / 1000.0,
-        columnar_size_mb, columnar_ratio);
+        transpose_field_encode_times.0 / 1000.0, transpose_field_encode_times.1 / 1000.0,
+        transpose_field_decode_times.0 / 1000.0, transpose_field_decode_times.1 / 1000.0,
+        transpose_field_size_mb, transpose_field_ratio);
+    println!("  │ TransposeBlockCompr. │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+        transpose_block_encode_times.0 / 1000.0, transpose_block_encode_times.1 / 1000.0,
+        transpose_block_decode_times.0 / 1000.0, transpose_block_decode_times.1 / 1000.0,
+        transpose_block_size_mb, transpose_block_ratio);
     println!("  │ FullVector           │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
         rowwise_encode_times.0 / 1000.0, rowwise_encode_times.1 / 1000.0,
         rowwise_decode_times.0 / 1000.0, rowwise_decode_times.1 / 1000.0,
         rowwise_size_mb, rowwise_ratio);
-    if grouped_size > 0 {
+    if grouped_field_size > 0 {
         println!("  │ GroupedFieldEncoded  │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
-            grouped_encode_times.0 / 1000.0, grouped_encode_times.1 / 1000.0,
-            grouped_decode_times.0 / 1000.0, grouped_decode_times.1 / 1000.0,
-            grouped_size_mb, grouped_ratio);
+            grouped_field_encode_times.0 / 1000.0, grouped_field_encode_times.1 / 1000.0,
+            grouped_field_decode_times.0 / 1000.0, grouped_field_decode_times.1 / 1000.0,
+            grouped_field_size_mb, grouped_field_ratio);
+        println!("  │ GroupedBlockCompr.   │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+            grouped_block_encode_times.0 / 1000.0, grouped_block_encode_times.1 / 1000.0,
+            grouped_block_decode_times.0 / 1000.0, grouped_block_decode_times.1 / 1000.0,
+            grouped_block_size_mb, grouped_block_ratio);
     }
     println!("  └──────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
 
@@ -2515,25 +2567,41 @@ fn benchmark_encoding_statistical_with_results(
 
     // Find best strategies
     let mut best_compression_strategy = "TransposeFieldEncoded";
-    let mut best_compression_ratio = columnar_ratio;
+    let mut best_compression_ratio = transpose_field_ratio;
+    if transpose_block_ratio > best_compression_ratio {
+        best_compression_strategy = "TransposeBlockCompressed";
+        best_compression_ratio = transpose_block_ratio;
+    }
     if rowwise_ratio > best_compression_ratio {
         best_compression_strategy = "FullVector";
         best_compression_ratio = rowwise_ratio;
     }
-    if grouped_ratio > best_compression_ratio {
+    if grouped_field_ratio > best_compression_ratio {
         best_compression_strategy = "GroupedFieldEncoded";
-        best_compression_ratio = grouped_ratio;
+        best_compression_ratio = grouped_field_ratio;
+    }
+    if grouped_block_ratio > best_compression_ratio {
+        best_compression_strategy = "GroupedBlockCompressed";
+        best_compression_ratio = grouped_block_ratio;
     }
 
     let mut best_encode_strategy = "TransposeFieldEncoded";
-    let mut best_encode_time = columnar_encode_times.0;
+    let mut best_encode_time = transpose_field_encode_times.0;
+    if transpose_block_encode_times.0 < best_encode_time {
+        best_encode_strategy = "TransposeBlockCompressed";
+        best_encode_time = transpose_block_encode_times.0;
+    }
     if rowwise_encode_times.0 < best_encode_time {
         best_encode_strategy = "FullVector";
         best_encode_time = rowwise_encode_times.0;
     }
-    if dimension > 128 && grouped_encode_times.0 < best_encode_time {
+    if dimension > 128 && grouped_field_encode_times.0 < best_encode_time {
         best_encode_strategy = "GroupedFieldEncoded";
-        best_encode_time = grouped_encode_times.0;
+        best_encode_time = grouped_field_encode_times.0;
+    }
+    if dimension > 128 && grouped_block_encode_times.0 < best_encode_time {
+        best_encode_strategy = "GroupedBlockCompressed";
+        best_encode_time = grouped_block_encode_times.0;
     }
 
     println!("\n  ✅ BEST PERFORMERS:");
@@ -2556,21 +2624,21 @@ fn benchmark_encoding_statistical_with_results(
         println!("    • Small Batches: Row-wise has lower overhead");
     }
 
-    // Return results for summary
+    // Return results for summary - using transpose field as representative columnar strategy
     Ok(EncodingResult {
         vector_count,
         dimension,
-        columnar_encode_ms: columnar_encode_times.0 / 1000.0,
+        columnar_encode_ms: transpose_field_encode_times.0 / 1000.0,
         rowwise_encode_ms: rowwise_encode_times.0 / 1000.0,
-        columnar_decode_ms: columnar_decode_times.0 / 1000.0,
+        columnar_decode_ms: transpose_field_decode_times.0 / 1000.0,
         rowwise_decode_ms: rowwise_decode_times.0 / 1000.0,
         columnar_serialize_ms: 0.0,  // Combined in encode time
         rowwise_serialize_ms: 0.0,   // Combined in encode time
         columnar_deserialize_ms: 0.0, // Combined in decode time
         rowwise_deserialize_ms: 0.0,  // Combined in decode time
-        columnar_compression: columnar_ratio,
+        columnar_compression: transpose_field_ratio,
         rowwise_compression: rowwise_ratio,
-        columnar_size_mb,
+        columnar_size_mb: transpose_field_size_mb,
         rowwise_size_mb,
     })
 }

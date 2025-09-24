@@ -38,6 +38,7 @@ fn analyze_layout() -> anyhow::Result<()> {
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: None,
     };
 
     let block = FastLanesDataBlock::new(vectors, config.clone());

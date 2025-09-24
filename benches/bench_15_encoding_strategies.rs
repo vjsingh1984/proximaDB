@@ -37,13 +37,14 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
 /// WORM (Write Once, Read Many) optimized configuration
 fn create_worm_config() -> BlockCompressionConfig {
     BlockCompressionConfig {
-        vector_layout: VectorEncodingLayout::TransposeVector,
+        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
         algorithm: CompressionAlgorithm::Zstd,
         compression_level: 6,
         enable_vector_compression: true,
         enable_metadata_compression: true,
         compression_threshold_bytes: 4096,
         dictionary_compression: true,
+        metadata_algorithm: None,
     }
 }
 
@@ -57,6 +58,7 @@ fn create_realtime_config() -> BlockCompressionConfig {
         enable_metadata_compression: true,
         compression_threshold_bytes: 16384,
         dictionary_compression: false,
+        metadata_algorithm: None,
     }
 }
 
@@ -70,6 +72,7 @@ fn create_balanced_config() -> BlockCompressionConfig {
         enable_metadata_compression: true,
         compression_threshold_bytes: 8192,
         dictionary_compression: false,
+        metadata_algorithm: None,
     }
 }
 
@@ -90,13 +93,14 @@ fn bench_encoding_strategies(c: &mut Criterion) {
             &vectors,
             |b, vectors| {
                 let config = BlockCompressionConfig {
-                    vector_layout: VectorEncodingLayout::TransposeVector,
+                    vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
                     algorithm: CompressionAlgorithm::Lz4,
                     compression_level: 1,
                     enable_vector_compression: true,
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    metadata_algorithm: None,
                 };
 
                 b.iter(|| {
@@ -122,6 +126,7 @@ fn bench_encoding_strategies(c: &mut Criterion) {
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    metadata_algorithm: None,
                 };
 
                 b.iter(|| {
@@ -225,13 +230,14 @@ fn bench_compression_tradeoffs(c: &mut Criterion) {
 
     for algorithm in algorithms {
         let config = BlockCompressionConfig {
-            vector_layout: VectorEncodingLayout::TransposeVector,
+            vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
             algorithm: algorithm.clone(),
             compression_level: 3,
             enable_vector_compression: true,
             enable_metadata_compression: true,
             compression_threshold_bytes: 4096,
             dictionary_compression: false,
+            metadata_algorithm: None,
         };
 
         group.bench_with_input(
@@ -263,13 +269,14 @@ fn bench_compression_ratios(c: &mut Criterion) {
         let uncompressed_size = vectors.len() * dimension * 4; // f32 = 4 bytes
 
         let columnar_config = BlockCompressionConfig {
-            vector_layout: VectorEncodingLayout::TransposeVector,
+            vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
             algorithm: CompressionAlgorithm::Zstd,
             compression_level: 6,
             enable_vector_compression: true,
             enable_metadata_compression: true,
             compression_threshold_bytes: 0,
             dictionary_compression: true,
+            metadata_algorithm: None,
         };
 
         let rowwise_config = BlockCompressionConfig {
@@ -280,6 +287,7 @@ fn bench_compression_ratios(c: &mut Criterion) {
             enable_metadata_compression: false,
             compression_threshold_bytes: 0,
             dictionary_compression: false,
+            metadata_algorithm: None,
         };
 
         // Benchmark with compression ratio measurement
@@ -321,13 +329,14 @@ fn bench_compression_ratios(c: &mut Criterion) {
         // Benchmark GroupedVector strategy for dimensions > 128
         if dimension > 128 {
             let grouped_config = BlockCompressionConfig {
-                vector_layout: VectorEncodingLayout::GroupedVector,
+                vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
                 algorithm: CompressionAlgorithm::Lz4,
                 compression_level: 1,
                 enable_vector_compression: true,
                 enable_metadata_compression: false,
                 compression_threshold_bytes: 0,
                 dictionary_compression: false,
+                metadata_algorithm: None,
             };
 
             group.bench_function(&format!("grouped_{}d", dimension), |b| {
@@ -365,13 +374,14 @@ fn bench_decoding_strategies(c: &mut Criterion) {
 
         // Pre-encode data for decoding benchmarks
         let columnar_config = BlockCompressionConfig {
-            vector_layout: VectorEncodingLayout::TransposeVector,
+            vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
             algorithm: CompressionAlgorithm::Lz4,
             compression_level: 1,
             enable_vector_compression: true,
             enable_metadata_compression: false,
             compression_threshold_bytes: 0,
             dictionary_compression: false,
+            metadata_algorithm: None,
         };
 
         let rowwise_config = BlockCompressionConfig {
@@ -382,6 +392,7 @@ fn bench_decoding_strategies(c: &mut Criterion) {
             enable_metadata_compression: false,
             compression_threshold_bytes: 0,
             dictionary_compression: false,
+            metadata_algorithm: None,
         };
 
         let columnar_encoded = create_and_serialize_block(&vectors, &columnar_config)
@@ -417,13 +428,14 @@ fn bench_decoding_strategies(c: &mut Criterion) {
         // GroupedVector decoding benchmark for high dimensions
         if dimension > 128 {
             let grouped_config = BlockCompressionConfig {
-                vector_layout: VectorEncodingLayout::GroupedVector,
+                vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
                 algorithm: CompressionAlgorithm::Lz4,
                 compression_level: 1,
                 enable_vector_compression: true,
                 enable_metadata_compression: false,
                 compression_threshold_bytes: 0,
                 dictionary_compression: false,
+                metadata_algorithm: None,
             };
 
             let grouped_encoded = create_and_serialize_block(&vectors, &grouped_config)
@@ -462,13 +474,14 @@ fn bench_roundtrip_performance(c: &mut Criterion) {
             &vectors,
             |b, vectors| {
                 let config = BlockCompressionConfig {
-                    vector_layout: VectorEncodingLayout::TransposeVector,
+                    vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
                     algorithm: CompressionAlgorithm::Lz4,
                     compression_level: 1,
                     enable_vector_compression: true,
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    metadata_algorithm: None,
                 };
 
                 b.iter(|| {
@@ -494,6 +507,7 @@ fn bench_roundtrip_performance(c: &mut Criterion) {
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    metadata_algorithm: None,
                 };
 
                 b.iter(|| {
@@ -528,13 +542,14 @@ fn bench_decode_compression_algorithms(c: &mut Criterion) {
 
     for algorithm in &algorithms {
         let config = BlockCompressionConfig {
-            vector_layout: VectorEncodingLayout::TransposeVector,
+            vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
             algorithm: algorithm.clone(),
             compression_level: 3,
             enable_vector_compression: true,
             enable_metadata_compression: true,
             compression_threshold_bytes: 4096,
             dictionary_compression: false,
+            metadata_algorithm: None,
         };
 
         let encoded = create_and_serialize_block(&vectors, &config)
@@ -639,13 +654,14 @@ fn bench_decode_memory_efficiency(c: &mut Criterion) {
         let vectors = generate_test_vectors(count, dimension);
 
         let columnar_config = BlockCompressionConfig {
-            vector_layout: VectorEncodingLayout::TransposeVector,
+            vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
             algorithm: CompressionAlgorithm::Zstd,
             compression_level: 6,
             enable_vector_compression: true,
             enable_metadata_compression: true,
             compression_threshold_bytes: 0,
             dictionary_compression: true,
+            metadata_algorithm: None,
         };
 
         let encoded = create_and_serialize_block(&vectors, &columnar_config)

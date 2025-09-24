@@ -37,6 +37,7 @@ fn main() {
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: None,
     };
 
     // Test with compression ENABLED (should get 3-6x with our optimization)
@@ -48,6 +49,7 @@ fn main() {
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: None,
     };
 
     // Create FastLanes block
@@ -86,13 +88,14 @@ fn main() {
 
     // Compare with TransposeVector for reference
     let transpose_config = BlockCompressionConfig {
-        vector_layout: VectorEncodingLayout::TransposeVector,
+        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
         algorithm: CompressionAlgorithm::Lz4,
         compression_level: 1,
         enable_vector_compression: true,
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: None,
     };
 
     match block.serialize_with_config(&transpose_config) {

@@ -42,6 +42,7 @@ fn main() {
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: None,
     };
 
     // Test row-wise with block compression
@@ -53,6 +54,7 @@ fn main() {
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: None,
     };
 
     println!("Testing with realistic random vectors (not pattern data)...\n");
