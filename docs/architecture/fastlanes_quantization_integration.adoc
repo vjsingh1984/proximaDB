@@ -1,0 +1,362 @@
+= FastLanes Encoding and Quantization Integration
+:toc:
+:toc-placement: preamble
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+:imagesdir: ../images
+
+[.lead]
+Analysis of FastLanes dual-mode encoding architecture and its integration with quantized vector storage across ProximaDB's 6 storage engines.
+
+== Executive Summary
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "FastLanes Dual-Mode Architecture"
+        A[Vector Input<br/>Raw f32 arrays]
+        B{Dimension Analysis}
+        C[Columnar Encoding<br/>< 1536D<br/>Better compression]
+        D[Row-wise Encoding<br/>≥ 1536D<br/>Faster reconstruction]
+        E[Quantization Layer<br/>Binary/INT8/PQ]
+        F[Storage Engines<br/>6 specialized engines]
+    end
+
+    A --> B
+    B -->|< 1536D| C
+    B -->|≥ 1536D| D
+    C --> E
+    D --> E
+    E --> F
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+----
+
+FastLanes provides **dual-mode encoding** that automatically selects optimal layout based on vector dimensions, impacting quantized vector integration across storage engines.
+
+== FastLanes Dual-Mode Architecture
+
+=== Encoding Modes
+
+[source,rust]
+----
+pub enum VectorEncodingLayout {
+    /// Columnar: Transpose vectors into dimension arrays
+    /// Better for: compression ratio, analytics queries
+    Columnar {
+        dims_per_group: usize, // Typically 64 for SIMD
+    },
+
+    /// RowWise: Store vectors as contiguous byte arrays
+    /// Better for: fast reconstruction, random access
+    RowWise {
+        compress_individual: bool,
+    },
+}
+----
+
+=== Automatic Selection Logic
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    A[Vector Dimensions] --> B{Dimension < 1536?}
+    B -->|Yes| C[Columnar Encoding<br/>dims_per_group: 64<br/>SIMD optimized]
+    B -->|No| D[Row-wise Encoding<br/>apply_simd: true<br/>Fast reconstruction]
+
+    C --> E[Better Compression<br/>Analytics-friendly]
+    D --> F[Faster Access<br/>Random-access friendly]
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+----
+
+[source,rust]
+----
+// Automatic selection implementation
+if dimension < 1536 {
+    // Use columnar for better compression
+    encode_vectors_columnar(vectors, dims_per_group: 64)
+} else {
+    // Use row-wise for faster reconstruction
+    encode_vectors_rowwise(vectors, apply_simd: dimension <= 2048)
+}
+----
+
+== Engine-Specific Storage Patterns
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "Storage Engine Integration"
+        A[SST Engine<br/>Row-wise optimized<br/>Inline quantization]
+        B[VIPER Engine<br/>Columnar native<br/>Separate columns]
+        C[SWIFT Engine<br/>Row-wise fast<br/>Inline quantization]
+        D[RAPTOR Engine<br/>Adaptive layout<br/>Dynamic selection]
+        E[NOVA Engine<br/>Progressive storage<br/>Multi-level quantization]
+        F[HELIX Engine<br/>Spatial clustering<br/>Locality-aware quantization]
+    end
+
+    subgraph "Quantization Strategies"
+        G[Inline Storage<br/>Within VectorRecord]
+        H[Columnar Storage<br/>Separate quantized columns]
+        I[Adaptive Storage<br/>Based on access patterns]
+    end
+
+    A --> G
+    B --> H
+    C --> G
+    D --> I
+    E --> I
+    F --> I
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+----
+
+=== SST Engine Integration
+
+[TIP]
+====
+**SST Engine**: Row-based with inline quantization
+
+Best for real-time queries with fast vector reconstruction.
+====
+
+[source,rust]
+----
+struct FastLanesDataBlock {
+    records: Vec<VectorRecord>, // VectorRecord.quantized field inline
+    encoding_marker: u8,        // Determines columnar vs row-wise
+}
+
+// Quantization integration
+impl VectorRecord {
+    quantized_vector: Vec<u8>,  // Inline quantized data
+    // Benefits: Single read operation, cache-friendly
+    // Trade-off: Higher memory usage per record
+}
+----
+
+=== VIPER Engine Integration
+
+[TIP]
+====
+**VIPER Engine**: Columnar with separate quantized columns
+
+Optimal for analytics with best compression ratios.
+====
+
+[source,rust]
+----
+// Parquet-style columnar layout
+struct ColumnarQuantizedStorage {
+    full_precision: Column<Vec<f32>>,    // Original vectors
+    binary_quantized: Column<Vec<u8>>,   // 1-bit quantization
+    int8_quantized: Column<Vec<u8>>,     // 8-bit quantization
+    pq_quantized: Column<Vec<u8>>,       // Product quantization
+}
+
+// Benefits: Best compression, efficient bulk operations
+// Trade-off: Multiple reads for complete reconstruction
+----
+
+=== Adaptive Integration Strategy
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+sequenceDiagram
+    participant App as Application
+    participant Engine as Storage Engine
+    participant FL as FastLanes
+    participant Quant as Quantization
+
+    App->>Engine: Store vectors
+    Engine->>FL: Analyze dimensions
+    FL->>FL: Select encoding mode
+    FL->>Quant: Apply quantization
+    Quant->>FL: Return quantized data
+    FL->>Engine: Store with layout
+    Engine->>App: Confirm storage
+
+    Note over FL: Auto-select based on:<br/>• Vector dimensions<br/>• Access patterns<br/>• Engine capabilities
+----
+
+== Quantization Integration Patterns
+
+=== Inline Quantization (Row-based Engines)
+
+[cols="2,3,2", options="header"]
+|===
+|Engine |Storage Pattern |Use Case
+
+|SST
+|Inline in VectorRecord
+|Real-time queries
+
+|SWIFT
+|Inline with compression
+|High-speed operations
+
+|RAPTOR
+|Adaptive inline/columnar
+|Dynamic workloads
+|===
+
+=== Columnar Quantization (Analytics Engines)
+
+[cols="2,3,2", options="header"]
+|===
+|Engine |Storage Pattern |Use Case
+
+|VIPER
+|Separate quantized columns
+|Analytics workloads
+
+|NOVA
+|Progressive quantization levels
+|Multi-tier storage
+
+|HELIX
+|Spatial-aware quantization
+|Locality optimization
+|===
+
+== Performance Implications
+
+=== Encoding Performance Matrix
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph LR
+    subgraph "Performance Characteristics"
+        A[Columnar Mode<br/>< 1536D<br/>2.1x compression<br/>15% slower encode<br/>25% faster bulk ops]
+        B[Row-wise Mode<br/>≥ 1536D<br/>1.8x compression<br/>Fast encode<br/>Excellent random access]
+    end
+
+    C[BERT-768] --> A
+    D[OpenAI-1536] --> B
+    E[OpenAI-3072] --> B
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+----
+
+=== Quantization Impact
+
+[horizontal]
+**Binary Quantization**:: 32x compression, ~5% encoding overhead
+**INT8 Quantization**:: 4x compression, ~10% encoding overhead
+**PQ Quantization**:: 4-8x compression, ~25% encoding overhead
+**Hybrid Strategy**:: Automatic selection based on data characteristics
+
+== Implementation Recommendations
+
+=== Engine-Specific Configurations
+
+[source,toml]
+----
+[storage.engines.sst]
+quantization = "inline"
+levels = ["binary", "int8"]
+threshold_vectors = 1000
+
+[storage.engines.viper]
+quantization = "columnar"
+levels = ["binary", "int8", "pq8"]
+compression_target = "max"
+
+[storage.engines.swift]
+quantization = "inline"
+levels = ["binary"]
+optimize_for = "speed"
+
+[storage.engines.raptor]
+quantization = "adaptive"
+levels = ["binary", "int8", "pq8"]
+switch_threshold = 5000
+
+[storage.engines.nova]
+quantization = "progressive"
+levels = ["binary", "int8", "pq8", "pq16"]
+tier_strategy = "access_frequency"
+
+[storage.engines.helix]
+quantization = "spatial_aware"
+levels = ["binary", "int8"]
+clustering_optimized = true
+----
+
+=== Workload-Based Selection
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    A[Workload Analysis] --> B{Primary Use Case}
+    B -->|Real-time| C[SST + Inline<br/>Binary + INT8]
+    B -->|Analytics| D[VIPER + Columnar<br/>All levels]
+    B -->|Streaming| E[SWIFT + Inline<br/>Binary only]
+    B -->|Mixed| F[RAPTOR + Adaptive<br/>Dynamic selection]
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style C fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style D fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style E fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style F fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+----
+
+== Migration Strategy
+
+=== Phase 1: Basic Integration
+1. Implement inline quantization for row-based engines (SST, SWIFT)
+2. Add columnar quantization for VIPER engine
+3. Create unified quantization API
+
+=== Phase 2: Advanced Features
+1. Implement adaptive quantization for RAPTOR
+2. Add progressive quantization for NOVA
+3. Develop spatial-aware quantization for HELIX
+
+=== Phase 3: Optimization
+1. Performance tuning based on real workloads
+2. Automatic quantization level selection
+3. Cross-engine quantization sharing
+
+== Conclusion
+
+FastLanes' dual-mode architecture provides optimal foundation for quantized vector integration:
+
+[horizontal]
+**Columnar Mode**:: Best for analytics engines (VIPER, NOVA) with superior compression
+**Row-wise Mode**:: Optimal for real-time engines (SST, SWIFT) with fast access
+**Adaptive Approach**:: Enables RAPTOR and HELIX to optimize based on workload patterns
+**Unified API**:: Consistent quantization interface across all engines
+
+The automatic dimension-based selection ensures optimal performance while maintaining simplicity for developers.
+
+---
+
+_For performance analysis, see xref:../performance/encoding_strategies.adoc[Encoding Strategy Recommendations]_

@@ -3,6 +3,7 @@ use proximadb::storage::engines::core::formats::fastlanes_blocks::{
     BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
+use tracing::{debug, info};
 use proximadb::proto::proximadb_v1::VectorRecord;
 use rand::prelude::*;
 use std::time::Instant;
@@ -298,9 +299,9 @@ fn bench_compression_ratios(c: &mut Criterion) {
                     let compressed = create_and_serialize_block(&vectors, &columnar_config).unwrap();
                     let compression_ratio = uncompressed_size as f64 / compressed.len() as f64;
 
-                    // Print compression ratio (will be captured by criterion)
+                    // Log compression ratio with debug tracing
                     if iters == 1 {
-                        println!("{}D Columnar: {:.2}x compression", dimension, compression_ratio);
+                        debug!("{}D Columnar: {:.2}x compression", dimension, compression_ratio);
                     }
 
                     black_box(compressed);
@@ -317,7 +318,7 @@ fn bench_compression_ratios(c: &mut Criterion) {
                     let compression_ratio = uncompressed_size as f64 / compressed.len() as f64;
 
                     if iters == 1 {
-                        println!("{}D Row-wise: {:.2}x compression", dimension, compression_ratio);
+                        debug!("{}D Row-wise: {:.2}x compression", dimension, compression_ratio);
                     }
 
                     black_box(compressed);
@@ -347,7 +348,7 @@ fn bench_compression_ratios(c: &mut Criterion) {
                         let compression_ratio = uncompressed_size as f64 / compressed.len() as f64;
 
                         if iters == 1 {
-                            println!("{}D GroupedVector: {:.2}x compression", dimension, compression_ratio);
+                            debug!("{}D GroupedVector: {:.2}x compression", dimension, compression_ratio);
                         }
 
                         black_box(compressed);

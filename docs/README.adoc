@@ -1,32 +1,74 @@
 = ProximaDB Documentation
 :toc: left
-:toclevels: 2
+:toclevels: 3
 :icons: font
+:source-highlighter: rouge
+:imagesdir: images
 
 [.lead]
-**Complete technical documentation for ProximaDB** +
-_Organized by use case and technical depth_
+Complete technical documentation for ProximaDB - the adaptive multi-engine vector database with industry-leading compression and performance.
 
 == Quick Navigation
 
-[cols="2,3", width="100%"]
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "Documentation Categories"
+        A[🚀 Getting Started<br/>quickstart/]
+        B[🏗️ Architecture<br/>architecture/]
+        C[📊 Performance<br/>performance/]
+        D[⚙️ Operations<br/>operations/]
+        E[🔒 Security<br/>security/]
+        F[🏢 Enterprise<br/>enterprise/]
+        G[🗺️ Roadmap<br/>roadmap/]
+        H[💼 Business<br/>business/]
+    end
+
+    I[ProximaDB<br/>Complete Platform] --> A
+    I --> B
+    I --> C
+    I --> D
+    I --> E
+    I --> F
+    I --> G
+    I --> H
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style G fill:#e76f51,stroke:#b8563d,stroke-width:2px,color:#000
+    style H fill:#d6e4f0,stroke:#a5c4d9,stroke-width:2px,color:#000
+    style I fill:#fafafa,stroke:#2e5c8a,stroke-width:3px,color:#000
+----
+
+.Quick Access Guide
+[cols="2,3,2", options="header"]
 |===
-|**Need** |**Start Here**
+|Need |Start Here |Category
 
-|Quick setup
-|link:quickstart/getting_started.adoc[Getting Started Guide]
+|Quick setup & installation
+|xref:quickstart/getting_started.adoc[Getting Started Guide]
+|🚀 Getting Started
 
-|Performance metrics
-|link:benchmarks/README.adoc[Benchmark Suite]
-
-|Storage engine selection
-|link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide]
+|Performance optimization
+|xref:performance/encoding_strategies.adoc[Encoding Strategies]
+|📊 Performance
 
 |Production deployment
-|link:enterprise/production_deployment_guide.adoc[Production Guide]
+|xref:operations/production_deployment.adoc[Production Guide]
+|⚙️ Operations
 
-|API reference
-|link:reference/graph_api_reference.adoc[API Documentation]
+|System architecture
+|xref:architecture/overview.adoc[Architecture Overview]
+|🏗️ Architecture
+
+|Security configuration
+|xref:security/authentication.adoc[Security Guide]
+|🔒 Security
 |===
 
 == Documentation Structure

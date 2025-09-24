@@ -3,6 +3,7 @@ use proximadb::storage::engines::core::formats::fastlanes_blocks::{
     BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
+use tracing::{debug, info};
 use proximadb::proto::proximadb_v1::VectorRecord;
 use rand::prelude::*;
 use std::collections::HashMap;
@@ -112,7 +113,7 @@ fn bench_compression_ratio_comparison(c: &mut Criterion) {
         let vectors = generate_test_vectors(vector_count, dimension);
         let uncompressed_size = vector_count * dimension * 4; // f32 = 4 bytes
 
-        println!("\n=== Compression Ratio Test: {}x{} ===", vector_count, dimension);
+        info!("Compression Ratio Test: {}x{}", vector_count, dimension);
 
         for algorithm in &algorithms {
             // Traditional approach
@@ -149,16 +150,16 @@ fn bench_compression_ratio_comparison(c: &mut Criterion) {
 
             let bytemuck_ratio = uncompressed_size as f64 / bytemuck_result.len() as f64;
 
-            println!("  {:?}:", algorithm);
-            println!("    Traditional: {:.2}x compression ({:.2} MB -> {:.2} MB)",
+            debug!("Algorithm: {:?}", algorithm);
+            debug!("  Traditional: {:.2}x compression ({:.2} MB -> {:.2} MB)",
                    traditional_ratio,
                    uncompressed_size as f64 / 1_000_000.0,
                    traditional_result.len() as f64 / 1_000_000.0);
-            println!("    Bytemuck: {:.2}x compression ({:.2} MB -> {:.2} MB)",
+            debug!("  Bytemuck: {:.2}x compression ({:.2} MB -> {:.2} MB)",
                    bytemuck_ratio,
                    uncompressed_size as f64 / 1_000_000.0,
                    bytemuck_result.len() as f64 / 1_000_000.0);
-            println!("    Improvement: {:.1}% better compression",
+            debug!("  Improvement: {:.1}% better compression",
                    ((bytemuck_ratio / traditional_ratio) - 1.0) * 100.0);
         }
     }

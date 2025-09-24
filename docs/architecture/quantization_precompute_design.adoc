@@ -1,0 +1,699 @@
+= Quantized Vector Precomputation Design Specification
+:toc:
+:toc-placement: preamble
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+:imagesdir: ../images
+
+[.lead]
+Design specification for precomputing quantized vectors during flush operations across all storage engines, leveraging existing quantization capabilities in ProximaDB.
+
+== Executive Summary
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "Quantization Precomputation Architecture"
+        A[Vector Ingestion<br/>Raw f32 arrays]
+        B[Flush Operations<br/>Batch processing]
+        C[Quantization Service<br/>Binary/INT8/PQ]
+        D[Storage Engines<br/>6 specialized engines]
+        E[Search Operations<br/>Progressive refinement]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+
+    subgraph "Performance Benefits"
+        F[5-10x Search Speedup<br/>Precomputed quantization]
+        G[30-50% Memory Reduction<br/>Quantized cache]
+        H[<10% Flush Overhead<br/>Binary + INT8]
+    end
+
+    E --> F
+    D --> G
+    C --> H
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style G fill:#e76f51,stroke:#b8563d,stroke-width:2px,color:#000
+    style H fill:#2a9d8f,stroke:#1e7a6b,stroke-width:2px,color:#000
+----
+
+This specification enables precomputing quantized vectors during flush operations to achieve 5-10x search speedup while leveraging existing quantization infrastructure.
+
+== Data Structure Changes
+
+=== Enhanced VectorRecord Structure
+
+[source,protobuf]
+----
+// Updated proto definition in proximadb.proto
+message VectorRecord {
+  string id = 1;
+  repeated float vector = 2;
+  repeated MetadataItem metadata = 3;
+  uint32 timestamp = 4;
+  optional uint32 updated_at = 5;
+  optional uint32 expires_at = 6;
+  optional uint32 version = 7;
+
+  // NEW: Structured quantization data
+  optional QuantizedVectors quantized = 8;
+  optional SourceContent source = 10;
+}
+
+// NEW: Structured quantization storage
+message QuantizedVectors {
+  optional bytes binary = 1;      // 1 bit per dimension
+  optional bytes int8 = 2;        // 8 bits per dimension
+  optional bytes pq4 = 3;         // 4-bit product quantization
+  optional bytes pq8 = 4;         // 8-bit product quantization
+  optional bytes pq16 = 5;        // 16-bit product quantization
+  optional bytes pq32 = 6;        // 32-bit product quantization
+
+  // Metadata for reconstruction
+  optional QuantizationMetadata metadata = 10;
+}
+
+message QuantizationMetadata {
+  repeated float scales = 1;      // For INT8 dequantization
+  repeated float offsets = 2;     // For INT8 dequantization
+  optional string codebook_id = 3; // Reference to PQ codebook
+  optional uint32 num_subvectors = 4; // PQ configuration
+  optional uint32 bits_per_code = 5;  // PQ configuration
+}
+----
+
+=== Quantization Levels Selection
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    A[Collection Size] --> B{Vector Count}
+    B -->|< 1,000| C[Binary Only<br/>Minimal overhead]
+    B -->|1,000 - 10,000| D[Binary + INT8<br/>Fast access]
+    B -->|10,000 - 100,000| E[Binary + INT8 + PQ8<br/>Balanced approach]
+    B -->|> 100,000| F[Binary + INT8 + PQ16<br/>High quality]
+
+    G[Search Pattern] --> H{Access Type}
+    H -->|Real-time| I[Prioritize Binary/INT8<br/>Low latency]
+    H -->|Analytics| J[Include PQ levels<br/>High recall]
+    H -->|Mixed| K[Progressive refinement<br/>All levels]
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style G fill:#2a9d8f,stroke:#1e7a6b,stroke-width:2px,color:#000
+    style H fill:#e76f51,stroke:#b8563d,stroke-width:2px,color:#000
+    style I fill:#ffd166,stroke:#cc9900,stroke-width:2px,color:#000
+    style J fill:#06ffa5,stroke:#05cc84,stroke-width:2px,color:#000
+    style K fill:#fb8500,stroke:#c96a00,stroke-width:2px,color:#000
+----
+
+== Quantization Precomputation Service
+
+=== Architecture Overview
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "Precomputation Service"
+        A[QuantizationPrecomputeService<br/>Central coordinator]
+        B[UnifiedQuantizationEngine<br/>Binary/INT8 processing]
+        C[StorageQuantizationEngine<br/>PQ processing]
+        D[GlobalQuantizationCache<br/>Codebook management]
+    end
+
+    subgraph "Processing Pipeline"
+        E[Vector Batch<br/>Raw f32 arrays]
+        F[Level Selection<br/>Based on collection size]
+        G[Parallel Quantization<br/>All selected levels]
+        H[Record Update<br/>Embed quantized data]
+    end
+
+    E --> F
+    F --> G
+    G --> H
+
+    A --> B
+    A --> C
+    A --> D
+
+    B --> G
+    C --> G
+    D --> G
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style G fill:#e76f51,stroke:#b8563d,stroke-width:2px,color:#000
+    style H fill:#2a9d8f,stroke:#1e7a6b,stroke-width:2px,color:#000
+----
+
+[source,rust]
+----
+// New file: src/compute/quantization/precompute.rs
+
+use crate::compute::quantization::{
+    unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel},
+    storage_engine::StorageQuantizationEngine,
+    selection::QuantizationSelector,
+    global_cache::GlobalQuantizationCache,
+};
+use crate::proto::proximadb_v1::{VectorRecord, QuantizedVectors, QuantizationMetadata};
+
+/// Service for precomputing quantized vectors during flush
+pub struct QuantizationPrecomputeService {
+    storage_engine: Arc<StorageQuantizationEngine>,
+    fallback_engine: Arc<UnifiedQuantizationEngine>,
+    global_cache: Arc<GlobalQuantizationCache>,
+}
+
+impl QuantizationPrecomputeService {
+    /// Create new precompute service using existing engines
+    pub fn new(
+        storage_engine: Arc<StorageQuantizationEngine>,
+        fallback_engine: Arc<UnifiedQuantizationEngine>,
+    ) -> Self {
+        Self {
+            storage_engine,
+            fallback_engine,
+            global_cache: GlobalQuantizationCache::global(),
+        }
+    }
+
+    /// Precompute quantized vectors for a batch during flush
+    pub async fn precompute_batch(
+        &self,
+        records: &mut Vec<VectorRecord>,
+        params: &FlushParameters,
+    ) -> Result<()> {
+        // Check if quantization is enabled
+        let quantization_config = params.collection_config.as_ref()
+            .and_then(|c| c.config.as_ref())
+            .and_then(|c| c.quantization.as_ref());
+
+        if quantization_config.is_none() || !quantization_config.unwrap().enabled {
+            return Ok(()); // No quantization needed
+        }
+
+        let config = quantization_config.unwrap();
+        let collection_id = params.collection_id.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection ID required for quantization"))?;
+
+        // Determine which quantization levels to compute
+        let levels = self.determine_quantization_levels(
+            &config,
+            records.len(),
+            params.collection_config.as_ref()
+                .and_then(|c| c.stats.as_ref())
+                .map(|s| s.vector_count as usize)
+                .unwrap_or(records.len()),
+        );
+
+        // Get or train codebooks if needed for PQ
+        if levels.needs_pq() {
+            self.ensure_codebooks(collection_id, &levels, records).await?;
+        }
+
+        // Batch quantize using existing engines
+        self.quantize_batch_with_levels(records, &levels, collection_id).await?;
+
+        Ok(())
+    }
+
+    /// Determine which quantization levels to compute based on configuration
+    fn determine_quantization_levels(
+        &self,
+        config: &QuantizationConfig,
+        batch_size: usize,
+        total_collection_size: usize,
+    ) -> QuantizationLevels {
+        let mut levels = QuantizationLevels::default();
+
+        // Always compute Binary and INT8 (fast and small)
+        levels.binary = true;
+        levels.int8 = true;
+
+        // Compute PQ based on collection size and configuration
+        if total_collection_size > 10_000 {
+            if let Some(pq_bits) = config.pq_bits {
+                match pq_bits {
+                    4 => levels.pq4 = true,
+                    8 => levels.pq8 = true,
+                    16 => levels.pq16 = true,
+                    32 => levels.pq32 = true,
+                    _ => levels.pq8 = true, // Default
+                }
+            } else {
+                // Smart selection based on collection size
+                if total_collection_size > 1_000_000 {
+                    levels.pq16 = true; // Higher quality for large collections
+                } else {
+                    levels.pq8 = true; // Standard PQ
+                }
+            }
+        }
+
+        levels
+    }
+}
+----
+
+== Storage Engine Integration Patterns
+
+=== Row-Based Engines (SST, SWIFT, RAPTOR)
+
+[TIP]
+====
+**Row-Based Storage**: Quantized vectors stored inline within VectorRecord for single-read access optimization.
+====
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph LR
+    subgraph "Row-Based Storage Pattern"
+        A[VectorRecord<br/>Complete record]
+        B[Original Vector<br/>f32 array]
+        C[Quantized Vectors<br/>Multiple levels inline]
+        D[Metadata<br/>Key-value pairs]
+    end
+
+    A --> B
+    A --> C
+    A --> D
+
+    subgraph "Storage Benefits"
+        E[Single Read Operation<br/>All data together]
+        F[Cache Friendly<br/>Spatial locality]
+        G[Fast Point Queries<br/>Minimal I/O]
+    end
+
+    A --> E
+    E --> F
+    F --> G
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style G fill:#2a9d8f,stroke:#1e7a6b,stroke-width:2px,color:#000
+----
+
+[source,rust]
+----
+impl SstEngine {
+    async fn flush_row_based(
+        &self,
+        records: Vec<VectorRecord>,
+        params: FlushParameters,
+    ) -> Result<Vec<FileHandle>> {
+        // SST uses FastLanesDataBlock with row-based encoding
+        let mut blocks = Vec::new();
+
+        for chunk in records.chunks(self.config.block_size) {
+            let mut block = FastLanesDataBlock::new(
+                chunk.to_vec(),
+                BlockCompressionConfig::row_based() // Row-based configuration
+            );
+
+            // Quantized vectors are stored inline in VectorRecord within the block
+            block.encode_with_scheme(FastLanesScheme::BitPacked { bits: 16 })?;
+            blocks.push(block);
+        }
+
+        self.write_blocks(blocks, params).await
+    }
+}
+----
+
+=== Columnar Engines (VIPER, NOVA, HELIX)
+
+[TIP]
+====
+**Columnar Storage**: Separate quantized columns for optimal compression and bulk operations.
+====
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "Columnar Storage Pattern"
+        A[Record Batch<br/>Arrow format]
+        B[Vector Column<br/>f32 arrays]
+        C[Binary Column<br/>1-bit quantized]
+        D[INT8 Column<br/>8-bit quantized]
+        E[PQ Column<br/>Product quantized]
+        F[Metadata Column<br/>Structured data]
+    end
+
+    A --> B
+    A --> C
+    A --> D
+    A --> E
+    A --> F
+
+    subgraph "Columnar Benefits"
+        G[Best Compression<br/>Column-specific algorithms]
+        H[Bulk Operations<br/>Vectorized processing]
+        I[Selective Reading<br/>Project only needed columns]
+    end
+
+    B --> G
+    C --> G
+    D --> G
+    E --> G
+
+    G --> H
+    H --> I
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style G fill:#2a9d8f,stroke:#1e7a6b,stroke-width:2px,color:#000
+    style H fill:#e76f51,stroke:#b8563d,stroke-width:2px,color:#000
+    style I fill:#ffd166,stroke:#cc9900,stroke-width:2px,color:#000
+----
+
+[source,rust]
+----
+impl ViperEngine {
+    async fn flush_columnar(
+        &self,
+        records: Vec<VectorRecord>,
+        params: FlushParameters,
+    ) -> Result<Vec<FileHandle>> {
+        // Convert to Arrow RecordBatch with separate columns
+        let mut columns: Vec<(String, Arc<dyn Array>)> = vec![];
+
+        // Standard columns
+        columns.push(("id", build_string_array(&records.iter().map(|r| &r.id))));
+        columns.push(("vector", build_float32_array(&records.iter().map(|r| &r.vector))));
+
+        // Add quantized columns if present (separate Parquet columns)
+        if records.iter().any(|r| r.quantized.as_ref().map(|q| q.binary.is_some()).unwrap_or(false)) {
+            columns.push(("vector_binary", build_binary_array(&records.iter().map(|r|
+                r.quantized.as_ref().and_then(|q| q.binary.as_ref())
+            ))));
+        }
+
+        if records.iter().any(|r| r.quantized.as_ref().map(|q| q.int8.is_some()).unwrap_or(false)) {
+            columns.push(("vector_int8", build_int8_array(&records.iter().map(|r|
+                r.quantized.as_ref().and_then(|q| q.int8.as_ref())
+            ))));
+        }
+
+        // Write Parquet file with projection-friendly columns
+        let batch = RecordBatch::try_new(schema, columns)?;
+        self.write_parquet(batch, params).await
+    }
+}
+----
+
+== Progressive Search Architecture
+
+=== Multi-Stage Search Pipeline
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+sequenceDiagram
+    participant Client as Search Request
+    participant Engine as Storage Engine
+    participant Binary as Binary Quantized
+    participant INT8 as INT8 Quantized
+    participant PQ as PQ Quantized
+    participant FP32 as Full Precision
+
+    Client->>Engine: Search query (top_k=10)
+    Engine->>Binary: Stage 1: Scan binary (100 candidates)
+    Binary-->>Engine: Fast approximate results
+    Engine->>INT8: Stage 2: Refine INT8 (50 candidates)
+    INT8-->>Engine: Better quality results
+    Engine->>PQ: Stage 3: Refine PQ (20 candidates)
+    PQ-->>Engine: High quality results
+    Engine->>FP32: Stage 4: Final ranking (10 results)
+    FP32-->>Engine: Exact results
+    Engine-->>Client: Top-k search results
+
+    Note over Binary: 10x faster than FP32<br/>Lower recall
+    Note over INT8: 5x faster than FP32<br/>Good recall
+    Note over PQ: 3x faster than FP32<br/>High recall
+    Note over FP32: Exact distances<br/>Perfect recall
+----
+
+[horizontal]
+**Stage 1 - Binary Scan**:: Fastest filtering using 1-bit quantization (10x candidates)
+**Stage 2 - INT8 Refinement**:: Quality improvement with 8-bit quantization (5x candidates)
+**Stage 3 - PQ Refinement**:: High-quality filtering with product quantization (2x candidates)
+**Stage 4 - FP32 Ranking**:: Final exact ranking using full precision (final top-k)
+
+=== Search Performance Matrix
+
+[cols="3,2,2,2,2", options="header"]
+|===
+|Quantization Level |Speed vs FP32 |Recall@10 |Memory Usage |Use Case
+
+|Binary
+|10x faster
+|85-90%
+|3% of FP32
+|Initial filtering
+
+|INT8
+|5x faster
+|92-95%
+|25% of FP32
+|Quality refinement
+
+|PQ8
+|3x faster
+|95-98%
+|25% of FP32
+|High-quality filtering
+
+|PQ16
+|2.5x faster
+|98-99%
+|50% of FP32
+|Near-exact results
+
+|FP32
+|1x (baseline)
+|100%
+|100%
+|Final ranking
+|===
+
+== Implementation Guidelines
+
+=== Flush Operation Integration
+
+[source,rust]
+----
+// Template for all storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX)
+
+impl UnifiedStorageEngine for XxxEngine {
+    async fn do_flush(&self, params: FlushParameters) -> Result<Vec<FileHandle>> {
+        // Step 1: Precompute quantized vectors
+        let mut records = params.vector_records.clone();
+
+        if self.should_precompute_quantization(&params) {
+            let precompute_service = QuantizationPrecomputeService::new(
+                self.storage_quantization_engine.clone(),
+                self.fallback_quantization_engine.clone(),
+            );
+
+            precompute_service.precompute_batch(&mut records, &params).await?;
+
+            debug!(
+                "Precomputed quantization for {} vectors (binary: {}, int8: {}, pq: {})",
+                records.len(),
+                records.iter().any(|r| r.quantized.as_ref().map(|q| q.binary.is_some()).unwrap_or(false)),
+                records.iter().any(|r| r.quantized.as_ref().map(|q| q.int8.is_some()).unwrap_or(false)),
+                records.iter().any(|r| r.quantized.as_ref().map(|q| q.pq8.is_some()).unwrap_or(false)),
+            );
+        }
+
+        // Step 2: Engine-specific storage
+        match self.engine_type() {
+            EngineType::Columnar => self.flush_columnar(records, params).await,
+            EngineType::RowBased => self.flush_row_based(records, params).await,
+        }
+    }
+
+    fn should_precompute_quantization(&self, params: &FlushParameters) -> bool {
+        // Use existing QuantizationSelector logic
+        QuantizationSelector::should_use_persistent_quantization(params, self.engine_name())
+    }
+}
+----
+
+=== Configuration Settings
+
+[source,toml]
+----
+[compute.quantization.precompute]
+enabled = true
+levels = ["binary", "int8", "pq8"]  # Levels to precompute
+max_batch_size = 10000  # Vectors per batch
+parallel_workers = 4  # Concurrent quantization threads
+
+[compute.quantization.storage]
+strategy = "adaptive"  # inline, columnar, or adaptive
+compression = "lz4"  # Compress quantized vectors
+codebook_cache_size = 1000  # Maximum codebooks in cache
+
+[compute.quantization.search]
+progressive_stages = 4  # Number of refinement stages
+binary_candidates_multiplier = 10  # Stage 1 candidate expansion
+int8_candidates_multiplier = 5   # Stage 2 candidate expansion
+pq_candidates_multiplier = 2     # Stage 3 candidate expansion
+----
+
+== Performance Expectations
+
+=== Storage Overhead Analysis
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "Storage Overhead by Level"
+        A[Original FP32<br/>100% baseline<br/>4 bytes/dim]
+        B[+ Binary<br/>103% total<br/>+1 bit/dim]
+        C[+ INT8<br/>128% total<br/>+1 byte/dim]
+        D[+ PQ8<br/>153% total<br/>+0.25-1 byte/dim]
+        E[+ PQ16<br/>178% total<br/>+0.5-2 bytes/dim]
+    end
+
+    subgraph "Performance Benefits"
+        F[Search Speed<br/>5-10x improvement]
+        G[Memory Usage<br/>30-50% reduction]
+        H[Cache Efficiency<br/>Higher hit rates]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+
+    B --> F
+    C --> F
+    D --> F
+
+    F --> G
+    G --> H
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style C fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style D fill:#8fc4f9,stroke:#6ba5d7,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style G fill:#2a9d8f,stroke:#1e7a6b,stroke-width:2px,color:#000
+    style H fill:#e76f51,stroke:#b8563d,stroke-width:2px,color:#000
+----
+
+=== Expected Performance Gains
+
+[horizontal]
+**Search Latency**:: 5-10x faster for large collections through progressive refinement
+**Memory Usage**:: 30-50% reduction when using quantized vectors in cache
+**Throughput**:: 3-5x higher QPS with precomputed quantization
+**Flush Overhead**:: +10% for Binary+INT8, +20% with PQ levels
+
+=== Quality Metrics
+
+[horizontal]
+**Recall@10**:: >95% with INT8, >99% with PQ8 progressive refinement
+**Recall@100**:: >99% with full progressive pipeline
+**Precision**:: Maintained through FP32 final ranking stage
+**Latency P95**:: <50ms for collections up to 1M vectors
+
+== Migration Strategy
+
+=== Phase 1: Infrastructure (Week 1)
+1. Add `QuantizedVectors` to proto definition
+2. Create `QuantizationPrecomputeService`
+3. Update `VectorRecord` handling throughout codebase
+4. Add configuration options
+
+=== Phase 2: Engine Integration (Week 2-3)
+1. **SST Engine**: Add precomputation to row-based flush
+2. **VIPER Engine**: Add quantized columns to Parquet schema
+3. **NOVA Engine**: Add progressive quantized columns
+4. **SWIFT Engine**: Add FastLanes block quantization
+5. **RAPTOR Engine**: Update adaptive row format
+6. **HELIX Engine**: Add zone-aware quantization storage
+
+=== Phase 3: Search Optimization (Week 4)
+1. Implement progressive search pipeline
+2. Add quantization-aware query planning
+3. Performance tuning and memory optimization
+4. Cache integration for quantized vectors
+
+=== Phase 4: Testing & Validation (Week 5)
+1. Unit tests for precomputation service
+2. Integration tests across all engines
+3. Performance benchmarks and regression testing
+4. Production validation with real workloads
+
+== Testing Requirements
+
+=== Unit Test Coverage
+- Quantization precomputation for each level (Binary, INT8, PQ4/8/16/32)
+- Storage and retrieval of quantized vectors across engines
+- Progressive search correctness and performance
+- Codebook management and caching
+
+=== Integration Test Scenarios
+- End-to-end tests with precomputation enabled/disabled
+- Cross-engine compatibility with quantized data
+- Memory usage analysis with various quantization levels
+- Performance regression testing
+
+=== Benchmark Requirements
+- Flush performance with different quantization levels
+- Search latency improvements with progressive refinement
+- Memory efficiency with quantized cache
+- Storage overhead measurements
+
+== Conclusion
+
+The quantized vector precomputation system provides:
+
+[horizontal]
+**Immediate Benefits**:: 5-10x search speedup, 30-50% memory reduction
+**Seamless Integration**:: Leverages existing quantization infrastructure
+**Storage Efficiency**:: <25% storage overhead for significant performance gains
+**Future-Proof Design**:: Extensible for new quantization methods
+
+This design enables ProximaDB to maintain its performance leadership while providing developers with transparent quantization benefits across all storage engines.
+
+---
+
+_For implementation details, see xref:../technical/quantization_system.adoc[Quantization System Architecture]_

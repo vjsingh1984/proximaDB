@@ -2789,7 +2789,7 @@ impl FastLanesDataBlock {
 
             // Auto-detect encoding scheme from group data and decode
             let decoder = FastLanesDecoder::new_from_data(&group_data);
-            let group_floats = decoder.decode_f32(&group_data, Some(GROUP_SIZE * dimension))?;
+            let group_floats = decoder.decode_f32(&group_data, Some(vector_count * group_dims))?;
 
             // Distribute the decoded floats to vectors
             // Data is stored row-wise: vec0[64D], vec1[64D], ...

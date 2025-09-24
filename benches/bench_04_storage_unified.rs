@@ -5,6 +5,7 @@ mod common;
 use common::benchmark_utils::{print_system_info, STANDARD_BATCH_SIZES};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use tracing::{debug, info, warn};
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, StorageAssignment, StorageConfig, VectorRecord, CompressionAlgorithm};
 use proximadb::storage::engines::factory::StorageEngineFactory;
@@ -476,17 +477,17 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         } else {
                             eprintln!("    ✅ FOUND: Pure search returned {} results for {} with {} in {}ms",
                                      results.len(), engine_name, compress_name, pure_time_ms);
-                            // Print detailed results with all metrics
+                            // Log detailed results with debug tracing (distance=0.0 means exact match)
                             for (i, result) in results.iter().take(5).enumerate() {
-                                eprintln!("       Result {}: ID={}, score={:.6}, similarity={:.6}, metadata_keys={}",
-                                         i+1, result.id, result.score,
-                                         result.similarity.unwrap_or(0.0),
-                                         result.metadata.len());
+                                debug!("Result {}: ID={}, distance={:.6}, similarity={:.6}, metadata_keys={}",
+                                      i+1, result.id, result.score,
+                                      result.similarity.unwrap_or(0.0),
+                                      result.metadata.len());
 
-                                // Show metadata if present
+                                // Log metadata if present
                                 if !result.metadata.is_empty() {
                                     for (key, val) in result.metadata.iter().take(3) {
-                                        eprintln!("         - {}: {:?}", key, val);
+                                        debug!("  - {}: {:?}", key, val);
                                     }
                                 }
                             }
@@ -624,10 +625,10 @@ fn bench_compression_with_search(c: &mut Criterion) {
                         } else {
                             eprintln!("    ✅ FOUND: Filtered search returned {} results for {} with {}",
                                      results.len(), engine_name, compress_name);
-                            // Print top 3 results with details
+                            // Log top 3 results with debug tracing
                             for (i, result) in results.iter().take(3).enumerate() {
-                                eprintln!("       Result {}: ID={}, score={:.6}, similarity={:.6}",
-                                         i+1, result.id, result.score, result.similarity.unwrap_or(0.0));
+                                debug!("Result {}: ID={}, distance={:.6}, similarity={:.6}",
+                                      i+1, result.id, result.score, result.similarity.unwrap_or(0.0));
                             }
                             if results.len() > 10 {
                                 eprintln!("      ⚠️  WARNING: Expected <= 10 results, got {}", results.len());

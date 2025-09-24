@@ -663,12 +663,49 @@ fn benchmark_encoding_configuration(
 }
 
 fn generate_test_vectors_for_encoding(num_vectors: usize, dimension: usize) -> Vec<Vec<f32>> {
+    // Use mixed pattern for realistic data (combines sparse, gaussian, quantized, and structured)
+    // This represents typical ML embeddings better than pure random noise
     let mut rng = thread_rng();
+
+    // Mixed pattern: realistic combination of patterns found in real embeddings
     (0..num_vectors)
-        .map(|_| {
-            (0..dimension)
-                .map(|_| rng.gen_range(-1.0..1.0))
-                .collect()
+        .map(|v| {
+            let mut vec = Vec::with_capacity(dimension);
+            let chunk_size = dimension / 4;
+
+            // First quarter: sparse (common in NLP embeddings)
+            for _ in 0..chunk_size {
+                vec.push(if rng.gen_bool(0.7) { 0.0 } else { rng.gen_range(-1.0..1.0) });
+            }
+
+            // Second quarter: gaussian-like (neural network activations)
+            // Box-Muller transform to approximate gaussian without rand_distr
+            for _ in 0..chunk_size {
+                let u1: f32 = rng.gen_range(0.001..1.0);
+                let u2: f32 = rng.gen_range(0.0..1.0);
+                let gaussian = ((-2.0f32 * u1.ln()).sqrt() * (2.0f32 * std::f32::consts::PI * u2).cos()) * 0.3f32;
+                vec.push(gaussian.clamp(-1.0, 1.0));
+            }
+
+            // Third quarter: quantized (common after vector quantization)
+            for _ in 0..chunk_size {
+                let level = rng.gen_range(0..16); // 16 levels
+                vec.push(-1.0 + level as f32 * (2.0 / 16.0));
+            }
+
+            // Fourth quarter: structured/sinusoidal (positional encodings, Fourier features)
+            let phase = v as f32 * 0.1;
+            for d in 0..(dimension - 3 * chunk_size) {
+                vec.push(((d as f32 * 0.2 + phase).sin() * 0.5) + rng.gen_range(-0.05..0.05));
+            }
+
+            // Normalize to unit length (common for cosine similarity)
+            let magnitude = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if magnitude > 0.0 {
+                vec.iter_mut().for_each(|x| *x /= magnitude);
+            }
+
+            vec
         })
         .collect()
 }
@@ -2083,12 +2120,49 @@ fn print_encoding_summary_table(results: &[EncodingResult]) {
 
 // Helper function to create test vectors for encoding
 fn generate_test_vectors_for_encoding_2(num_vectors: usize, dimension: usize) -> Vec<Vec<f32>> {
+    // Use mixed pattern for realistic data (combines sparse, gaussian, quantized, and structured)
+    // This represents typical ML embeddings better than pure random noise
     let mut rng = thread_rng();
+
+    // Mixed pattern: realistic combination of patterns found in real embeddings
     (0..num_vectors)
-        .map(|_| {
-            (0..dimension)
-                .map(|_| rng.gen_range(-1.0..1.0))
-                .collect()
+        .map(|v| {
+            let mut vec = Vec::with_capacity(dimension);
+            let chunk_size = dimension / 4;
+
+            // First quarter: sparse (common in NLP embeddings)
+            for _ in 0..chunk_size {
+                vec.push(if rng.gen_bool(0.7) { 0.0 } else { rng.gen_range(-1.0..1.0) });
+            }
+
+            // Second quarter: gaussian-like (neural network activations)
+            // Box-Muller transform to approximate gaussian without rand_distr
+            for _ in 0..chunk_size {
+                let u1: f32 = rng.gen_range(0.001..1.0);
+                let u2: f32 = rng.gen_range(0.0..1.0);
+                let gaussian = ((-2.0f32 * u1.ln()).sqrt() * (2.0f32 * std::f32::consts::PI * u2).cos()) * 0.3f32;
+                vec.push(gaussian.clamp(-1.0, 1.0));
+            }
+
+            // Third quarter: quantized (common after vector quantization)
+            for _ in 0..chunk_size {
+                let level = rng.gen_range(0..16); // 16 levels
+                vec.push(-1.0 + level as f32 * (2.0 / 16.0));
+            }
+
+            // Fourth quarter: structured/sinusoidal (positional encodings, Fourier features)
+            let phase = v as f32 * 0.1;
+            for d in 0..(dimension - 3 * chunk_size) {
+                vec.push(((d as f32 * 0.2 + phase).sin() * 0.5) + rng.gen_range(-0.05..0.05));
+            }
+
+            // Normalize to unit length (common for cosine similarity)
+            let magnitude = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if magnitude > 0.0 {
+                vec.iter_mut().for_each(|x| *x /= magnitude);
+            }
+
+            vec
         })
         .collect()
 }

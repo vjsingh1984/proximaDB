@@ -1,6 +1,7 @@
 /// Validation utilities for benchmarks to ensure correctness
 
 use proximadb::storage::traits::FlushResult as TraitFlushResult;
+use tracing::{debug, warn};
 use proximadb::core::search::results::OptimizedSearchRecord;
 use proximadb::proto::proximadb_v1::SqlValue;
 use std::collections::HashMap;
@@ -32,10 +33,10 @@ pub fn validate_flush_result(result: &TraitFlushResult, engine: &str, compressio
         valid = false;
     }
 
-    // Success message if all good
+    // Log success message with debug tracing
     if valid {
-        eprintln!("    ✅ Flush validated: {} vectors, {} bytes for {} with {}",
-                 result.entries_flushed.unwrap_or(0), result.bytes_written.unwrap_or(0), engine, compression);
+        debug!("Flush validated: {} vectors, {} bytes for {} with {}",
+               result.entries_flushed.unwrap_or(0), result.bytes_written.unwrap_or(0), engine, compression);
     }
 
     valid
@@ -71,22 +72,25 @@ pub fn validate_search_results(
     if is_filtered && !results.is_empty() {
         // This is a placeholder - actual implementation would check metadata
         // based on the filter criteria used in the benchmark
-        eprintln!("    ℹ️  INFO: Filter validation would check metadata here");
+        debug!("Filter validation would check metadata here");
     }
 
-    // Check result scores are valid (between 0 and 1 for cosine similarity)
+    // Check result scores are valid (note: score represents distance, lower = more similar)
     for result in results {
-        if result.score < 0.0 || result.score > 1.0 {
-            eprintln!("    ⚠️  WARNING: Invalid score {} for vector {} in {} with {}",
+        if result.score < 0.0 {
+            eprintln!("    ⚠️  WARNING: Invalid distance {} for vector {} in {} with {}",
                      result.score, result.id, engine, compression);
             valid = false;
         }
+        // Log detailed result info for debugging
+        debug!("Vector {}: distance={:.6}, similarity={:.6}",
+               result.id, result.score, result.similarity.unwrap_or(0.0));
     }
 
     if valid && !results.is_empty() {
-        eprintln!("    ✅ {} search validated: {} results for {} with {}",
-                 if is_filtered { "Filtered" } else { "Pure" },
-                 results.len(), engine, compression);
+        debug!("{} search validated: {} results for {} with {}",
+               if is_filtered { "Filtered" } else { "Pure" },
+               results.len(), engine, compression);
     }
 
     valid
@@ -120,8 +124,8 @@ pub fn validate_metadata_filter(
                  invalid_count, field, expected_value, engine, compression);
         valid = false;
     } else if !results.is_empty() {
-        eprintln!("    ✅ Filter validated: All {} results match {}={:?} for {} with {}",
-                 results.len(), field, expected_value, engine, compression);
+        debug!("Filter validated: All {} results match {}={:?} for {} with {}",
+               results.len(), field, expected_value, engine, compression);
     }
 
     valid
