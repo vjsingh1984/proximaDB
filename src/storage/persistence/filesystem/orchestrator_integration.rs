@@ -77,6 +77,7 @@ impl OrchestratorIntegration for UnifiedCachingFilesystem {
                 OrchestratorCacheType::GraphPropertyIndex => CacheTier::L3,  // Property indexes in L3
                 OrchestratorCacheType::DistanceTable => CacheTier::L2,  // Distance tables in L2
                 OrchestratorCacheType::MetricsSnapshot => CacheTier::L3,  // Metrics snapshots in L3
+                OrchestratorCacheType::Quantization => CacheTier::L2,  // Quantization codebooks in L2
             };
             metrics.record_hit(tier);
         } else {

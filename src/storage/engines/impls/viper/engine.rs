@@ -126,10 +126,12 @@ pub struct ViperEngine {
     /// Stores dimensions, schemas, compression settings per collection
     collections: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
 
-    /// Unified quantization engine from compute module
+    /// Storage-aware quantization engine for persistent collection-based PQ
     /// Provides Binary, INT8, PQ4/8/16 quantization with hardware acceleration
-    quantization_engine:
+    storage_quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    /// Fallback stateless quantization engine for ad-hoc queries
+    fallback_quantization_engine: Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
     /// Universal performance optimizer eliminating code duplication
     ///
@@ -357,11 +359,21 @@ impl ViperEngine {
                 enable_hardware_acceleration: true,
             };
 
-        let quantization_engine = Arc::new(
+        let storage_quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
                 unified_engine.clone(),
                 distance_compute.clone(),
                 storage_config,
+            ),
+        );
+
+        // Create fallback stateless quantization engine for ad-hoc queries
+        let fallback_codebook_store =
+            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let fallback_quantization_engine = Arc::new(
+            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                distance_compute.clone(),
+                fallback_codebook_store,
             ),
         );
 
@@ -435,7 +447,8 @@ impl ViperEngine {
             // Search engine removed - using IntegratedSearchOptimizer
             stats: Arc::new(EngineStats::default()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            quantization_engine,
+            storage_quantization_engine,
+            fallback_quantization_engine,
             universal_optimizer,
             orchestrator: None,
         })
@@ -1476,6 +1489,30 @@ impl ViperEngine {
             // No collection service available, return minimal metadata
             warn!("No collection service available for metadata retrieval");
             Ok(None)
+        }
+    }
+
+    /// Smart quantization selection using shared logic
+    fn should_use_persistent_quantization(&self, operation_context: &str, collection_size: Option<usize>) -> bool {
+        crate::compute::quantization::selection::QuantizationSelector::should_use_persistent_quantization_simple(
+            operation_context,
+            collection_size,
+        )
+    }
+
+    /// Get the appropriate quantization engine based on operation context
+    async fn get_quantization_engine(&self, operation_context: &str, collection_size: Option<usize>) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        if self.should_use_persistent_quantization(operation_context, collection_size) {
+            // Use global quantization cache for persistent operations
+            if let Some(global_cache) = crate::compute::quantization::global_cache::GlobalQuantizationCache::instance() {
+                global_cache.get_or_create_engine("default_collection".to_string()).await
+            } else {
+                // Fallback to fallback engine since we need UnifiedQuantizationEngine type
+                self.fallback_quantization_engine.clone()
+            }
+        } else {
+            // Use stateless engine for ad-hoc operations
+            self.fallback_quantization_engine.clone()
         }
     }
 }

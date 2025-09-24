@@ -131,7 +131,7 @@ impl UnifiedTestEnvironment {
             self.collection_id
         );
 
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(
+        let _distance_compute = Arc::new(UnifiedDistanceCompute::new(
             proximadb::compute::distance_computation::DistanceMetric::Cosine,
         ));
 
@@ -659,7 +659,7 @@ pub mod operations {
         let mut collection = environment.create_test_collection_for_engine(StorageEngine::Viper);
 
         // VIPER uses Parquet compression, configured through collection config
-        if let Some(ref mut config) = collection.config {
+        if let Some(ref mut _config) = collection.config {
             use proximadb::proto::proximadb_v1::CompressionAlgorithm;
 
             // Map to Parquet-supported algorithms

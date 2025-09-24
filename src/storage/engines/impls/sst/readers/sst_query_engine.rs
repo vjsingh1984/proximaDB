@@ -4402,6 +4402,8 @@ impl UnifiedSstableReader {
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+                    metadata_algorithm: None,
                 },
                 compression_algorithm: CompressionAlgorithm::None,
                 uncompressed_size: 0,

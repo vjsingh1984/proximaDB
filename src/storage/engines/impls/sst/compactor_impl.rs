@@ -1019,7 +1019,7 @@ mod tests {
         ));
 
         let base_config = StorageQuantizationConfig::default();
-        let base_engine = Arc::new(StorageQuantizationEngine::new(
+        let _base_engine = Arc::new(StorageQuantizationEngine::new(
             unified_engine,
             distance_compute,
             base_config,

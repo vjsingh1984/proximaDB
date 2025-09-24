@@ -402,6 +402,8 @@ impl RowBasedCompressionConfig {
             enable_metadata_compression: self.metadata_compression.enabled,
             compression_threshold_bytes: self.compression_thresholds.min_compression_size,
             dictionary_compression: self.adaptive_compression.enabled,
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            metadata_algorithm: None, // Use main algorithm for metadata
         }
     }
 

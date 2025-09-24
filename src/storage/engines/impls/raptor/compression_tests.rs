@@ -1,6 +1,6 @@
 use super::*;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig, CompressionAlgorithm, StorageConfig, StorageAssignment, StorageEngine, VectorRecord};
-use crate::storage::traits::FlushParameters;
+use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use anyhow::Result;
 use std::collections::HashMap;
 

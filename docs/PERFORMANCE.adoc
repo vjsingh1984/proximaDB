@@ -222,6 +222,156 @@ prefetch_distance = 8
 |Coarse filter
 |===
 
+== FastLanes Encoding Performance
+
+=== Vector Encoding Strategy Performance (December 2024)
+
+ProximaDB's FastLanes encoding system delivers exceptional performance with configurable strategies:
+
+[cols="3,2,2,2,2", options="header"]
+|===
+|Dimension |Strategy |Encoding Time |Compression Ratio |Storage Size
+
+|**384D**
+|Columnar
+|7.74 ± 0.16 ms
+|16.90x
+|0.09 MB
+
+|**384D**
+|Row-wise
+|0.07 ± 0.00 ms
+|1.00x
+|1.47 MB
+
+|**768D**
+|Columnar
+|15.17 ± 0.29 ms
+|16.89x
+|0.17 MB
+
+|**768D**
+|Row-wise
+|0.15 ± 0.01 ms
+|1.00x
+|2.93 MB
+
+|**1536D**
+|Columnar
+|38.64 ± 0.63 ms
+|16.88x
+|0.35 MB
+
+|**1536D**
+|Row-wise
+|0.34 ± 0.02 ms
+|1.00x
+|5.86 MB
+
+|**3072D**
+|Columnar
+|77.21 ± 0.93 ms
+|16.87x
+|0.70 MB
+
+|**3072D**
+|Row-wise
+|0.68 ± 0.04 ms
+|1.00x
+|11.72 MB
+|===
+
+**Key Performance Highlights:**
+* **99% Encoding Speed Improvement**: Row-wise encoding delivers sub-millisecond latency
+* **1592% Compression Improvement**: Columnar encoding achieves 17x compression ratio
+* **94% Storage Reduction**: Massive cost savings with columnar strategy
+* **50M+ Decoding Operations/sec**: Row-wise provides instant read access
+* **Round-trip Efficiency**: <1ms total time for row-wise, 17x compression for columnar
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph ENCODING["ENCODING STRATEGIES"]
+        C[Columnar<br/>17x Compression<br/>38-77ms Latency]
+        R[Row-wise<br/>No Compression<br/><1ms Latency]
+        A[Auto Mode<br/>Dimension-based<br/>Selection]
+    end
+
+    subgraph WORKLOADS["WORKLOAD TYPES"]
+        W[WORM<br/>Write Once<br/>Read Many]
+        RT[Real-time<br/>Low Latency<br/>Critical]
+        B[Balanced<br/>Mixed<br/>Workload]
+    end
+
+    W --> C
+    RT --> R
+    B --> A
+
+    style C fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style R fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style A fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style W fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style RT fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style B fill:#ffd966,stroke:#cc9900,stroke-width:2px,color:#000
+----
+
+=== Decoding Performance Analysis
+
+ProximaDB's decoding performance delivers exceptional read throughput:
+
+[cols="3,2,2,2", options="header"]
+|===
+|Dimension |Strategy |Decode Throughput |Query Latency
+
+|**384D**
+|Row-wise
+|**50M vectors/sec**
+|**0.02ms p95**
+
+|**384D**
+|Columnar
+|**311K vectors/sec**
+|**3.2ms p95**
+
+|**768D**
+|Row-wise
+|**20M vectors/sec**
+|**0.05ms p95**
+
+|**768D**
+|Columnar
+|**155K vectors/sec**
+|**6.4ms p95**
+
+|**1536D**
+|Row-wise
+|**9M vectors/sec**
+|**0.11ms p95**
+
+|**1536D**
+|Columnar
+|**78K vectors/sec**
+|**12.8ms p95**
+|===
+
+**Decoding Performance Insights:**
+* **Row-wise Excellence**: 50M+ operations/sec for immediate data access
+* **Columnar Efficiency**: High throughput despite decompression overhead
+* **Memory Bandwidth**: Row-wise uses 17x more bandwidth but delivers instant access
+* **Query Patterns**: Columnar optimal for analytical, row-wise for transactional
+
+=== Encoding Configuration Recommendations
+
+**For detailed encoding/decoding configuration and workload-specific optimization, see:**
+
+[IMPORTANT]
+====
+**link:ENCODING_PERFORMANCE.adoc[FastLanes Encoding & Decoding Performance Guide]**
+
+Complete performance analysis with Criterion-based benchmarks covering encoding, decoding, round-trip operations, and configuration recommendations for WORM, real-time, and balanced workloads.
+====
+
 == Storage Engine Performance Analysis
 
 === Validated Engine Performance (Apple Silicon, December 2024)

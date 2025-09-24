@@ -439,7 +439,7 @@ impl VectorMemoryPool {
             let vector_data = config.serialize_vector(vector)?;
 
             // Write length prefix
-            buffer.extend_from_slice(&(vector_data.len()).to_le_bytes());
+            buffer.extend_from_slice(&(vector_data.len() as u32).to_le_bytes());
             buffer.extend_from_slice(&vector_data);
         }
 

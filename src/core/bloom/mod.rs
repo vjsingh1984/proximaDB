@@ -708,10 +708,10 @@ impl SstableBloomFilter {
         buffer.write_all(&self.stats.metadata_queries_saved.to_le_bytes())?;
 
         // Write data lengths and data
-        buffer.write_all(&(self.key_filter_data.len()).to_le_bytes())?;
+        buffer.write_all(&(self.key_filter_data.len() as u32).to_le_bytes())?;
         buffer.write_all(&self.key_filter_data)?;
 
-        buffer.write_all(&(self.metadata_filter_data.len()).to_le_bytes())?;
+        buffer.write_all(&(self.metadata_filter_data.len() as u32).to_le_bytes())?;
         buffer.write_all(&self.metadata_filter_data)?;
 
         Ok(buffer)

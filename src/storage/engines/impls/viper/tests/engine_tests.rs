@@ -18,6 +18,12 @@ use std::collections::HashMap;
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use arrow_array::{StringArray, Int32Array, RecordBatch};
+use arrow_schema::{DataType, Field, Schema};
+use parquet::arrow::ArrowWriter;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::file::properties::WriterProperties;
+use std::fs::File;
 
 /// Create test configuration
 fn create_test_config(_base_path: &str) -> ViperEngineConfig {
@@ -1141,4 +1147,91 @@ async fn test_concurrent_operations() {
         .unwrap();
 
     assert_eq!(results.len(), 100); // 5 tasks * 20 vectors
+}
+
+#[tokio::test]
+async fn test_parquet_bloom_filter_support() {
+    // This test verifies that Parquet files written with ArrowWriter
+    // correctly support bloom filters when configured
+
+    println!("🧪 Testing Parquet bloom filter support...");
+
+    // Create test data
+    let ids = StringArray::from(vec!["id1", "id2", "id3", "id4", "id5"]);
+    let values = Int32Array::from(vec![1, 2, 3, 4, 5]);
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Utf8, false),
+        Field::new("value", DataType::Int32, false),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(ids), Arc::new(values)],
+    ).expect("Failed to create record batch");
+
+    // Configure writer with bloom filters
+    let props = WriterProperties::builder()
+        .set_column_bloom_filter_enabled("id".into(), true)
+        .set_column_bloom_filter_fpp("id".into(), 0.01)
+        .set_column_bloom_filter_enabled("value".into(), true)
+        .set_column_bloom_filter_fpp("value".into(), 0.01)
+        .build();
+
+    // Create a temporary file for testing
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test_bloom.parquet");
+
+    // Write Parquet file
+    {
+        let file = File::create(&file_path).expect("Failed to create parquet file");
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props))
+            .expect("Failed to create ArrowWriter");
+        writer.write(&batch).expect("Failed to write batch");
+        writer.close().expect("Failed to close writer");
+    }
+
+    println!("✅ Parquet file written with bloom filter configuration");
+
+    // Read back and check metadata
+    let file = File::open(&file_path).expect("Failed to open parquet file");
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .expect("Failed to create parquet reader");
+    let metadata = reader.metadata();
+
+    println!("📊 Parquet file metadata:");
+    println!("  Row groups: {}", metadata.num_row_groups());
+
+    let mut has_bloom = false;
+    for i in 0..metadata.num_row_groups() {
+        let row_group = metadata.row_group(i);
+        println!("  Row group {}:", i);
+        for col_idx in 0..row_group.num_columns() {
+            let col = row_group.column(col_idx);
+            let bloom_offset = col.bloom_filter_offset();
+            let bloom_length = col.bloom_filter_length();
+
+            if bloom_offset.is_some() || bloom_length.is_some() {
+                has_bloom = true;
+            }
+
+            println!("    Column {}: bloom_filter_offset = {:?}, bloom_filter_length = {:?}",
+                     col_idx,
+                     bloom_offset,
+                     bloom_length);
+        }
+    }
+
+    if has_bloom {
+        println!("✅ BLOOM FILTERS CONFIRMED: ArrowWriter DOES write bloom filters to Parquet files!");
+    } else {
+        println!("❌ WARNING: No bloom filters found in Parquet metadata!");
+        println!("   This might mean:");
+        println!("   1. The parquet version doesn't support bloom filters");
+        println!("   2. Bloom filters are not being written despite configuration");
+    }
+
+    // For VIPER engine, this is important because bloom filters can significantly
+    // improve query performance when filtering by ID or other indexed columns
+    assert!(has_bloom, "Parquet should support bloom filters for optimal VIPER performance");
 }

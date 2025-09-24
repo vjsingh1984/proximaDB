@@ -232,6 +232,8 @@ async fn load_block_from_disk(superblock_idx: u32, block_idx: u32) -> Result<Fas
         enable_metadata_compression: true,
         compression_threshold_bytes: 1024,
         dictionary_compression: false,
+        vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+        metadata_algorithm: None, // Use main algorithm for metadata
     };
 
     Ok(FastLanesDataBlock::new(Vec::new(), compression_config))

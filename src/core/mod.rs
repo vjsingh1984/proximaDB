@@ -222,7 +222,7 @@ impl VectorRecordSerialization for VectorRecord {
         buffer.write_all(&(vector_bytes.len() as u32).to_le_bytes())?;
         buffer.write_all(vector_bytes)?;
 
-        buffer.write_all(&(bincode_data.len()).to_le_bytes())?;
+        buffer.write_all(&(bincode_data.len() as u32).to_le_bytes())?;
         buffer.write_all(&bincode_data)?;
 
         Ok(buffer)

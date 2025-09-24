@@ -546,6 +546,7 @@ mod tests {
                 enable_metadata_compression: true,
                 compression_threshold_bytes: 8192,
                 dictionary_compression: false,
+                vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
             },
             compression_algorithm: crate::core::compression::CompressionAlgorithm::Lz4,
             uncompressed_size: 0,

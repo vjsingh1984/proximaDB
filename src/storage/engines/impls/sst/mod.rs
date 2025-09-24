@@ -1018,6 +1018,8 @@ mod compression_helpers {
             enable_metadata_compression: true,
             compression_threshold_bytes: 1024, // 1KB threshold for testing
             dictionary_compression: false,
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            metadata_algorithm: None, // Use main algorithm for metadata
         }
     }
 
@@ -1122,6 +1124,8 @@ mod compression_helpers {
                 enable_metadata_compression: true,
                 compression_threshold_bytes: block_size / 1000, // Use 0.1% of block size as threshold
                 dictionary_compression: false,
+                vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+                metadata_algorithm: None, // Use main algorithm for metadata
             }
         } else {
             BlockCompressionConfig::default()
@@ -1647,8 +1651,10 @@ pub struct SstEngine {
     distance_compute: Arc<UnifiedDistanceCompute>,
     // Shared decompression cache across all collections
     decompression_cache: Arc<decompression_cache::DecompressionCache>,
-    // Shared quantization engine
-    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    // Storage-aware quantization engine for persistent collection-based PQ
+    storage_quantization_engine: Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    // Fallback stateless quantization engine for ad-hoc queries
+    fallback_quantization_engine: Arc<UnifiedQuantizationEngine>,
 
     // Universal performance optimization (replaces SST-specific optimization)
     /// Universal performance optimizer eliminating code duplication
@@ -1711,12 +1717,27 @@ impl SstEngine {
             String::new(), // Empty collection_id for singleton
         ));
 
-        // Create quantization engine (optional for SST)
-        // For now, use in-memory codebook store since SST doesn't require quantization
+        // Create storage-aware quantization engine for persistent collection-based PQ
         let codebook_store: Arc<dyn CodebookStore> = Arc::new(InMemoryCodebookStore::new());
-        let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+        let unified_quantization = Arc::new(UnifiedQuantizationEngine::new(
             distance_compute.clone(),
-            codebook_store,
+            codebook_store.clone(),
+        ));
+
+        let storage_config = crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
+        let storage_quantization_engine = Arc::new(
+            crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
+                unified_quantization.clone(),
+                distance_compute.clone(),
+                storage_config,
+            )
+        );
+
+        // Create fallback stateless quantization engine for ad-hoc queries
+        let fallback_codebook_store: Arc<dyn CodebookStore> = Arc::new(InMemoryCodebookStore::new());
+        let fallback_quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
+            distance_compute.clone(),
+            fallback_codebook_store,
         ));
 
         // Initialize decompression cache with default size (64MB)
@@ -1775,7 +1796,8 @@ impl SstEngine {
             sstable_reader,
             distance_compute,
             decompression_cache: decompression_cache.clone(),
-            quantization_engine,
+            storage_quantization_engine,
+            fallback_quantization_engine,
             universal_optimizer,
             orchestrator: crate::storage::cache::orchestrator::CrossCacheOrchestrator::global(),
         })
@@ -1820,12 +1842,26 @@ impl SstEngine {
         })?;
 
         // Storage location MUST come from collection config - no fallback paths
-        return Err(SstError::InvalidArgument(format!(
+        Err(SstError::InvalidArgument(format!(
             "SST: Collection '{}' has no storage assignment. All collections must have storage assignments.",
             collection_id
-        )).into());
-        // This should not be reached as we return an error above
-        unreachable!("Collection must have storage assignment")
+        )).into())
+    }
+
+    /// Check if we should use persistent quantization for this operation
+    /// Returns true for collection-based operations with quantization enabled
+    fn should_use_persistent_quantization(&self, params: &FlushParameters) -> bool {
+        crate::compute::quantization::QuantizationSelector::should_use_persistent_quantization(params, "SST")
+    }
+
+    /// Get the storage quantization engine for persistent collection operations
+    fn get_storage_quantization_engine(&self) -> &Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
+        &self.storage_quantization_engine
+    }
+
+    /// Get the fallback quantization engine for stateless operations
+    fn get_fallback_quantization_engine(&self) -> &Arc<UnifiedQuantizationEngine> {
+        &self.fallback_quantization_engine
     }
 
     /// Enable compaction with the SST tree's atomic coordinator
@@ -4893,7 +4929,7 @@ impl SstEngine {
         &self,
     ) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
         // Use the existing quantization engine from the struct
-        self.quantization_engine.clone()
+        self.fallback_quantization_engine.clone()
     }
 
     fn mock_storage_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {

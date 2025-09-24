@@ -45,6 +45,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tracing::{debug, trace, warn};
 
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
@@ -283,6 +284,39 @@ pub struct QuantizationStatistics {
     pub quantization_time_ms: u64,
 }
 
+/// Vector encoding layout strategies for FastLanes compression
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VectorEncodingLayout {
+    /// TransposeFieldEncodedAndCompressedVector: transpose RxD → DxR, store each dimension as separate field
+    /// Each dimension field gets FastLanes encoding + field-level compression
+    /// Better when dimensions have patterns/correlations
+    TransposeFieldEncodedAndCompressedVector,
+
+    /// TransposeFieldEncodedBlockCompressedVector: transpose RxD → DxR, store each dimension as separate field
+    /// Each dimension field gets FastLanes encoding, then entire block is compressed
+    /// Better for uniform compression across all dimensions
+    TransposeFieldEncodedBlockCompressedVector,
+
+    /// FullVector: keep vectors as RxD, store as single vector field array
+    /// Vector field contains [bytemuck(vec0), bytemuck(vec1), ...] + compression
+    /// Better for high-dimensional vectors with no dimensional patterns
+    FullVector,
+
+    /// GroupedFieldEncodedAndCompressedVector: divide vectors into 32D groups, each group compressed separately
+    /// Provides better cache locality and parallel processing for high dimensions
+    /// Groups are [0-31], [32-63], etc. with field-level compression
+    GroupedFieldEncodedAndCompressedVector,
+
+    /// GroupedFieldEncodedBlockCompressedVector: divide vectors into 32D groups, then compress entire block
+    /// Same grouping as above but with block-level compression instead of per-group
+    /// Better for uniform compression across all groups
+    GroupedFieldEncodedBlockCompressedVector,
+
+    /// Auto: choose strategy based on dimension count and data patterns
+    /// Uses heuristics to select optimal encoding (defaults to GroupedFieldEncodedAndCompressedVector for most cases)
+    Auto,
+}
+
 /// Block compression configuration
 #[derive(Debug, Clone)]
 pub struct BlockCompressionConfig {
@@ -292,6 +326,10 @@ pub struct BlockCompressionConfig {
     pub enable_metadata_compression: bool,
     pub compression_threshold_bytes: usize,
     pub dictionary_compression: bool,
+    /// Vector encoding layout strategy (columnar vs row-wise)
+    pub vector_layout: VectorEncodingLayout,
+    /// Metadata-specific compression algorithm (if None, uses main algorithm)
+    pub metadata_algorithm: Option<CompressionAlgorithm>,
 }
 
 /// Block statistics for performance monitoring
@@ -773,10 +811,14 @@ impl FastLanesDataBlock {
 
         let mut result = Vec::new();
 
+        trace!("[ENCODE] Starting serialization with config: {:?}", config);
+        trace!("[ENCODE] Records count: {}", self.records.len());
+
         // Write format version for backward compatibility
         const COLUMNAR_FORMAT_VERSION: u8 = 1; // Version 1 = initial release
         result.push(COLUMNAR_FORMAT_VERSION);
         result.push(self.encoding_marker);
+        trace!("[ENCODE] Position {}: Wrote format version {} + encoding marker {}", result.len(), COLUMNAR_FORMAT_VERSION, self.encoding_marker);
 
         if self.records.is_empty() {
             result.write_all(&0u32.to_le_bytes())?; // Zero records
@@ -787,6 +829,7 @@ impl FastLanesDataBlock {
         result.write_all(&(self.records.len() as u32).to_le_bytes())?;
         let dimension = self.records[0].vector.len();
         result.write_all(&(dimension as u32).to_le_bytes())?;
+        trace!("[ENCODE] Position {}: Wrote record count {} + dimension {}", result.len(), self.records.len(), dimension);
 
         // ============ STEP 1: Encode vectors using FastLanes dual-mode encoding ============
         // Initialize encoder - delegate to fastlanes_encoding module
@@ -808,38 +851,67 @@ impl FastLanesDataBlock {
         // Collect vectors from records
         let vectors: Vec<Vec<f32>> = self.records.iter().map(|r| r.vector.clone()).collect();
 
-        // Choose encoding layout based on dimension and configuration
-        // Use columnar for better compression on low-medium dimensions
-        // Use row-wise for high dimensions to speed up reconstruction
-        let encoded_vectors = if dimension <= 512 {
-            // Columnar layout for better compression
-            let columnar = encoder.encode_vectors_columnar(&vectors, 64)?;
-            // Serialize columnar format
-            let mut bytes = Vec::new();
-            bytes.extend(&(dimension as u32).to_le_bytes());
-            bytes.extend(&(vectors.len() as u32).to_le_bytes());
-            for group in &columnar.dimension_groups {
-                // Serialize each dimension in the group
-                for dim in &group.dimensions {
-                    bytes.extend(&(dim.encoded_data.len()).to_le_bytes());
-                    bytes.extend(&dim.encoded_data);
+        // Choose encoding strategy based on configuration
+        let strategy = match config.vector_layout {
+            VectorEncodingLayout::Auto => {
+                // Auto-select: use GroupedFieldEncodedAndCompressedVector as default for better cache locality
+                // Only use TransposeFieldEncodedAndCompressedVector for very small dimensions where grouping overhead isn't worth it
+                if dimension <= 64 {
+                    VectorEncodingLayout::FullVector  // Single group, no benefit from grouping
+                } else if dimension <= 128 {
+                    VectorEncodingLayout::FullVector  // Marginal benefit, keep simple
+                } else {
+                    VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector  // Default for D > 128
                 }
             }
-            bytes
-        } else {
-            // Row-wise for medium-high dimensions
-            let rowwise = encoder.encode_vectors_rowwise(&vectors, dimension <= 2048)?;
-            // Concatenate all encoded vectors
-            let mut all_bytes = Vec::new();
-            for vec_data in &rowwise.encoded_vectors {
-                all_bytes.extend(vec_data);
+            layout => layout,
+        };
+
+        trace!("[ENCODE] Selected strategy: {:?}, dimension: {}", strategy, dimension);
+
+        let encoded_vectors = match strategy {
+            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector => {
+                trace!("[ENCODE] Using TransposeFieldEncodedAndCompressedVector strategy with field-level compression");
+                // TransposeFieldEncodedAndCompressedVector strategy: RxD → DxR with per-dimension compression
+                let result = Self::encode_transpose_field_encoded_and_compressed_vector_field(&vectors, dimension, config)?;
+                trace!("[ENCODE] TransposeFieldEncodedAndCompressedVector encoded size: {} bytes", result.len());
+                result
             }
-            all_bytes
+            VectorEncodingLayout::FullVector => {
+                trace!("[ENCODE] Using FullVector strategy with field-level compression");
+                // FullVector strategy: field-level compression with delta encoding
+                let result = Self::encode_full_vector_field(&vectors, dimension, config)?;
+                trace!("[ENCODE] FullVector encoded size: {} bytes", result.len());
+                result
+            }
+            VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector => {
+                trace!("[ENCODE] Using TransposeFieldEncodedBlockCompressedVector strategy with block-level compression");
+                // TransposeFieldEncodedBlockCompressedVector strategy: RxD → DxR with block compression
+                let result = Self::encode_transpose_field_encoded_block_compressed_vector_field(&vectors, dimension, config)?;
+                trace!("[ENCODE] TransposeFieldEncodedBlockCompressedVector encoded size: {} bytes", result.len());
+                result
+            }
+            VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector => {
+                trace!("[ENCODE] Using GroupedFieldEncodedAndCompressedVector strategy");
+                // GroupedFieldEncodedAndCompressedVector strategy: divide into 32D groups with field-level compression
+                let result = Self::encode_grouped_field_encoded_and_compressed_vector_field(&vectors, dimension, config)?;
+                trace!("[ENCODE] GroupedFieldEncodedAndCompressedVector encoded size: {} bytes", result.len());
+                result
+            }
+            VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector => {
+                trace!("[ENCODE] Using GroupedFieldEncodedBlockCompressedVector strategy");
+                // GroupedFieldEncodedBlockCompressedVector strategy: divide into 32D groups with block-level compression
+                let result = Self::encode_grouped_field_encoded_block_compressed_vector_field(&vectors, dimension, config)?;
+                trace!("[ENCODE] GroupedFieldEncodedBlockCompressedVector encoded size: {} bytes", result.len());
+                result
+            }
+            VectorEncodingLayout::Auto => unreachable!("Auto should be resolved above"),
         };
 
         // Write encoded vectors
         result.write_all(&(encoded_vectors.len() as u32).to_le_bytes())?;
         result.write_all(&encoded_vectors)?;
+        trace!("[ENCODE] Position {}: Wrote vector data length {} + {} bytes", result.len(), encoded_vectors.len(), encoded_vectors.len());
 
         // ============ STEP 2: Encode IDs using FastLanes dictionary encoding ============
         let mut unique_ids = HashSet::new();
@@ -856,10 +928,12 @@ impl FastLanesDataBlock {
 
         // Write dictionary
         result.write_all(&(id_dictionary.len() as u32).to_le_bytes())?;
-        for id in &id_dictionary {
+        trace!("[ENCODE] Position {}: Wrote ID dictionary length {}", result.len(), id_dictionary.len());
+        for (i, id) in id_dictionary.iter().enumerate() {
             let bytes = id.as_bytes();
             result.write_all(&(bytes.len() as u32).to_le_bytes())?;
             result.write_all(bytes)?;
+            trace!("[ENCODE] Position {}: Wrote ID[{}] '{}' (len {} + {} bytes)", result.len(), i, id, bytes.len(), bytes.len());
         }
 
         // Collect indices and encode using FastLanes delta encoding
@@ -872,6 +946,7 @@ impl FastLanesDataBlock {
         let encoded_ids = encoder.encode_i64(&id_indices)?;
         result.write_all(&(encoded_ids.len() as u32).to_le_bytes())?;
         result.write_all(&encoded_ids)?;
+        trace!("[ENCODE] Position {}: Wrote ID indices length {} + {} bytes", result.len(), encoded_ids.len(), encoded_ids.len());
 
         // ============ STEP 3: Build sparse metadata columns ============
         let mut metadata_keys = HashSet::new();
@@ -883,6 +958,7 @@ impl FastLanesDataBlock {
 
         let metadata_key_list: Vec<String> = metadata_keys.into_iter().collect();
         result.write_all(&(metadata_key_list.len() as u32).to_le_bytes())?;
+        trace!("[ENCODE] Position {}: Wrote metadata key count {}", result.len(), metadata_key_list.len());
 
         for key in &metadata_key_list {
             // Write key name
@@ -931,13 +1007,15 @@ impl FastLanesDataBlock {
 
             // Compress and write sparse values
             if !sparse_values.is_empty() {
+                // Use metadata-specific compression algorithm, fall back to main algorithm
+                let metadata_algo = config.metadata_algorithm.unwrap_or(config.algorithm);
                 let compressed_values = compress(
                     &sparse_values,
-                    CompressionAlgorithm::Zstd,
-                    3,
+                    metadata_algo,
+                    config.compression_level as i32,
                     CompressionContext::Block,
                 )?;
-                result.write_all(&(compressed_values.len()).to_le_bytes())?;
+                result.write_all(&(compressed_values.len() as u32).to_le_bytes())?;
                 result.write_all(&compressed_values)?;
             } else {
                 result.write_all(&0u32.to_le_bytes())?;
@@ -952,13 +1030,18 @@ impl FastLanesDataBlock {
             .collect();
 
         let encoded_timestamps = encoder.encode_i64(&timestamps)?;
-        result.write_all(&(encoded_timestamps.len() as u32).to_le_bytes())?;
+        let timestamp_len_bytes = (encoded_timestamps.len() as u32).to_le_bytes();
+        trace!("[ENCODE] Timestamp count: {}, encoded size: {} bytes", timestamps.len(), encoded_timestamps.len());
+        trace!("[ENCODE] Writing timestamp length bytes: {:?}", timestamp_len_bytes);
+        result.write_all(&timestamp_len_bytes)?;
         result.write_all(&encoded_timestamps)?;
+        trace!("[ENCODE] Position {}: Wrote timestamp length {} + {} bytes", result.len(), encoded_timestamps.len(), encoded_timestamps.len());
 
         // ============ STEP 5: Write block metadata ============
         let metadata_bytes = bincode::serialize(&self.metadata)?;
         result.write_all(&(metadata_bytes.len() as u32).to_le_bytes())?;
         result.write_all(&metadata_bytes)?;
+        trace!("[ENCODE] Position {}: Wrote block metadata length {} + {} bytes", result.len(), metadata_bytes.len(), metadata_bytes.len());
 
         // ============ STEP 6: Apply compression if configured ============
         if config.algorithm != CompressionAlgorithm::None {
@@ -971,6 +1054,7 @@ impl FastLanesDataBlock {
 
             // If compression is actually beneficial
             if compressed.len() < result.len() {
+                trace!("[ENCODE] Compression beneficial: {} -> {} bytes", result.len(), compressed.len());
                 // Write compressed format: marker + original size + compressed data
                 let mut final_result = Vec::new();
 
@@ -983,6 +1067,7 @@ impl FastLanesDataBlock {
                     _ => 0x80,
                 };
                 final_result.push(compression_marker);
+                trace!("[ENCODE] Using compression marker: 0x{:02X}", compression_marker);
 
                 // Write original size for decompression
                 final_result.extend(&(result.len() as u32).to_le_bytes());
@@ -990,7 +1075,10 @@ impl FastLanesDataBlock {
                 // Write compressed data
                 final_result.extend(compressed);
 
+                trace!("[ENCODE] Final compressed size: {} bytes", final_result.len());
                 return Ok(final_result);
+            } else {
+                trace!("[ENCODE] Compression not beneficial: {} -> {} bytes", result.len(), compressed.len());
             }
         }
 
@@ -999,6 +1087,7 @@ impl FastLanesDataBlock {
         let mut final_result = Vec::with_capacity(result.len() + 1);
         final_result.push(0x00); // Uncompressed marker
         final_result.extend(result);
+        trace!("[ENCODE] Final uncompressed size: {} bytes", final_result.len());
         Ok(final_result)
     }
 
@@ -1009,17 +1098,22 @@ impl FastLanesDataBlock {
         use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, markers};
         use std::io::Read;
 
+        trace!("[DECODE] Starting deserialization, data size: {} bytes", data.len());
+
         if data.is_empty() {
+            warn!(" [DECODE] ERROR: Empty data");
             return Err(anyhow::anyhow!(
                 "Empty data for FastLanesDataBlock deserialization"
             ));
         }
 
         let first_byte = data[0];
+        trace!("[DECODE] First byte: 0x{:02X}", first_byte);
 
         // Check compression/encoding status
         let (decompressed_data, encoding_marker) = if first_byte >= 0x80 && first_byte < 0x90 {
             // This is compressed data (0x80-0x8F range)
+            trace!("[DECODE] Compressed data detected");
             let algorithm = match first_byte {
                 0x80 => CompressionAlgorithm::Lz4,
                 0x81 => CompressionAlgorithm::Zstd,
@@ -1027,17 +1121,21 @@ impl FastLanesDataBlock {
                 0x83 => CompressionAlgorithm::Gzip,
                 _ => CompressionAlgorithm::None,
             };
+            trace!("[DECODE] Compression algorithm: {:?}", algorithm);
 
             // Read original size
             let original_size = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+            trace!("[DECODE] Original size: {} bytes", original_size);
 
             // Decompress the rest of the data
             let compressed_data = &data[5..];
+            trace!("[DECODE] Compressed data size: {} bytes", compressed_data.len());
             let decompressed = decompress(
                 compressed_data,
                 algorithm,
                 CompressionContext::Block,
             )?;
+            trace!("[DECODE] Decompressed size: {} bytes", decompressed.len());
 
             // The decompressed data contains: format_version + encoding_marker + data
             let actual_marker = if decompressed.len() > 1 {
@@ -1045,9 +1143,11 @@ impl FastLanesDataBlock {
             } else {
                 0x00
             };
+            trace!("[DECODE] Encoding marker from decompressed: 0x{:02X}", actual_marker);
             (decompressed, actual_marker)
         } else if first_byte == 0x00 {
             // Uncompressed data marker - the actual data follows
+            trace!("[DECODE] Uncompressed data detected");
             let actual_data = &data[1..];
             // The uncompressed data starts with format version and encoding marker
             let actual_marker = if actual_data.len() > 1 {
@@ -1055,11 +1155,15 @@ impl FastLanesDataBlock {
             } else {
                 0x00
             };
+            trace!("[DECODE] Format version: 0x{:02X}, Encoding marker: 0x{:02X}",
+                     if actual_data.len() > 0 { actual_data[0] } else { 0x00 }, actual_marker);
             (actual_data.to_vec(), actual_marker)
         } else {
             // Legacy or direct format: check if it's format version
+            trace!("[DECODE] Legacy/direct format detected");
             if first_byte == 0x01 && data.len() > 1 {
                 // Format version 1, next byte is encoding marker
+                trace!("[DECODE] Format version 1, encoding marker: 0x{:02X}", data[1]);
                 (data.to_vec(), data[1])
             } else {
                 // Assume first byte is encoding marker directly (very old format)
@@ -1067,108 +1171,198 @@ impl FastLanesDataBlock {
             }
         };
 
-        // Now process the decompressed data
-        // Skip format version and encoding marker if present
-        let data = if decompressed_data.len() > 2 && decompressed_data[0] == 0x01 {
-            // Has format version, skip both format version and encoding marker
-            &decompressed_data[2..]
-        } else if decompressed_data.len() > 1 {
-            // No format version or old format, skip just the encoding marker
-            &decompressed_data[1..]
+        // Now process the decompressed data sequentially from position 0
+        // DO NOT SKIP ANY BYTES - read everything in sequence to match serialization
+        trace!("[DECODE] Processing decompressed data sequentially from position 0");
+        trace!("[DECODE] Total decompressed data size: {} bytes", decompressed_data.len());
+
+        // Create cursor at position 0 - read all fields sequentially
+        let mut cursor = std::io::Cursor::new(&decompressed_data);
+
+        // Read format version and encoding marker sequentially (matches serialization)
+        let mut format_version_byte = [0u8; 1];
+        cursor.read_exact(&mut format_version_byte)?;
+        let format_version = format_version_byte[0];
+        trace!("[DECODE] Format version: 0x{:02X} at position 0", format_version);
+
+        let mut encoding_marker_byte = [0u8; 1];
+        cursor.read_exact(&mut encoding_marker_byte)?;
+        let encoding_marker_read = encoding_marker_byte[0];
+        trace!("[DECODE] Encoding marker: 0x{:02X} at position 1", encoding_marker_read);
+
+        // ============ STEP 1: Read record count and dimension (matches serialization) ============
+        let mut record_count_bytes = [0u8; 4];
+        cursor.read_exact(&mut record_count_bytes)?;
+        let record_count = u32::from_le_bytes(record_count_bytes) as usize;
+        trace!("[DECODE] Record count: {}", record_count);
+
+        if record_count == 0 {
+            // Empty block case
+            return Ok(Self::new(vec![], BlockCompressionConfig::default()));
+        }
+
+        let mut dimension_bytes = [0u8; 4];
+        cursor.read_exact(&mut dimension_bytes)?;
+        let dimension = u32::from_le_bytes(dimension_bytes) as usize;
+        trace!("[DECODE] Dimension: {}", dimension);
+
+        // ============ STEP 2: Read vector data (matches serialization sequence) ============
+        let mut vector_len_bytes = [0u8; 4];
+        cursor.read_exact(&mut vector_len_bytes)?;
+        let vector_data_len = u32::from_le_bytes(vector_len_bytes) as usize;
+        trace!("[DECODE] Vector data length: {} bytes", vector_data_len);
+
+        let mut vector_data = vec![0u8; vector_data_len];
+        cursor.read_exact(&mut vector_data)?;
+
+        // Detect encoding strategy and decode accordingly
+        trace!("[DECODE] Checking vector data format...");
+        if vector_data.len() >= 2 {
+            trace!("[DECODE] Vector data first 2 bytes: [0x{:02X}, 0x{:02X}]",
+                     vector_data[0], vector_data[1]);
+        }
+
+        let mut records = if vector_data.len() >= 2 && vector_data[0] == 0x46 && vector_data[1] == 0x56 {
+            // FullVector format detected (FV marker)
+            trace!("[DECODE] FullVector format detected, decoding...");
+            Self::decode_full_vector(&vector_data, dimension, record_count)?
+        } else if vector_data.len() >= 2 && vector_data[0] == 0x47 && vector_data[1] == 0x56 {
+            // GroupedFieldEncodedAndCompressedVector format detected (GV marker)
+            trace!("[DECODE] GroupedFieldEncodedAndCompressedVector format detected, decoding...");
+            Self::decode_grouped_field_encoded_and_compressed_vector(&vector_data, dimension, record_count)?
+        } else if vector_data.len() >= 2 && vector_data[0] == 0x47 && vector_data[1] == 0x42 {
+            // GroupedFieldEncodedBlockCompressedVector format detected (GB marker)
+            trace!("[DECODE] GroupedFieldEncodedBlockCompressedVector format detected, decoding...");
+            Self::decode_grouped_field_encoded_block_compressed_vector(&vector_data, dimension, record_count)?
+        } else if vector_data.len() >= 2 && vector_data[0] == 0x54 && vector_data[1] == 0x56 {
+            // TransposeFieldEncodedAndCompressedVector format detected (TV marker)
+            trace!("[DECODE] TransposeFieldEncodedAndCompressedVector format detected, decoding...");
+            Self::decode_transpose_field_encoded_and_compressed_vector(&vector_data, dimension, record_count)?
+        } else if vector_data.len() >= 2 && vector_data[0] == 0x54 && vector_data[1] == 0x42 {
+            // TransposeFieldEncodedBlockCompressedVector format detected (TB marker)
+            trace!("[DECODE] TransposeFieldEncodedBlockCompressedVector format detected, decoding...");
+            Self::decode_transpose_field_encoded_block_compressed_vector(&vector_data, dimension, record_count)?
         } else {
-            // Shouldn't happen, but handle gracefully
-            &decompressed_data[..]
+            // Legacy format: decode using existing columnar logic
+            trace!("[DECODE] Legacy format detected, decoding...");
+            Self::decode_existing_columnar_format(&vector_data, encoding_marker)?
         };
 
-        // Data is already decompressed at this point
-        let mut cursor = std::io::Cursor::new(data);
+        // ============ CRITICAL: Decode the remaining sections that encoder wrote ============
 
-        // Read metadata length and deserialize
-        let mut len_bytes = [0u8; 4];
-        cursor.read_exact(&mut len_bytes)?;
-        let metadata_len = u32::from_le_bytes(len_bytes) as usize;
+        // STEP 2: Decode IDs (must match encoder sequence)
+        trace!("[DECODE] Position {}: Reading ID dictionary length", cursor.position());
+        let mut id_len_bytes = [0u8; 4];
+        cursor.read_exact(&mut id_len_bytes)?;
+        let id_dict_len = u32::from_le_bytes(id_len_bytes) as usize;
+        trace!("[DECODE] Position {}: ID dictionary length: {} (bytes: {:?})", cursor.position(), id_dict_len, id_len_bytes);
+
+        let mut id_dictionary = Vec::with_capacity(id_dict_len);
+        for i in 0..id_dict_len {
+            let mut id_str_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut id_str_len_bytes)?;
+            let id_str_len = u32::from_le_bytes(id_str_len_bytes) as usize;
+            trace!("[DECODE] ID[{}] string length: {} (bytes: {:?})", i, id_str_len, id_str_len_bytes);
+
+            let mut id_bytes = vec![0u8; id_str_len];
+            cursor.read_exact(&mut id_bytes)?;
+            let id_string = String::from_utf8(id_bytes)?;
+            trace!("[DECODE] ID[{}]: '{}'", i, id_string);
+            id_dictionary.push(id_string);
+        }
+        // Read encoded ID indices (part of ID dictionary section in serialization)
+        trace!("[DECODE] Position {}: Reading encoded ID indices length (part of ID section)", cursor.position());
+        let mut encoded_id_len_bytes = [0u8; 4];
+        cursor.read_exact(&mut encoded_id_len_bytes)?;
+        let encoded_id_len = u32::from_le_bytes(encoded_id_len_bytes) as usize;
+        trace!("[DECODE] Position {}: Encoded ID indices length: {} (bytes: {:?})", cursor.position(), encoded_id_len, encoded_id_len_bytes);
+
+        let mut _encoded_id_data = vec![0u8; encoded_id_len];
+        cursor.read_exact(&mut _encoded_id_data)?;
+        trace!("[DECODE] Position {}: Finished reading entire ID section (dictionary + indices)", cursor.position());
+        // For now, assign sequential IDs - could decode indices later
+
+        // STEP 3: Skip metadata sections (simplified for now)
+        trace!("[DECODE] Position {}: Reading metadata key count", cursor.position());
+        let mut metadata_key_count_bytes = [0u8; 4];
+        cursor.read_exact(&mut metadata_key_count_bytes)?;
+        let metadata_key_count = u32::from_le_bytes(metadata_key_count_bytes) as usize;
+        trace!("[DECODE] Position {}: Metadata key count: {} (bytes: {:?})", cursor.position(), metadata_key_count, metadata_key_count_bytes);
+
+        for i in 0..metadata_key_count {
+            trace!("[DECODE] Processing metadata key {}", i);
+
+            // Read and skip key name (actually read the bytes, don't just set position)
+            let mut key_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut key_len_bytes)?;
+            let key_len = u32::from_le_bytes(key_len_bytes) as usize;
+            trace!("[DECODE] Metadata key[{}] name length: {} (bytes: {:?})", i, key_len, key_len_bytes);
+            let mut key_name_bytes = vec![0u8; key_len];
+            cursor.read_exact(&mut key_name_bytes)?;
+            let key_name = String::from_utf8_lossy(&key_name_bytes);
+            trace!("[DECODE] Metadata key[{}] name: '{}' (read {} bytes)", i, key_name, key_len);
+
+            // Read and skip presence bitmap (actually read the bytes, don't just set position)
+            let mut bitmap_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut bitmap_len_bytes)?;
+            let bitmap_len = u32::from_le_bytes(bitmap_len_bytes) as usize;
+            trace!("[DECODE] Metadata key[{}] bitmap length: {} (bytes: {:?})", i, bitmap_len, bitmap_len_bytes);
+            let mut bitmap_bytes = vec![0u8; bitmap_len];
+            cursor.read_exact(&mut bitmap_bytes)?;
+            trace!("[DECODE] Metadata key[{}] bitmap: read {} bytes", i, bitmap_len);
+
+            // Read and skip compressed values (actually read the bytes, don't just set position)
+            let mut values_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut values_len_bytes)?;
+            let values_len = u32::from_le_bytes(values_len_bytes) as usize;
+            trace!("[DECODE] Metadata key[{}] values length: {} (bytes: {:?})", i, values_len, values_len_bytes);
+            let mut values_bytes = vec![0u8; values_len];
+            cursor.read_exact(&mut values_bytes)?;
+            trace!("[DECODE] Metadata key[{}] values: read {} bytes", i, values_len);
+
+            trace!("[DECODE] Finished processing metadata key {}, cursor at position: {}", i, cursor.position());
+        }
+
+        // STEP 4: Read and skip timestamps (actually read the bytes, don't just set position)
+        let data_len = cursor.get_ref().len();
+        trace!("[DECODE] About to read timestamp length at cursor position: {}, total data length: {}", cursor.position(), data_len);
+        if cursor.position() + 4 > data_len as u64 {
+            warn!(" [DECODE] ERROR: Trying to read past end of data! Cursor {} + 4 > data length {}", cursor.position(), data_len);
+        }
+        // Debug: print next 8 bytes at current position
+        let current_pos = cursor.position() as usize;
+        let data_ref = cursor.get_ref();
+        if current_pos + 8 <= data_ref.len() {
+            let next_8_bytes = &data_ref[current_pos..current_pos + 8];
+            trace!("[DECODE] Next 8 bytes at position {}: {:?}", current_pos, next_8_bytes);
+        }
+        let mut timestamp_len_bytes = [0u8; 4];
+        cursor.read_exact(&mut timestamp_len_bytes)?;
+        let timestamp_len = u32::from_le_bytes(timestamp_len_bytes) as usize;
+        trace!("[DECODE] Timestamp length: {} (bytes: {:?}), cursor now at: {}", timestamp_len, timestamp_len_bytes, cursor.position());
+
+        // Actually read the timestamp bytes instead of just setting position
+        let mut timestamp_bytes = vec![0u8; timestamp_len];
+        cursor.read_exact(&mut timestamp_bytes)?;
+        trace!("[DECODE] Read timestamps: {} bytes", timestamp_len);
+
+        // STEP 5: Read block metadata (LAST in serialization sequence)
+        let mut metadata_len_bytes = [0u8; 4];
+        cursor.read_exact(&mut metadata_len_bytes)?;
+        let metadata_len = u32::from_le_bytes(metadata_len_bytes) as usize;
+        trace!("[DECODE] Block metadata length: {} bytes", metadata_len);
 
         let mut metadata_bytes = vec![0u8; metadata_len];
         cursor.read_exact(&mut metadata_bytes)?;
         let metadata: FastLanesBlockMetadata = bincode::deserialize(&metadata_bytes)?;
+        trace!("[DECODE] Block metadata deserialized successfully");
 
-        // Decode vectors based on marker
-        let records = if encoding_marker != 0x00 && encoding_marker < 0x80 {
-            // FastLanes encoded
-            let decoder = FastLanesDecoder::new(
-                markers::to_scheme(encoding_marker).unwrap_or(
-                    crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::BitPacked { bits: 16 }
-                )
-            );
-
-            // Read dimensions and count
-            let mut dim_bytes = [0u8; 4];
-            cursor.read_exact(&mut dim_bytes)?;
-            let dimension = u32::from_le_bytes(dim_bytes) as usize;
-
-            let mut count_bytes = [0u8; 4];
-            cursor.read_exact(&mut count_bytes)?;
-            let vector_count = u32::from_le_bytes(count_bytes) as usize;
-
-            // Decode columns
-            let mut columns: Vec<Vec<f32>> = Vec::with_capacity(dimension);
-            for _ in 0..dimension {
-                let mut col_len_bytes = [0u8; 4];
-                cursor.read_exact(&mut col_len_bytes)?;
-                let col_len = u32::from_le_bytes(col_len_bytes) as usize;
-
-                let mut col_data = vec![0u8; col_len];
-                cursor.read_exact(&mut col_data)?;
-
-                // Each column contains `vector_count` floats
-                let column = decoder.decode_f32(&col_data, vector_count)?;
-                columns.push(column);
+        // Now assign IDs from dictionary
+        for (i, record) in records.iter_mut().enumerate() {
+            if i < id_dictionary.len() {
+                record.id = id_dictionary[i % id_dictionary.len()].clone();
             }
-
-            // Transpose back to row-major
-            let mut records = Vec::with_capacity(vector_count);
-            for i in 0..vector_count {
-                let mut vector = Vec::with_capacity(dimension);
-                for col in &columns {
-                    vector.push(col[i]);
-                }
-
-                records.push(VectorRecord {
-                    id: format!("record_{}", i), // Will be updated from metadata
-                    vector,
-                    metadata: std::collections::HashMap::new(),
-                    timestamp: 0,
-                    updated_at: None,
-                    quantized_vector: Vec::new(),
-                    expires_at: None,
-                    version: None,
-                    source: None,
-                });
-            }
-
-            records
-        } else {
-            // Raw encoding
-            let mut count_bytes = [0u8; 4];
-            cursor.read_exact(&mut count_bytes)?;
-            let record_count = u32::from_le_bytes(count_bytes) as usize;
-
-            let mut records = Vec::with_capacity(record_count);
-            for _ in 0..record_count {
-                let mut len_bytes = [0u8; 4];
-                cursor.read_exact(&mut len_bytes)?;
-                let record_len = u32::from_le_bytes(len_bytes) as usize;
-
-                let mut record_data = vec![0u8; record_len];
-                cursor.read_exact(&mut record_data)?;
-
-                use prost::Message;
-                let record = VectorRecord::decode(&record_data[..])?;
-                records.push(record);
-            }
-
-            records
-        };
+        }
 
         // Reconstruct the block
         let block_id = metadata.record_count;
@@ -1193,6 +1387,1140 @@ impl FastLanesDataBlock {
             metadata_stats: None,
             has_deletes,
         })
+    }
+
+    /// Encode vectors using FullVector strategy with field-level compression
+    /// Each field (vectors, IDs, metadata) is compressed separately
+    fn encode_full_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::core::compression::{compress, CompressionContext};
+
+        let mut field_data = Vec::new();
+
+        // Add format markers for identification
+        field_data.push(0x46); // "F"
+        field_data.push(0x56); // "V" -> "FV" = FullVector marker
+        field_data.push(0x01); // Version 0x01 (field-level compression)
+
+        // Note: dimension and record count are available from file header, no need to duplicate
+
+        if vectors.is_empty() {
+            return Ok(field_data);
+        }
+
+        // ===== VECTOR FIELD COMPRESSION =====
+        // Apply delta encoding row-wise for better compression
+        let mut vector_data = Vec::new();
+
+        // Store first vector as-is
+        let first_bytes: &[u8] = bytemuck::cast_slice(&vectors[0]);
+        vector_data.extend_from_slice(first_bytes);
+
+        // For subsequent vectors, store delta from previous
+        for i in 1..vectors.len() {
+            if vectors[i].len() != dimension {
+                return Err(anyhow::anyhow!("Vector dimension mismatch: {} != {}", vectors[i].len(), dimension));
+            }
+
+            // Calculate deltas and store
+            for j in 0..dimension {
+                let delta = vectors[i][j] - vectors[i-1][j];
+                vector_data.extend_from_slice(&delta.to_le_bytes());
+            }
+        }
+
+        // Encode vector data with FastLanes
+        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+        let encoded_vectors = encoder.encode_f32(&bytemuck::cast_slice::<u8, f32>(&vector_data))?;
+
+        // Compress vector field if enabled
+        let final_vector_data = if config.enable_vector_compression && config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+            let compressed = compress(
+                &encoded_vectors,
+                config.algorithm,
+                config.compression_level as i32,
+                CompressionContext::Block,
+            )?;
+
+            // Write vector field header: [compression_marker][data] (no size overhead)
+            let compression_marker = match config.algorithm {
+                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
+                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
+                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
+                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                _ => 0x00,
+            };
+
+            let mut compressed_field = Vec::new();
+            compressed_field.push(compression_marker);
+            compressed_field.extend(&compressed);
+            compressed_field
+        } else {
+            // Uncompressed vector field: [0x00][data] (no size overhead)
+            let mut uncompressed_field = Vec::new();
+            uncompressed_field.push(0x00); // no compression marker
+            uncompressed_field.extend(&encoded_vectors);
+            uncompressed_field
+        };
+
+        field_data.extend(&final_vector_data);
+
+        trace!("[ENCODE_FV] Encoded FullVector: {} vectors, {} dims, {} bytes",
+               vectors.len(), dimension, field_data.len());
+
+        Ok(field_data)
+    }
+
+    /// Encode vectors using GroupedFieldEncodedAndCompressedVector strategy with compression-friendly encoding
+    /// Divides vectors into 32D groups for better cache locality and compression
+    fn encode_grouped_field_encoded_and_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::core::compression::{compress, CompressionContext};
+
+        const GROUP_SIZE: usize = 32;
+        let mut field_data = Vec::new();
+
+        // Add format markers for identification
+        field_data.push(0x47); // "G"
+        field_data.push(0x56); // "V" -> "GV" = GroupedFieldEncodedAndCompressed marker
+        field_data.push(0x01); // Version 0x01 (optimized layout)
+
+        // Calculate and write number of groups (only field-specific info needed)
+        let num_groups = (dimension + GROUP_SIZE - 1) / GROUP_SIZE;
+        field_data.extend(&(num_groups as u32).to_le_bytes());
+        // Note: dimension and record count are available from file header, no need to duplicate
+
+        // Write compression algorithm for all groups (header-based)
+        let compression_marker = if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+            match config.algorithm {
+                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
+                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
+                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
+                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                _ => 0x10, // Default to LZ4
+            }
+        } else {
+            0x00 // No compression
+        };
+        field_data.push(compression_marker);
+
+        // Create encoder for compression-friendly encoding
+        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+
+        // Process each 64D group
+        for group_idx in 0..num_groups {
+            let start_dim = group_idx * GROUP_SIZE;
+            let end_dim = ((group_idx + 1) * GROUP_SIZE).min(dimension);
+            let group_dims = end_dim - start_dim;
+
+            // Write group metadata
+            field_data.extend(&(start_dim as u32).to_le_bytes());
+            field_data.extend(&(group_dims as u32).to_le_bytes());
+
+            // Collect group data for encoding
+            // Store row-wise: each vector's 64D chunk contiguously
+            let mut group_floats = Vec::with_capacity(vectors.len() * group_dims);
+
+            for vector in vectors {
+                for dim_idx in start_dim..end_dim {
+                    group_floats.push(vector[dim_idx]);
+                }
+            }
+
+            // Encode the group using FastLanes for better compression
+            let encoded_group = encoder.encode_f32(&group_floats)?;
+
+            // Apply compression based on header algorithm (uniform for all groups)
+            let final_group_data = if compression_marker != 0x00 {
+                let compressed = compress(
+                    &encoded_group,
+                    config.algorithm,
+                    config.compression_level as i32,
+                    CompressionContext::Block,
+                )?;
+
+                // Use compression if beneficial, otherwise store uncompressed
+                if compressed.len() < encoded_group.len() {
+                    compressed
+                } else {
+                    encoded_group
+                }
+            } else {
+                encoded_group
+            };
+
+            // Write simplified group data: only final size + data (no per-group markers)
+            field_data.extend(&(final_group_data.len() as u32).to_le_bytes());
+            field_data.extend_from_slice(&final_group_data);
+        }
+
+        Ok(field_data)
+    }
+
+    /// Encode vectors using GroupedFieldEncodedBlockCompressedVector strategy with block-level compression
+    /// Divides vectors into 32D groups, applies FastLanes encoding to each group, then compresses entire block
+    fn encode_grouped_field_encoded_block_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::core::compression::{compress, CompressionContext};
+
+        const GROUP_SIZE: usize = 32;
+        let mut field_data = Vec::new();
+
+        // Add format markers for identification
+        field_data.push(0x47); // "G"
+        field_data.push(0x42); // "B" -> "GB" = GroupedBlockCompressed marker
+        field_data.push(0x01); // Version 0x01 (block compression)
+
+        // Calculate and write number of groups (only field-specific info needed)
+        let num_groups = (dimension + GROUP_SIZE - 1) / GROUP_SIZE;
+        field_data.extend(&(num_groups as u32).to_le_bytes());
+        // Note: dimension and record count are available from file header, no need to duplicate
+
+        if vectors.is_empty() {
+            return Ok(field_data);
+        }
+
+        // Create encoder for FastLanes delta encoding
+        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+
+        // Process each group and accumulate uncompressed data
+        let mut uncompressed_block = Vec::new();
+
+        for group_idx in 0..num_groups {
+            let start_dim = group_idx * GROUP_SIZE;
+            let end_dim = std::cmp::min(start_dim + GROUP_SIZE, dimension);
+
+            trace!(" [ENCODE_GB] Processing group {} (dims {}-{})", group_idx, start_dim, end_dim - 1);
+
+            // Collect group data: transpose group dimensions
+            let mut group_data = Vec::new();
+            for dim in start_dim..end_dim {
+                let dim_values: Vec<f32> = vectors.iter()
+                    .map(|v| v.get(dim).copied().unwrap_or(0.0))
+                    .collect();
+
+                // Apply FastLanes encoding to this dimension
+                let encoded_dim = encoder.encode_f32(&dim_values)
+                    .map_err(|e| anyhow::anyhow!("FastLanes encoding failed for group {} dim {}: {}", group_idx, dim, e))?;
+
+                // Write dimension size and data within the group
+                group_data.extend(&(encoded_dim.len() as u32).to_le_bytes());
+                group_data.extend(&encoded_dim);
+            }
+
+            // Write group size and data to uncompressed block
+            uncompressed_block.extend(&(group_data.len() as u32).to_le_bytes());
+            uncompressed_block.extend(&group_data);
+        }
+
+        // Now compress the entire block
+        if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+            let compressed_block = compress(&uncompressed_block, config.algorithm.clone(), config.compression_level as i32, CompressionContext::Block)
+                .map_err(|e| anyhow::anyhow!("Block compression failed: {}", e))?;
+
+            // Write compression algorithm marker
+            let compression_marker = match config.algorithm {
+                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
+                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
+                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
+                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                _ => 0x10, // Default to LZ4
+            };
+            field_data.push(compression_marker);
+
+            // Write compressed block size and data
+            field_data.extend(&(compressed_block.len() as u32).to_le_bytes());
+            field_data.extend(&compressed_block);
+        } else {
+            // No compression - write algorithm marker and uncompressed block
+            field_data.push(0x00); // No compression marker
+            field_data.extend(&(uncompressed_block.len() as u32).to_le_bytes());
+            field_data.extend(&uncompressed_block);
+        }
+
+        trace!(" [ENCODE_GB] GroupedFieldEncodedBlockCompressed complete: {} groups, {} bytes", num_groups, field_data.len());
+        Ok(field_data)
+    }
+
+    /// Encode vectors using TransposeFieldEncodedBlockCompressedVector strategy with block-level compression
+    /// Transposes RxD → DxR, applies FastLanes encoding to each dimension, then compresses entire block
+    fn encode_transpose_field_encoded_block_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::core::compression::{compress, CompressionContext};
+
+        let mut field_data = Vec::new();
+
+        // Add format markers for identification
+        field_data.push(0x54); // "T"
+        field_data.push(0x42); // "B" -> "TB" = TransposeBlockCompressed marker
+        field_data.push(0x01); // Version 0x01 (block compression)
+
+        // Note: dimension and record count are available from file header, no need to duplicate
+
+        if vectors.is_empty() || dimension == 0 {
+            return Ok(field_data);
+        }
+
+        // Create encoder for FastLanes delta encoding
+        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+
+        // Transpose and encode each dimension (no per-dimension compression)
+        let mut uncompressed_block = Vec::new();
+
+        for dim_idx in 0..dimension {
+            // Extract this dimension across all vectors
+            let dim_values: Vec<f32> = vectors.iter()
+                .map(|v| v.get(dim_idx).copied().unwrap_or(0.0))
+                .collect();
+
+            trace!(" [ENCODE_TB] Encoding dimension {} with {} values", dim_idx, dim_values.len());
+
+            // Apply FastLanes delta encoding (no compression yet)
+            let encoded_dim = encoder.encode_f32(&dim_values)
+                .map_err(|e| anyhow::anyhow!("FastLanes encoding failed for dimension {}: {}", dim_idx, e))?;
+
+            // Write dimension size and encoded data
+            uncompressed_block.extend(&(encoded_dim.len() as u32).to_le_bytes());
+            uncompressed_block.extend(&encoded_dim);
+        }
+
+        // Now compress the entire block
+        if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+            let compressed_block = compress(&uncompressed_block, config.algorithm.clone(), config.compression_level as i32, CompressionContext::Block)
+                .map_err(|e| anyhow::anyhow!("Block compression failed: {}", e))?;
+
+            // Write compression algorithm marker
+            let compression_marker = match config.algorithm {
+                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
+                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
+                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
+                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                _ => 0x10, // Default to LZ4
+            };
+            field_data.push(compression_marker);
+
+            // Write compressed block size and data
+            field_data.extend(&(compressed_block.len() as u32).to_le_bytes());
+            field_data.extend(&compressed_block);
+        } else {
+            // No compression - write algorithm marker and uncompressed block
+            field_data.push(0x00); // No compression marker
+            field_data.extend(&(uncompressed_block.len() as u32).to_le_bytes());
+            field_data.extend(&uncompressed_block);
+        }
+
+        trace!(" [ENCODE_TB] TransposeFieldEncodedBlockCompressed complete: {} bytes", field_data.len());
+        Ok(field_data)
+    }
+
+    /// Encode vectors using TransposeFieldEncodedAndCompressedVector strategy with per-dimension field compression
+    /// Transposes RxD → DxR and compresses each dimension field separately
+    fn encode_transpose_field_encoded_and_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::core::compression::{compress, CompressionContext};
+
+        let mut field_data = Vec::new();
+
+        // Add format markers for identification
+        field_data.push(0x54); // "T"
+        field_data.push(0x56); // "V" -> "TV" = TransposeFieldEncodedAndCompressed marker
+        field_data.push(0x01); // Version 0x01 (field-level compression)
+
+        // Note: dimension and record count are available from file header, no need to duplicate
+
+        if vectors.is_empty() || dimension == 0 {
+            return Ok(field_data);
+        }
+
+        trace!("[ENCODE_TV] Encoding {} vectors, {} dimensions", vectors.len(), dimension);
+
+        // ===== PER-DIMENSION FIELD COMPRESSION =====
+        // Transpose RxD → DxR: each dimension becomes a separate field
+        for dim_idx in 0..dimension {
+            // Extract all values for this dimension across all vectors
+            let mut dimension_values = Vec::with_capacity(vectors.len());
+            for vector in vectors {
+                if vector.len() <= dim_idx {
+                    return Err(anyhow::anyhow!("Vector dimension mismatch at dim {}: vector has {} dims but expected {}",
+                        dim_idx, vector.len(), dimension));
+                }
+                dimension_values.push(vector[dim_idx]);
+            }
+
+            // Encode dimension data with FastLanes (delta encoding for better compression)
+            let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+            let encoded_dimension = encoder.encode_f32(&dimension_values)?;
+
+            // Compress dimension field if enabled
+            let final_dimension_data = if config.enable_vector_compression && config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+                let compressed = compress(
+                    &encoded_dimension,
+                    config.algorithm,
+                    config.compression_level as i32,
+                    CompressionContext::Block,
+                )?;
+
+                // Write dimension field header: [compression_marker][data_size][data]
+                let compression_marker = match config.algorithm {
+                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
+                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
+                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
+                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    _ => 0x00,
+                };
+
+                let mut compressed_field = Vec::new();
+                compressed_field.push(compression_marker);
+                compressed_field.extend(&(compressed.len() as u32).to_le_bytes()); // compressed data size
+                compressed_field.extend(&compressed);
+                compressed_field
+            } else {
+                // Uncompressed dimension field: [0x00][data_size][data]
+                let mut uncompressed_field = Vec::new();
+                uncompressed_field.push(0x00); // no compression marker
+                uncompressed_field.extend(&(encoded_dimension.len() as u32).to_le_bytes()); // data size
+                uncompressed_field.extend(&encoded_dimension);
+                uncompressed_field
+            };
+
+            field_data.extend(&final_dimension_data);
+
+            trace!("[ENCODE_TV] Encoded dimension {}: {} bytes", dim_idx, final_dimension_data.len());
+        }
+
+        trace!("[ENCODE_TV] Total TransposeFieldEncodedAndCompressed encoded size: {} bytes", field_data.len());
+
+        Ok(field_data)
+    }
+
+    /// Decode FullVector format data
+    fn decode_full_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+        use std::io::{Cursor, Read};
+
+        trace!(" [DECODE_FV] Starting FullVector decode, data size: {} bytes", data.len());
+        let mut cursor = Cursor::new(data);
+
+        // Verify FullVector marker
+        let mut marker = [0u8; 2];
+        cursor.read_exact(&mut marker)?;
+        trace!(" [DECODE_FV] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
+        if marker != [0x46, 0x56] {
+            warn!(" [DECODE_FV] Invalid marker");
+            return Err(anyhow::anyhow!("Invalid FullVector marker: expected [0x46, 0x56], got {:?}", marker));
+        }
+
+        // Read encoding version
+        let mut version = [0u8; 1];
+        cursor.read_exact(&mut version)?;
+        let encoding_version = version[0];
+
+        trace!(" [DECODE_FV] Dimension: {} (from file header)", dimension);
+        trace!(" [DECODE_FV] Vector count: {} (from file header)", vector_count);
+
+        if vector_count == 0 {
+            return Ok(vec![]);
+        }
+
+        let mut records = Vec::with_capacity(vector_count);
+
+        if encoding_version == 0x01 {
+            // Field-level compression with delta encoding
+            use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+            use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
+
+            // ===== DECODE VECTOR FIELD =====
+            // Read compression marker
+            let mut compression_marker = [0u8; 1];
+            cursor.read_exact(&mut compression_marker)?;
+            trace!(" [DECODE_FV] Vector compression marker: 0x{:02X}", compression_marker[0]);
+
+            let vector_data = if compression_marker[0] != 0x00 {
+                // Compressed vector field - read all remaining data and decompress
+                let algorithm = match compression_marker[0] {
+                    0x10 => CompressionAlgorithm::Lz4,
+                    0x11 => CompressionAlgorithm::Zstd,
+                    0x12 => CompressionAlgorithm::Snappy,
+                    0x13 => CompressionAlgorithm::Gzip,
+                    _ => CompressionAlgorithm::Lz4, // Default
+                };
+
+                // Read remaining compressed data (no size prefixes)
+                let remaining_bytes = data.len() - cursor.position() as usize;
+                let mut compressed_data = vec![0u8; remaining_bytes];
+                cursor.read_exact(&mut compressed_data)?;
+                decompress(&compressed_data, algorithm, CompressionContext::Block)?
+            } else {
+                // Uncompressed vector field - read all remaining data
+                let remaining_bytes = data.len() - cursor.position() as usize;
+                let mut vector_data = vec![0u8; remaining_bytes];
+                cursor.read_exact(&mut vector_data)?;
+                vector_data
+            };
+
+            // Decode FastLanes encoded data
+            let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+            let decoded_floats = decoder.decode_f32(&vector_data, vector_count * dimension)?;
+
+            trace!(" [DECODE_FV] Decoded {} floats from FastLanes", decoded_floats.len());
+
+            // Reconstruct vectors from delta-encoded data
+            if decoded_floats.len() != vector_count * dimension {
+                return Err(anyhow::anyhow!("Decoded data size mismatch: {} vs {}",
+                    decoded_floats.len(), vector_count * dimension));
+            }
+
+            // First vector is stored as-is
+            let first_vector = decoded_floats[0..dimension].to_vec();
+            records.push(VectorRecord {
+                id: format!("fv_vec_{:06}", 0),
+                vector: first_vector.clone(),
+                metadata: std::collections::HashMap::new(),
+                quantized_vector: vec![],
+                expires_at: None,
+                source: None,
+                timestamp: 0,
+                updated_at: None,
+                version: None,
+            });
+
+            // Reconstruct subsequent vectors by applying deltas
+            let mut prev_vector = first_vector;
+            for i in 1..vector_count {
+                let start_idx = i * dimension;
+                let end_idx = start_idx + dimension;
+                let delta_slice = &decoded_floats[start_idx..end_idx];
+
+                let mut vector = Vec::with_capacity(dimension);
+                for j in 0..dimension {
+                    vector.push(prev_vector[j] + delta_slice[j]);
+                }
+
+                records.push(VectorRecord {
+                    id: format!("fv_vec_{:06}", i),
+                    vector: vector.clone(),
+                    metadata: std::collections::HashMap::new(),
+                    quantized_vector: vec![],
+                    expires_at: None,
+                    source: None,
+                    timestamp: 0,
+                    updated_at: None,
+                    version: None,
+                });
+
+                prev_vector = vector;
+            }
+        } else {
+            // Fallback to raw decoding
+            let bytes_per_vector = dimension * 4;
+            for i in 0..vector_count {
+                let mut vector_bytes = vec![0u8; bytes_per_vector];
+                cursor.read_exact(&mut vector_bytes)?;
+                let vector: Vec<f32> = bytemuck::cast_slice(&vector_bytes).to_vec();
+
+                records.push(VectorRecord {
+                    id: format!("fv_vec_{:06}", i),
+                    vector,
+                    metadata: std::collections::HashMap::new(),
+                    quantized_vector: vec![],
+                    expires_at: None,
+                    source: None,
+                    timestamp: 0,
+                    updated_at: None,
+                    version: None,
+                });
+            }
+        }
+
+        Ok(records)
+    }
+
+    /// Decode GroupedFieldEncodedAndCompressedVector format data with FastLanes encoding and per-group compression
+    fn decode_grouped_field_encoded_and_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+        use std::io::{Cursor, Read};
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
+        const GROUP_SIZE: usize = 32;
+
+        trace!(" [DECODE_GV] Starting GroupedFieldEncodedAndCompressed decode, data size: {} bytes", data.len());
+        let mut cursor = Cursor::new(data);
+
+        // Verify GroupedFieldEncodedAndCompressed marker
+        let mut marker = [0u8; 2];
+        cursor.read_exact(&mut marker)?;
+        trace!(" [DECODE_GV] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
+        if marker != [0x47, 0x56] {
+            warn!(" [DECODE_GV] Invalid marker");
+            return Err(anyhow::anyhow!("Invalid GroupedFieldEncodedAndCompressed marker: expected [0x47, 0x56], got {:?}", marker));
+        }
+
+        // Read encoding version
+        let mut version = [0u8; 1];
+        cursor.read_exact(&mut version)?;
+        let encoding_version = version[0];
+        trace!(" [DECODE_GV] Encoding version: 0x{:02X}", encoding_version);
+
+        trace!(" [DECODE_GV] Dimension: {} (from file header)", dimension);
+        trace!(" [DECODE_GV] Vector count: {} (from file header)", vector_count);
+
+        // Read number of groups (field-specific metadata)
+        let mut num_groups_bytes = [0u8; 4];
+        cursor.read_exact(&mut num_groups_bytes)?;
+        let num_groups = u32::from_le_bytes(num_groups_bytes) as usize;
+        trace!(" [DECODE_GV] Number of groups: {}", num_groups);
+
+        if vector_count == 0 {
+            return Ok(vec![]);
+        }
+
+        // Initialize vectors
+        let mut vectors: Vec<Vec<f32>> = vec![vec![0.0; dimension]; vector_count];
+
+        // Create decoder for FastLanes encoding
+        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+
+        // Handle optimized header-based compression in version 0x01
+        let compression_algorithm = if encoding_version == 0x01 {
+            // Optimized header-based compression (version 0x01)
+            let mut compression_marker = [0u8; 1];
+            cursor.read_exact(&mut compression_marker)?;
+            match compression_marker[0] {
+                0x10 => Some(CompressionAlgorithm::Lz4),
+                0x11 => Some(CompressionAlgorithm::Zstd),
+                0x12 => Some(CompressionAlgorithm::Snappy),
+                0x13 => Some(CompressionAlgorithm::Gzip),
+                0x00 => None, // No compression
+                _ => None, // Default to no compression for unknown markers
+            }
+        } else {
+            None // Legacy or other versions - fall back to per-group handling
+        };
+
+        trace!(" [DECODE_GV] Header compression algorithm: {:?}", compression_algorithm);
+
+        // Process each 64D group
+        for group_idx in 0..num_groups {
+            // Read group metadata
+            let mut start_dim_bytes = [0u8; 4];
+            cursor.read_exact(&mut start_dim_bytes)?;
+            let start_dim = u32::from_le_bytes(start_dim_bytes) as usize;
+
+            let mut group_dims_bytes = [0u8; 4];
+            cursor.read_exact(&mut group_dims_bytes)?;
+            let group_dims = u32::from_le_bytes(group_dims_bytes) as usize;
+
+            // Read group data based on version
+            let group_data = if encoding_version == 0x01 {
+                // Version 0x01: Header-based compression (no per-group compression marker)
+                // Read only the data size
+                let mut data_len_bytes = [0u8; 4];
+                cursor.read_exact(&mut data_len_bytes)?;
+                let data_len = u32::from_le_bytes(data_len_bytes) as usize;
+
+                // Read data
+                let mut group_data = vec![0u8; data_len];
+                cursor.read_exact(&mut group_data)?;
+
+                // Decompress if compression algorithm is set in header
+                if let Some(algorithm) = compression_algorithm {
+                    decompress(&group_data, algorithm, CompressionContext::Block)?
+                } else {
+                    group_data
+                }
+            } else {
+                // Legacy version: Per-group compression markers
+                let mut compression_marker = [0u8; 1];
+                cursor.read_exact(&mut compression_marker)?;
+
+                if compression_marker[0] != 0x00 {
+                    // Compressed group - determine algorithm from marker
+                    let algorithm = match compression_marker[0] {
+                        0x10 => CompressionAlgorithm::Lz4,
+                        0x11 => CompressionAlgorithm::Zstd,
+                        0x12 => CompressionAlgorithm::Snappy,
+                        0x13 => CompressionAlgorithm::Gzip,
+                        _ => CompressionAlgorithm::Lz4, // Default
+                    };
+
+                    // Read original size
+                    let mut orig_size_bytes = [0u8; 4];
+                    cursor.read_exact(&mut orig_size_bytes)?;
+                    let _original_size = u32::from_le_bytes(orig_size_bytes) as usize;
+
+                    // Read compressed data length
+                    let mut data_len_bytes = [0u8; 4];
+                    cursor.read_exact(&mut data_len_bytes)?;
+                    let data_len = u32::from_le_bytes(data_len_bytes) as usize;
+
+                    // Read compressed data
+                    let mut compressed_data = vec![0u8; data_len];
+                    cursor.read_exact(&mut compressed_data)?;
+
+                    // Decompress using the detected algorithm
+                    decompress(&compressed_data, algorithm, CompressionContext::Block)?
+                } else {
+                    // Uncompressed group
+                    let mut data_len_bytes = [0u8; 4];
+                    cursor.read_exact(&mut data_len_bytes)?;
+                    let data_len = u32::from_le_bytes(data_len_bytes) as usize;
+
+                    let mut group_data = vec![0u8; data_len];
+                    cursor.read_exact(&mut group_data)?;
+                    group_data
+                }
+            };
+
+            trace!(" [DECODE_GV] Group {}: start_dim={}, dims={}, decoded_len={}",
+                     group_idx, start_dim, group_dims, group_data.len());
+
+            // Decode the FastLanes encoded data
+            let group_floats = decoder.decode_f32(&group_data, vectors.len() * group_dims)?;
+
+            // Distribute the decoded floats to vectors
+            // Data is stored row-wise: vec0[64D], vec1[64D], ...
+            for vec_idx in 0..vector_count {
+                let start_idx = vec_idx * group_dims;
+                let end_idx = start_idx + group_dims;
+
+                // Copy this vector's portion of the group
+                for (local_idx, &value) in group_floats[start_idx..end_idx].iter().enumerate() {
+                    vectors[vec_idx][start_dim + local_idx] = value;
+                }
+            }
+        }
+
+        // Convert to VectorRecords
+        let mut records = Vec::with_capacity(vector_count);
+        for (i, vector) in vectors.into_iter().enumerate() {
+            records.push(VectorRecord {
+                id: format!("gv_vec_{:06}", i), // Generated ID for GroupedFieldEncodedAndCompressed
+                vector,
+                metadata: std::collections::HashMap::new(),
+                quantized_vector: vec![],
+                expires_at: None,
+                source: None,
+                timestamp: 0,
+                updated_at: None,
+                version: None,
+            });
+        }
+
+        trace!(" [DECODE_GV] Successfully decoded {} vectors", records.len());
+        Ok(records)
+    }
+
+    /// Decode TransposeFieldEncodedAndCompressedVector format data with per-dimension field compression
+    fn decode_transpose_field_encoded_and_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+        use std::io::{Cursor, Read};
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
+
+        trace!(" [DECODE_TV] Starting TransposeFieldEncodedAndCompressed decode, data size: {} bytes", data.len());
+        let mut cursor = Cursor::new(data);
+
+        // Verify TransposeFieldEncodedAndCompressed marker
+        let mut marker = [0u8; 2];
+        cursor.read_exact(&mut marker)?;
+        trace!(" [DECODE_TV] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
+        if marker != [0x54, 0x56] {
+            warn!(" [DECODE_TV] Invalid marker");
+            return Err(anyhow::anyhow!("Invalid TransposeFieldEncodedAndCompressed marker: expected [0x54, 0x56], got {:?}", marker));
+        }
+
+        // Read encoding version
+        let mut version = [0u8; 1];
+        cursor.read_exact(&mut version)?;
+        let encoding_version = version[0];
+        trace!(" [DECODE_TV] Encoding version: 0x{:02X}", encoding_version);
+
+        trace!(" [DECODE_TV] Dimension: {} (from file header)", dimension);
+        trace!(" [DECODE_TV] Vector count: {} (from file header)", vector_count);
+
+        if vector_count == 0 || dimension == 0 {
+            return Ok(vec![]);
+        }
+
+        // Initialize vectors to store reconstructed data
+        let mut vectors: Vec<Vec<f32>> = vec![vec![0.0; dimension]; vector_count];
+
+        // Create decoder for FastLanes encoding
+        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+
+        // ===== DECODE EACH DIMENSION FIELD =====
+        for dim_idx in 0..dimension {
+            // Read compression marker for this dimension
+            let mut compression_marker = [0u8; 1];
+            cursor.read_exact(&mut compression_marker)?;
+            trace!(" [DECODE_TV] Dimension {} compression marker: 0x{:02X}", dim_idx, compression_marker[0]);
+
+            let dimension_data = if compression_marker[0] != 0x00 {
+                // Compressed dimension field - read compressed data size and decompress
+                let algorithm = match compression_marker[0] {
+                    0x10 => CompressionAlgorithm::Lz4,
+                    0x11 => CompressionAlgorithm::Zstd,
+                    0x12 => CompressionAlgorithm::Snappy,
+                    0x13 => CompressionAlgorithm::Gzip,
+                    _ => CompressionAlgorithm::Lz4, // Default
+                };
+
+                // Read compressed data size only
+                let mut comp_size_bytes = [0u8; 4];
+                cursor.read_exact(&mut comp_size_bytes)?;
+                let compressed_size = u32::from_le_bytes(comp_size_bytes) as usize;
+
+                // Read and decompress data
+                let mut compressed_data = vec![0u8; compressed_size];
+                cursor.read_exact(&mut compressed_data)?;
+                decompress(&compressed_data, algorithm, CompressionContext::Block)?
+            } else {
+                // Uncompressed dimension field - read data size and data
+                let mut size_bytes = [0u8; 4];
+                cursor.read_exact(&mut size_bytes)?;
+                let data_size = u32::from_le_bytes(size_bytes) as usize;
+
+                let mut dimension_data = vec![0u8; data_size];
+                cursor.read_exact(&mut dimension_data)?;
+                dimension_data
+            };
+
+            // Decode FastLanes encoded dimension data
+            let dimension_floats = decoder.decode_f32(&dimension_data, vector_count)?;
+
+            trace!(" [DECODE_TV] Decoded dimension {}: {} floats", dim_idx, dimension_floats.len());
+
+            // Verify we have the right number of values for this dimension
+            if dimension_floats.len() != vector_count {
+                return Err(anyhow::anyhow!("Dimension {} data size mismatch: {} vs {}",
+                    dim_idx, dimension_floats.len(), vector_count));
+            }
+
+            // Distribute the decoded floats to the appropriate position in each vector
+            for (vec_idx, &value) in dimension_floats.iter().enumerate() {
+                vectors[vec_idx][dim_idx] = value;
+            }
+        }
+
+        // Convert to VectorRecords
+        let mut records = Vec::with_capacity(vector_count);
+        for (i, vector) in vectors.into_iter().enumerate() {
+            records.push(VectorRecord {
+                id: format!("tv_vec_{:06}", i), // Generated ID for TransposeFieldEncodedAndCompressed
+                vector,
+                metadata: std::collections::HashMap::new(),
+                quantized_vector: vec![],
+                expires_at: None,
+                source: None,
+                timestamp: 0,
+                updated_at: None,
+                version: None,
+            });
+        }
+
+        trace!(" [DECODE_TV] Successfully decoded {} vectors", records.len());
+        Ok(records)
+    }
+
+    /// Decode existing TransposeFieldEncodedAndCompressed (columnar) format
+    fn decode_existing_columnar_format(data: &[u8], encoding_marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, markers};
+        use std::io::{Cursor, Read};
+
+        let mut cursor = Cursor::new(data);
+
+        // Read dimensions and count from the TransposeFieldEncodedAndCompressed data
+        let mut dim_bytes = [0u8; 4];
+        cursor.read_exact(&mut dim_bytes)?;
+        let dimension = u32::from_le_bytes(dim_bytes) as usize;
+
+        let mut count_bytes = [0u8; 4];
+        cursor.read_exact(&mut count_bytes)?;
+        let vector_count = u32::from_le_bytes(count_bytes) as usize;
+
+        // Decode using existing FastLanes columnar logic
+        let decoder = FastLanesDecoder::new(
+            markers::to_scheme(encoding_marker).unwrap_or(
+                crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::BitPacked { bits: 16 }
+            )
+        );
+
+        // Read all dimension data
+        let mut all_dimensions = Vec::with_capacity(dimension);
+
+        for dim_idx in 0..dimension {
+            // Read length of this dimension's encoded data
+            let mut len_bytes = [0u8; 4];
+            cursor.read_exact(&mut len_bytes)?;
+            let encoded_len = u32::from_le_bytes(len_bytes) as usize;
+
+            // Read the encoded data
+            let mut encoded_data = vec![0u8; encoded_len];
+            cursor.read_exact(&mut encoded_data)?;
+
+            // Decode this dimension's data
+            let decoded = decoder.decode_f32(&encoded_data, vector_count)?;
+            all_dimensions.push(decoded);
+        }
+
+        // Transpose back: from DxR to RxD
+        let mut records = Vec::with_capacity(vector_count);
+        for row_idx in 0..vector_count {
+            let mut vector = Vec::with_capacity(dimension);
+            for dim_idx in 0..dimension {
+                vector.push(all_dimensions[dim_idx][row_idx]);
+            }
+
+            records.push(VectorRecord {
+                id: format!("tv_vec_{:06}", row_idx), // Generated ID for TransposeFieldEncodedAndCompressed
+                vector,
+                metadata: std::collections::HashMap::new(),
+                quantized_vector: vec![],
+                expires_at: None,
+                source: None,
+                timestamp: 0,
+                updated_at: None,
+                version: None,
+            });
+        }
+
+        Ok(records)
+    }
+
+    /// Decode GroupedFieldEncodedBlockCompressedVector format data with block-level compression
+    fn decode_grouped_field_encoded_block_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+        use std::io::{Cursor, Read};
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
+        const GROUP_SIZE: usize = 32;
+
+        trace!(" [DECODE_GB] Starting GroupedFieldEncodedBlockCompressed decode, data size: {} bytes", data.len());
+        let mut cursor = Cursor::new(data);
+
+        // Verify GroupedBlockCompressed marker
+        let mut marker = [0u8; 2];
+        cursor.read_exact(&mut marker)?;
+        trace!(" [DECODE_GB] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
+        if marker != [0x47, 0x42] { // "GB"
+            warn!(" [DECODE_GB] Invalid marker");
+            return Err(anyhow::anyhow!("Invalid GroupedFieldEncodedBlockCompressedVector marker: expected [0x47, 0x42], got {:?}", marker));
+        }
+
+        // Read encoding version
+        let mut version = [0u8; 1];
+        cursor.read_exact(&mut version)?;
+        let encoding_version = version[0];
+        trace!(" [DECODE_GB] Encoding version: 0x{:02X}", encoding_version);
+
+        trace!(" [DECODE_GB] Dimension: {} (from file header)", dimension);
+        trace!(" [DECODE_GB] Vector count: {} (from file header)", vector_count);
+
+        // Read number of groups (field-specific metadata)
+        let mut num_groups_bytes = [0u8; 4];
+        cursor.read_exact(&mut num_groups_bytes)?;
+        let num_groups = u32::from_le_bytes(num_groups_bytes) as usize;
+        trace!(" [DECODE_GB] Number of groups: {}", num_groups);
+
+        if vector_count == 0 {
+            return Ok(vec![]);
+        }
+
+        // Read compression algorithm marker
+        let mut compression_marker = [0u8; 1];
+        cursor.read_exact(&mut compression_marker)?;
+        let compression_algorithm = match compression_marker[0] {
+            0x00 => CompressionAlgorithm::None,
+            0x10 => CompressionAlgorithm::Lz4,
+            0x11 => CompressionAlgorithm::Zstd,
+            0x12 => CompressionAlgorithm::Snappy,
+            0x13 => CompressionAlgorithm::Gzip,
+            _ => return Err(anyhow::anyhow!("Unknown compression algorithm marker: 0x{:02X}", compression_marker[0])),
+        };
+
+        // Read block size and data
+        let mut block_size_bytes = [0u8; 4];
+        cursor.read_exact(&mut block_size_bytes)?;
+        let block_size = u32::from_le_bytes(block_size_bytes) as usize;
+
+        let mut block_data = vec![0u8; block_size];
+        cursor.read_exact(&mut block_data)?;
+
+        // Decompress block if needed
+        let uncompressed_block = if compression_algorithm != CompressionAlgorithm::None {
+            decompress(&block_data, compression_algorithm, CompressionContext::Block)
+                .map_err(|e| anyhow::anyhow!("Block decompression failed: {}", e))?
+        } else {
+            block_data
+        };
+
+        // Initialize vectors
+        let mut vectors: Vec<Vec<f32>> = vec![vec![0.0; dimension]; vector_count];
+        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+
+        // Parse uncompressed block data
+        let mut block_cursor = Cursor::new(uncompressed_block);
+
+        for group_idx in 0..num_groups {
+            let start_dim = group_idx * GROUP_SIZE;
+            let end_dim = std::cmp::min(start_dim + GROUP_SIZE, dimension);
+
+            // Read group size
+            let mut group_size_bytes = [0u8; 4];
+            block_cursor.read_exact(&mut group_size_bytes)?;
+            let group_size = u32::from_le_bytes(group_size_bytes) as usize;
+
+            // Read group data
+            let mut group_data = vec![0u8; group_size];
+            block_cursor.read_exact(&mut group_data)?;
+
+            // Decode each dimension in this group
+            let mut group_cursor = Cursor::new(group_data);
+            for dim in start_dim..end_dim {
+                // Read dimension size
+                let mut dim_size_bytes = [0u8; 4];
+                group_cursor.read_exact(&mut dim_size_bytes)?;
+                let dim_size = u32::from_le_bytes(dim_size_bytes) as usize;
+
+                // Read dimension data
+                let mut dim_data = vec![0u8; dim_size];
+                group_cursor.read_exact(&mut dim_data)?;
+
+                // Decode this dimension's values
+                let decoded_values = decoder.decode_f32(&dim_data, vector_count)
+                    .map_err(|e| anyhow::anyhow!("FastLanes decoding failed for group {} dim {}: {}", group_idx, dim, e))?;
+
+                // Copy values to vectors
+                for (row_idx, &value) in decoded_values.iter().enumerate() {
+                    if row_idx < vector_count {
+                        vectors[row_idx][dim] = value;
+                    }
+                }
+            }
+        }
+
+        // Convert to VectorRecord format
+        let mut records = Vec::new();
+        for (row_idx, vector) in vectors.into_iter().enumerate() {
+            records.push(VectorRecord {
+                id: format!("gb_vec_{:06}", row_idx), // Generated ID for GroupedBlockCompressed
+                vector,
+                metadata: std::collections::HashMap::new(),
+                quantized_vector: vec![],
+                expires_at: None,
+                source: None,
+                timestamp: 0,
+                updated_at: None,
+                version: None,
+            });
+        }
+
+        trace!(" [DECODE_GB] Successfully decoded {} vectors", records.len());
+        Ok(records)
+    }
+
+    /// Decode TransposeFieldEncodedBlockCompressedVector format data with block-level compression
+    fn decode_transpose_field_encoded_block_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
+        use std::io::{Cursor, Read};
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
+
+        trace!(" [DECODE_TB] Starting TransposeFieldEncodedBlockCompressed decode, data size: {} bytes", data.len());
+        let mut cursor = Cursor::new(data);
+
+        // Verify TransposeBlockCompressed marker
+        let mut marker = [0u8; 2];
+        cursor.read_exact(&mut marker)?;
+        trace!(" [DECODE_TB] Read marker: [{:02X}, {:02X}]", marker[0], marker[1]);
+        if marker != [0x54, 0x42] { // "TB"
+            warn!(" [DECODE_TB] Invalid marker");
+            return Err(anyhow::anyhow!("Invalid TransposeFieldEncodedBlockCompressedVector marker: expected [0x54, 0x42], got {:?}", marker));
+        }
+
+        // Read encoding version
+        let mut version = [0u8; 1];
+        cursor.read_exact(&mut version)?;
+        let encoding_version = version[0];
+        trace!(" [DECODE_TB] Encoding version: 0x{:02X}", encoding_version);
+
+        trace!(" [DECODE_TB] Dimension: {} (from file header)", dimension);
+        trace!(" [DECODE_TB] Vector count: {} (from file header)", vector_count);
+
+        if vector_count == 0 || dimension == 0 {
+            return Ok(vec![]);
+        }
+
+        // Read compression algorithm marker
+        let mut compression_marker = [0u8; 1];
+        cursor.read_exact(&mut compression_marker)?;
+        let compression_algorithm = match compression_marker[0] {
+            0x00 => CompressionAlgorithm::None,
+            0x10 => CompressionAlgorithm::Lz4,
+            0x11 => CompressionAlgorithm::Zstd,
+            0x12 => CompressionAlgorithm::Snappy,
+            0x13 => CompressionAlgorithm::Gzip,
+            _ => return Err(anyhow::anyhow!("Unknown compression algorithm marker: 0x{:02X}", compression_marker[0])),
+        };
+
+        // Read block size and data
+        let mut block_size_bytes = [0u8; 4];
+        cursor.read_exact(&mut block_size_bytes)?;
+        let block_size = u32::from_le_bytes(block_size_bytes) as usize;
+
+        let mut block_data = vec![0u8; block_size];
+        cursor.read_exact(&mut block_data)?;
+
+        // Decompress block if needed
+        let uncompressed_block = if compression_algorithm != CompressionAlgorithm::None {
+            decompress(&block_data, compression_algorithm, CompressionContext::Block)
+                .map_err(|e| anyhow::anyhow!("Block decompression failed: {}", e))?
+        } else {
+            block_data
+        };
+
+        // Initialize vectors
+        let mut vectors: Vec<Vec<f32>> = vec![vec![0.0; dimension]; vector_count];
+        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+
+        // Parse uncompressed block data
+        let mut block_cursor = Cursor::new(uncompressed_block);
+
+        for dim_idx in 0..dimension {
+            // Read dimension size
+            let mut dim_size_bytes = [0u8; 4];
+            block_cursor.read_exact(&mut dim_size_bytes)?;
+            let dim_size = u32::from_le_bytes(dim_size_bytes) as usize;
+
+            // Read dimension data
+            let mut dim_data = vec![0u8; dim_size];
+            block_cursor.read_exact(&mut dim_data)?;
+
+            // Decode this dimension's values
+            let decoded_values = decoder.decode_f32(&dim_data, vector_count)
+                .map_err(|e| anyhow::anyhow!("FastLanes decoding failed for dimension {}: {}", dim_idx, e))?;
+
+            // Copy values to vectors
+            for (row_idx, &value) in decoded_values.iter().enumerate() {
+                if row_idx < vector_count {
+                    vectors[row_idx][dim_idx] = value;
+                }
+            }
+        }
+
+        // Convert to VectorRecord format
+        let mut records = Vec::new();
+        for (row_idx, vector) in vectors.into_iter().enumerate() {
+            records.push(VectorRecord {
+                id: format!("tb_vec_{:06}", row_idx), // Generated ID for TransposeBlockCompressed
+                vector,
+                metadata: std::collections::HashMap::new(),
+                quantized_vector: vec![],
+                expires_at: None,
+                source: None,
+                timestamp: 0,
+                updated_at: None,
+                version: None,
+            });
+        }
+
+        trace!(" [DECODE_TB] Successfully decoded {} vectors", records.len());
+        Ok(records)
     }
 }
 
@@ -1281,6 +2609,8 @@ impl Default for BlockCompressionConfig {
             enable_metadata_compression: true,
             compression_threshold_bytes: 8192, // 8KB
             dictionary_compression: false,
+            vector_layout: VectorEncodingLayout::Auto,
+            metadata_algorithm: None, // Default: use main algorithm
         }
     }
 }
@@ -1411,6 +2741,76 @@ mod tests {
 
         assert_eq!(superblock.blocks.len(), 1);
         assert_eq!(superblock.record_count, 1);
+    }
+
+    #[test]
+    fn test_grouped_vector_encoding() {
+        // Test GroupedFieldEncodedAndCompressedVector strategy for high-dimensional vectors
+        let dimension = 256; // Should trigger GroupedFieldEncodedAndCompressedVector with Auto
+        let vector_count = 10;
+
+        // Create test vectors
+        let records: Vec<VectorRecord> = (0..vector_count)
+            .map(|i| {
+                let vector = (0..dimension)
+                    .map(|d| ((i as f32 * 0.1) + (d as f32 * 0.01)).sin())
+                    .collect();
+                VectorRecord {
+                    id: format!("vec_{}", i),
+                    vector,
+                    metadata: std::collections::HashMap::new(),
+                    quantized_vector: vec![],
+                    expires_at: None,
+                    source: None,
+                    timestamp: 0,
+                    updated_at: None,
+                    version: None,
+                }
+            })
+            .collect();
+
+        // Test Auto strategy (should pick GroupedFieldEncodedAndCompressedVector for D > 128)
+        let compression_config_auto = BlockCompressionConfig {
+            vector_layout: VectorEncodingLayout::Auto,
+            ..Default::default()
+        };
+        let block_auto = FastLanesDataBlock::new(
+            records.clone(),
+            compression_config_auto,
+        );
+
+        // Serialize and deserialize
+        let serialized = block_auto.serialize().unwrap();
+        let deserialized = FastLanesDataBlock::deserialize(&serialized).unwrap();
+
+        // Verify records match
+        assert_eq!(deserialized.records.len(), vector_count);
+        for (i, record) in deserialized.records.iter().enumerate() {
+            assert_eq!(record.vector.len(), dimension);
+            // Check first value to ensure correctness
+            let expected = ((i as f32 * 0.1) + (0 as f32 * 0.01)).sin();
+            let diff = (record.vector[0] - expected).abs();
+            assert!(diff < 0.0001, "Vector mismatch at index {}", i);
+        }
+
+        // Test explicit GroupedFieldEncodedAndCompressedVector strategy
+        let compression_config_grouped = BlockCompressionConfig {
+            vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
+            ..Default::default()
+        };
+        let block_grouped = FastLanesDataBlock::new(
+            records,
+            compression_config_grouped,
+        );
+
+        let serialized_grouped = block_grouped.serialize().unwrap();
+        let deserialized_grouped = FastLanesDataBlock::deserialize(&serialized_grouped).unwrap();
+
+        assert_eq!(deserialized_grouped.records.len(), vector_count);
+        // Verify all dimensions are preserved
+        for record in deserialized_grouped.records.iter() {
+            assert_eq!(record.vector.len(), dimension);
+        }
     }
 
     #[test]

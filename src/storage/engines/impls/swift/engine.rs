@@ -59,9 +59,12 @@ pub struct SwiftEngine {
     /// Direct compression provider (no adapter indirection)
     compression_provider: StandardCompression,
 
-    /// Unified quantization engine from compute module
-    quantization_engine:
+    /// Storage-aware quantization engine for persistent collection-based PQ
+    storage_quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    /// Fallback stateless quantization engine for ad-hoc queries
+    fallback_quantization_engine:
+        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
     /// Filesystem factory for storage operations
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
@@ -138,11 +141,21 @@ impl SwiftEngine {
                 enable_hardware_acceleration: true,
             };
 
-        let quantization_engine = Arc::new(
+        let storage_quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
-                unified_engine,
+                unified_engine.clone(),
                 distance_engine.clone(),
                 storage_config,
+            ),
+        );
+
+        // Create fallback stateless quantization engine for ad-hoc queries
+        let fallback_codebook_store =
+            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let fallback_quantization_engine = Arc::new(
+            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                distance_engine.clone(),
+                fallback_codebook_store,
             ),
         );
 
@@ -168,7 +181,8 @@ impl SwiftEngine {
             hardware,
             metrics_collector: None,
             compression_provider,
-            quantization_engine,
+            storage_quantization_engine,
+            fallback_quantization_engine,
             filesystem,
             universal_optimizer,
             // Service dependencies
@@ -407,7 +421,7 @@ impl SwiftEngine {
             let superblock = &superblocks[superblock_idx];
 
             // Phase 3: Use quantization engine for progressive search within superblock
-            if let Some(ref _quantization_engine) = Some(&self.quantization_engine) {
+            if let Some(ref _quantization_engine) = Some(&self.storage_quantization_engine) {
                 // TODO: Implement progressive search using quantization engine
                 // For now, simulate with placeholder results
                 for block in &superblock.blocks {
@@ -429,6 +443,22 @@ impl SwiftEngine {
         results.truncate(top_k);
 
         Ok(results)
+    }
+
+    /// Check if we should use persistent quantization for this operation
+    /// Returns true for collection-based operations with quantization enabled
+    pub fn should_use_persistent_quantization(&self, params: &FlushParameters) -> bool {
+        crate::compute::quantization::QuantizationSelector::should_use_persistent_quantization(params, "SWIFT")
+    }
+
+    /// Get the storage quantization engine for persistent collection operations
+    pub fn get_storage_quantization_engine(&self) -> &Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
+        &self.storage_quantization_engine
+    }
+
+    /// Get the fallback quantization engine for stateless operations
+    pub fn get_fallback_quantization_engine(&self) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        &self.fallback_quantization_engine
     }
 }
 

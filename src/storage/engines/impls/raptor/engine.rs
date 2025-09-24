@@ -109,6 +109,10 @@ pub struct RaptorEngine {
     compactor: Arc<RaptorCompactor>,
     // HNSW functionality handled by individual rowgroup segments
 
+    // Dual quantization architecture for optimal performance
+    storage_quantization_engine: Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    fallback_quantization_engine: Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
+
     // Deep integration with AXIS clustering
     cluster_manager: Arc<RwLock<ClusterManager>>,
     clustering_config: ClusteringConfig,
@@ -136,6 +140,30 @@ pub struct RaptorEngine {
 }
 
 impl RaptorEngine {
+    /// Smart quantization selection using shared logic
+    fn should_use_persistent_quantization(&self, operation_context: &str, collection_size: Option<usize>) -> bool {
+        crate::compute::quantization::selection::QuantizationSelector::should_use_persistent_quantization_simple(
+            operation_context,
+            collection_size,
+        )
+    }
+
+    /// Get the appropriate quantization engine based on operation context
+    async fn get_quantization_engine(&self, operation_context: &str, collection_size: Option<usize>) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        if self.should_use_persistent_quantization(operation_context, collection_size) {
+            // Use global quantization cache for persistent operations
+            if let Some(global_cache) = crate::compute::quantization::global_cache::GlobalQuantizationCache::instance() {
+                global_cache.get_or_create_engine("default_collection".to_string()).await
+            } else {
+                // Fallback to fallback engine since we need UnifiedQuantizationEngine type
+                self.fallback_quantization_engine.clone()
+            }
+        } else {
+            // Use stateless engine for ad-hoc operations
+            self.fallback_quantization_engine.clone()
+        }
+    }
+
     /// Create a new RAPTOR engine instance (stateless)
     /// Collection info comes from FlushParameters and StorageQueryContext at runtime
     pub async fn new() -> Result<Self> {
@@ -154,15 +182,21 @@ impl RaptorEngine {
             SmartRowGroupSizer::for_s3_standard(config.dimension, 200) // 200 bytes avg metadata
                 .with_query_pattern(super::smart_rowgroup_sizing::QueryPattern::Mixed);
 
-        // Create quantization engine for RAPTOR
-        let quantization_engine = Arc::new(
+        // Create dual quantization architecture for RAPTOR
+        let storage_quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new_default()
+        );
+        let fallback_quantization_engine = Arc::new(
+            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()),
+                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
+            )
         );
 
         let rowgroup_manager = Arc::new(RwLock::new(RowGroups::new(
             config.clone(),
             smart_sizer,
-            Some(quantization_engine.clone()), // Add quantization engine
+            Some(storage_quantization_engine.clone()), // Add storage quantization engine
         )?));
 
         // ============================================================================
@@ -402,6 +436,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             cache,
             file_registry,
             metrics,
+            storage_quantization_engine,
+            fallback_quantization_engine,
         })
     }
 

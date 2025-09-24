@@ -234,7 +234,10 @@ impl FastLanesEncoder {
     /// Maintains IEEE 754 precision while applying compression
     pub fn encode_f32(&self, data: &[f32]) -> Result<Vec<u8>> {
         // Convert f32 to bits preserving exact representation
-        let int_data: Vec<i64> = data.iter().map(|&f| f.to_bits() as i64).collect();
+        // Cast to i64 via u64 to avoid sign extension issues
+        let int_data: Vec<i64> = data.iter()
+            .map(|&f| f.to_bits() as u64 as i64)
+            .collect();
 
         // Encode as integers preserving all bits
         let mut encoded = vec![0x80]; // Marker for f32 encoding
@@ -369,19 +372,20 @@ impl FastLanesEncoder {
 
         // Process in blocks for SIMD efficiency
         for chunk in data.chunks(self.block_size) {
-            // Transposed bit-packing: group bits by position
-            // This layout enables SIMD extraction
-            for bit_pos in 0..bits {
-                let mut byte = 0u8;
-                let mut bit_idx = 0;
+            // For each value in the chunk, pack its bits
+            // Process 8 values at a time to fill bytes
+            for value_group in chunk.chunks(8) {
+                // For each bit position, collect bits from up to 8 values into a byte
+                for bit_pos in 0..bits {
+                    let mut byte = 0u8;
 
-                for &value in chunk.iter().take(8) {
-                    let bit = ((value as u64 >> bit_pos) & 1) as u8;
-                    byte |= bit << bit_idx;
-                    bit_idx += 1;
+                    for (idx, &value) in value_group.iter().enumerate() {
+                        let bit = ((value as u64 >> bit_pos) & 1) as u8;
+                        byte |= bit << idx;
+                    }
+
+                    encoded.push(byte);
                 }
-
-                encoded.push(byte);
             }
         }
 
@@ -396,12 +400,23 @@ impl FastLanesEncoder {
         // Store base value
         encoded.extend_from_slice(&base.to_le_bytes());
 
-        // Compute deltas - LLVM will auto-vectorize this loop
-        let deltas: Vec<i64> = data.iter().map(|&v| v - base).collect();
+        // Compute deltas using wrapping arithmetic to avoid overflow
+        // This is safe because we'll use wrapping_add during decode as well
+        let deltas: Vec<i64> = data.iter()
+            .map(|&v| v.wrapping_sub(base))
+            .collect();
 
         // Determine optimal bit width for deltas
-        let max_delta = deltas.iter().map(|&d| d.abs()).max().unwrap_or(0);
-        let bits = 64 - max_delta.leading_zeros() as u8;
+        // Use unsigned comparison for bit width calculation
+        let max_delta = deltas.iter()
+            .map(|&d| d.unsigned_abs())
+            .max()
+            .unwrap_or(0);
+        let bits = if max_delta == 0 {
+            1
+        } else {
+            64 - max_delta.leading_zeros() as u8
+        };
         encoded.push(bits);
 
         // Bit-pack the deltas
@@ -554,32 +569,55 @@ impl FastLanesEncoder {
         const SIMD_ALIGNMENT: usize = 16; // 16 x f32 = 64 bytes (cache line)
         let padded_dimension = ((dimension + SIMD_ALIGNMENT - 1) / SIMD_ALIGNMENT) * SIMD_ALIGNMENT;
 
-        let mut encoded_vectors = Vec::with_capacity(vectors.len());
+        if apply_simd_encoding {
+            // ============ INDIVIDUAL VECTOR ENCODING (Original FastLanes approach) ============
+            // Process each vector with FastLanes SIMD encoding
+            let mut encoded_vectors = Vec::with_capacity(vectors.len());
 
-        // Process each vector
-        for vector in vectors {
-            // Create SIMD-aligned vector with padding
-            let mut aligned_vector = vec![0.0f32; padded_dimension];
-            aligned_vector[..dimension].copy_from_slice(&vector[..]);
+            for vector in vectors {
+                // Create SIMD-aligned vector with padding
+                let mut aligned_vector = vec![0.0f32; padded_dimension];
+                aligned_vector[..dimension].copy_from_slice(&vector[..]);
 
-            let encoded = if apply_simd_encoding {
                 // Apply FastLanes SIMD encoding to the entire vector
-                self.encode_f32(&aligned_vector)?
-            } else {
-                // Store as raw bytes for fastest access (bytemuck)
-                let bytes: &[u8] = cast_slice(&aligned_vector[..]);
-                bytes.to_vec()
-            };
+                let encoded = self.encode_f32(&aligned_vector)?;
+                encoded_vectors.push(encoded);
+            }
 
-            encoded_vectors.push(encoded);
+            Ok(RowWiseEncodedVectors {
+                num_vectors: vectors.len(),
+                dimension,
+                padded_dimension,
+                encoded_vectors,
+            })
+        } else {
+            // ============ BLOCK-LEVEL COMPRESSION (New optimized approach) ============
+            // Buffer all vectors into a single contiguous block for economies of scale
+
+            let total_floats = vectors.len() * padded_dimension;
+            let mut block_buffer = Vec::with_capacity(total_floats);
+
+            // Pack all vectors consecutively using row-wise layout
+            for vector in vectors {
+                // Create SIMD-aligned vector with padding
+                let mut aligned_vector = vec![0.0f32; padded_dimension];
+                aligned_vector[..dimension].copy_from_slice(&vector[..]);
+                block_buffer.extend_from_slice(&aligned_vector);
+            }
+
+            // Convert entire block to bytes using bytemuck (zero-copy)
+            let block_bytes: &[u8] = cast_slice(&block_buffer);
+
+            // Store as single compressed block instead of individual vectors
+            let compressed_block = vec![block_bytes.to_vec()];
+
+            Ok(RowWiseEncodedVectors {
+                num_vectors: vectors.len(),
+                dimension,
+                padded_dimension,
+                encoded_vectors: compressed_block, // Single block instead of per-vector
+            })
         }
-
-        Ok(RowWiseEncodedVectors {
-            num_vectors: vectors.len(),
-            dimension,
-            padded_dimension,
-            encoded_vectors,
-        })
     }
 
     /// Encode vectors with automatic layout selection based on dimension
@@ -843,7 +881,10 @@ impl FastLanesDecoder {
         // Decode integers and convert back to f32
         let int_data = self.decode_integers(&data[1..], count)?;
 
-        let floats: Vec<f32> = int_data.iter().map(|&i| f32::from_bits(i as u32)).collect();
+        // Convert back to f32, handling the i64 -> u32 conversion properly
+        let floats: Vec<f32> = int_data.iter()
+            .map(|&i| f32::from_bits((i as u64) as u32))
+            .collect();
 
         Ok(floats)
     }
@@ -1003,10 +1044,13 @@ impl FastLanesDecoder {
         let mut values = Vec::with_capacity(count);
         let mut offset = 0;
 
-        // Process in blocks
-        for _block in 0..(count + self.block_size - 1) / self.block_size {
-            // Extract transposed bits
-            for value_idx in 0..self.block_size.min(count - values.len()) {
+        // Process values 8 at a time (matching the packing)
+        while values.len() < count {
+            let remaining = count - values.len();
+            let values_in_group = remaining.min(8);
+
+            // Extract values from this group
+            for value_idx in 0..values_in_group {
                 let mut value = 0u64;
 
                 for bit_pos in 0..bits {
@@ -1016,7 +1060,7 @@ impl FastLanesDecoder {
                     }
 
                     let byte = data[byte_idx];
-                    let bit = ((byte >> (value_idx % 8)) & 1) as u64;
+                    let bit = ((byte >> value_idx) & 1) as u64;
                     value |= bit << bit_pos;
                 }
 
@@ -1043,8 +1087,10 @@ impl FastLanesDecoder {
         // Decode deltas
         let deltas = self.unpack_integers(&data[9..], count, bits)?;
 
-        // Apply deltas (auto-vectorized)
-        let values: Vec<i64> = deltas.iter().map(|&delta| base + delta).collect();
+        // Apply deltas using wrapping arithmetic to match encoder
+        let values: Vec<i64> = deltas.iter()
+            .map(|&delta| base.wrapping_add(delta))
+            .collect();
 
         Ok(values)
     }

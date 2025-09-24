@@ -48,9 +48,12 @@ pub struct NovaEngine {
     metrics_collector: Option<Arc<EngineMetricsCollector>>,
     /// Direct compression provider (no adapter indirection)
     compression_provider: StandardCompression,
-    /// Unified quantization engine from compute module
-    quantization_engine:
+    /// Storage-aware quantization engine for persistent collection-based PQ
+    storage_quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    /// Fallback stateless quantization engine for ad-hoc queries
+    fallback_quantization_engine:
+        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
     /// Distance computation engine
     distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 
@@ -108,11 +111,21 @@ impl NovaEngine {
                 enable_hardware_acceleration: true,
             };
 
-        let quantization_engine = Arc::new(
+        let storage_quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
-                unified_engine,
+                unified_engine.clone(),
                 distance_compute.clone(),
                 storage_config,
+            ),
+        );
+
+        // Create fallback stateless quantization engine for ad-hoc queries
+        let fallback_codebook_store =
+            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let fallback_quantization_engine = Arc::new(
+            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                distance_compute.clone(),
+                fallback_codebook_store,
             ),
         );
 
@@ -143,7 +156,8 @@ impl NovaEngine {
             hardware,
             metrics_collector: None,
             compression_provider,
-            quantization_engine,
+            storage_quantization_engine,
+            fallback_quantization_engine,
             distance_engine: distance_compute,
             universal_optimizer,
         })
@@ -854,6 +868,22 @@ impl NovaEngine {
         } else {
             "file://".to_string()
         }
+    }
+
+    /// Check if we should use persistent quantization for this operation
+    /// Returns true for collection-based operations with quantization enabled
+    pub fn should_use_persistent_quantization(&self, params: &FlushParameters) -> bool {
+        crate::compute::quantization::QuantizationSelector::should_use_persistent_quantization(params, "NOVA")
+    }
+
+    /// Get the storage quantization engine for persistent collection operations
+    pub fn get_storage_quantization_engine(&self) -> &Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
+        &self.storage_quantization_engine
+    }
+
+    /// Get the fallback quantization engine for stateless operations
+    pub fn get_fallback_quantization_engine(&self) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        &self.fallback_quantization_engine
     }
 }
 

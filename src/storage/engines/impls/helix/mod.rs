@@ -234,9 +234,9 @@ pub struct HelixEngine {
     filesystem_factory: Arc<FilesystemFactory>,
     /// Unified distance computation engine
     distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
-    /// Unified quantization engine for storage
-    quantization_engine:
-        Option<Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
+    /// Dual quantization architecture for optimal performance
+    storage_quantization_engine: Option<Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>>,
+    fallback_quantization_engine: Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
     /// Unified cache orchestrator
     cache_orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
     /// PCA model for clustering
@@ -268,6 +268,30 @@ struct EngineMetrics {
 }
 
 impl HelixEngine {
+    /// Smart quantization selection using shared logic
+    fn should_use_persistent_quantization(&self, operation_context: &str, collection_size: Option<usize>) -> bool {
+        crate::compute::quantization::selection::QuantizationSelector::should_use_persistent_quantization_simple(
+            operation_context,
+            collection_size,
+        )
+    }
+
+    /// Get the appropriate quantization engine based on operation context
+    async fn get_quantization_engine(&self, operation_context: &str, collection_size: Option<usize>) -> Option<Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>> {
+        if self.should_use_persistent_quantization(operation_context, collection_size) {
+            // Use global quantization cache for persistent operations
+            if let Some(global_cache) = crate::compute::quantization::global_cache::GlobalQuantizationCache::instance() {
+                Some(global_cache.get_or_create_engine("default_collection".to_string()).await)
+            } else {
+                // Fallback to fallback engine since we need UnifiedQuantizationEngine type
+                Some(self.fallback_quantization_engine.clone())
+            }
+        } else {
+            // Use stateless engine for ad-hoc operations
+            Some(self.fallback_quantization_engine.clone())
+        }
+    }
+
     /// Write a simplified SSTable without PCA or Hilbert ordering (fast path for small batches)
     async fn write_sstable_simple(
         &self,
@@ -353,8 +377,8 @@ impl HelixEngine {
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
         );
 
-        // Initialize quantization engine if enabled
-        let quantization_engine = if config.storage_quantization {
+        // Initialize dual quantization architecture
+        let storage_quantization_engine = if config.storage_quantization {
             let codebook_store =
                 Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
             let unified_engine = Arc::new(
@@ -375,6 +399,14 @@ impl HelixEngine {
         } else {
             None
         };
+
+        // Always create fallback quantization engine for ad-hoc operations
+        let fallback_quantization_engine = Arc::new(
+            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                distance_compute.clone(),
+                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
+            )
+        );
 
         // Initialize cache orchestrator (prefer explicit, else config-driven)
         let cache_orchestrator = if let Some(orc) = orchestrator {
@@ -412,7 +444,8 @@ impl HelixEngine {
             filesystem,
             filesystem_factory,
             distance_compute,
-            quantization_engine,
+            storage_quantization_engine,
+            fallback_quantization_engine,
             cache_orchestrator,
             pca_model: Arc::new(RwLock::new(None)),
             levels: Arc::new(RwLock::new(levels)),

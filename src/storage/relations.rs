@@ -209,7 +209,7 @@ impl InMemoryRelationsStore {
     
     /// Legacy persist method - now delegates to ORION
     async fn _legacy_persist_relation(&self, collection_id: &str, relation: &Relation) -> Result<()> {
-        let key = Self::relation_key(
+        let _key = Self::relation_key(
             collection_id,
             &relation.source_entity_id,
             &relation.relation_type,

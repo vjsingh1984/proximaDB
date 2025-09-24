@@ -416,6 +416,162 @@ Key configuration sections in `config/config.toml`:
 - `/data/viper_data/`: VIPER engine columnar storage
 
 
+## Quantized Vector Precomputation Architecture
+
+### Overview
+ProximaDB implements quantized vector precomputation during flush operations to optimize search performance. Quantized representations (Binary, INT8, PQ) are computed once during data ingestion and stored alongside original vectors, eliminating runtime quantization overhead.
+
+### Architecture Components
+
+#### 1. VectorRecord Extension
+The `VectorRecord` proto message includes optional quantized representations:
+```protobuf
+message VectorRecord {
+    // ... existing fields ...
+    optional QuantizedVectors quantized = 20;
+}
+
+message QuantizedVectors {
+    optional bytes binary = 1;      // 1 bit per dimension
+    optional bytes int8 = 2;        // 8 bits per dimension
+    optional bytes pq4 = 3;         // 4-bit PQ codes
+    optional bytes pq8 = 4;         // 8-bit PQ codes
+    optional bytes pq16 = 5;        // 16-bit PQ codes
+    optional bytes pq32 = 6;        // 32-bit PQ codes
+}
+```
+
+#### 2. Quantization Precompute Service
+Location: `src/compute/quantization/precompute.rs`
+
+The service leverages existing quantization modules:
+- Uses `GlobalQuantizationCache` for codebook management
+- Delegates to `UnifiedQuantizationEngine` for quantization operations
+- Integrates with `QuantizationSelector` for intelligent level selection
+
+#### 3. Storage Engine Integration
+
+**Row-Based Engines (SST, SWIFT, RAPTOR)**:
+- Store quantized vectors inline within VectorRecord
+- Access pattern: Single read retrieves all representations
+- Optimal for point queries and small batch operations
+
+**Columnar Engines (VIPER, NOVA, HELIX)**:
+- Store quantized vectors in separate columns
+- Access pattern: Column scan for specific quantization level
+- Optimal for large batch operations and analytics
+
+### Implementation Guidelines
+
+#### Phase 1: Core Infrastructure
+1. Extend VectorRecord proto with QuantizedVectors message
+2. Implement QuantizationPrecomputeService using existing modules:
+   ```rust
+   // Use existing capabilities
+   let cache = GlobalQuantizationCache::global();
+   let engine = cache.get_or_create_engine(collection_id).await;
+   let quantized = engine.quantize_batch(&vectors, level).await?;
+   ```
+
+#### Phase 2: Engine Integration
+Modify flush operations in each engine:
+```rust
+async fn do_flush(&self, params: FlushParameters) -> Result<FlushResult> {
+    // Existing flush logic
+    let records = self.prepare_records(params)?;
+
+    // Add precomputation if quantization enabled
+    if params.collection_config.quantization.enabled {
+        let precompute = QuantizationPrecomputeService::new();
+        records = precompute.add_quantized_vectors(records, &params.collection_config).await?;
+    }
+
+    // Continue with storage
+    self.store_records(records).await
+}
+```
+
+#### Phase 3: Search Integration
+Modify search to use precomputed vectors:
+```rust
+async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
+    // Check for precomputed vectors
+    if let Some(quantized_level) = self.select_quantization_level(&request) {
+        // Use precomputed quantized vectors
+        return self.search_with_precomputed(request, quantized_level).await;
+    }
+
+    // Fall back to runtime quantization or full precision
+    self.search_standard(request).await
+}
+```
+
+### Testing Requirements
+
+#### Unit Tests
+- Test quantization precomputation for each level
+- Verify storage and retrieval of quantized vectors
+- Test fallback to runtime quantization when precomputed unavailable
+
+#### Integration Tests
+- End-to-end tests with precomputation enabled/disabled
+- Performance benchmarks comparing precomputed vs runtime
+- Memory usage analysis with various quantization levels
+
+#### Test Locations
+- Unit tests: `src/compute/quantization/precompute.rs` (inline #[cfg(test)])
+- Integration tests: `tests/quantization/precompute_integration_test.rs`
+- Benchmarks: `benches/bench_15_precompute_quantization.rs`
+
+### Performance Expectations
+
+#### Search Performance Improvements
+- Binary search: 10-15x faster (no runtime quantization)
+- INT8 search: 8-10x faster
+- PQ search: 5-8x faster
+
+#### Storage Overhead
+- Binary: +3% storage (1 bit vs 32 bits per dimension)
+- INT8: +25% storage (8 bits vs 32 bits)
+- PQ8: +25% storage (depends on compression ratio)
+- PQ16: +50% storage
+- PQ32: +100% storage
+
+#### Memory Requirements
+- Codebook cache: ~10MB per collection
+- Precomputation buffer: ~100MB during flush
+- Total overhead: <5% of system memory
+
+### Configuration
+
+Add to `config/config.toml`:
+```toml
+[compute.quantization.precompute]
+enabled = true
+levels = ["binary", "int8", "pq8"]  # Levels to precompute
+max_batch_size = 10000  # Vectors per batch
+parallel_workers = 4  # Concurrent quantization threads
+
+[compute.quantization.storage]
+strategy = "inline"  # inline or columnar
+compression = "lz4"  # Compress quantized vectors
+```
+
+### Migration Path
+
+1. **Week 1**: Implement core infrastructure and service
+2. **Week 2**: Integrate with SST and VIPER engines
+3. **Week 3**: Integrate with remaining engines
+4. **Week 4**: Add search optimizations
+5. **Week 5**: Performance tuning and benchmarking
+
+### Common Pitfalls to Avoid
+
+1. **Don't duplicate quantization logic** - Always use existing UnifiedQuantizationEngine
+2. **Don't store all levels by default** - Use QuantizationSelector to choose optimal levels
+3. **Don't ignore memory limits** - Implement batching for large flush operations
+4. **Don't break backward compatibility** - Support reading old data without quantized vectors
+
 ## Important Architecture Concepts
 
 ### Quantization System

@@ -121,6 +121,8 @@ pub enum CacheType {
     Metadata,
     /// Query execution plans for performance optimization
     QueryPlan,
+    /// Quantization codebooks (collection-partitioned PQ/Binary/INT8 codebooks)
+    Quantization,
     // SKS/Graph extensions
     /// Entity headers (typed/flexible metadata, provenance, temporal)
     EntityHeader,

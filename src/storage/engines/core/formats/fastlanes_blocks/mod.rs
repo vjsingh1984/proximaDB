@@ -149,6 +149,7 @@
 pub mod block_reader;  // ✅ NEW: Unified FastLanes block reader with strategies
 pub mod block_structures;
 pub mod bloom_filter; // Row-based bloom filter for SST and Swift
+// Block-level compression now integrated into main block_structures.rs
 pub mod compression_config;
 pub mod index_structures;
 // Quantization now handled by unified compute module
@@ -159,10 +160,11 @@ pub mod sst_metadata; // NEW: Zero-copy metadata serialization for SST
 pub mod swift_metadata;
 pub mod utilities; // NEW: Zero-copy metadata serialization for SWIFT
 
+
 // Re-exports for common use
 pub use block_structures::{
     BlockCompressionConfig, BlockLayout, BlockLocation, BlockMetadataStats, FastLanesBlockMetadata, FastLanesDataBlock,
-    QuantizationStatistics, SuperBlock,
+    QuantizationStatistics, SuperBlock, VectorEncodingLayout,
 };
 pub use compression_config::{
     CompressionParameters, CompressionStats, RowBasedCompressionConfig, VectorCompressionStrategy,
