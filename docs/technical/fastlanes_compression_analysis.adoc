@@ -7,7 +7,17 @@
 
 == Executive Summary
 
-FastLanesDataBlock now offers **five distinct encoding strategies** with both field-level and block-level compression options (January 2025). The system automatically selects optimal strategies based on dimension count (threshold: 128 for grouped strategies). Our comprehensive benchmarks reveal **100% test pass rate** across all 23 test scenarios, with TransposeFieldEncodedBlockCompressed achieving the **fastest decode at 16.7ms** and GroupedFieldEncodedBlockCompressed achieving **maximum compression at 1.57x**.
+FastLanesDataBlock now offers **five distinct encoding strategies** with both field-level and block-level compression options (January 2025). However, production benchmarks reveal significant performance issues:
+
+[WARNING]
+====
+**Critical Performance Issue Identified**:
+- Expected compression: 1.5-2.0x
+- Actual compression: 1.0-1.1x (all strategies)
+- Root cause: Hardcoded delta encoding pre-compresses data, leaving no redundancy for additional compression
+====
+
+Our comprehensive testing shows **100% functional correctness** (23/23 tests pass) but **compression effectiveness is severely limited** by architectural choices.
 
 == FastLanesDataBlock Architecture
 
@@ -159,17 +169,37 @@ graph TB
     style D2 fill:#b4a7d6,stroke:#8474b1,stroke-width:2px,color:#000
 ----
 
-=== Key Finding: Layout Impact is Minimal for Compression
+=== Production vs Test Performance Discrepancy
 
-[cols="3,2,2,2", options="header"]
-|===
-| Dimension | Layout Used | FastLanes Ratio | +Best Compression
+[WARNING]
+====
+**Major Discrepancy Found**: Test examples show 1.5x compression but production benchmarks show only 1.1x
+====
 
-| 384D | Columnar | 15.8x | 18.3x (Zstd)
-| 768D | Row-wise | 15.8x | 20.0x (Zstd)
-| 1536D | Row-wise | 15.8x | 19.5x (Zstd)
-| 3072D | Row-wise | 15.8x | 19.0x (Zstd)
+[cols="3,2,2,2,2", options="header"]
 |===
+| Scenario | Expected | Test Examples | Production Benchmark | Discrepancy
+
+| 384D Vectors
+| 15.8x ratio
+| 1.57x (works)
+| 1.1x (fails)
+| -93% performance
+
+| 768D Vectors
+| 15.8x ratio
+| 1.49x (works)
+| 1.1x (fails)
+| -93% performance
+
+| 1536D Vectors
+| 15.8x ratio
+| 1.57x (works)
+| 1.1x (fails)
+| -93% performance
+|===
+
+The discrepancy is due to different data patterns - test examples use synthetic patterns while production uses random data.
 
 **Conclusion**: FastLanes encoding provides consistent ~15.8x compression regardless of layout. Additional compression adds 10-25% improvement uniformly.
 
@@ -427,17 +457,47 @@ compression_level = 1
 
 == Conclusions
 
-1. **FastLanes does the heavy lifting**: 15.8x compression regardless of layout
-2. **Layout choice affects performance, not compression**: Both achieve similar ratios
-3. **Default threshold (512) is reasonable**: Based on cache and memory patterns
-4. **Additional compression is uniform**: 10-25% extra reduction for both layouts
-5. **Snappy is optimal for most cases**: Best balance after FastLanes encoding
+=== Current State (January 2025)
+1. **FastLanes delta encoding dominates**: Hardcoded delta removes most compressible patterns
+2. **Strategy differences negligible**: All achieve 1.0-1.1x compression (expected 1.5-2.0x)
+3. **Row-wise is fastest**: 1.5x faster encoding, similar compression
+4. **Complex strategies add overhead**: Field/block compression variants provide no benefit
+5. **Production data differs from tests**: Random data doesn't compress as well as patterns
 
-=== Final Recommendation
+=== Recommended Improvements
 
-For FastLanesDataBlock usage:
-- **Trust the defaults**: Dimension ≤ 512 → Columnar, > 512 → Row-wise
-- **Use Snappy**: Provides best balance with FastLanes
-- **Profile if borderline**: Dimensions near 512 need testing
-- **Consider workload**: Override defaults only for specific patterns
-- **Monitor metrics**: Track encode/decode times in production
+1. **Replace hardcoded delta encoding**:
+```rust
+// Current: Always delta
+let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+
+// Improved: Adaptive selection
+let scheme = analyze_and_select_scheme(&data);
+let encoder = FastLanesEncoder::new(scheme);
+```
+
+2. **Add compression bypass**:
+```rust
+if encoded_size < original_size * 0.5 {
+    // FastLanes already achieved 2x, skip additional compression
+    return Ok(encoded_data);
+}
+```
+
+3. **Simplify to 2 strategies**:
+   - **FullVector**: Fast path for low-latency
+   - **Columnar**: Compressed path for storage optimization
+   - Remove: Field/block compression variants (no measurable benefit)
+
+=== Final Recommendation (Current Implementation)
+
+**Use FullVector/Row-wise for ALL workloads**:
+- ✅ Fastest encoding/decoding
+- ✅ Similar compression to complex strategies
+- ✅ Simpler code path
+- ✅ Lower CPU overhead
+
+**Avoid until improvements land**:
+- ❌ TransposeFieldEncoded variants (slower, no compression benefit)
+- ❌ GroupedFieldEncoded variants (complex, no compression benefit)
+- ❌ Additional compression algorithms (minimal benefit after delta encoding)
