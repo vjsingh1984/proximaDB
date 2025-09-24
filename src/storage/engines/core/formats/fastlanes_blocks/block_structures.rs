@@ -2109,9 +2109,6 @@ impl FastLanesDataBlock {
         };
         field_data.push(compression_intent);
 
-        // Track which groups are actually compressed (bitmap)
-        let mut compression_bitmap = vec![0u8; (num_groups + 7) / 8]; // Bit per group
-
         // Create encoder with adaptive scheme selection
         // Analyze first group to determine optimal encoding
         let sample_group: Vec<f32> = vectors.iter()
@@ -2154,8 +2151,8 @@ impl FastLanesDataBlock {
             // Encode the group using FastLanes for better compression
             let encoded_group = encoder.encode_f32(&group_floats, Some(group_floats.len()))?;
 
-            // Apply compression if configured and beneficial
-            let (final_group_data, is_compressed) = if compression_intent != 0x00 {
+            // Apply compression uniformly based on header setting
+            let final_group_data = if compression_intent != 0x00 {
                 let compressed = compress(
                     &encoded_group,
                     config.algorithm,
@@ -2163,18 +2160,11 @@ impl FastLanesDataBlock {
                     CompressionContext::Block,
                 )?;
 
-                // Use compression if beneficial AND valid
-                if compressed.len() < encoded_group.len() && compressed.len() > 0 {
-                    // Set bit in bitmap to indicate this group is compressed
-                    let byte_idx = group_idx / 8;
-                    let bit_idx = group_idx % 8;
-                    compression_bitmap[byte_idx] |= 1 << bit_idx;
-                    (compressed, true)
-                } else {
-                    (encoded_group, false)
-                }
+                // Always use compression when header says to compress
+                // This ensures consistency between encoder and decoder
+                compressed
             } else {
-                (encoded_group, false)
+                encoded_group
             };
 
             // Write group data size and data
@@ -2182,30 +2172,8 @@ impl FastLanesDataBlock {
             field_data.extend_from_slice(&final_group_data);
         }
 
-        // Check if any group was actually compressed
-        let any_compressed = compression_bitmap.iter().any(|&byte| byte != 0);
-
-        // Update compression intent based on actual compression results
-        // The structure is: marker[2] + version[1] + num_groups[4] + compression_intent[1]
-        // So compression_intent is at position 7
-        let actual_compression_marker = if any_compressed {
-            compression_intent // Keep the original intent if any group was compressed
-        } else {
-            0x00 // No compression actually happened
-        };
-
-        // Update the compression marker in the header
-        if field_data.len() > 7 {
-            field_data[7] = actual_compression_marker;
-        }
-
-        // Write compression bitmap only if some groups are actually compressed
-        if any_compressed && actual_compression_marker != 0x00 {
-            // Write bitmap size
-            field_data.extend(&((compression_bitmap.len() as u32).to_le_bytes()));
-            // Write bitmap data
-            field_data.extend_from_slice(&compression_bitmap);
-        }
+        // No need for bitmap or checking compression success
+        // We uniformly apply the compression algorithm from the header
 
         // Add summary debug log
         let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
@@ -2720,23 +2688,9 @@ impl FastLanesDataBlock {
                 _ => None, // Default to no compression for unknown markers
             };
 
-            // Read compression bitmap if compression is enabled
-            let bitmap = if compression_intent[0] != 0x00 {
-                // Read bitmap size
-                let mut bitmap_size_bytes = [0u8; 4];
-                cursor.read_exact(&mut bitmap_size_bytes)?;
-                let bitmap_size = u32::from_le_bytes(bitmap_size_bytes) as usize;
-
-                // Read bitmap
-                let mut bitmap = vec![0u8; bitmap_size];
-                cursor.read_exact(&mut bitmap)?;
-                Some(bitmap)
-            } else {
-                None
-            };
-
+            // No bitmap needed - uniform compression from header
             // Return num_groups along with compression info
-            (algorithm, (num_groups, bitmap))
+            (algorithm, (num_groups, None::<Vec<u8>>))
         } else {
             // Legacy version: read num_groups separately
             let mut num_groups_bytes = [0u8; 4];
@@ -2744,10 +2698,10 @@ impl FastLanesDataBlock {
             let num_groups = u32::from_le_bytes(num_groups_bytes) as usize;
             trace!(" [DECODE_GV] Number of groups: {}", num_groups);
 
-            (None, (num_groups, None)) // Legacy or other versions - fall back to per-group handling
+            (None, (num_groups, None::<Vec<u8>>)) // Legacy or other versions - fall back to per-group handling
         };
 
-        let (num_groups, compression_bitmap) = compression_bitmap_deferred;
+        let (num_groups, _compression_bitmap) = compression_bitmap_deferred;
         trace!(" [DECODE_GV] Header compression algorithm: {:?}", compression_algorithm);
 
         if vector_count == 0 {
@@ -2780,28 +2734,10 @@ impl FastLanesDataBlock {
                 let mut group_data = vec![0u8; data_len];
                 cursor.read_exact(&mut group_data)?;
 
-                // Check if this specific group is compressed using bitmap
-                let is_group_compressed = if let Some(ref bitmap) = compression_bitmap {
-                    let byte_idx = group_idx / 8;
-                    let bit_idx = group_idx % 8;
-                    if byte_idx < bitmap.len() {
-                        (bitmap[byte_idx] & (1 << bit_idx)) != 0
-                    } else {
-                        false
-                    }
-                } else {
-                    // No bitmap means all groups follow compression_intent
-                    compression_algorithm.is_some()
-                };
-
-                // Decompress only if this specific group is compressed
-                if is_group_compressed {
-                    if let Some(algorithm) = compression_algorithm {
-                        decompress(&group_data, algorithm, CompressionContext::Block)?
-                    } else {
-                        // Should not happen - compressed bit set but no algorithm
-                        group_data
-                    }
+                // Decompress if header indicates compression
+                // All groups use the same compression algorithm uniformly
+                if let Some(algorithm) = compression_algorithm {
+                    decompress(&group_data, algorithm, CompressionContext::Block)?
                 } else {
                     group_data
                 }
