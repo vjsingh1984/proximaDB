@@ -910,7 +910,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                 reference: 0,
                 bits: 16,
             });
-            let decoded = decoder.decode_f32(&column_data, num_vectors)?;
+            let decoded = decoder.decode_f32(&column_data, Some(num_vectors))?; // Pass expected count for smart decoding
             columns.push(decoded);
         }
 
@@ -1041,7 +1041,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                 reference: 0,
                 bits: 16,
             });
-            let values = decoder.decode_f32(&values_data, num_nonzeros)?;
+            let values = decoder.decode_f32(&values_data, Some(num_nonzeros))?; // Pass expected count for smart decoding
 
             // Reconstruct dense vectors from sparse representation
             let mut dense_vectors = vec![0.0f32; num_vectors * dimension];
@@ -1088,7 +1088,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                 reference: 0,
                 bits: 16,
             });
-            let values = decoder.decode_f32(&values_data, num_nonzeros)?;
+            let values = decoder.decode_f32(&values_data, Some(num_nonzeros))?; // Pass expected count for smart decoding
 
             // Reconstruct dense vectors from CSR
             let mut dense_vectors = vec![0.0f32; num_vectors * dimension];

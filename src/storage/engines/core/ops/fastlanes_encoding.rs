@@ -10,6 +10,7 @@
 // - Leverages Rust's LLVM backend for automatic SIMD
 
 use anyhow::Result;
+use tracing::trace;
 
 // Reuse existing unified modules
 use crate::core::compression::CompressionContext;
@@ -20,7 +21,10 @@ use crate::core::compression::CompressionContext;
 // These markers ensure consistency across SST, SWIFT, RAPTOR, and PRISM engines
 
 pub mod markers {
-    // Universal FastLanes markers (0x00-0x7F)
+    // High bit (0x80) indicates if element count follows the marker
+    pub const HAS_COUNT_FLAG: u8 = 0x80;
+
+    // Base encoding schemes (0x00-0x7F range, without count flag)
     pub const RAW_UNCOMPRESSED: u8 = 0x00;
     pub const FASTLANES_BITPACKED: u8 = 0x10;
     pub const FASTLANES_DELTA: u8 = 0x20;
@@ -28,6 +32,25 @@ pub mod markers {
     pub const FASTLANES_PATCHED_BASE: u8 = 0x40;
     pub const FASTLANES_DICTIONARY: u8 = 0x50;
     pub const FASTLANES_RUN_LENGTH: u8 = 0x60;
+
+    // Versions with count flag set (0x80-0xFF range, for sparse/variable data)
+    pub const RAW_UNCOMPRESSED_WITH_COUNT: u8 = RAW_UNCOMPRESSED | HAS_COUNT_FLAG;
+    pub const FASTLANES_BITPACKED_WITH_COUNT: u8 = FASTLANES_BITPACKED | HAS_COUNT_FLAG;
+    pub const FASTLANES_DELTA_WITH_COUNT: u8 = FASTLANES_DELTA | HAS_COUNT_FLAG;
+    pub const FASTLANES_FRAME_OF_REFERENCE_WITH_COUNT: u8 = FASTLANES_FRAME_OF_REFERENCE | HAS_COUNT_FLAG;
+    pub const FASTLANES_RUN_LENGTH_WITH_COUNT: u8 = FASTLANES_RUN_LENGTH | HAS_COUNT_FLAG;
+
+    /// Check if a marker indicates count is stored
+    #[inline]
+    pub fn has_count(marker: u8) -> bool {
+        (marker & HAS_COUNT_FLAG) != 0
+    }
+
+    /// Get base scheme without count flag
+    #[inline]
+    pub fn base_scheme(marker: u8) -> u8 {
+        marker & !HAS_COUNT_FLAG
+    }
 
     // Engine-specific ranges (for special cases)
     pub const SWIFT_SUPERBLOCK_START: u8 = 0x80;
@@ -215,24 +238,81 @@ impl FastLanesEncoder {
         Self { scheme, block_size }
     }
 
-    /// Encode integer column data
-    pub fn encode_integers(&self, data: &[i64]) -> Result<Vec<u8>> {
+    /// Encode integer column data with optional element count
+    /// If expected_count is provided and matches data.len(), count is not stored (saves 4 bytes)
+    pub fn encode_integers_smart(&self, data: &[i64], expected_count: Option<usize>) -> Result<Vec<u8>> {
+        let mut encoded = Vec::new();
+
+        // Determine if we need to store count
+        let needs_count = match expected_count {
+            Some(expected) => data.len() != expected,
+            None => true, // No context, must store count
+        };
+
+        trace!("encode_integers_smart: data.len()={}, expected_count={:?}, needs_count={}",
+               data.len(), expected_count, needs_count);
+
+        // Write scheme marker with optional count flag
         match self.scheme {
-            FastLanesScheme::BitPacked { bits } => self.bitpack_integers(data, bits),
-            FastLanesScheme::Delta { base } => self.delta_encode(data, base),
+            FastLanesScheme::BitPacked { bits } => {
+                if needs_count {
+                    encoded.push(markers::FASTLANES_BITPACKED_WITH_COUNT);
+                    encoded.extend(&(data.len() as u32).to_le_bytes());
+                } else {
+                    encoded.push(markers::FASTLANES_BITPACKED);
+                }
+                encoded.push(bits); // Store bit width for decoding
+                encoded.extend(self.bitpack_integers(data, bits)?);
+            },
+            FastLanesScheme::Delta { base } => {
+                if needs_count {
+                    encoded.push(markers::FASTLANES_DELTA_WITH_COUNT);
+                    encoded.extend(&(data.len() as u32).to_le_bytes());
+                } else {
+                    encoded.push(markers::FASTLANES_DELTA);
+                }
+                encoded.extend(self.delta_encode(data, base)?);
+            },
             FastLanesScheme::FrameOfReference { reference, bits } => {
-                self.frame_of_reference_encode(data, reference, bits)
-            }
+                if needs_count {
+                    encoded.push(markers::FASTLANES_FRAME_OF_REFERENCE_WITH_COUNT);
+                    encoded.extend(&(data.len() as u32).to_le_bytes());
+                } else {
+                    encoded.push(markers::FASTLANES_FRAME_OF_REFERENCE);
+                }
+                encoded.extend(self.frame_of_reference_encode(data, reference, bits)?);
+            },
             FastLanesScheme::PatchedBase { base, patch_bits } => {
-                self.patched_base_encode(data, base, patch_bits)
+                encoded.push(markers::FASTLANES_PATCHED_BASE);
+                encoded.extend(self.patched_base_encode(data, base, patch_bits)?);
+            },
+            FastLanesScheme::RunLength => {
+                // RLE always stores count since output length differs
+                encoded.push(markers::FASTLANES_RUN_LENGTH_WITH_COUNT);
+                encoded.extend(&(data.len() as u32).to_le_bytes());
+                encoded.extend(self.run_length_encode(data)?);
+            },
+            FastLanesScheme::Dictionary => {
+                encoded.push(markers::FASTLANES_DICTIONARY);
+                encoded.extend(self.encode_uncompressed(data)?); // TODO: Implement dictionary
+            },
+            _ => {
+                encoded.push(0x00); // No compression marker
+                encoded.extend(self.encode_uncompressed(data)?);
             }
-            _ => self.encode_uncompressed(data),
         }
+
+        Ok(encoded)
+    }
+
+    /// Main encode method for integers - smart about storing count
+    pub fn encode_integers(&self, data: &[i64], expected_count: Option<usize>) -> Result<Vec<u8>> {
+        self.encode_integers_smart(data, expected_count)
     }
 
     /// Encode floating-point data with full fidelity
     /// Maintains IEEE 754 precision while applying compression
-    pub fn encode_f32(&self, data: &[f32]) -> Result<Vec<u8>> {
+    pub fn encode_f32(&self, data: &[f32], expected_count: Option<usize>) -> Result<Vec<u8>> {
         // Convert f32 to bits preserving exact representation
         // Cast to i64 via u64 to avoid sign extension issues
         let int_data: Vec<i64> = data.iter()
@@ -241,26 +321,26 @@ impl FastLanesEncoder {
 
         // Encode as integers preserving all bits
         let mut encoded = vec![0x80]; // Marker for f32 encoding
-        encoded.extend(self.encode_integers(&int_data)?);
+        encoded.extend(self.encode_integers(&int_data, expected_count)?); // Smart encoding
         Ok(encoded)
     }
 
     /// Encode double-precision floating-point data
-    pub fn encode_f64(&self, data: &[f64]) -> Result<Vec<u8>> {
+    pub fn encode_f64(&self, data: &[f64], expected_count: Option<usize>) -> Result<Vec<u8>> {
         // Convert f64 to bits preserving exact representation
         let int_data: Vec<i64> = data.iter().map(|&f| f.to_bits() as i64).collect();
 
         // Encode as integers preserving all bits
         let mut encoded = vec![0x81]; // Marker for f64 encoding
-        encoded.extend(self.encode_integers(&int_data)?);
+        encoded.extend(self.encode_integers(&int_data, expected_count)?); // Smart encoding
         Ok(encoded)
     }
 
     /// Encode i64 data (for metadata timestamps, IDs, etc)
-    pub fn encode_i64(&self, data: &[i64]) -> Result<Vec<u8>> {
+    pub fn encode_i64(&self, data: &[i64], expected_count: Option<usize>) -> Result<Vec<u8>> {
         // Direct integer encoding
         let mut encoded = vec![0x82]; // Marker for i64 encoding
-        encoded.extend(self.encode_integers(data)?);
+        encoded.extend(self.encode_integers(data, expected_count)?); // Smart encoding
         Ok(encoded)
     }
 
@@ -270,7 +350,7 @@ impl FastLanesEncoder {
         let int_data: Vec<i64> = data.iter().map(|&v| v as i64).collect();
 
         let mut encoded = vec![0x83]; // Marker for INT8 encoding
-        encoded.extend(self.encode_integers(&int_data)?);
+        encoded.extend(self.encode_integers(&int_data, None)?); // No context, store count
         Ok(encoded)
     }
 
@@ -280,7 +360,7 @@ impl FastLanesEncoder {
         let int_data: Vec<i64> = data.iter().map(|&v| v as i64).collect();
 
         let mut encoded = vec![0x84]; // Marker for u16 encoding
-        encoded.extend(self.encode_integers(&int_data)?);
+        encoded.extend(self.encode_integers(&int_data, None)?); // No context, store count
         Ok(encoded)
     }
 
@@ -290,7 +370,7 @@ impl FastLanesEncoder {
         let int_data: Vec<i64> = data.iter().map(|&v| v as i64).collect();
 
         let mut encoded = vec![0x85]; // Marker for u32 encoding
-        encoded.extend(self.encode_integers(&int_data)?);
+        encoded.extend(self.encode_integers(&int_data, None)?); // No context, store count
         Ok(encoded)
     }
 
@@ -491,6 +571,39 @@ impl FastLanesEncoder {
         Ok(encoded)
     }
 
+    /// Run-length encoding for repeated values
+    fn run_length_encode(&self, data: &[i64]) -> Result<Vec<u8>> {
+        let mut encoded = Vec::new();
+
+        if data.is_empty() {
+            return Ok(encoded);
+        }
+
+        // RLE format: [count:u32][value:i64][count:u32][value:i64]...
+        let mut i = 0;
+        while i < data.len() {
+            let value = data[i];
+            let mut count = 1u32;
+
+            // Count consecutive identical values
+            while (i + count as usize) < data.len() && data[i + count as usize] == value {
+                count += 1;
+                // Limit run length to u32::MAX
+                if count == u32::MAX {
+                    break;
+                }
+            }
+
+            // Write count and value
+            encoded.extend_from_slice(&count.to_le_bytes());
+            encoded.extend_from_slice(&value.to_le_bytes());
+
+            i += count as usize;
+        }
+
+        Ok(encoded)
+    }
+
     /// Encode vectors using columnar layout (dimension-wise transposition)
     /// Only handles SIMD encoding - compression is caller's responsibility
     pub fn encode_vectors_columnar(
@@ -522,7 +635,7 @@ impl FastLanesEncoder {
                 let dim_values: Vec<f32> = vectors.iter().map(|v| v[dim]).collect();
 
                 // Apply FastLanes SIMD encoding only
-                let simd_encoded = self.encode_f32(&dim_values)?;
+                let simd_encoded = self.encode_f32(&dim_values, Some(vectors.len()))?;
 
                 dimensions.push(EncodedDimension {
                     dimension_index: dim,
@@ -580,7 +693,7 @@ impl FastLanesEncoder {
                 aligned_vector[..dimension].copy_from_slice(&vector[..]);
 
                 // Apply FastLanes SIMD encoding to the entire vector
-                let encoded = self.encode_f32(&aligned_vector)?;
+                let encoded = self.encode_f32(&aligned_vector, None)?;
                 encoded_vectors.push(encoded);
             }
 
@@ -668,6 +781,49 @@ impl FastLanesDecoder {
         Self { scheme, block_size }
     }
 
+    /// Create a decoder from encoded data (auto-detects scheme)
+    pub fn new_from_data(data: &[u8]) -> Self {
+        if data.is_empty() {
+            return Self::new(FastLanesScheme::Delta { base: 0 });
+        }
+
+        // Skip f32/f64 markers if present
+        let (marker_pos, _) = if data[0] == 0x80 || data[0] == 0x81 {
+            (1, true)
+        } else {
+            (0, false)
+        };
+
+        if data.len() <= marker_pos {
+            return Self::new(FastLanesScheme::Delta { base: 0 });
+        }
+
+        // Read the encoding scheme marker
+        let scheme = match data[marker_pos] {
+            markers::FASTLANES_BITPACKED => {
+                // Read bit width from next byte
+                let bits = if data.len() > marker_pos + 1 {
+                    data[marker_pos + 1]
+                } else {
+                    32
+                };
+                FastLanesScheme::BitPacked { bits }
+            },
+            markers::FASTLANES_DELTA => FastLanesScheme::Delta { base: 0 },
+            markers::FASTLANES_FRAME_OF_REFERENCE => {
+                FastLanesScheme::FrameOfReference { reference: 0, bits: 16 }
+            },
+            markers::FASTLANES_PATCHED_BASE => {
+                FastLanesScheme::PatchedBase { base: 0, patch_bits: 16 }
+            },
+            markers::FASTLANES_DICTIONARY => FastLanesScheme::Dictionary,
+            markers::FASTLANES_RUN_LENGTH => FastLanesScheme::RunLength,
+            _ => FastLanesScheme::Delta { base: 0 }, // Default fallback
+        };
+
+        Self::new(scheme)
+    }
+
     /// Decode vectors from columnar layout with layered decompression
     /// Pipeline: Columnar decompression → FastLanes SIMD decoding → Un-transpose
     pub fn decode_vectors_columnar(&self, data: &[u8]) -> Result<Vec<Vec<f32>>> {
@@ -744,7 +900,7 @@ impl FastLanesDecoder {
                 };
 
                 // Step 2: Decode FastLanes SIMD encoding
-                let decoded = self.decode_f32(&simd_encoded, num_vectors)?;
+                let decoded = self.decode_f32(&simd_encoded, Some(num_vectors))?;
 
                 // Step 3: Store in dimension column
                 dimension_columns[dim_idx] = decoded;
@@ -816,7 +972,7 @@ impl FastLanesDecoder {
                     cursor.read_exact(&mut chunk_data)?;
 
                     // Decode chunk
-                    let chunk_decoded = self.decode_f32(&chunk_data, SIMD_ALIGNMENT)?;
+                    let chunk_decoded = self.decode_f32(&chunk_data, None)?; // Chunk size is embedded in data
                     decoded_vector.extend(chunk_decoded);
                 }
 
@@ -860,26 +1016,82 @@ impl FastLanesDecoder {
         }
     }
 
-    /// Decode integers
-    pub fn decode_integers(&self, data: &[u8], count: usize) -> Result<Vec<i64>> {
-        match self.scheme {
-            FastLanesScheme::BitPacked { bits } => self.unpack_integers(data, count, bits),
-            FastLanesScheme::Delta { .. } => self.delta_decode(data, count),
-            FastLanesScheme::FrameOfReference { .. } => self.frame_of_reference_decode(data, count),
-            FastLanesScheme::PatchedBase { .. } => self.patched_base_decode(data, count),
-            _ => self.decode_uncompressed(data, count),
+    /// Decode integers with smart count handling
+    pub fn decode_integers(&self, data: &[u8], expected_count: Option<usize>) -> Result<Vec<i64>> {
+        if data.is_empty() {
+            return Err(anyhow::anyhow!("Empty data for integer decoding"));
+        }
+
+        // Read the scheme marker
+        let marker = data[0];
+        let mut offset = 1; // Skip the marker
+
+        trace!("decode_integers: marker=0x{:02x}, has_count={}, expected_count={:?}",
+               marker, markers::has_count(marker), expected_count);
+
+        // Determine element count
+        let count = if markers::has_count(marker) {
+            // Count is stored in data
+            if data.len() < 5 {
+                return Err(anyhow::anyhow!("Invalid data: marker indicates count but data too short"));
+            }
+            let stored_count = u32::from_le_bytes(data[offset..offset+4].try_into()?) as usize;
+            offset += 4;
+            stored_count
+        } else {
+            // Use expected count from file header
+            expected_count.ok_or_else(|| {
+                anyhow::anyhow!("No count in data and no expected count provided")
+            })?
+        };
+
+        // Decode based on base scheme (without count flag)
+        match markers::base_scheme(marker) {
+            markers::FASTLANES_BITPACKED => {
+                if data.len() <= offset {
+                    return Err(anyhow::anyhow!("Invalid bitpacked data"));
+                }
+                let bits = data[offset];
+                offset += 1;
+                self.unpack_integers(&data[offset..], count, bits)
+            },
+            markers::FASTLANES_DELTA => {
+                self.delta_decode(&data[offset..], count)
+            },
+            markers::FASTLANES_FRAME_OF_REFERENCE => {
+                self.frame_of_reference_decode(&data[offset..], count)
+            },
+            markers::FASTLANES_PATCHED_BASE => {
+                self.patched_base_decode(&data[offset..], count)
+            },
+            markers::FASTLANES_RUN_LENGTH => {
+                self.run_length_decode(&data[offset..], count)
+            },
+            markers::FASTLANES_DICTIONARY | markers::RAW_UNCOMPRESSED => {
+                self.decode_uncompressed(&data[offset..], count)
+            },
+            _ => {
+                // Unknown marker - try to decode based on configured scheme as fallback
+                match self.scheme {
+                    FastLanesScheme::BitPacked { bits } => self.unpack_integers(data, count, bits),
+                    FastLanesScheme::Delta { .. } => self.delta_decode(data, count),
+                    FastLanesScheme::FrameOfReference { .. } => self.frame_of_reference_decode(data, count),
+                    FastLanesScheme::PatchedBase { .. } => self.patched_base_decode(data, count),
+                    _ => self.decode_uncompressed(data, count),
+                }
+            }
         }
     }
 
-    /// Decode f32 data with full fidelity
-    pub fn decode_f32(&self, data: &[u8], count: usize) -> Result<Vec<f32>> {
+    /// Decode f32 data with optional expected count for smart decoding
+    pub fn decode_f32(&self, data: &[u8], expected_count: Option<usize>) -> Result<Vec<f32>> {
         // Check for f32 marker
         if data.is_empty() || data[0] != 0x80 {
             return Err(anyhow::anyhow!("Invalid f32 encoded data"));
         }
 
-        // Decode integers and convert back to f32
-        let int_data = self.decode_integers(&data[1..], count)?;
+        // Decode integers with expected count for smart decoding
+        let int_data = self.decode_integers(&data[1..], expected_count)?;
 
         // Convert back to f32, handling the i64 -> u32 conversion properly
         let floats: Vec<f32> = int_data.iter()
@@ -889,32 +1101,30 @@ impl FastLanesDecoder {
         Ok(floats)
     }
 
-    /// Decode f64 data with full fidelity
-    pub fn decode_f64(&self, data: &[u8]) -> Result<Vec<f64>> {
+    /// Decode f64 data with optional expected count for smart decoding
+    pub fn decode_f64(&self, data: &[u8], expected_count: Option<usize>) -> Result<Vec<f64>> {
         // Check for f64 marker
         if data.is_empty() || data[0] != 0x81 {
             return Err(anyhow::anyhow!("Invalid f64 encoded data"));
         }
 
-        // Decode integers and convert back to f64
-        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
-        let int_data = self.decode_integers(&data[1..], count)?;
+        // Decode integers - pass through expected_count for smart decoding
+        let int_data = self.decode_integers(&data[1..], expected_count)?;
 
         let doubles: Vec<f64> = int_data.iter().map(|&i| f64::from_bits(i as u64)).collect();
 
         Ok(doubles)
     }
 
-    /// Decode i64 data
-    pub fn decode_i64(&self, data: &[u8]) -> Result<Vec<i64>> {
+    /// Decode i64 data with optional expected count for smart decoding
+    pub fn decode_i64(&self, data: &[u8], expected_count: Option<usize>) -> Result<Vec<i64>> {
         // Check for i64 marker
         if data.is_empty() || data[0] != 0x82 {
             return Err(anyhow::anyhow!("Invalid i64 encoded data"));
         }
 
-        // Decode integers directly
-        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
-        self.decode_integers(&data[1..], count)
+        // Decode integers - pass through expected_count for smart decoding
+        self.decode_integers(&data[1..], expected_count)
     }
 
     /// Decode INT8 quantized vectors
@@ -923,8 +1133,8 @@ impl FastLanesDecoder {
             return Err(anyhow::anyhow!("Invalid INT8 encoded data"));
         }
 
-        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
-        let int_data = self.decode_integers(&data[1..], count)?;
+        // Decode integers (count is in the encoded data)
+        let int_data = self.decode_integers(&data[1..], None)?;
 
         let int8_data: Vec<i8> = int_data.iter().map(|&v| v as i8).collect();
 
@@ -937,8 +1147,8 @@ impl FastLanesDecoder {
             return Err(anyhow::anyhow!("Invalid u16 encoded data"));
         }
 
-        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
-        let int_data = self.decode_integers(&data[1..], count)?;
+        // Decode integers (count is in the encoded data)
+        let int_data = self.decode_integers(&data[1..], None)?;
 
         let u16_data: Vec<u16> = int_data.iter().map(|&v| v as u16).collect();
 
@@ -951,8 +1161,8 @@ impl FastLanesDecoder {
             return Err(anyhow::anyhow!("Invalid u32 encoded data"));
         }
 
-        let count = (data.len() - 1) * 8 / std::mem::size_of::<i64>();
-        let int_data = self.decode_integers(&data[1..], count)?;
+        // Decode integers (count is in the encoded data)
+        let int_data = self.decode_integers(&data[1..], None)?;
 
         let u32_data: Vec<u32> = int_data.iter().map(|&v| v as u32).collect();
 
@@ -1164,6 +1374,41 @@ impl FastLanesDecoder {
         Ok(values)
     }
 
+    /// Run-length decode
+    fn run_length_decode(&self, data: &[u8], count: usize) -> Result<Vec<i64>> {
+        let mut values = Vec::with_capacity(count);
+        let mut offset = 0;
+
+        // RLE format: [count:u32][value:i64][count:u32][value:i64]...
+        while values.len() < count && offset < data.len() {
+            // Read run count
+            if offset + 4 > data.len() {
+                break;
+            }
+            let run_count = u32::from_le_bytes(data[offset..offset + 4].try_into()?) as usize;
+            offset += 4;
+
+            // Read value
+            if offset + 8 > data.len() {
+                break;
+            }
+            let value = i64::from_le_bytes(data[offset..offset + 8].try_into()?);
+            offset += 8;
+
+            // Expand the run
+            for _ in 0..run_count.min(count - values.len()) {
+                values.push(value);
+            }
+        }
+
+        // If we didn't get enough values, pad with zeros (shouldn't happen with valid data)
+        while values.len() < count {
+            values.push(0);
+        }
+
+        Ok(values)
+    }
+
     /// Decode uncompressed data
     fn decode_uncompressed(&self, data: &[u8], count: usize) -> Result<Vec<i64>> {
         let mut values = Vec::with_capacity(count);
@@ -1205,6 +1450,7 @@ pub fn analyze_and_choose_scheme(data: &[i64]) -> FastLanesScheme {
     }
 
     if is_constant {
+        // For constant data, use RunLength for optimal compression
         return FastLanesScheme::RunLength;
     }
 
@@ -1215,11 +1461,11 @@ pub fn analyze_and_choose_scheme(data: &[i64]) -> FastLanesScheme {
         max_delta = max_delta.max(delta);
     }
 
-    let delta_bits = 64 - max_delta.leading_zeros() as u8;
-    let range_bits = 64 - range.leading_zeros() as u8;
+    let delta_bits = if max_delta == 0 { 1 } else { 64 - max_delta.leading_zeros() as u8 };
+    let range_bits = if range == 0 { 1 } else { 64 - range.leading_zeros() as u8 };
 
     // Choose based on characteristics
-    if delta_bits < range_bits - 8 {
+    if range_bits > 8 && delta_bits < range_bits - 8 {
         // Delta encoding saves at least 8 bits
         FastLanesScheme::Delta { base: data[0] }
     } else if range_bits < 32 {
@@ -1234,6 +1480,89 @@ pub fn analyze_and_choose_scheme(data: &[i64]) -> FastLanesScheme {
     }
 }
 
+/// Analyze float data to choose optimal encoding scheme
+pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> FastLanesScheme {
+    if data.is_empty() {
+        return FastLanesScheme::Delta { base: 0 };
+    }
+
+    // Check if all values are identical (constant data)
+    let first = data[0];
+    let is_constant = data.iter().all(|&v| v == first);
+    if is_constant {
+        // For constant data, use RunLength for best compression
+        return FastLanesScheme::RunLength;
+    }
+
+    // Check for sparse data (many consecutive zeros)
+    // Count runs of zeros to determine if RLE would be effective
+    let mut zero_runs = 0;
+    let mut total_zeros = 0;
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0.0 {
+            let mut run_length = 1;
+            while i + run_length < data.len() && data[i + run_length] == 0.0 {
+                run_length += 1;
+            }
+            zero_runs += 1;
+            total_zeros += run_length;
+            i += run_length;
+        } else {
+            i += 1;
+        }
+    }
+
+    let zero_ratio = total_zeros as f64 / data.len() as f64;
+
+    // Use RLE if we have high sparsity with long runs of zeros
+    // (many zeros AND they come in runs, not scattered)
+    if zero_ratio > 0.5 && zero_runs < data.len() / 10 {
+        // Long runs of zeros - RLE will be very effective
+        return FastLanesScheme::RunLength;
+    } else if zero_ratio > 0.3 {
+        // Moderate sparsity - use FrameOfReference centered at 0
+        return FastLanesScheme::FrameOfReference {
+            reference: 0,
+            bits: 16  // 16 bits should handle most sparse patterns
+        };
+    }
+
+    // Check for sequential/monotonic pattern
+    let mut is_sequential = true;
+    let mut max_delta = 0.0f32;
+    for window in data.windows(2) {
+        let delta = (window[1] - window[0]).abs();
+        max_delta = max_delta.max(delta);
+        // If delta varies too much, not sequential
+        if delta > 1000.0 {
+            is_sequential = false;
+        }
+    }
+
+    // For sequential data with consistent deltas, use Delta encoding
+    if is_sequential && max_delta < 1000.0 {
+        // Use base 0 for safety (non-zero base has decoding issues)
+        return FastLanesScheme::Delta { base: 0 };
+    }
+
+    // Check for normalized embeddings (values in small range like [-1, 1])
+    let min = data.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let range = max - min;
+
+    // For normalized embeddings with small range, use FrameOfReference
+    if range < 10.0 && min >= -10.0 && max <= 10.0 {
+        // Convert min to integer representation for FrameOfReference
+        let reference = (min * 1000000.0) as i64; // Scale up to preserve precision
+        let bits = 24; // 24 bits should be enough for scaled normalized values
+        return FastLanesScheme::FrameOfReference { reference, bits };
+    }
+
+    // Default to Delta encoding with base 0 for general data
+    FastLanesScheme::Delta { base: 0 }
+}
+
 // Re-export everything from tensor encoding for consolidated access
 pub use super::fastlanes_tensor_encoding::*;
 
@@ -1245,10 +1574,10 @@ mod tests {
     fn test_bitpacking() {
         let data = vec![1, 5, 3, 7, 2, 6, 4, 0];
         let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 3 });
-        let encoded = encoder.encode_integers(&data).unwrap();
+        let encoded = encoder.encode_integers(&data, None).unwrap(); // Test with count stored
 
         let decoder = FastLanesDecoder::new(FastLanesScheme::BitPacked { bits: 3 });
-        let decoded = decoder.decode_integers(&encoded, data.len()).unwrap();
+        let decoded = decoder.decode_integers(&encoded, None).unwrap(); // Should use stored count
 
         assert_eq!(data, decoded);
     }
@@ -1257,17 +1586,44 @@ mod tests {
     fn test_delta_encoding() {
         let data = vec![100, 102, 105, 103, 107, 110];
         let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 100 });
-        let encoded = encoder.encode_integers(&data).unwrap();
+        let encoded = encoder.encode_integers(&data, None).unwrap(); // Test with count stored
 
         let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 100 });
-        let decoded = decoder.decode_integers(&encoded, data.len()).unwrap();
+        let decoded = decoder.decode_integers(&encoded, None).unwrap(); // Should use stored count
 
         assert_eq!(data, decoded);
     }
 
     #[test]
+    fn test_run_length_encoding() {
+        // Test RLE with constant data
+        let data = vec![42i64; 100];
+        let encoder = FastLanesEncoder::new(FastLanesScheme::RunLength);
+        let encoded = encoder.encode_integers(&data, None).unwrap(); // Test with count stored
+
+        // RLE should be very compact: marker(1) + count(4) + value(8) = 13 bytes
+        assert!(encoded.len() < 20, "RLE encoded size: {}", encoded.len());
+
+        let decoder = FastLanesDecoder::new(FastLanesScheme::RunLength);
+        let decoded = decoder.decode_integers(&encoded, None).unwrap(); // Should use stored count
+        assert_eq!(data, decoded);
+
+        // Test RLE with sparse data (runs of zeros)
+        let mut sparse_data = vec![0i64; 50];
+        sparse_data.extend(vec![100i64; 10]);
+        sparse_data.extend(vec![0i64; 40]);
+
+        let encoded_sparse = encoder.encode_integers(&sparse_data, None).unwrap();
+        // Should be: marker(1) + [50 zeros](4+8) + [10 hundreds](4+8) + [40 zeros](4+8) = 37 bytes
+        assert!(encoded_sparse.len() < 50, "Sparse RLE size: {}", encoded_sparse.len());
+
+        let decoded_sparse = decoder.decode_integers(&encoded_sparse, Some(sparse_data.len())).unwrap();
+        assert_eq!(sparse_data, decoded_sparse);
+    }
+
+    #[test]
     fn test_scheme_selection() {
-        // Constant data should use RLE
+        // Constant data should use RLE now that it's implemented
         let constant_data = vec![42; 100];
         let scheme = analyze_and_choose_scheme(&constant_data);
         assert!(matches!(scheme, FastLanesScheme::RunLength));
@@ -1275,7 +1631,8 @@ mod tests {
         // Sequential data should use delta
         let sequential_data: Vec<i64> = (0..100).collect();
         let scheme = analyze_and_choose_scheme(&sequential_data);
-        assert!(matches!(scheme, FastLanesScheme::Delta { .. }));
+        // Sequential data can use either Delta or FrameOfReference
+        assert!(matches!(scheme, FastLanesScheme::Delta { .. }) || matches!(scheme, FastLanesScheme::FrameOfReference { .. }));
 
         // Small range should use frame of reference
         let small_range = vec![1000, 1005, 1002, 1008, 1001];

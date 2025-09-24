@@ -2169,7 +2169,7 @@ fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::co
             cursor.read_exact(&mut encoded_data)?;
 
             // Decode this dimension's data
-            let decoded = decoder.decode_f32(&encoded_data, num_vectors)?;
+            let decoded = decoder.decode_f32(&encoded_data, Some(num_vectors))?;
             all_dimensions[dim_idx] = decoded;
             dim_idx += 1;
         }
@@ -2237,7 +2237,7 @@ fn decode_rowwise_simple(data: &[u8]) -> Result<Vec<Vec<f32>>> {
         let floats = if !vec_data.is_empty() && vec_data[0] == 0x80 {
             // FastLanes encoded data
             let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
-            decoder.decode_f32(&vec_data, dimension)?
+            decoder.decode_f32(&vec_data, Some(dimension))?
         } else {
             // Raw bytes - cast directly to f32
             let float_slice: &[f32] = cast_slice(&vec_data);

@@ -2930,7 +2930,7 @@ impl RaptorWriter {
 
         // Encode each dimension column
         for column in columns {
-            let encoded_column = fastlanes_encoder.encode_f32(&column)?;
+            let encoded_column = fastlanes_encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
             encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
             encoded.extend(&encoded_column);
         }
@@ -3072,7 +3072,7 @@ impl RaptorWriter {
 
         // Encode each dimension column with FastLanes
         for column in fp32_columns {
-            let encoded_column = fastlanes_encoder.encode_f32(&column)?;
+            let encoded_column = fastlanes_encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
             encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
             encoded.extend(&encoded_column);
         }
@@ -3798,7 +3798,7 @@ impl RaptorWriter {
         // Encode each dimension column
         for column in columns {
             // Use FastLanes float encoding with full fidelity
-            let encoded_column = encoder.encode_f32(&column)?;
+            let encoded_column = encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;
         }
@@ -4094,7 +4094,7 @@ impl RaptorWriter {
 
             // Write centroid vector using FastLanes
             let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 32 });
-            let encoded = encoder.encode_f32(&centroid.vector)?;
+            let encoded = encoder.encode_f32(&centroid.vector, None)?; // Single centroid, no expected count
             ivf_data.extend(&(encoded.len() as u32).to_le_bytes());
             ivf_data.extend(&encoded);
         }
@@ -4833,7 +4833,7 @@ impl RaptorWriter {
                     };
 
                     let encoder = FastLanesEncoder::new(scheme);
-                    let encoded_ints = encoder.encode_i64(&integers)?;
+                    let encoded_ints = encoder.encode_i64(&integers, None)?; // TODO: Pass expected count for optimization
 
                     encoded.extend(&min.to_le_bytes());
                     encoded.extend(&max.to_le_bytes());
@@ -4861,7 +4861,7 @@ impl RaptorWriter {
                         .collect();
 
                     let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
-                    let encoded_floats = encoder.encode_f32(&floats)?;
+                    let encoded_floats = encoder.encode_f32(&floats, None)?; // TODO: Pass expected count for optimization
 
                     encoded.extend(&(encoded_floats.len() as u32).to_le_bytes());
                     encoded.extend(&encoded_floats);

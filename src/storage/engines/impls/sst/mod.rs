@@ -1214,7 +1214,7 @@ mod block_utils {
 
         // Encode each column
         for column in columns {
-            let encoded_column = encoder.encode_f32(&column)?;
+            let encoded_column = encoder.encode_f32(&column, Some(column.len()))?;
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;
         }
@@ -1273,7 +1273,7 @@ mod block_utils {
             let mut column_data = vec![0u8; column_len];
             cursor.read_exact(&mut column_data)?;
 
-            let decoded_column = decoder.decode_f32(&column_data, column_len)?;
+            let decoded_column = decoder.decode_f32(&column_data, Some(vector_count))?;
             columns.push(decoded_column);
         }
 

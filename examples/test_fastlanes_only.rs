@@ -14,12 +14,12 @@ fn main() -> anyhow::Result<()> {
     
     // Encode using Delta scheme
     let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
-    let encoded = encoder.encode_f32(&test_floats)?;
+    let encoded = encoder.encode_f32(&test_floats, None)?;
     println!("\nEncoded size: {} bytes", encoded.len());
     
     // Decode
     let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
-    let decoded = decoder.decode_f32(&encoded, test_floats.len())?;
+    let decoded = decoder.decode_f32(&encoded, Some(test_floats.len()))?;
     
     println!("\nDecoded data (first 20):");
     for i in 0..20 {

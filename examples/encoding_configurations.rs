@@ -22,7 +22,7 @@ use proximadb::core::compression::CompressionAlgorithm;
 pub fn create_worm_config() -> BlockCompressionConfig {
     BlockCompressionConfig {
         // Force columnar for maximum compression
-        vector_layout: VectorEncodingLayout::TransposeVector,
+        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
 
         // Use Zstd for best compression ratio
         algorithm: CompressionAlgorithm::Zstd,
@@ -33,6 +33,7 @@ pub fn create_worm_config() -> BlockCompressionConfig {
         enable_metadata_compression: true,
         compression_threshold_bytes: 4096,  // Lower threshold
         dictionary_compression: true,
+        metadata_algorithm: Some(CompressionAlgorithm::Zstd),
     }
 }
 
@@ -63,6 +64,7 @@ pub fn create_realtime_config() -> BlockCompressionConfig {
         enable_metadata_compression: true,
         compression_threshold_bytes: 16384,  // Higher threshold
         dictionary_compression: false,
+        metadata_algorithm: Some(CompressionAlgorithm::Lz4),
     }
 }
 
@@ -97,6 +99,7 @@ pub fn create_balanced_config() -> BlockCompressionConfig {
         enable_metadata_compression: true,
         compression_threshold_bytes: 8192,  // Standard threshold
         dictionary_compression: false,  // Skip for speed
+        metadata_algorithm: Some(CompressionAlgorithm::Snappy),
     }
 }
 
@@ -106,13 +109,14 @@ pub fn create_balanced_config() -> BlockCompressionConfig {
 /// Prioritizes maximum compression to reduce storage and transfer costs.
 pub fn create_aws_config() -> BlockCompressionConfig {
     BlockCompressionConfig {
-        vector_layout: VectorEncodingLayout::TransposeVector,
+        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
         algorithm: CompressionAlgorithm::Zstd,
         compression_level: 5,
         enable_vector_compression: true,
         enable_metadata_compression: true,
         compression_threshold_bytes: 4096,
         dictionary_compression: true,
+        metadata_algorithm: Some(CompressionAlgorithm::Zstd),
     }
 }
 
@@ -129,6 +133,7 @@ pub fn create_azure_config() -> BlockCompressionConfig {
         enable_metadata_compression: true,
         compression_threshold_bytes: 8192,
         dictionary_compression: false,
+        metadata_algorithm: Some(CompressionAlgorithm::Snappy),
     }
 }
 
@@ -138,13 +143,14 @@ pub fn create_azure_config() -> BlockCompressionConfig {
 /// Uses Gzip for good compression with reasonable decompression speed.
 pub fn create_gcs_config() -> BlockCompressionConfig {
     BlockCompressionConfig {
-        vector_layout: VectorEncodingLayout::TransposeVector,
+        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
         algorithm: CompressionAlgorithm::Gzip,
         compression_level: 6,
         enable_vector_compression: true,
         enable_metadata_compression: true,
         compression_threshold_bytes: 4096,
         dictionary_compression: true,
+        metadata_algorithm: Some(CompressionAlgorithm::Gzip),
     }
 }
 
@@ -158,9 +164,9 @@ pub fn validate_encoding_config(
     latency_budget_ms: f64
 ) -> Result<(), String> {
     match config.vector_layout {
-        VectorEncodingLayout::TransposeVector if expected_dimensions > 1536 => {
+        VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector if expected_dimensions > 1536 => {
             if latency_budget_ms < 100.0 {
-                return Err("TransposeVector encoding may exceed latency budget for high dimensions".into());
+                return Err("TransposeField encoding may exceed latency budget for high dimensions".into());
             }
         },
         VectorEncodingLayout::FullVector if expected_dimensions < 256 => {
@@ -180,7 +186,7 @@ mod tests {
     fn test_workload_configurations() {
         // Test WORM configuration
         let worm_config = create_worm_config();
-        assert_eq!(worm_config.vector_layout, VectorEncodingLayout::TransposeVector);
+        assert_eq!(worm_config.vector_layout, VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector);
         assert_eq!(worm_config.algorithm, CompressionAlgorithm::Zstd);
         assert!(worm_config.enable_vector_compression);
         assert!(worm_config.dictionary_compression);
@@ -222,7 +228,7 @@ mod tests {
     #[test]
     fn test_cloud_provider_configs() {
         let aws_config = create_aws_config();
-        assert_eq!(aws_config.vector_layout, VectorEncodingLayout::TransposeVector);
+        assert_eq!(aws_config.vector_layout, VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector);
         assert_eq!(aws_config.algorithm, CompressionAlgorithm::Zstd);
 
         let azure_config = create_azure_config();
@@ -230,7 +236,7 @@ mod tests {
         assert_eq!(azure_config.algorithm, CompressionAlgorithm::Snappy);
 
         let gcs_config = create_gcs_config();
-        assert_eq!(gcs_config.vector_layout, VectorEncodingLayout::TransposeVector);
+        assert_eq!(gcs_config.vector_layout, VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector);
         assert_eq!(gcs_config.algorithm, CompressionAlgorithm::Gzip);
     }
 }

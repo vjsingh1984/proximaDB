@@ -54,6 +54,7 @@ fn bench_rowwise_encoding_comparison(c: &mut Criterion) {
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    metadata_algorithm: Some(CompressionAlgorithm::None),
                 };
 
                 b.iter(|| {
@@ -77,6 +78,7 @@ fn bench_rowwise_encoding_comparison(c: &mut Criterion) {
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    metadata_algorithm: Some(CompressionAlgorithm::None),
                 };
                 b.iter(|| {
                     let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
@@ -122,6 +124,7 @@ fn bench_compression_ratio_comparison(c: &mut Criterion) {
                 enable_metadata_compression: false,
                 compression_threshold_bytes: 0,
                 dictionary_compression: false,
+                metadata_algorithm: Some(CompressionAlgorithm::None),
             };
 
             let traditional_block = FastLanesDataBlock::new(vectors.clone(), traditional_config.clone());
@@ -139,6 +142,7 @@ fn bench_compression_ratio_comparison(c: &mut Criterion) {
                 enable_metadata_compression: false,
                 compression_threshold_bytes: 0,
                 dictionary_compression: false,
+                metadata_algorithm: Some(CompressionAlgorithm::None),
             };
             let block = FastLanesDataBlock::new(vectors.clone(), bytemuck_config.clone());
             let bytemuck_result = block.serialize_with_config(&bytemuck_config).unwrap();
@@ -171,6 +175,7 @@ fn bench_compression_ratio_comparison(c: &mut Criterion) {
                 enable_metadata_compression: false,
                 compression_threshold_bytes: 0,
                 dictionary_compression: false,
+                metadata_algorithm: Some(CompressionAlgorithm::None),
             };
             let trad_block = FastLanesDataBlock::new(vectors.clone(), trad_config.clone());
             let _traditional = trad_block.serialize_with_config(&trad_config);
@@ -183,6 +188,7 @@ fn bench_compression_ratio_comparison(c: &mut Criterion) {
                 enable_metadata_compression: false,
                 compression_threshold_bytes: 0,
                 dictionary_compression: false,
+                metadata_algorithm: Some(CompressionAlgorithm::None),
             };
             let block = FastLanesDataBlock::new(vectors.clone(), bytemuck_config.clone());
             let _bytemuck = block.serialize_with_config(&bytemuck_config).unwrap();
@@ -209,6 +215,7 @@ fn bench_decode_performance_comparison(c: &mut Criterion) {
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: Some(CompressionAlgorithm::None),
     };
 
     let traditional_block = FastLanesDataBlock::new(vectors.clone(), traditional_config.clone());
@@ -223,6 +230,7 @@ fn bench_decode_performance_comparison(c: &mut Criterion) {
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: Some(CompressionAlgorithm::None),
     };
     let block = FastLanesDataBlock::new(vectors.clone(), bytemuck_config.clone());
     let bytemuck_encoded = block.serialize_with_config(&bytemuck_config).unwrap();
@@ -269,6 +277,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
                             enable_metadata_compression: false,
                             compression_threshold_bytes: 0,
                             dictionary_compression: false,
+                            metadata_algorithm: Some(CompressionAlgorithm::None),
                         };
 
                         let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
@@ -299,6 +308,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
                             enable_metadata_compression: false,
                             compression_threshold_bytes: 0,
                             dictionary_compression: false,
+                            metadata_algorithm: Some(CompressionAlgorithm::None),
                         };
                         let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
                         let encoded = block.serialize_with_config(&config).unwrap();
@@ -343,6 +353,7 @@ fn bench_scalability_comparison(c: &mut Criterion) {
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    metadata_algorithm: Some(CompressionAlgorithm::None),
                 };
 
                 b.iter_custom(|iters| {
@@ -372,6 +383,7 @@ fn bench_scalability_comparison(c: &mut Criterion) {
                             enable_metadata_compression: false,
                             compression_threshold_bytes: 0,
                             dictionary_compression: false,
+                            metadata_algorithm: Some(CompressionAlgorithm::None),
                         };
                         let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
                         let result = block.serialize_with_config(&config).unwrap();

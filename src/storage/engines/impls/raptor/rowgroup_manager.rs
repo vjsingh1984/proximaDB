@@ -503,7 +503,7 @@ impl RowGroups {
 
         for dimension_data in &transposed.dimensions {
             if !dimension_data.is_empty() {
-                let encoded = self.fastlanes_encoder.encode_f32(dimension_data)?;
+                let encoded = self.fastlanes_encoder.encode_f32(dimension_data, None)?; // TODO: Pass expected count for optimization
                 encoded_dimensions.push(encoded);
                 encoding_schemes.push(FastLanesScheme::BitPacked { bits: 16 }); // Default scheme
             }

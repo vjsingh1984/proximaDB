@@ -75,6 +75,7 @@ fn test_configuration(
         enable_metadata_compression: false, // Keep consistent
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: None,
     };
 
     let block = FastLanesDataBlock::new(vectors.to_vec(), config.clone());
@@ -144,7 +145,7 @@ fn main() -> anyhow::Result<()> {
 
     let layouts = vec![
         VectorEncodingLayout::FullVector,
-        VectorEncodingLayout::TransposeVector,
+        VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
         VectorEncodingLayout::Auto,
     ];
 
@@ -212,7 +213,7 @@ fn main() -> anyhow::Result<()> {
         .filter(|(config, _, _, success)| config.contains("FullVector") && *success)
         .collect();
     let transpose_results: Vec<_> = results.iter()
-        .filter(|(config, _, _, success)| config.contains("TransposeVector") && *success)
+        .filter(|(config, _, _, success)| config.contains("TransposeField") && *success)
         .collect();
 
     if !full_vector_results.is_empty() {
@@ -222,7 +223,7 @@ fn main() -> anyhow::Result<()> {
 
     if !transpose_results.is_empty() {
         let avg_transpose = transpose_results.iter().map(|(_, _, ratio, _)| ratio).sum::<f64>() / transpose_results.len() as f64;
-        println!("   TransposeVector average ratio: {:.2}x", avg_transpose);
+        println!("   TransposeField average ratio: {:.2}x", avg_transpose);
     }
 
     // Identify compression benefit

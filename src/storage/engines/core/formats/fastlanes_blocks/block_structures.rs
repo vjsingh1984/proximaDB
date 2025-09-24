@@ -52,6 +52,17 @@ use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
 // Quantization now handled by unified compute module
 
+/// Pattern detected in vector data for optimal encoding selection
+#[derive(Debug, Clone)]
+enum VectorDataPattern {
+    Empty,
+    Constant(f32),
+    Sparse(f32), // ratio of zeros
+    Sequential { max_delta: f32 },
+    Normalized { min: f32, max: f32 },
+    General { min: f32, max: f32, range: f32 },
+}
+
 /// FastLanes encoding metadata for efficient vector block encoding
 ///
 /// This metadata structure contains all information needed to decode
@@ -452,6 +463,54 @@ pub struct BlockLocation {
 }
 
 impl FastLanesDataBlock {
+    /// Analyze float data pattern and return descriptive information
+    fn analyze_pattern_f32(data: &[f32]) -> String {
+        if data.is_empty() {
+            return "Empty".to_string();
+        }
+
+        // Check for constant data
+        let first = data[0];
+        if data.iter().all(|&v| v == first) {
+            return format!("Constant({})", first);
+        }
+
+        // Calculate statistics
+        let min = data.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let range = max - min;
+
+        // Check for sparsity
+        let zero_count = data.iter().filter(|&&v| v == 0.0).count();
+        let zero_ratio = zero_count as f64 / data.len() as f64;
+        if zero_ratio > 0.5 {
+            return format!("Sparse({:.1}% zeros)", zero_ratio * 100.0);
+        }
+
+        // Check for sequential pattern
+        let mut max_delta = 0.0f32;
+        let mut is_sequential = true;
+        for window in data.windows(2) {
+            let delta = (window[1] - window[0]).abs();
+            max_delta = max_delta.max(delta);
+            if delta > 1000.0 {
+                is_sequential = false;
+                break;
+            }
+        }
+        if is_sequential && max_delta < 100.0 {
+            return format!("Sequential(Δ≤{:.1})", max_delta);
+        }
+
+        // Check for normalized range
+        if range < 10.0 && min >= -10.0 && max <= 10.0 {
+            return format!("Normalized([{:.2},{:.2}])", min, max);
+        }
+
+        // General pattern
+        format!("General(range:{:.1}, min:{:.1}, max:{:.1})", range, min, max)
+    }
+
     /// **🚀 Create a new FastLanes data block with AUTOMATIC optimization capabilities**
     ///
     /// **This method automatically generates ALL the features that storage engines typically implement manually:**
@@ -682,54 +741,123 @@ impl FastLanesDataBlock {
         self.statistics.last_accessed_at = chrono::Utc::now().timestamp();
     }
 
-    /// Choose optimal encoding based on vector statistics
-    fn choose_optimal_encoding_marker(records: &[VectorRecord]) -> u8 {
+    /// Detect the pattern of vector data for optimal encoding
+    fn detect_vector_pattern(records: &[VectorRecord]) -> VectorDataPattern {
         if records.is_empty() || records[0].vector.is_empty() {
-            return 0x00; // Raw for empty blocks
+            return VectorDataPattern::Empty;
         }
 
-        // Analyze vector statistics
-        let mut min_val = f32::MAX;
-        let mut max_val = f32::MIN;
-        let mut total_delta = 0.0f32;
-        let mut prev_values: Option<Vec<f32>> = None;
+        let dimension = records[0].vector.len();
+        let total_values = records.len() * dimension;
 
+        // Flatten all vectors for analysis
+        let mut all_values = Vec::with_capacity(total_values);
         for record in records {
-            for (i, &val) in record.vector.iter().enumerate() {
-                min_val = min_val.min(val);
-                max_val = max_val.max(val);
+            all_values.extend_from_slice(&record.vector);
+        }
 
-                // Calculate delta for adjacent vectors
-                if let Some(ref prev) = prev_values {
-                    if i < prev.len() {
-                        total_delta += (val - prev[i]).abs();
+        // Count zeros and check for sparsity
+        let zero_count = all_values.iter().filter(|&&v| v == 0.0).count();
+        let zero_ratio = zero_count as f64 / total_values as f64;
+
+        // Check for constant data
+        let first_val = all_values[0];
+        let is_constant = all_values.iter().all(|&v| v == first_val);
+        if is_constant {
+            return VectorDataPattern::Constant(first_val);
+        }
+
+        // Check for sparse pattern with runs of zeros
+        if zero_ratio > 0.5 {
+            // Count runs to determine if RLE would be effective
+            let mut zero_runs = 0;
+            let mut i = 0;
+            while i < all_values.len() {
+                if all_values[i] == 0.0 {
+                    zero_runs += 1;
+                    while i < all_values.len() && all_values[i] == 0.0 {
+                        i += 1;
                     }
+                } else {
+                    i += 1;
                 }
             }
-            prev_values = Some(record.vector.clone());
+            // If we have long runs of zeros (not scattered), it's sparse
+            if zero_runs < total_values / 20 {
+                return VectorDataPattern::Sparse(zero_ratio as f32);
+            }
         }
 
+        // Check for normalized embeddings (values in small range)
+        let min_val = all_values.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_val = all_values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let range = max_val - min_val;
-        let avg_delta = if records.len() > 1 {
-            total_delta / (records.len() as f32 * records[0].vector.len() as f32)
-        } else {
-            range
+
+        if range < 4.0 && min_val >= -2.0 && max_val <= 2.0 {
+            return VectorDataPattern::Normalized { min: min_val, max: max_val };
+        }
+
+        // Check for sequential/monotonic pattern
+        let mut is_sequential = true;
+        let mut max_delta = 0.0f32;
+        for window in all_values.windows(2) {
+            let delta = (window[1] - window[0]).abs();
+            max_delta = max_delta.max(delta);
+            if delta > 100.0 {
+                is_sequential = false;
+                break;
+            }
+        }
+
+        if is_sequential && max_delta < 10.0 {
+            return VectorDataPattern::Sequential { max_delta };
+        }
+
+        // Default to general pattern with statistics
+        VectorDataPattern::General { min: min_val, max: max_val, range }
+    }
+
+    /// Choose optimal encoding based on detected pattern
+    fn choose_optimal_encoding_marker(records: &[VectorRecord]) -> u8 {
+        let pattern = Self::detect_vector_pattern(records);
+
+        let encoding_marker = match pattern {
+            VectorDataPattern::Empty => 0x00, // Raw encoding
+            VectorDataPattern::Constant(val) => {
+                trace!("[PATTERN] Constant pattern detected (value: {}) -> Using RunLength encoding", val);
+                0x60 // RunLength encoding
+            },
+            VectorDataPattern::Sparse(ratio) if ratio > 0.7 => {
+                trace!("[PATTERN] Sparse pattern detected ({}% zeros) -> Using RunLength encoding", ratio * 100.0);
+                0x60 // RunLength for very sparse
+            },
+            VectorDataPattern::Sparse(ratio) => {
+                trace!("[PATTERN] Sparse pattern detected ({}% zeros) -> Using FrameOfReference encoding", ratio * 100.0);
+                0x30 // FrameOfReference for moderate sparsity
+            },
+            VectorDataPattern::Sequential { max_delta } if max_delta < 1.0 => {
+                trace!("[PATTERN] Sequential pattern detected (max_delta: {}) -> Using Delta encoding", max_delta);
+                0x20 // Delta encoding
+            },
+            VectorDataPattern::Normalized { min, max } => {
+                trace!("[PATTERN] Normalized pattern detected (range: [{}, {}]) -> Using FrameOfReference encoding", min, max);
+                0x30 // FrameOfReference for normalized
+            },
+            VectorDataPattern::General { min, max, range } if range < 100.0 => {
+                trace!("[PATTERN] General pattern with small range (min: {}, max: {}, range: {}) -> Using FrameOfReference encoding", min, max, range);
+                0x30 // FrameOfReference for small range
+            },
+            VectorDataPattern::General { min, max, range } => {
+                trace!("[PATTERN] General pattern (min: {}, max: {}, range: {}) -> Using BitPacked encoding", min, max, range);
+                0x10 // BitPacked as default for general case
+            },
+            _ => {
+                trace!("[PATTERN] Unknown pattern -> Using BitPacked encoding (default)");
+                0x10
+            }
         };
 
-        // Decision tree for encoding selection
-        if range < 1e-6 {
-            // Near-constant values
-            0x60 // RunLength encoding
-        } else if avg_delta < range / 4.0 {
-            // Strong temporal correlation
-            0x20 // Delta encoding
-        } else if range < 100.0 && min_val.abs() < 1000.0 {
-            // Small range, use FrameOfReference
-            0x30 // FrameOfReference
-        } else {
-            // Default to BitPacking for general case
-            0x10 // BitPacked - most versatile for SIMD
-        }
+        encoding_marker
     }
 
     /// Create encoding metadata for the chosen scheme
@@ -867,7 +995,7 @@ impl FastLanesDataBlock {
             layout => layout,
         };
 
-        trace!("[ENCODE] Selected strategy: {:?}, dimension: {}", strategy, dimension);
+        debug!("[ENCODE] Selected strategy: {:?}, dimension: {}", strategy, dimension);
 
         let encoded_vectors = match strategy {
             VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector => {
@@ -913,42 +1041,54 @@ impl FastLanesDataBlock {
         result.write_all(&encoded_vectors)?;
         trace!("[ENCODE] Position {}: Wrote vector data length {} + {} bytes", result.len(), encoded_vectors.len(), encoded_vectors.len());
 
-        // ============ STEP 2: Encode IDs using FastLanes dictionary encoding ============
-        let mut unique_ids = HashSet::new();
-        for record in &self.records {
-            unique_ids.insert(record.id.clone());
+        // ============ STEP 2: Encode ID Column (Cardinality-Aware) ============
+        debug!("[ENCODE] Encoding ID column for {} records", self.records.len());
+
+        // Collect IDs in original record order (CRITICAL for correct reconstruction)
+        let ordered_ids: Vec<String> = self.records.iter().map(|r| r.id.clone()).collect();
+
+        // Build dictionary from unique IDs while preserving first-occurrence order
+        let mut id_dictionary = Vec::new();
+        let mut id_lookup = HashMap::new();
+        for id in &ordered_ids {
+            if !id_lookup.contains_key(id) {
+                let dict_index = id_dictionary.len() as u32;
+                id_dictionary.push(id.clone());
+                id_lookup.insert(id.clone(), dict_index);
+                trace!("ID dict[{}] = '{}'", dict_index, id);
+            }
         }
+        trace!("ID dictionary built: {} entries", id_dictionary.len());
 
-        let id_dictionary: Vec<String> = unique_ids.into_iter().collect();
-        let id_lookup: HashMap<String, i64> = id_dictionary
-            .iter()
-            .enumerate()
-            .map(|(idx, id)| (id.clone(), idx as i64))
-            .collect();
+        debug!("[ENCODE] ID dictionary: {} unique IDs from {} records", id_dictionary.len(), ordered_ids.len());
 
-        // Write dictionary
+        // Write ID dictionary
         result.write_all(&(id_dictionary.len() as u32).to_le_bytes())?;
-        trace!("[ENCODE] Position {}: Wrote ID dictionary length {}", result.len(), id_dictionary.len());
         for (i, id) in id_dictionary.iter().enumerate() {
             let bytes = id.as_bytes();
             result.write_all(&(bytes.len() as u32).to_le_bytes())?;
             result.write_all(bytes)?;
-            trace!("[ENCODE] Position {}: Wrote ID[{}] '{}' (len {} + {} bytes)", result.len(), i, id, bytes.len(), bytes.len());
+            trace!("[ENCODE] ID dict[{}]: '{}'", i, id);
         }
 
-        // Collect indices and encode using FastLanes delta encoding
-        let id_indices: Vec<i64> = self
-            .records
+        // Create ID indices in record order
+        let id_indices: Vec<i64> = ordered_ids
             .iter()
-            .map(|record| *id_lookup.get(&record.id).unwrap())
+            .map(|id| *id_lookup.get(id).unwrap() as i64)
             .collect();
 
-        let encoded_ids = encoder.encode_i64(&id_indices)?;
-        result.write_all(&(encoded_ids.len() as u32).to_le_bytes())?;
-        result.write_all(&encoded_ids)?;
-        trace!("[ENCODE] Position {}: Wrote ID indices length {} + {} bytes", result.len(), encoded_ids.len(), encoded_ids.len());
+        trace!("ID indices to encode: {} values", id_indices.len());
+        debug!("[ENCODE] ID indices (first 5): {:?}", &id_indices[..std::cmp::min(5, id_indices.len())]);
 
-        // ============ STEP 3: Build sparse metadata columns ============
+        // Encode indices using FastLanes (good for sequential patterns)
+        // Smart encoding: since this is a required field with count = record_count,
+        // we pass expected_count to avoid storing redundant count
+        let encoded_ids = encoder.encode_integers(&id_indices, Some(self.records.len()))?;
+        result.write_all(&(encoded_ids.len() as u32).to_le_bytes())?; // Data length only
+        result.write_all(&encoded_ids)?;
+        debug!("[ENCODE] Encoded {} ID indices to {} bytes", id_indices.len(), encoded_ids.len());
+
+        // ============ STEP 3: Build sparse metadata columns (chunk IDs, page IDs, etc.) ============
         let mut metadata_keys = HashSet::new();
         for record in &self.records {
             for (key, _sql_value) in &record.metadata {
@@ -1022,28 +1162,193 @@ impl FastLanesDataBlock {
             }
         }
 
-        // ============ STEP 4: Encode timestamps using FastLanes ============
-        let timestamps: Vec<i64> = self
-            .records
+        // ============ STEP 4: Encode Timestamp Column (High Cardinality, Often Sequential) ============
+        debug!("[ENCODE] Encoding timestamp column for {} records", self.records.len());
+
+        // Collect timestamps in record order - use both timestamp and updated_at
+        let timestamps: Vec<i64> = self.records
             .iter()
-            .map(|record| record.updated_at.unwrap_or(0) as i64)
+            .map(|record| record.timestamp) // Use primary timestamp field
             .collect();
 
-        let encoded_timestamps = encoder.encode_i64(&timestamps)?;
-        let timestamp_len_bytes = (encoded_timestamps.len() as u32).to_le_bytes();
-        trace!("[ENCODE] Timestamp count: {}, encoded size: {} bytes", timestamps.len(), encoded_timestamps.len());
-        trace!("[ENCODE] Writing timestamp length bytes: {:?}", timestamp_len_bytes);
-        result.write_all(&timestamp_len_bytes)?;
-        result.write_all(&encoded_timestamps)?;
-        trace!("[ENCODE] Position {}: Wrote timestamp length {} + {} bytes", result.len(), encoded_timestamps.len(), encoded_timestamps.len());
+        debug!("[ENCODE] Timestamps (first 5): {:?}", &timestamps[..std::cmp::min(5, timestamps.len())]);
 
-        // ============ STEP 5: Write block metadata ============
+        // FastLanes delta encoding is perfect for sequential timestamps
+        let encoded_timestamps = encoder.encode_i64(&timestamps, Some(self.records.len()))?;
+        result.write_all(&(encoded_timestamps.len() as u32).to_le_bytes())?;
+        result.write_all(&encoded_timestamps)?;
+        debug!("[ENCODE] Encoded {} timestamps to {} bytes", timestamps.len(), encoded_timestamps.len());
+
+        // ============ STEP 5: Encode Source Column (Medium/High Cardinality - Actual Content) ============
+        debug!("[ENCODE] Encoding source column for {} records", self.records.len());
+
+        // Collect sources in record order (actual embedding generation content)
+        let ordered_sources: Vec<Option<String>> = self.records.iter().map(|r| r.source.clone()).collect();
+
+        // Build dictionary for sources (actual content text - medium to high cardinality)
+        let mut source_dictionary = Vec::new();
+        let mut source_lookup = HashMap::new();
+        source_lookup.insert(None, 0u32); // Reserve 0 for None/null
+        source_dictionary.push(String::new()); // Empty string represents None
+
+        for source in &ordered_sources {
+            if let Some(src) = source {
+                if !source_lookup.contains_key(&Some(src.clone())) {
+                    let dict_index = source_dictionary.len() as u32;
+                    source_dictionary.push(src.clone());
+                    source_lookup.insert(Some(src.clone()), dict_index);
+                }
+            }
+        }
+
+        debug!("[ENCODE] Source dictionary: {} unique sources", source_dictionary.len());
+
+        // Write source dictionary
+        result.write_all(&(source_dictionary.len() as u32).to_le_bytes())?;
+        for (i, source) in source_dictionary.iter().enumerate() {
+            let bytes = source.as_bytes();
+            result.write_all(&(bytes.len() as u32).to_le_bytes())?;
+            result.write_all(bytes)?;
+            trace!("[ENCODE] Source dict[{}]: '{}'", i, if source.is_empty() { "NULL" } else { source });
+        }
+
+        // Create source indices in record order
+        let source_indices: Vec<i64> = ordered_sources
+            .iter()
+            .map(|source| *source_lookup.get(source).unwrap() as i64)
+            .collect();
+
+        debug!("[ENCODE] Source indices (first 5): {:?}", &source_indices[..std::cmp::min(5, source_indices.len())]);
+
+        // Encode source indices using adaptive selection (content varies, dictionary indices may have patterns)
+        // Smart encoding: since this is a required field with count = record_count,
+        // we pass expected_count to avoid storing redundant count
+        let encoded_sources = encoder.encode_integers(&source_indices, Some(self.records.len()))?; // FastLanes will auto-detect best scheme
+        result.write_all(&(encoded_sources.len() as u32).to_le_bytes())?; // Data length only
+        result.write_all(&encoded_sources)?;
+        debug!("[ENCODE] Encoded {} source indices to {} bytes", source_indices.len(), encoded_sources.len());
+
+        // ============ STEP 6: Encode Updated_at Column (Optional Timestamps) ============
+        debug!("[ENCODE] Encoding updated_at column for {} records", self.records.len());
+
+        // Collect updated_at values (may be None)
+        let updated_ats: Vec<Option<i64>> = self.records.iter().map(|r| r.updated_at).collect();
+
+        // Count non-None values for efficient sparse storage
+        let non_none_count = updated_ats.iter().filter(|&&x| x.is_some()).count();
+        debug!("[ENCODE] Updated_at: {} non-None values out of {}", non_none_count, updated_ats.len());
+
+        if non_none_count == 0 {
+            // All None - just write marker
+            result.write_all(&0u32.to_le_bytes())?; // 0 = all None
+        } else if non_none_count == updated_ats.len() {
+            // All Some - dense storage
+            result.write_all(&1u32.to_le_bytes())?; // 1 = all Some
+            let values: Vec<i64> = updated_ats.iter().map(|opt| opt.unwrap_or(0)).collect();
+            let encoded_updated_ats = encoder.encode_i64(&values, Some(values.len()))?;
+            result.write_all(&(encoded_updated_ats.len() as u32).to_le_bytes())?;
+            result.write_all(&encoded_updated_ats)?;
+        } else {
+            // Sparse storage - bitmap + values
+            result.write_all(&2u32.to_le_bytes())?; // 2 = sparse
+
+            // Create presence bitmap
+            let mut bitmap = Vec::new();
+            let mut values = Vec::new();
+            for &opt_val in &updated_ats {
+                if let Some(val) = opt_val {
+                    bitmap.push(1u8);
+                    values.push(val);
+                } else {
+                    bitmap.push(0u8);
+                }
+            }
+
+            // Write bitmap
+            result.write_all(&(bitmap.len() as u32).to_le_bytes())?;
+            result.write_all(&bitmap)?;
+
+            // Write encoded values
+            let encoded_values = encoder.encode_i64(&values, Some(values.len()))?;
+            result.write_all(&(encoded_values.len() as u32).to_le_bytes())?;
+            result.write_all(&encoded_values)?;
+        }
+
+        // ============ STEP 7: Encode Other Optional Fields (expires_at, version, quantized_vector) ============
+        debug!("[ENCODE] Encoding expires_at, version, and quantized_vector columns");
+
+        // Expires_at (similar to updated_at)
+        let expires_ats: Vec<Option<i64>> = self.records.iter().map(|r| r.expires_at).collect();
+        let expires_non_none = expires_ats.iter().filter(|&&x| x.is_some()).count();
+
+        if expires_non_none == 0 {
+            result.write_all(&0u32.to_le_bytes())?; // All None
+        } else {
+            result.write_all(&1u32.to_le_bytes())?; // Has values
+            let mut bitmap = Vec::new();
+            let mut values = Vec::new();
+            for &opt_val in &expires_ats {
+                if let Some(val) = opt_val {
+                    bitmap.push(1u8);
+                    values.push(val);
+                } else {
+                    bitmap.push(0u8);
+                }
+            }
+            result.write_all(&(bitmap.len() as u32).to_le_bytes())?;
+            result.write_all(&bitmap)?;
+            let encoded_expires = encoder.encode_i64(&values, Some(values.len()))?;
+            result.write_all(&(encoded_expires.len() as u32).to_le_bytes())?;
+            result.write_all(&encoded_expires)?;
+        }
+
+        // Version (similar pattern)
+        let versions: Vec<Option<i64>> = self.records.iter().map(|r| r.version).collect();
+        let version_non_none = versions.iter().filter(|&&x| x.is_some()).count();
+
+        if version_non_none == 0 {
+            result.write_all(&0u32.to_le_bytes())?; // All None
+        } else {
+            result.write_all(&1u32.to_le_bytes())?; // Has values
+            let mut bitmap = Vec::new();
+            let mut values = Vec::new();
+            for &opt_val in &versions {
+                if let Some(val) = opt_val {
+                    bitmap.push(1u8);
+                    values.push(val);
+                } else {
+                    bitmap.push(0u8);
+                }
+            }
+            result.write_all(&(bitmap.len() as u32).to_le_bytes())?;
+            result.write_all(&bitmap)?;
+            let encoded_versions = encoder.encode_i64(&values, Some(values.len()))?;
+            result.write_all(&(encoded_versions.len() as u32).to_le_bytes())?;
+            result.write_all(&encoded_versions)?;
+        }
+
+        // Quantized_vector (bytes field - special handling)
+        let quantized_vectors: Vec<&[u8]> = self.records.iter().map(|r| r.quantized_vector.as_slice()).collect();
+        let quantized_non_empty = quantized_vectors.iter().filter(|bytes| !bytes.is_empty()).count();
+
+        if quantized_non_empty == 0 {
+            result.write_all(&0u32.to_le_bytes())?; // All empty
+        } else {
+            result.write_all(&1u32.to_le_bytes())?; // Has data
+            // Store each quantized vector with length prefix
+            for bytes in &quantized_vectors {
+                result.write_all(&(bytes.len() as u32).to_le_bytes())?;
+                result.write_all(bytes)?;
+            }
+        }
+
+        // ============ STEP 8: Write block metadata ============
         let metadata_bytes = bincode::serialize(&self.metadata)?;
         result.write_all(&(metadata_bytes.len() as u32).to_le_bytes())?;
         result.write_all(&metadata_bytes)?;
-        trace!("[ENCODE] Position {}: Wrote block metadata length {} + {} bytes", result.len(), metadata_bytes.len(), metadata_bytes.len());
+        debug!("[ENCODE] Wrote block metadata: {} bytes", metadata_bytes.len());
 
-        // ============ STEP 6: Apply compression if configured ============
+        // ============ STEP 9: Apply compression if configured ============
         if config.algorithm != CompressionAlgorithm::None {
             let compressed = compress(
                 &result,
@@ -1268,19 +1573,42 @@ impl FastLanesDataBlock {
             cursor.read_exact(&mut id_bytes)?;
             let id_string = String::from_utf8(id_bytes)?;
             trace!("[DECODE] ID[{}]: '{}'", i, id_string);
-            id_dictionary.push(id_string);
+            id_dictionary.push(id_string.clone());
+            trace!("ID dict[{}] = '{}'", i, id_string);
         }
+        trace!("ID dictionary loaded: {} entries", id_dictionary.len());
         // Read encoded ID indices (part of ID dictionary section in serialization)
-        trace!("[DECODE] Position {}: Reading encoded ID indices length (part of ID section)", cursor.position());
+        trace!("[DECODE] Position {}: Reading encoded ID indices (part of ID section)", cursor.position());
+
+        // Read data length
         let mut encoded_id_len_bytes = [0u8; 4];
         cursor.read_exact(&mut encoded_id_len_bytes)?;
         let encoded_id_len = u32::from_le_bytes(encoded_id_len_bytes) as usize;
         trace!("[DECODE] Position {}: Encoded ID indices length: {} (bytes: {:?})", cursor.position(), encoded_id_len, encoded_id_len_bytes);
 
-        let mut _encoded_id_data = vec![0u8; encoded_id_len];
-        cursor.read_exact(&mut _encoded_id_data)?;
+        let mut encoded_id_data = vec![0u8; encoded_id_len];
+        cursor.read_exact(&mut encoded_id_data)?;
         trace!("[DECODE] Position {}: Finished reading entire ID section (dictionary + indices)", cursor.position());
-        // For now, assign sequential IDs - could decode indices later
+
+        // Decode the ID indices using FastLanes decoder with record_count from header
+        trace!("Decoding ID indices: record_count={}, data_len={}", record_count, encoded_id_data.len());
+        let decoder = FastLanesDecoder::new_from_data(&encoded_id_data);
+        let decoded_id_indices = match decoder.decode_integers(&encoded_id_data, Some(record_count)) {
+            Ok(indices) => {
+                if indices.len() != record_count {
+                    warn!("❌ [DECODE_IDS] ID indices count mismatch: got {}, expected {}, using sequential fallback",
+                          indices.len(), record_count);
+                    (0..record_count).map(|i| i as i64).collect()
+                } else {
+                    debug!("Successfully decoded {} ID indices", indices.len());
+                    indices
+                }
+            }
+            Err(e) => {
+                warn!("❌ [DECODE_IDS] Failed to decode ID indices: {}, using sequential fallback", e);
+                (0..record_count).map(|i| i as i64).collect()
+            }
+        };
 
         // STEP 3: Skip metadata sections (simplified for now)
         trace!("[DECODE] Position {}: Reading metadata key count", cursor.position());
@@ -1346,7 +1674,197 @@ impl FastLanesDataBlock {
         cursor.read_exact(&mut timestamp_bytes)?;
         trace!("[DECODE] Read timestamps: {} bytes", timestamp_len);
 
-        // STEP 5: Read block metadata (LAST in serialization sequence)
+        // ============ STEP 5: Decode Source Column ============
+        debug!("[DECODE] Decoding source column...");
+        let mut source_dict_len_bytes = [0u8; 4];
+        cursor.read_exact(&mut source_dict_len_bytes)?;
+        let source_dict_len = u32::from_le_bytes(source_dict_len_bytes) as usize;
+
+        let mut source_dictionary = Vec::with_capacity(source_dict_len);
+        for i in 0..source_dict_len {
+            let mut source_str_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut source_str_len_bytes)?;
+            let source_str_len = u32::from_le_bytes(source_str_len_bytes) as usize;
+
+            let mut source_bytes = vec![0u8; source_str_len];
+            cursor.read_exact(&mut source_bytes)?;
+            let source_string = String::from_utf8(source_bytes)?;
+            source_dictionary.push(source_string);
+            trace!("[DECODE] Source dict[{}]: '{}'", i, source_dictionary[i]);
+        }
+
+        // Read data length
+        let mut encoded_source_len_bytes = [0u8; 4];
+        cursor.read_exact(&mut encoded_source_len_bytes)?;
+        let encoded_source_len = u32::from_le_bytes(encoded_source_len_bytes) as usize;
+
+        let mut encoded_source_data = vec![0u8; encoded_source_len];
+        cursor.read_exact(&mut encoded_source_data)?;
+
+        // Use record_count from header instead of storing redundant count
+        let source_decoder = FastLanesDecoder::new_from_data(&encoded_source_data);
+        let decoded_source_indices = match source_decoder.decode_integers(&encoded_source_data, Some(record_count)) {
+            Ok(indices) => {
+                debug!("✅ [DECODE] Successfully decoded {} source indices", indices.len());
+                indices
+            }
+            Err(e) => {
+                warn!("❌ [DECODE] Failed to decode source indices: {}, using fallback", e);
+                vec![0; record_count] // Fallback to first dictionary entry (empty string/None)
+            }
+        };
+
+        // ============ STEP 7-9: Decode Optional Fields (updated_at, expires_at, version, quantized_vector) ============
+        debug!("[DECODE] Decoding optional fields...");
+
+        // Decode updated_at
+        let mut updated_at_type_bytes = [0u8; 4];
+        cursor.read_exact(&mut updated_at_type_bytes)?;
+        let updated_at_type = u32::from_le_bytes(updated_at_type_bytes);
+
+        let decoded_updated_ats = match updated_at_type {
+            0 => vec![None; record_count], // All None
+            1 => {
+                // All Some - dense storage
+                let mut len_bytes = [0u8; 4];
+                cursor.read_exact(&mut len_bytes)?;
+                let data_len = u32::from_le_bytes(len_bytes) as usize;
+                let mut data = vec![0u8; data_len];
+                cursor.read_exact(&mut data)?;
+                let decoder = FastLanesDecoder::new_from_data(&data);
+                match decoder.decode_i64(&data, Some(record_count)) {
+                    Ok(values) => values.into_iter().map(Some).collect(),
+                    Err(_) => vec![None; record_count],
+                }
+            }
+            2 => {
+                // Sparse storage
+                let mut bitmap_len_bytes = [0u8; 4];
+                cursor.read_exact(&mut bitmap_len_bytes)?;
+                let bitmap_len = u32::from_le_bytes(bitmap_len_bytes) as usize;
+                let mut bitmap = vec![0u8; bitmap_len];
+                cursor.read_exact(&mut bitmap)?;
+
+                let mut values_len_bytes = [0u8; 4];
+                cursor.read_exact(&mut values_len_bytes)?;
+                let values_len = u32::from_le_bytes(values_len_bytes) as usize;
+                let mut values_data = vec![0u8; values_len];
+                cursor.read_exact(&mut values_data)?;
+
+                let decoder = FastLanesDecoder::new_from_data(&values_data);
+                let values = decoder.decode_i64(&values_data, None).unwrap_or_default(); // Sparse, count is in data
+
+                let mut result = Vec::new();
+                let mut value_idx = 0;
+                for &present in &bitmap {
+                    if present == 1 && value_idx < values.len() {
+                        result.push(Some(values[value_idx]));
+                        value_idx += 1;
+                    } else {
+                        result.push(None);
+                    }
+                }
+                result
+            }
+            _ => vec![None; record_count],
+        };
+
+        // Decode expires_at (similar pattern)
+        let mut expires_at_type_bytes = [0u8; 4];
+        cursor.read_exact(&mut expires_at_type_bytes)?;
+        let expires_at_type = u32::from_le_bytes(expires_at_type_bytes);
+
+        let decoded_expires_ats = if expires_at_type == 0 {
+            vec![None; record_count] // All None
+        } else {
+            // Has values - sparse format
+            let mut bitmap_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut bitmap_len_bytes)?;
+            let bitmap_len = u32::from_le_bytes(bitmap_len_bytes) as usize;
+            let mut bitmap = vec![0u8; bitmap_len];
+            cursor.read_exact(&mut bitmap)?;
+
+            let mut values_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut values_len_bytes)?;
+            let values_len = u32::from_le_bytes(values_len_bytes) as usize;
+            let mut values_data = vec![0u8; values_len];
+            cursor.read_exact(&mut values_data)?;
+
+            let decoder = FastLanesDecoder::new_from_data(&values_data);
+            let values = decoder.decode_i64(&values_data, None).unwrap_or_default(); // Sparse, count is in data
+
+            let mut result = Vec::new();
+            let mut value_idx = 0;
+            for &present in &bitmap {
+                if present == 1 && value_idx < values.len() {
+                    result.push(Some(values[value_idx]));
+                    value_idx += 1;
+                } else {
+                    result.push(None);
+                }
+            }
+            result
+        };
+
+        // Decode version (similar pattern)
+        let mut version_type_bytes = [0u8; 4];
+        cursor.read_exact(&mut version_type_bytes)?;
+        let version_type = u32::from_le_bytes(version_type_bytes);
+
+        let decoded_versions = if version_type == 0 {
+            vec![None; record_count] // All None
+        } else {
+            // Has values - sparse format
+            let mut bitmap_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut bitmap_len_bytes)?;
+            let bitmap_len = u32::from_le_bytes(bitmap_len_bytes) as usize;
+            let mut bitmap = vec![0u8; bitmap_len];
+            cursor.read_exact(&mut bitmap)?;
+
+            let mut values_len_bytes = [0u8; 4];
+            cursor.read_exact(&mut values_len_bytes)?;
+            let values_len = u32::from_le_bytes(values_len_bytes) as usize;
+            let mut values_data = vec![0u8; values_len];
+            cursor.read_exact(&mut values_data)?;
+
+            let decoder = FastLanesDecoder::new_from_data(&values_data);
+            let values = decoder.decode_i64(&values_data, None).unwrap_or_default(); // Sparse, count is in data
+
+            let mut result = Vec::new();
+            let mut value_idx = 0;
+            for &present in &bitmap {
+                if present == 1 && value_idx < values.len() {
+                    result.push(Some(values[value_idx]));
+                    value_idx += 1;
+                } else {
+                    result.push(None);
+                }
+            }
+            result
+        };
+
+        // Decode quantized_vector (bytes field)
+        let mut quantized_type_bytes = [0u8; 4];
+        cursor.read_exact(&mut quantized_type_bytes)?;
+        let quantized_type = u32::from_le_bytes(quantized_type_bytes);
+
+        let decoded_quantized_vectors = if quantized_type == 0 {
+            vec![Vec::new(); record_count] // All empty
+        } else {
+            // Has data
+            let mut result = Vec::new();
+            for _ in 0..record_count {
+                let mut len_bytes = [0u8; 4];
+                cursor.read_exact(&mut len_bytes)?;
+                let len = u32::from_le_bytes(len_bytes) as usize;
+                let mut data = vec![0u8; len];
+                cursor.read_exact(&mut data)?;
+                result.push(data);
+            }
+            result
+        };
+
+        // ============ STEP 10: Read block metadata (LAST in serialization sequence) ============
         let mut metadata_len_bytes = [0u8; 4];
         cursor.read_exact(&mut metadata_len_bytes)?;
         let metadata_len = u32::from_le_bytes(metadata_len_bytes) as usize;
@@ -1357,12 +1875,52 @@ impl FastLanesDataBlock {
         let metadata: FastLanesBlockMetadata = bincode::deserialize(&metadata_bytes)?;
         trace!("[DECODE] Block metadata deserialized successfully");
 
-        // Now assign IDs from dictionary
-        for (i, record) in records.iter_mut().enumerate() {
-            if i < id_dictionary.len() {
-                record.id = id_dictionary[i % id_dictionary.len()].clone();
-            }
+        // ============ RECONSTRUCT COMPLETE VECTORRECORDS FROM COLUMNAR DATA ============
+        debug!("🔧 [DECODE] Reconstructing {} VectorRecords from columnar data", record_count);
+
+        // All data should have exactly record_count elements in the same order
+        if records.len() != record_count || decoded_id_indices.len() != record_count || decoded_source_indices.len() != record_count {
+            return Err(anyhow::anyhow!("Columnar data length mismatch: vectors={}, ids={}, sources={}, expected={}",
+                records.len(), decoded_id_indices.len(), decoded_source_indices.len(), record_count));
         }
+
+        // Reconstruct each record by combining columnar data at the same index
+        for i in 0..record_count {
+            // Get the vector (already decoded)
+            let record = &mut records[i];
+
+            // Set the correct ID from dictionary
+            let id_dict_index = decoded_id_indices[i] as usize;
+            trace!("Record[{}]: ID dict_index = {}", i, id_dict_index);
+            if id_dict_index < id_dictionary.len() {
+                record.id = id_dictionary[id_dict_index].clone();
+                trace!("Record[{}]: Set ID from dict[{}] = '{}'", i, id_dict_index, record.id);
+            } else {
+                warn!("Record[{}]: ID dict_index {} >= dict_len {}", i, id_dict_index, id_dictionary.len());
+                record.id = format!("corrupted_id_{}", i);
+            }
+
+            // Set the correct source from dictionary
+            let source_dict_index = decoded_source_indices[i] as usize;
+            if source_dict_index < source_dictionary.len() {
+                let source_str = &source_dictionary[source_dict_index];
+                record.source = if source_str.is_empty() { None } else { Some(source_str.clone()) };
+            } else {
+                warn!("❌ [DECODE] Record[{}]: Source dict_index {} >= dict_len {}", i, source_dict_index, source_dictionary.len());
+                record.source = None;
+            }
+
+            // Set optional fields from decoded data
+            record.updated_at = decoded_updated_ats.get(i).copied().flatten();
+            record.expires_at = decoded_expires_ats.get(i).copied().flatten();
+            record.version = decoded_versions.get(i).copied().flatten();
+            record.quantized_vector = decoded_quantized_vectors.get(i).map(|v| v.clone()).unwrap_or_default();
+
+            trace!("🔧 [DECODE] Record[{}]: ID='{}', Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}, Quantized_len={}",
+                i, record.id, record.source, record.updated_at, record.expires_at, record.version, record.quantized_vector.len());
+        }
+
+        debug!("✅ [DECODE] Successfully reconstructed {} VectorRecords", record_count);
 
         // Reconstruct the block
         let block_id = metadata.record_count;
@@ -1409,32 +1967,63 @@ impl FastLanesDataBlock {
         }
 
         // ===== VECTOR FIELD COMPRESSION =====
-        // Apply delta encoding row-wise for better compression
-        let mut vector_data = Vec::new();
-
-        // Store first vector as-is
-        let first_bytes: &[u8] = bytemuck::cast_slice(&vectors[0]);
-        vector_data.extend_from_slice(first_bytes);
-
-        // For subsequent vectors, store delta from previous
-        for i in 1..vectors.len() {
-            if vectors[i].len() != dimension {
-                return Err(anyhow::anyhow!("Vector dimension mismatch: {} != {}", vectors[i].len(), dimension));
+        // Flatten all vectors into a single array for better pattern detection
+        let mut all_floats = Vec::with_capacity(vectors.len() * dimension);
+        for vector in vectors {
+            if vector.len() != dimension {
+                return Err(anyhow::anyhow!("Vector dimension mismatch: {} != {}", vector.len(), dimension));
             }
-
-            // Calculate deltas and store
-            for j in 0..dimension {
-                let delta = vectors[i][j] - vectors[i-1][j];
-                vector_data.extend_from_slice(&delta.to_le_bytes());
-            }
+            all_floats.extend_from_slice(vector);
         }
 
-        // Encode vector data with FastLanes
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
-        let encoded_vectors = encoder.encode_f32(&bytemuck::cast_slice::<u8, f32>(&vector_data))?;
+        // Let adaptive encoding analyze the actual data patterns
+        let raw_bytes = all_floats.len() * std::mem::size_of::<f32>();
 
-        // Compress vector field if enabled
-        let final_vector_data = if config.enable_vector_compression && config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+        // Enhanced debugging - print sample data for random data analysis
+        let sample_values: Vec<f32> = all_floats.iter().take(10).copied().collect();
+        debug!("🔍 [ENCODE_FULL_VECTOR] Raw bytes: {} | Values: {} | Dimension: {} | Sample: {:?}",
+               raw_bytes, all_floats.len(), dimension, sample_values);
+
+        let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&all_floats);
+        let pattern_info = Self::analyze_pattern_f32(&all_floats);
+
+        // Print algorithm selection with more detail
+        debug!("🎯 [ENCODE_FULL_VECTOR] Pattern: '{}' | Selected Scheme: {:?} | Data Stats: min={:.3} max={:.3} avg={:.3}",
+               pattern_info, scheme,
+               all_floats.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
+               all_floats.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
+               all_floats.iter().sum::<f32>() / all_floats.len() as f32);
+
+        let encoder = FastLanesEncoder::new(scheme.clone());
+
+        // Enhanced error handling for encoding
+        let encoded_vectors = match encoder.encode_f32(&all_floats, Some(all_floats.len())) {
+            Ok(data) => data,
+            Err(e) => {
+                warn!("❌ [ENCODE_FULL_VECTOR] Encoding failed with scheme {:?}: {}", scheme, e);
+                debug!("   Falling back to raw serialization for robustness");
+
+                // Fallback: use raw f32 serialization with simple marker
+                let mut fallback_data = vec![0xFF, 0xFB]; // Fallback marker
+                for &val in &all_floats {
+                    fallback_data.extend_from_slice(&val.to_le_bytes());
+                }
+                fallback_data
+            }
+        };
+
+        let encoded_bytes = encoded_vectors.len();
+
+        // Calculate compression ratio for bypass decision
+        let compression_ratio = raw_bytes as f64 / encoded_bytes as f64;
+        debug!("📊 [ENCODE_FULL_VECTOR] Encoded: {} bytes | Compression: {:.2}x (Raw {} -> Encoded {})",
+               encoded_bytes, compression_ratio, raw_bytes, encoded_bytes);
+
+        // Compress vector field if enabled AND FastLanes didn't already compress well
+        let final_vector_data = if config.enable_vector_compression
+            && config.algorithm != crate::core::compression::CompressionAlgorithm::None
+            && compression_ratio < 2.0  // Only apply additional compression if FastLanes achieved < 2x
+        {
             let compressed = compress(
                 &encoded_vectors,
                 config.algorithm,
@@ -1442,20 +2031,36 @@ impl FastLanesDataBlock {
                 CompressionContext::Block,
             )?;
 
-            // Write vector field header: [compression_marker][data] (no size overhead)
-            let compression_marker = match config.algorithm {
-                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
-                _ => 0x00,
+            // Only use compression if it actually helps (>10% improvement)
+            if compressed.len() < (encoded_vectors.len() * 9 / 10) {
+                let compressed_bytes = compressed.len();
+                let total_compression = raw_bytes as f64 / compressed_bytes as f64;
+                debug!("[ENCODE_FULL_VECTOR] Field: VECTORS | Additional compression: {} -> {} bytes | Total: {:.2}x | Final: Raw {} -> Encoded {} -> Compressed {}",
+                       encoded_bytes, compressed_bytes, total_compression, raw_bytes, encoded_bytes, compressed_bytes);
+
+                // Write vector field header: [compression_marker][data] (no size overhead)
+                let compression_marker = match config.algorithm {
+                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
+                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
+                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
+                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    _ => 0x00,
             };
 
-            let mut compressed_field = Vec::new();
-            compressed_field.push(compression_marker);
-            compressed_field.extend(&compressed);
-            compressed_field
+                let mut compressed_field = Vec::new();
+                compressed_field.push(compression_marker);
+                compressed_field.extend(&compressed);
+                compressed_field
+            } else {
+                trace!("[ENCODE] Skipping additional compression (no benefit)");
+                // Uncompressed vector field: [0x00][data] (no size overhead)
+                let mut uncompressed_field = Vec::new();
+                uncompressed_field.push(0x00); // no compression marker
+                uncompressed_field.extend(&encoded_vectors);
+                uncompressed_field
+            }
         } else {
+            debug!("[ENCODE] Bypassing compression (FastLanes already compressed {:.2}x)", compression_ratio);
             // Uncompressed vector field: [0x00][data] (no size overhead)
             let mut uncompressed_field = Vec::new();
             uncompressed_field.push(0x00); // no compression marker
@@ -1504,8 +2109,24 @@ impl FastLanesDataBlock {
         };
         field_data.push(compression_marker);
 
-        // Create encoder for compression-friendly encoding
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+        // Create encoder with adaptive scheme selection
+        // Analyze first group to determine optimal encoding
+        let sample_group: Vec<f32> = vectors.iter()
+            .take(std::cmp::min(10, vectors.len()))
+            .flat_map(|v| v.iter().take(GROUP_SIZE))
+            .copied()
+            .collect();
+
+        let (scheme, pattern_info) = if !sample_group.is_empty() {
+            let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&sample_group);
+            let pattern = Self::analyze_pattern_f32(&sample_group);
+            (scheme, pattern)
+        } else {
+            (FastLanesScheme::Delta { base: 0 }, "Empty".to_string())
+        };
+
+        debug!("[ENCODE_GV] GroupedFieldEncoded | Pattern: {} | Selected: {:?} | Reason: Better cache locality for grouped access", pattern_info, scheme);
+        let encoder = FastLanesEncoder::new(scheme);
 
         // Process each 64D group
         for group_idx in 0..num_groups {
@@ -1528,7 +2149,7 @@ impl FastLanesDataBlock {
             }
 
             // Encode the group using FastLanes for better compression
-            let encoded_group = encoder.encode_f32(&group_floats)?;
+            let encoded_group = encoder.encode_f32(&group_floats, Some(group_floats.len()))?;
 
             // Apply compression based on header algorithm (uniform for all groups)
             let final_group_data = if compression_marker != 0x00 {
@@ -1553,6 +2174,12 @@ impl FastLanesDataBlock {
             field_data.extend(&(final_group_data.len() as u32).to_le_bytes());
             field_data.extend_from_slice(&final_group_data);
         }
+
+        // Add summary debug log
+        let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
+        let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
+        debug!("[ENCODE_GV] GroupedFieldEncoded Summary: {} vectors x {} dims | {} groups | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: 32D groups for cache locality",
+               vectors.len(), dimension, num_groups, total_raw_bytes, field_data.len(), compression_ratio);
 
         Ok(field_data)
     }
@@ -1580,8 +2207,8 @@ impl FastLanesDataBlock {
             return Ok(field_data);
         }
 
-        // Create encoder for FastLanes delta encoding
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+        // Track patterns across groups for summary
+        let mut pattern_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
         // Process each group and accumulate uncompressed data
         let mut uncompressed_block = Vec::new();
@@ -1590,7 +2217,26 @@ impl FastLanesDataBlock {
             let start_dim = group_idx * GROUP_SIZE;
             let end_dim = std::cmp::min(start_dim + GROUP_SIZE, dimension);
 
-            trace!(" [ENCODE_GB] Processing group {} (dims {}-{})", group_idx, start_dim, end_dim - 1);
+            // Collect group data first for analysis
+            let mut group_floats = Vec::with_capacity(vectors.len() * (end_dim - start_dim));
+            for vector in vectors {
+                for dim in start_dim..end_dim {
+                    group_floats.push(vector[dim]);
+                }
+            }
+
+            // Analyze this group's pattern and choose scheme
+            let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&group_floats);
+            let pattern = Self::analyze_pattern_f32(&group_floats);
+
+            // Track patterns for summary
+            *pattern_counts.entry(pattern.clone()).or_insert(0) += 1;
+
+            trace!(" [ENCODE_GB] Group {} (dims {}-{}): Pattern: {} | Scheme: {:?}",
+                   group_idx, start_dim, end_dim - 1, pattern, scheme);
+
+            // Use group-specific encoder with group-specific scheme
+            let encoder = FastLanesEncoder::new(scheme);
 
             // Collect group data: transpose group dimensions
             let mut group_data = Vec::new();
@@ -1600,7 +2246,7 @@ impl FastLanesDataBlock {
                     .collect();
 
                 // Apply FastLanes encoding to this dimension
-                let encoded_dim = encoder.encode_f32(&dim_values)
+                let encoded_dim = encoder.encode_f32(&dim_values, Some(vectors.len()))
                     .map_err(|e| anyhow::anyhow!("FastLanes encoding failed for group {} dim {}: {}", group_idx, dim, e))?;
 
                 // Write dimension size and data within the group
@@ -1638,6 +2284,13 @@ impl FastLanesDataBlock {
             field_data.extend(&uncompressed_block);
         }
 
+        // Add summary debug log
+        let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
+        let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
+
+        debug!("[ENCODE_GB] GroupedBlockCompressed Summary: {} vectors x {} dims | {} groups | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x",
+               vectors.len(), dimension, num_groups, pattern_counts, total_raw_bytes, field_data.len(), compression_ratio);
+
         trace!(" [ENCODE_GB] GroupedFieldEncodedBlockCompressed complete: {} groups, {} bytes", num_groups, field_data.len());
         Ok(field_data)
     }
@@ -1661,8 +2314,23 @@ impl FastLanesDataBlock {
             return Ok(field_data);
         }
 
-        // Create encoder for FastLanes delta encoding
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+        // Create encoder with adaptive scheme selection
+        // Sample first few dimensions to get representative data
+        let sample_data: Vec<f32> = vectors.iter()
+            .take(std::cmp::min(100, vectors.len()))
+            .flat_map(|v| v.iter().take(std::cmp::min(50, dimension)).copied())
+            .collect();
+
+        let (scheme, pattern_info) = if !sample_data.is_empty() {
+            let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&sample_data);
+            let pattern = Self::analyze_pattern_f32(&sample_data);
+            (scheme, pattern)
+        } else {
+            (FastLanesScheme::Delta { base: 0 }, "Empty".to_string())
+        };
+
+        debug!("[ENCODE_GB] GroupedBlockCompressed | Pattern: {} | Selected: {:?} | Reason: Block-level compression for better ratios", pattern_info, scheme);
+        let encoder = FastLanesEncoder::new(scheme);
 
         // Transpose and encode each dimension (no per-dimension compression)
         let mut uncompressed_block = Vec::new();
@@ -1676,7 +2344,7 @@ impl FastLanesDataBlock {
             trace!(" [ENCODE_TB] Encoding dimension {} with {} values", dim_idx, dim_values.len());
 
             // Apply FastLanes delta encoding (no compression yet)
-            let encoded_dim = encoder.encode_f32(&dim_values)
+            let encoded_dim = encoder.encode_f32(&dim_values, Some(dim_values.len()))
                 .map_err(|e| anyhow::anyhow!("FastLanes encoding failed for dimension {}: {}", dim_idx, e))?;
 
             // Write dimension size and encoded data
@@ -1709,6 +2377,12 @@ impl FastLanesDataBlock {
             field_data.extend(&uncompressed_block);
         }
 
+        // Add summary debug log
+        let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
+        let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
+        debug!("[ENCODE_TB] TransposeBlockCompressed Summary: {} vectors x {} dims | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: Transpose then block compress",
+               vectors.len(), dimension, total_raw_bytes, field_data.len(), compression_ratio);
+
         trace!(" [ENCODE_TB] TransposeFieldEncodedBlockCompressed complete: {} bytes", field_data.len());
         Ok(field_data)
     }
@@ -1734,6 +2408,9 @@ impl FastLanesDataBlock {
 
         trace!("[ENCODE_TV] Encoding {} vectors, {} dimensions", vectors.len(), dimension);
 
+        // Track pattern statistics across dimensions for summary
+        let mut pattern_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
         // ===== PER-DIMENSION FIELD COMPRESSION =====
         // Transpose RxD → DxR: each dimension becomes a separate field
         for dim_idx in 0..dimension {
@@ -1747,9 +2424,12 @@ impl FastLanesDataBlock {
                 dimension_values.push(vector[dim_idx]);
             }
 
-            // Encode dimension data with FastLanes (delta encoding for better compression)
-            let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
-            let encoded_dimension = encoder.encode_f32(&dimension_values)?;
+            // Encode dimension data with adaptive FastLanes encoding
+            let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&dimension_values);
+            let pattern = Self::analyze_pattern_f32(&dimension_values);
+            trace!("[ENCODE_DIM] Dimension {}: Pattern: {} | Selected: {:?}", dim_idx, pattern, scheme);
+            let encoder = FastLanesEncoder::new(scheme);
+            let encoded_dimension = encoder.encode_f32(&dimension_values, Some(vectors.len()))?;
 
             // Compress dimension field if enabled
             let final_dimension_data = if config.enable_vector_compression && config.algorithm != crate::core::compression::CompressionAlgorithm::None {
@@ -1785,8 +2465,18 @@ impl FastLanesDataBlock {
 
             field_data.extend(&final_dimension_data);
 
+            // Track pattern for summary statistics
+            *pattern_counts.entry(pattern.clone()).or_insert(0) += 1;
+
             trace!("[ENCODE_TV] Encoded dimension {}: {} bytes", dim_idx, final_dimension_data.len());
         }
+
+        // Add summary debug log for all dimensions
+        let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
+        let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
+
+        debug!("[ENCODE_TV] TransposeFieldEncoded Summary: {} vectors x {} dims | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x",
+               vectors.len(), dimension, pattern_counts, total_raw_bytes, field_data.len(), compression_ratio);
 
         trace!("[ENCODE_TV] Total TransposeFieldEncodedAndCompressed encoded size: {} bytes", field_data.len());
 
@@ -1857,47 +2547,61 @@ impl FastLanesDataBlock {
                 vector_data
             };
 
-            // Decode FastLanes encoded data
-            let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
-            let decoded_floats = decoder.decode_f32(&vector_data, vector_count * dimension)?;
+            // Decode FastLanes encoded data with fallback handling
+            let decoded_floats = if vector_data.len() >= 2 && vector_data[0] == 0xFF && vector_data[1] == 0xFB {
+                // Fallback marker detected - decode raw f32 data
+                debug!("🔧 [DECODE_FV] Fallback marker detected, using raw f32 decoding");
+                let raw_data = &vector_data[2..]; // Skip fallback marker
+                if raw_data.len() != vector_count * dimension * 4 {
+                    return Err(anyhow::anyhow!("Fallback raw data size mismatch: {} vs {}",
+                        raw_data.len(), vector_count * dimension * 4));
+                }
+
+                let mut decoded = Vec::with_capacity(vector_count * dimension);
+                for chunk in raw_data.chunks_exact(4) {
+                    let value = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    decoded.push(value);
+                }
+                debug!("🔧 [DECODE_FV] Fallback decoded {} floats", decoded.len());
+                decoded
+            } else {
+                // Normal FastLanes decoding with enhanced error handling
+                debug!("🔍 [DECODE_FV] Using FastLanes decoding, data size: {} bytes", vector_data.len());
+                let decoder = FastLanesDecoder::new_from_data(&vector_data);
+
+                match decoder.decode_f32(&vector_data, Some(vector_count * dimension)) {
+                    Ok(floats) => {
+                        debug!("✅ [DECODE_FV] FastLanes decoded {} floats successfully", floats.len());
+                        floats
+                    }
+                    Err(e) => {
+                        warn!("❌ [DECODE_FV] FastLanes decoding failed: {}", e);
+                        debug!("   Vector data preview: {:?}", &vector_data[..std::cmp::min(20, vector_data.len())]);
+                        return Err(anyhow::anyhow!("FastLanes decoding failed: {}", e));
+                    }
+                }
+            };
 
             trace!(" [DECODE_FV] Decoded {} floats from FastLanes", decoded_floats.len());
 
-            // Reconstruct vectors from delta-encoded data
+            // NEW: Vectors are now encoded directly without manual delta
             if decoded_floats.len() != vector_count * dimension {
                 return Err(anyhow::anyhow!("Decoded data size mismatch: {} vs {}",
                     decoded_floats.len(), vector_count * dimension));
             }
 
-            // First vector is stored as-is
-            let first_vector = decoded_floats[0..dimension].to_vec();
-            records.push(VectorRecord {
-                id: format!("fv_vec_{:06}", 0),
-                vector: first_vector.clone(),
-                metadata: std::collections::HashMap::new(),
-                quantized_vector: vec![],
-                expires_at: None,
-                source: None,
-                timestamp: 0,
-                updated_at: None,
-                version: None,
-            });
-
-            // Reconstruct subsequent vectors by applying deltas
-            let mut prev_vector = first_vector;
-            for i in 1..vector_count {
+            // Each vector is stored consecutively in the decoded array
+            for i in 0..vector_count {
                 let start_idx = i * dimension;
                 let end_idx = start_idx + dimension;
-                let delta_slice = &decoded_floats[start_idx..end_idx];
+                let vector = decoded_floats[start_idx..end_idx].to_vec();
 
-                let mut vector = Vec::with_capacity(dimension);
-                for j in 0..dimension {
-                    vector.push(prev_vector[j] + delta_slice[j]);
-                }
+                let temp_id = format!("fv_vec_{:06}", i);
+                debug!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from FastLanes data", i, temp_id);
 
                 records.push(VectorRecord {
-                    id: format!("fv_vec_{:06}", i),
-                    vector: vector.clone(),
+                    id: temp_id,
+                    vector,
                     metadata: std::collections::HashMap::new(),
                     quantized_vector: vec![],
                     expires_at: None,
@@ -1906,8 +2610,6 @@ impl FastLanesDataBlock {
                     updated_at: None,
                     version: None,
                 });
-
-                prev_vector = vector;
             }
         } else {
             // Fallback to raw decoding
@@ -1917,8 +2619,11 @@ impl FastLanesDataBlock {
                 cursor.read_exact(&mut vector_bytes)?;
                 let vector: Vec<f32> = bytemuck::cast_slice(&vector_bytes).to_vec();
 
+                let temp_id = format!("fv_vec_{:06}", i);
+                debug!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from raw data", i, temp_id);
+
                 records.push(VectorRecord {
-                    id: format!("fv_vec_{:06}", i),
+                    id: temp_id,
                     vector,
                     metadata: std::collections::HashMap::new(),
                     quantized_vector: vec![],
@@ -1976,7 +2681,8 @@ impl FastLanesDataBlock {
         let mut vectors: Vec<Vec<f32>> = vec![vec![0.0; dimension]; vector_count];
 
         // Create decoder for FastLanes encoding
-        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+        // Note: We'll detect scheme from each group's data individually
+        // since different groups might use different schemes
 
         // Handle optimized header-based compression in version 0x01
         let compression_algorithm = if encoding_version == 0x01 {
@@ -2072,8 +2778,9 @@ impl FastLanesDataBlock {
             trace!(" [DECODE_GV] Group {}: start_dim={}, dims={}, decoded_len={}",
                      group_idx, start_dim, group_dims, group_data.len());
 
-            // Decode the FastLanes encoded data
-            let group_floats = decoder.decode_f32(&group_data, vectors.len() * group_dims)?;
+            // Auto-detect encoding scheme from group data and decode
+            let decoder = FastLanesDecoder::new_from_data(&group_data);
+            let group_floats = decoder.decode_f32(&group_data, Some(GROUP_SIZE * dimension))?;
 
             // Distribute the decoded floats to vectors
             // Data is stored row-wise: vec0[64D], vec1[64D], ...
@@ -2142,8 +2849,7 @@ impl FastLanesDataBlock {
         // Initialize vectors to store reconstructed data
         let mut vectors: Vec<Vec<f32>> = vec![vec![0.0; dimension]; vector_count];
 
-        // Create decoder for FastLanes encoding
-        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+        // Decoder will be created per dimension/group as needed
 
         // ===== DECODE EACH DIMENSION FIELD =====
         for dim_idx in 0..dimension {
@@ -2183,7 +2889,9 @@ impl FastLanesDataBlock {
             };
 
             // Decode FastLanes encoded dimension data
-            let dimension_floats = decoder.decode_f32(&dimension_data, vector_count)?;
+            // Create a decoder for this dimension's data
+            let dim_decoder = FastLanesDecoder::new_from_data(&dimension_data);
+            let dimension_floats = dim_decoder.decode_f32(&dimension_data, Some(vector_count))?;
 
             trace!(" [DECODE_TV] Decoded dimension {}: {} floats", dim_idx, dimension_floats.len());
 
@@ -2256,7 +2964,7 @@ impl FastLanesDataBlock {
             cursor.read_exact(&mut encoded_data)?;
 
             // Decode this dimension's data
-            let decoded = decoder.decode_f32(&encoded_data, vector_count)?;
+            let decoded = decoder.decode_f32(&encoded_data, Some(vector_count * dimension))?;
             all_dimensions.push(decoded);
         }
 
@@ -2352,10 +3060,9 @@ impl FastLanesDataBlock {
 
         // Initialize vectors
         let mut vectors: Vec<Vec<f32>> = vec![vec![0.0; dimension]; vector_count];
-        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
 
         // Parse uncompressed block data
-        let mut block_cursor = Cursor::new(uncompressed_block);
+        let mut block_cursor = Cursor::new(&uncompressed_block);
 
         for group_idx in 0..num_groups {
             let start_dim = group_idx * GROUP_SIZE;
@@ -2382,8 +3089,9 @@ impl FastLanesDataBlock {
                 let mut dim_data = vec![0u8; dim_size];
                 group_cursor.read_exact(&mut dim_data)?;
 
-                // Decode this dimension's values
-                let decoded_values = decoder.decode_f32(&dim_data, vector_count)
+                // Decode this dimension's values with auto-detected scheme
+                let dim_decoder = FastLanesDecoder::new_from_data(&dim_data);
+                let decoded_values = dim_decoder.decode_f32(&dim_data, Some(num_groups * GROUP_SIZE))
                     .map_err(|e| anyhow::anyhow!("FastLanes decoding failed for group {} dim {}: {}", group_idx, dim, e))?;
 
                 // Copy values to vectors
@@ -2476,10 +3184,9 @@ impl FastLanesDataBlock {
 
         // Initialize vectors
         let mut vectors: Vec<Vec<f32>> = vec![vec![0.0; dimension]; vector_count];
-        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
 
         // Parse uncompressed block data
-        let mut block_cursor = Cursor::new(uncompressed_block);
+        let mut block_cursor = Cursor::new(&uncompressed_block);
 
         for dim_idx in 0..dimension {
             // Read dimension size
@@ -2491,8 +3198,11 @@ impl FastLanesDataBlock {
             let mut dim_data = vec![0u8; dim_size];
             block_cursor.read_exact(&mut dim_data)?;
 
+            // Create decoder for this dimension's data
+            let dim_decoder = FastLanesDecoder::new_from_data(&dim_data);
+
             // Decode this dimension's values
-            let decoded_values = decoder.decode_f32(&dim_data, vector_count)
+            let decoded_values = dim_decoder.decode_f32(&dim_data, Some(vector_count))
                 .map_err(|e| anyhow::anyhow!("FastLanes decoding failed for dimension {}: {}", dim_idx, e))?;
 
             // Copy values to vectors

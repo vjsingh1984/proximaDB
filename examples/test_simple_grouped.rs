@@ -25,13 +25,14 @@ fn main() -> anyhow::Result<()> {
     };
     
     let config = BlockCompressionConfig {
-        vector_layout: VectorEncodingLayout::GroupedVector,
+        vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
         algorithm: CompressionAlgorithm::None,
         compression_level: 1,
         enable_vector_compression: true,
         enable_metadata_compression: false,
         compression_threshold_bytes: 0,
         dictionary_compression: false,
+        metadata_algorithm: None,
     };
     
     let block = FastLanesDataBlock::new(vec![record], config.clone());

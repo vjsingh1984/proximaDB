@@ -11,7 +11,7 @@ use std::collections::HashMap;
 /// - Zero-copy memory-mapped I/O
 /// - Predicate pushdown optimization
 use std::sync::Arc;
-use tracing::debug;
+use tracing::{debug, info, warn};
 
 // Use unified components instead of custom implementations
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute, SimilarityResult};
@@ -3009,62 +3009,58 @@ impl ValidationReport {
     }
 
     pub fn print_summary(&self) {
-        println!("\n🔍 RAPTOR Reader-Writer Alignment Report");
-        println!("==========================================");
-        println!("📊 Overall Score: {:.1}%", self.alignment_score * 100.0);
-        println!("🎯 Components Passing: {}/5", self.get_passing_components());
-        println!("");
-        println!("📋 Component Status:");
-        println!(
-            "  ✅ Footer Reading: {}",
+        info!("RAPTOR Reader-Writer Alignment Report");
+        info!("Overall Score: {:.1}%", self.alignment_score * 100.0);
+        info!("Components Passing: {}/5", self.get_passing_components());
+        info!("Component Status:");
+        info!(
+            "  Footer Reading: {}",
             if self.footer_reading { "PASS" } else { "FAIL" }
         );
-        println!(
-            "  ✅ Metadata Extraction: {}",
+        info!(
+            "  Metadata Extraction: {}",
             if self.metadata_extraction {
                 "PASS"
             } else {
                 "FAIL"
             }
         );
-        println!(
-            "  ✅ Bloom Filter Independence: {}",
+        info!(
+            "  Bloom Filter Independence: {}",
             if self.bloom_filter_independence {
                 "PASS"
             } else {
                 "FAIL"
             }
         );
-        println!(
-            "  ✅ Compression Alignment: {}",
+        info!(
+            "  Compression Alignment: {}",
             if self.compression_alignment {
                 "PASS"
             } else {
                 "FAIL"
             }
         );
-        println!(
-            "  ✅ Cache Integration: {}",
+        info!(
+            "  Cache Integration: {}",
             if self.cache_integration {
                 "PASS"
             } else {
                 "FAIL"
             }
         );
-        println!("");
-        println!("📈 Statistics:");
-        println!("  📁 Total Row Groups: {}", self.total_row_groups);
-        println!("  🔍 Bloom Filters Tested: {}", self.bloom_filters_tested);
-        println!(
-            "  ✅ Bloom Filters Successful: {}",
+        info!("Statistics:");
+        info!("  Total Row Groups: {}", self.total_row_groups);
+        info!("  Bloom Filters Tested: {}", self.bloom_filters_tested);
+        info!(
+            "  Bloom Filters Successful: {}",
             self.bloom_filters_successful
         );
-        println!("");
 
         if !self.errors.is_empty() {
-            println!("❌ Errors ({}):", self.errors.len());
+            warn!("Errors ({}):", self.errors.len());
             for error in &self.errors {
-                println!("   • {}", error);
+                warn!("   - {}", error);
             }
         }
 
@@ -3604,7 +3600,7 @@ impl RaptorReader {
             cursor.read_exact(&mut encoded_data)?;
 
             // Decode using FastLanes
-            let decoded = fastlanes_decoder.decode_f32(&encoded_data, num_rows)?;
+            let decoded = fastlanes_decoder.decode_f32(&encoded_data, Some(num_rows))?; // Pass expected count for smart decoding
             columns[dim_idx] = decoded;
         }
 
