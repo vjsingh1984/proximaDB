@@ -509,32 +509,32 @@ async fn main() -> Result<()> {
         match command {
             Commands::All => {
                 // Run all criterion benchmarks
-                run_criterion_benchmarks(CriterionSuite::All, cli.sample_size, cli.measurement_time)?;
+                run_criterion_benchmarks(CriterionSuite::All, cli.sample_size, cli.measurement_time).await?;
             }
             Commands::Distance { metrics: _ } => {
-                run_criterion_benchmarks(CriterionSuite::CoreDistance, cli.sample_size, cli.measurement_time)?;
+                run_criterion_benchmarks(CriterionSuite::CoreDistance, cli.sample_size, cli.measurement_time).await?;
             }
             Commands::Vectors { num_vectors: _ } => {
-                run_criterion_benchmarks(CriterionSuite::VectorOps, cli.sample_size, cli.measurement_time)?;
+                run_criterion_benchmarks(CriterionSuite::VectorOps, cli.sample_size, cli.measurement_time).await?;
             }
             Commands::Index { .. } => {
-                run_criterion_benchmarks(CriterionSuite::IndexOps, cli.sample_size, cli.measurement_time)?;
+                run_criterion_benchmarks(CriterionSuite::IndexOps, cli.sample_size, cli.measurement_time).await?;
             }
             Commands::Encoding { .. } => {
-                run_criterion_benchmarks(CriterionSuite::Encoding, cli.sample_size, cli.measurement_time)?;
+                run_criterion_benchmarks(CriterionSuite::Encoding, cli.sample_size, cli.measurement_time).await?;
             }
             Commands::Compression { .. } => {
                 println!("\n🗜️  Running Comprehensive Compression Benchmarks");
                 benchmark_compression_algorithms(1024, 768)?;
             }
             Commands::Criterion { suite, sample_size, measurement_time } => {
-                run_criterion_benchmarks(suite.clone(), *sample_size, *measurement_time)?;
+                run_criterion_benchmarks(suite.clone(), *sample_size, *measurement_time).await?;
             }
         }
     } else {
         // Default behavior: run the specified suite or all benchmarks
         let suite = cli.suite.unwrap_or(CriterionSuite::All);
-        run_criterion_benchmarks(suite, cli.sample_size, cli.measurement_time)?;
+        run_criterion_benchmarks(suite, cli.sample_size, cli.measurement_time).await?;
     }
 
     println!("\n✅ Benchmark suite completed successfully!\n");
@@ -929,7 +929,7 @@ impl EmbeddingGenerator {
     }
 }
 
-fn run_criterion_benchmarks(
+async fn run_criterion_benchmarks(
     suite: CriterionSuite,
     sample_size: usize,
     _measurement_time: u64,
@@ -946,7 +946,7 @@ fn run_criterion_benchmarks(
         CriterionSuite::CoreDistance => run_core_distance_benchmarks(sample_size),
         CriterionSuite::HardwareSimd => run_hardware_simd_benchmarks(sample_size),
         CriterionSuite::VectorOps => run_vector_ops_benchmarks(sample_size),
-        CriterionSuite::IndexOps => run_index_ops_benchmarks(sample_size),
+        CriterionSuite::IndexOps => run_index_ops_benchmarks(sample_size).await,
         CriterionSuite::Encoding => run_encoding_benchmarks_statistical(sample_size),
         CriterionSuite::MemoryVector => run_memory_vector_benchmarks(sample_size),
         CriterionSuite::StorageUnified => run_storage_unified_benchmarks(sample_size),
@@ -960,7 +960,7 @@ fn run_criterion_benchmarks(
             run_core_distance_benchmarks(sample_size)?;
             run_hardware_simd_benchmarks(sample_size)?;
             run_vector_ops_benchmarks(sample_size)?;
-            run_index_ops_benchmarks(sample_size)?;
+            run_index_ops_benchmarks(sample_size).await?;
             run_encoding_benchmarks_statistical(sample_size)?;
             Ok(())
         }
@@ -1374,17 +1374,13 @@ fn benchmark_metadata_operations_statistical(sample_size: usize) {
 
 // ============= Index Operations Benchmarks (Statistical) =============
 
-fn run_index_ops_benchmarks(sample_size: usize) -> Result<()> {
+async fn run_index_ops_benchmarks(sample_size: usize) -> Result<()> {
     println!("\n📊 Index Operations Benchmarks");
     println!("{}", "-".repeat(60));
 
-    // Run async benchmarks in runtime
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(async {
-        benchmark_hnsw_statistical(sample_size).await?;
-        benchmark_lsh_statistical(sample_size).await?;
-        Ok::<(), anyhow::Error>(())
-    })?;
+    // Already in async context, just await the benchmarks
+    benchmark_hnsw_statistical(sample_size).await?;
+    benchmark_lsh_statistical(sample_size).await?;
 
     println!("✅ Index operations benchmarks completed");
     Ok(())
