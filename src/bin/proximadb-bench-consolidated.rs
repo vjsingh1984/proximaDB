@@ -626,8 +626,8 @@ fn benchmark_encoding_configuration(
     }
     let fullvector_serialize_ms = fullvector_serialize_times.iter().sum::<f64>() / iterations as f64;
 
-    // Benchmark GroupedVector serialization (new strategy)
-    compression_config.vector_layout = VectorEncodingLayout::GroupedVector;
+    // Benchmark GroupedFieldEncodedAndCompressedVector serialization (new strategy)
+    compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
     let grouped_block = FastLanesDataBlock::new(records, compression_config.clone());
 
     let mut grouped_serialize_times = Vec::with_capacity(iterations);
@@ -2387,10 +2387,11 @@ fn benchmark_encoding_statistical_with_results(
         compression_threshold_bytes: 1024,
         dictionary_compression: false,
         vector_layout: VectorEncodingLayout::Auto,
+        metadata_algorithm: Some(CompressionAlgorithm::None),  // Add missing field
     };
 
-    // ============ COLUMNAR ENCODING (TransposeVector) ============
-    compression_config.vector_layout = VectorEncodingLayout::TransposeVector;
+    // ============ COLUMNAR ENCODING (TransposeFieldEncodedAndCompressedVector) ============
+    compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
     let columnar_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
 
     // Measure combined serialization + compression + encoding time
@@ -2443,7 +2444,7 @@ fn benchmark_encoding_statistical_with_results(
     let grouped_serialized;
 
     if dimension > 128 {
-        compression_config.vector_layout = VectorEncodingLayout::GroupedVector;
+        compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
         let grouped_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
 
         // Measure combined serialization + compression + encoding time
@@ -2491,7 +2492,7 @@ fn benchmark_encoding_statistical_with_results(
     println!("\n  ┌──────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
     println!("  │ Strategy             │ Encode (ms)  │ Decode (ms)  │ Size (MB)    │ Compression  │");
     println!("  ├──────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
-    println!("  │ TransposeVector      │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+    println!("  │ TransposeFieldEncoded│ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
         columnar_encode_times.0 / 1000.0, columnar_encode_times.1 / 1000.0,
         columnar_decode_times.0 / 1000.0, columnar_decode_times.1 / 1000.0,
         columnar_size_mb, columnar_ratio);
@@ -2500,7 +2501,7 @@ fn benchmark_encoding_statistical_with_results(
         rowwise_decode_times.0 / 1000.0, rowwise_decode_times.1 / 1000.0,
         rowwise_size_mb, rowwise_ratio);
     if grouped_size > 0 {
-        println!("  │ GroupedVector (64D)  │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+        println!("  │ GroupedFieldEncoded  │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
             grouped_encode_times.0 / 1000.0, grouped_encode_times.1 / 1000.0,
             grouped_decode_times.0 / 1000.0, grouped_decode_times.1 / 1000.0,
             grouped_size_mb, grouped_ratio);
@@ -2513,25 +2514,25 @@ fn benchmark_encoding_statistical_with_results(
         vector_count, dimension, compression_config.algorithm);
 
     // Find best strategies
-    let mut best_compression_strategy = "TransposeVector";
+    let mut best_compression_strategy = "TransposeFieldEncoded";
     let mut best_compression_ratio = columnar_ratio;
     if rowwise_ratio > best_compression_ratio {
         best_compression_strategy = "FullVector";
         best_compression_ratio = rowwise_ratio;
     }
     if grouped_ratio > best_compression_ratio {
-        best_compression_strategy = "GroupedVector";
+        best_compression_strategy = "GroupedFieldEncoded";
         best_compression_ratio = grouped_ratio;
     }
 
-    let mut best_encode_strategy = "TransposeVector";
+    let mut best_encode_strategy = "TransposeFieldEncoded";
     let mut best_encode_time = columnar_encode_times.0;
     if rowwise_encode_times.0 < best_encode_time {
         best_encode_strategy = "FullVector";
         best_encode_time = rowwise_encode_times.0;
     }
     if dimension > 128 && grouped_encode_times.0 < best_encode_time {
-        best_encode_strategy = "GroupedVector";
+        best_encode_strategy = "GroupedFieldEncoded";
         best_encode_time = grouped_encode_times.0;
     }
 
@@ -2547,7 +2548,7 @@ fn benchmark_encoding_statistical_with_results(
             best_compression_strategy, (1.0 - 1.0/best_compression_ratio) * 100.0);
     }
     if dimension > 128 {
-        println!("    • High Dimensions: GroupedVector optimal (cache-friendly 64D chunks)");
+        println!("    • High Dimensions: GroupedFieldEncoded optimal (cache-friendly 32D chunks)");
     }
     if vector_count > 10000 {
         println!("    • Large Batches: Columnar benefits from better compression");
