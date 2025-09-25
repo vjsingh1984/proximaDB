@@ -65,14 +65,14 @@ impl HelixSIMDWriter {
 
         // Create enhanced compression config for HELIX with spatial optimization
         let compression_config = BlockCompressionConfig {
-            algorithm: CompressionAlgorithm::Lz4, // Fast for spatial queries
+            algorithm: CompressionAlgorithm::Zstd, // Better compression for read-heavy workloads
             compression_level: 3,
             enable_vector_compression: true,
             enable_metadata_compression: true,
             compression_threshold_bytes: 256,
             dictionary_compression: records.len() > 1000,
-            // Use transposed layout for spatial clustering benefits
-            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
+            // Use Auto layout - defaults to GroupedFieldEncoded for optimal performance
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
             metadata_algorithm: None,
         };
 

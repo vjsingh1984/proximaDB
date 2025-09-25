@@ -61,7 +61,7 @@ fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec
             id: format!("vec_{:06}", i),
             vector,
             metadata: HashMap::new(),
-            timestamp: Some(i as u64),
+            timestamp: i as i64,
             updated_at: Some(i as i64),
             expires_at: None,
             version: Some(1),
@@ -329,7 +329,7 @@ fn bench_large_scale(c: &mut Criterion) {
                         enable_metadata_compression: true,
                         compression_threshold_bytes: 256,
                         dictionary_compression: true, // Enable for large blocks
-                        vector_layout: Some(VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector),
+                        vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
                         metadata_algorithm: None,
                     };
 
@@ -364,7 +364,7 @@ fn bench_simd_transpose(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::from_parameter(format!("{}x{}", count, dim)),
             |b| {
-                let simd_encoder = UnifiedFastLanesSIMD::new(EngineProfile::SST);
+                let simd_encoder = UnifiedFastLanesSIMD::new(EngineProfile::SST).unwrap();
 
                 b.iter(|| {
                     let transposed = simd_encoder.simd_transpose_vectors(&vectors).unwrap();

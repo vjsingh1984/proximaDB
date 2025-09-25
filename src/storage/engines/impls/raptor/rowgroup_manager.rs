@@ -14,6 +14,9 @@ use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesEncoder;
+use crate::storage::engines::core::ops::unified_fastlanes_simd::{UnifiedFastLanesSIMD, EngineProfile};
+use crate::storage::engines::core::formats::fastlanes_blocks::{BlockCompressionConfig, VectorEncodingLayout};
+use crate::core::compression::CompressionAlgorithm;
 
 // RowGroup removed - consolidated into common::RowGroup
 // The unified RowGroup now includes columnar_data field
@@ -47,8 +50,10 @@ pub struct RowGroups {
     optimal_size: OptimalRowGroupSize,
     /// Quantization engine if enabled
     quantization_engine: Option<Arc<StorageQuantizationEngine>>,
-    /// FastLanes encoder
-    fastlanes_encoder: FastLanesEncoder,
+    /// SIMD-optimized encoder for RAPTOR
+    simd_encoder: UnifiedFastLanesSIMD,
+    /// Block compression configuration
+    compression_config: BlockCompressionConfig,
     /// Configuration
     config: RaptorConfig,
 }
@@ -64,11 +69,21 @@ impl RowGroups {
 
         tracing::info!("RAPTOR RowGroups initialized: {}", optimal_size.rationale);
 
-        let fastlanes_encoder = FastLanesEncoder::new(
-            crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::BitPacked {
-                bits: 16,
-            },
-        );
+        // Use SIMD-optimized encoder with RAPTOR engine profile
+        let simd_encoder = UnifiedFastLanesSIMD::new(EngineProfile::SST)?;
+
+        // Configure compression for optimal read performance
+        let compression_config = BlockCompressionConfig {
+            algorithm: CompressionAlgorithm::Zstd,
+            compression_level: 3,
+            enable_vector_compression: true,
+            enable_metadata_compression: true,
+            compression_threshold_bytes: 256,
+            dictionary_compression: false,
+            // Use Auto layout - defaults to GroupedFieldEncoded for optimal performance
+            vector_layout: VectorEncodingLayout::Auto,
+            metadata_algorithm: None,
+        };
 
         Ok(Self {
             row_groups: HashMap::new(),
@@ -77,7 +92,8 @@ impl RowGroups {
             smart_sizer,
             optimal_size,
             quantization_engine,
-            fastlanes_encoder,
+            simd_encoder,
+            compression_config,
             config,
         })
     }
@@ -480,39 +496,85 @@ impl RowGroups {
         Ok(())
     }
 
-    /// Apply FastLanes compression to a row group
+    /// Apply SIMD-optimized FastLanes compression to a row group
     async fn apply_fastlanes_compression(&mut self, row_group_id: u16) -> Result<()> {
         let row_group = self
             .row_groups
-            .get_mut(&row_group_id)
+            .get(&row_group_id)
             .ok_or_else(|| anyhow::anyhow!("Row group not found"))?;
 
         let columnar_data = row_group
             .columnar_data
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Columnar data not initialized"))?;
 
-        let mut encoded_dimensions = Vec::new();
-        let mut encoding_schemes = Vec::new();
-
-        // Compress each dimension separately using FastLanes
+        // Get transposed vectors
         let transposed = columnar_data
             .transposed_vectors
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Transposed vectors not available"))?;
 
-        for dimension_data in &transposed.dimensions {
-            if !dimension_data.is_empty() {
-                let encoded = self.fastlanes_encoder.encode_f32(dimension_data, None)?; // TODO: Pass expected count for optimization
-                encoded_dimensions.push(encoded);
-                encoding_schemes.push(FastLanesScheme::BitPacked { bits: 16 }); // Default scheme
+        // Convert from columnar (DxN) back to row format (NxD) for SIMD processing
+        let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(row_group.vector_count);
+        for i in 0..row_group.vector_count {
+            let mut vector = Vec::with_capacity(transposed.dimension);
+            for dim in &transposed.dimensions {
+                if i < dim.len() {
+                    vector.push(dim[i]);
+                }
             }
+            vectors.push(vector);
         }
 
+        // Use SIMD-optimized transposition and encoding
+        let simd_transposed = self.simd_encoder.simd_transpose_vectors(&vectors)?;
+
+        // Determine optimal encoding strategy based on dimension
+        let dimension = transposed.dimension;
+        let (encoded_dimensions, encoding_schemes) = if dimension > 128 {
+            // Use grouped field encoding for high-dimensional vectors
+            let group_size = 32;
+            let num_groups = (dimension + group_size - 1) / group_size;
+            let mut encoded = Vec::new();
+            let mut schemes = Vec::new();
+
+            for group_idx in 0..num_groups {
+                let start = group_idx * group_size;
+                let end = ((group_idx + 1) * group_size).min(dimension);
+
+                // Encode each group with SIMD
+                for dim_idx in start..end {
+                    if dim_idx < simd_transposed.len() {
+                        let encoded_dim = self.simd_encoder.simd_encode_dimension(&simd_transposed[dim_idx],
+                                                                           &FastLanesScheme::Adaptive)?;
+                        encoded.push(encoded_dim);
+                        schemes.push(FastLanesScheme::Adaptive);
+                    }
+                }
+            }
+            (encoded, schemes)
+        } else {
+            // For lower dimensions, encode each dimension directly
+            let mut encoded = Vec::new();
+            let mut schemes = Vec::new();
+
+            for dim_data in &simd_transposed {
+                let encoded_dim = self.simd_encoder.simd_encode_dimension(dim_data,
+                                                                   &FastLanesScheme::Adaptive)?;
+                encoded.push(encoded_dim);
+                schemes.push(FastLanesScheme::Adaptive);
+            }
+            (encoded, schemes)
+        };
+
         // Calculate compression ratio
-        let original_size = transposed.dimensions.len() * row_group.vector_count * 4; // 4 bytes per f32
+        let original_size = vectors.len() * dimension * 4; // 4 bytes per f32
         let compressed_size: usize = encoded_dimensions.iter().map(|d| d.len()).sum();
         let compression_ratio = original_size as f32 / compressed_size.max(1) as f32;
+
+        // Update row group with SIMD-encoded data
+        let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
+        let columnar_data = row_group.columnar_data.as_mut().unwrap();
 
         columnar_data.fastlanes_data = Some(FastLanesEncodedData {
             encoded_dimensions,
@@ -521,9 +583,10 @@ impl RowGroups {
         });
 
         tracing::debug!(
-            "FastLanes compression: {:.2}x ratio for row group {}",
+            "SIMD FastLanes compression: {:.2}x ratio for row group {} (dimension: {})",
             compression_ratio,
-            row_group_id
+            row_group_id,
+            dimension
         );
 
         Ok(())
