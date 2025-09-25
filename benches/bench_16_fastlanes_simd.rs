@@ -61,7 +61,7 @@ fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec
             id: format!("vec_{:06}", i),
             vector,
             metadata: HashMap::new(),
-            timestamp: i as u64,
+            timestamp: Some(i as u64),
             updated_at: Some(i as i64),
             expires_at: None,
             version: Some(1),
@@ -98,7 +98,7 @@ fn bench_fastlanes_baseline(c: &mut Criterion) {
                             enable_metadata_compression: true,
                             compression_threshold_bytes: 256,
                             dictionary_compression: false,
-                            vector_layout: Some(VectorEncodingLayout::FullVector), // No SIMD
+                            vector_layout: VectorEncodingLayout::FullVector, // No SIMD
                             metadata_algorithm: None,
                         };
 
@@ -144,7 +144,7 @@ fn bench_fastlanes_simd_layouts(c: &mut Criterion) {
                         enable_metadata_compression: true,
                         compression_threshold_bytes: 256,
                         dictionary_compression: false,
-                        vector_layout: Some(layout),
+                        vector_layout: layout,
                         metadata_algorithm: None,
                     };
 
@@ -190,7 +190,7 @@ fn bench_engine_profiles(c: &mut Criterion) {
                         enable_metadata_compression: true,
                         compression_threshold_bytes: 256,
                         dictionary_compression: false,
-                        vector_layout: Some(VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
+                        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
                         metadata_algorithm: None,
                     };
 
@@ -232,7 +232,7 @@ fn bench_data_patterns(c: &mut Criterion) {
                         enable_metadata_compression: true,
                         compression_threshold_bytes: 256,
                         dictionary_compression: false,
-                        vector_layout: Some(VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
+                        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
                         metadata_algorithm: None,
                     };
 
@@ -274,7 +274,7 @@ fn bench_compression_ratios(c: &mut Criterion) {
                         enable_metadata_compression: true,
                         compression_threshold_bytes: 256,
                         dictionary_compression: false,
-                        vector_layout: Some(VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
+                        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
                         metadata_algorithm: None,
                     };
 
@@ -405,7 +405,7 @@ fn bench_encoding_algorithms(c: &mut Criterion) {
                         enable_metadata_compression: true,
                         compression_threshold_bytes: 256,
                         dictionary_compression: false,
-                        vector_layout: Some(VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
+                        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
                         metadata_algorithm: None,
                     };
 
