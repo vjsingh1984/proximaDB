@@ -144,6 +144,14 @@ enum Commands {
         /// Generate detailed matrix output
         #[arg(short = 'm', long)]
         matrix: bool,
+
+        /// Compression algorithm to use (none, lz4, snappy, zstd, gzip, brotli)
+        #[arg(short = 'c', long, default_value = "zstd")]
+        compression: String,
+
+        /// Compression level (1-22 for zstd, 1-9 for gzip/brotli, ignored for others)
+        #[arg(short = 'l', long, default_value_t = 3)]
+        compression_level: u8,
     },
 
     /// [08] Compression algorithms benchmarks
@@ -595,8 +603,13 @@ async fn main() -> Result<()> {
             Commands::Bench06Index { .. } => {
                 run_criterion_benchmarks(CriterionSuite::IndexOps, cli.sample_size, cli.measurement_time).await?;
             }
-            Commands::Bench07Encoding { .. } => {
-                run_criterion_benchmarks(CriterionSuite::Encoding, cli.sample_size, cli.measurement_time).await?;
+            Commands::Bench07Encoding { compression, compression_level, .. } => {
+                // Pass compression settings to encoding benchmarks
+                run_encoding_benchmarks_with_compression(
+                    cli.sample_size,
+                    compression,
+                    *compression_level
+                )?;
             }
             Commands::Bench08Compression { .. } => {
                 println!("\n🗜️  Running Comprehensive Compression Benchmarks");
@@ -2281,9 +2294,31 @@ fn print_encoding_interpretation_guide() {
 
 // ============= Encoding Benchmarks (Statistical) =============
 
-fn run_encoding_benchmarks_statistical(sample_size: usize) -> Result<()> {
+fn parse_compression_algorithm(s: &str) -> Result<CompressionAlgorithm> {
+    match s.to_lowercase().as_str() {
+        "none" => Ok(CompressionAlgorithm::None),
+        "lz4" => Ok(CompressionAlgorithm::Lz4),
+        "snappy" => Ok(CompressionAlgorithm::Snappy),
+        "zstd" | "zstandard" => Ok(CompressionAlgorithm::Zstd),
+        "gzip" => Ok(CompressionAlgorithm::Gzip),
+        "brotli" => Ok(CompressionAlgorithm::Brotli),
+        _ => Err(anyhow::anyhow!(
+            "Unknown compression algorithm: {}. Valid options: none, lz4, snappy, zstd, gzip, brotli",
+            s
+        )),
+    }
+}
+
+fn run_encoding_benchmarks_with_compression(
+    sample_size: usize,
+    compression_str: &str,
+    compression_level: u8,
+) -> Result<()> {
+    let algorithm = parse_compression_algorithm(compression_str)?;
+
     println!("\n📊 Encoding Benchmarks (Statistical Framework)");
-    println!("Sample size: {} iterations\n", sample_size);
+    println!("Sample size: {} iterations", sample_size);
+    println!("Compression: {:?} (level: {})\n", algorithm, compression_level);
 
     // Print interpretation guide
     print_encoding_interpretation_guide();
@@ -2298,7 +2333,13 @@ fn run_encoding_benchmarks_statistical(sample_size: usize) -> Result<()> {
     for vector_count in &vector_counts {
         for dimension in &dimensions {
             println!("\n⚙️  Benchmarking encoding: {} vectors, {} dimensions", vector_count, dimension);
-            let result = benchmark_encoding_statistical_with_results(*vector_count, *dimension, sample_size)?;
+            let result = benchmark_encoding_statistical_with_compression(
+                *vector_count,
+                *dimension,
+                sample_size,
+                algorithm,
+                compression_level,
+            )?;
             results.push(result);
         }
     }
@@ -2307,6 +2348,11 @@ fn run_encoding_benchmarks_statistical(sample_size: usize) -> Result<()> {
     print_encoding_summary_table(&results);
 
     Ok(())
+}
+
+fn run_encoding_benchmarks_statistical(sample_size: usize) -> Result<()> {
+    // Default to zstd with level 3
+    run_encoding_benchmarks_with_compression(sample_size, "zstd", 3)
 }
 
 // Structure to hold encoding benchmark results
@@ -2758,14 +2804,24 @@ fn benchmark_encoding_statistical(
     dimension: usize,
     sample_size: usize,
 ) -> Result<()> {
-    let _ = benchmark_encoding_statistical_with_results(vector_count, dimension, sample_size)?;
+    println!("\n⚙️  Benchmarking encoding: {} vectors, {} dimensions", vector_count, dimension);
+    // Default to zstd with level 3
+    let _ = benchmark_encoding_statistical_with_compression(
+        vector_count,
+        dimension,
+        sample_size,
+        CompressionAlgorithm::Zstd,
+        3,
+    )?;
     Ok(())
 }
 
-fn benchmark_encoding_statistical_with_results(
+fn benchmark_encoding_statistical_with_compression(
     vector_count: usize,
     dimension: usize,
     sample_size: usize,
+    compression_algorithm: CompressionAlgorithm,
+    compression_level: u8,
 ) -> Result<EncodingResult> {
     // Generate test data once
     let vectors = generate_test_vectors_for_encoding_2(vector_count, dimension);
@@ -2774,8 +2830,8 @@ fn benchmark_encoding_statistical_with_results(
     // Use FastLanesDataBlock's built-in writer/reader interface
     // This gives us combined metrics (serialization + compression + encoding)
     let mut compression_config = BlockCompressionConfig {
-        algorithm: CompressionAlgorithm::Snappy,
-        compression_level: 1,
+        algorithm: compression_algorithm,
+        compression_level,
         enable_vector_compression: true,
         enable_metadata_compression: true,
         compression_threshold_bytes: 1024,
@@ -3036,6 +3092,7 @@ fn benchmark_encoding_statistical_with_results(
         rowwise_size_mb,
     })
 }
+
 
 // Comprehensive compression algorithm benchmark
 fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Result<()> {
