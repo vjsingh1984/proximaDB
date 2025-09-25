@@ -4,6 +4,14 @@
 :icons: font
 :source-highlighter: rouge
 
+[NOTE]
+====
+**Implementation Status**: See link:Q1_2025_STATUS.adoc[Q1 2025 Status Report] for current progress.
+
+* ✅ **Advanced Search Optimization**: COMPLETE
+* 🔶 **Quantized Vector Precomputation**: PARTIAL (core ready, service pending)
+====
+
 [.lead]
 **Detailed implementation instructions for Q1 2025 features: Advanced Search Optimization and Quantized Vector Precomputation**
 

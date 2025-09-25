@@ -631,9 +631,8 @@ impl SstableWriter {
         let mut block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(self.compression_config.as_ref());
 
         // Enable SIMD optimization for SST (maximum compression focus)
-        block_compression_config.vector_layout = Some(
-            crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector
-        );
+        block_compression_config.vector_layout =
+            crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
 
         // ✅ FastLanes automatically provides:
         // - 🔍 Automatic Bloom Filter Generation

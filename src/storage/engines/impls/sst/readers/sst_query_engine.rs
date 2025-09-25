@@ -4414,6 +4414,8 @@ impl UnifiedSstableReader {
                 records: chunk.to_vec(),
                 quantized_vectors: None,
                 quantization_level: None,
+                encoded_vectors: None,
+                vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::FullVector,
                 quantized_section: None,
                 metadata: crate::storage::engines::core::formats::fastlanes_blocks::FastLanesBlockMetadata::default(),
                 compression_config: BlockCompressionConfig {

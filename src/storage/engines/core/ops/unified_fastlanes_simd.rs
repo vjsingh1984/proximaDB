@@ -47,60 +47,54 @@ fn get_cached_simd_backend() -> HardwareBackend {
 }
 
 /// Engine-specific optimization profiles
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EngineProfile {
-    /// HELIX: Spatial locality optimization
-    Helix {
-        hilbert_curve_aware: bool,
-        spatial_grouping_size: usize,
-        enable_clustering_detection: bool,
-    },
     /// SST: Write-optimized with filtering stages
-    Sst {
-        filter_stage_optimization: bool,
-        bloom_filter_aware: bool,
-        write_buffer_size: usize,
-    },
+    SST,
     /// SWIFT: Low-latency optimization
-    Swift {
-        low_latency_mode: bool,
-        cache_line_optimization: bool,
-        skip_advanced_patterns: bool,
-    },
+    Swift,
+    /// HELIX: Spatial locality optimization
+    Helix,
+}
+
+impl Default for EngineProfile {
+    fn default() -> Self {
+        EngineProfile::SST
+    }
 }
 
 impl EngineProfile {
     /// Get optimal SIMD configuration for engine
     pub fn simd_config(&self) -> SIMDEngineConfig {
         match self {
-            EngineProfile::Helix { spatial_grouping_size, enable_clustering_detection, .. } => {
+            EngineProfile::Helix => {
                 SIMDEngineConfig {
                     prefer_large_blocks: true,
-                    block_size_hint: *spatial_grouping_size,
+                    block_size_hint: 8192,
                     optimize_for_sequential_access: true,
                     prefetch_aggressive: true,
-                    enable_advanced_patterns: *enable_clustering_detection,
+                    enable_advanced_patterns: true,
                     parallel_threshold: 16,
                 }
             },
-            EngineProfile::Sst { write_buffer_size, .. } => {
+            EngineProfile::SST => {
                 SIMDEngineConfig {
                     prefer_large_blocks: true,
-                    block_size_hint: *write_buffer_size / 4, // Adjust for vector data
+                    block_size_hint: 4096,
                     optimize_for_sequential_access: false,
                     prefetch_aggressive: false,
-                    enable_advanced_patterns: false, // Focus on write speed
+                    enable_advanced_patterns: false,
                     parallel_threshold: 8,
                 }
             },
-            EngineProfile::Swift { low_latency_mode, skip_advanced_patterns, .. } => {
+            EngineProfile::Swift => {
                 SIMDEngineConfig {
-                    prefer_large_blocks: !low_latency_mode,
-                    block_size_hint: if *low_latency_mode { 1024 } else { 4096 },
+                    prefer_large_blocks: false,
+                    block_size_hint: 1024,
                     optimize_for_sequential_access: false,
                     prefetch_aggressive: false,
-                    enable_advanced_patterns: !skip_advanced_patterns,
-                    parallel_threshold: if *low_latency_mode { 32 } else { 16 },
+                    enable_advanced_patterns: false,
+                    parallel_threshold: 4,
                 }
             },
         }
@@ -231,7 +225,21 @@ pub struct UnifiedFastLanesSIMD {
     temp_buffer_pool: Arc<VectorMemoryPool>, // For intermediate results
 }
 
+impl std::fmt::Debug for UnifiedFastLanesSIMD {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnifiedFastLanesSIMD")
+            .field("config", &self.config)
+            .field("engine_profile", &self.engine_profile)
+            .finish()
+    }
+}
+
 impl UnifiedFastLanesSIMD {
+    /// Create new SIMD encoder with default parameters
+    pub fn new(engine_profile: EngineProfile) -> anyhow::Result<Self> {
+        Ok(Self::new_for_engine(engine_profile, 384, 1000))
+    }
+
     /// Create new SIMD encoder optimized for specific engine
     pub fn new_for_engine(
         engine_profile: EngineProfile,

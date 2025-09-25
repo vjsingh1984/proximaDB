@@ -72,7 +72,7 @@ impl HelixSIMDWriter {
             compression_threshold_bytes: 256,
             dictionary_compression: records.len() > 1000,
             // Use transposed layout for spatial clustering benefits
-            vector_layout: Some(crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
             metadata_algorithm: None,
         };
 
@@ -227,7 +227,7 @@ pub async fn write_helix_sstable_simd(
         ..Default::default()
     };
 
-    let mut global_bloom = BloomFilterFactory::create_optimal(bloom_config)?;
+    let mut global_bloom = BloomFilterFactory::create(bloom_config)?;
 
     // Track SIMD performance metrics
     let mut total_simd_time = std::time::Duration::ZERO;
@@ -415,7 +415,7 @@ pub async fn write_helix_sstable(
             compression_threshold_bytes: 512, // Lower threshold for better compression
             dictionary_compression: chunk.len() > 500, // Use dictionary for large blocks
             // Enable SIMD-optimized transposed layout for spatial data
-            vector_layout: Some(crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
             metadata_algorithm: None, // Use main algorithm for metadata
         };
 

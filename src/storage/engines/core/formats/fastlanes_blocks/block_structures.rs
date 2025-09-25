@@ -480,13 +480,13 @@ impl FastLanesDataBlock {
 
         match engine_profile {
             EngineProfile::SST => SIMD_ENCODER_SST.get_or_init(|| {
-                UnifiedFastLanesSIMD::new(EngineProfile::SST)
+                UnifiedFastLanesSIMD::new(EngineProfile::SST).expect("Failed to create SST SIMD encoder")
             }),
             EngineProfile::Swift => SIMD_ENCODER_SWIFT.get_or_init(|| {
-                UnifiedFastLanesSIMD::new(EngineProfile::Swift)
+                UnifiedFastLanesSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder")
             }),
             EngineProfile::Helix => SIMD_ENCODER_HELIX.get_or_init(|| {
-                UnifiedFastLanesSIMD::new(EngineProfile::Helix)
+                UnifiedFastLanesSIMD::new(EngineProfile::Helix).expect("Failed to create Helix SIMD encoder")
             }),
         }
     }
@@ -743,7 +743,7 @@ impl FastLanesDataBlock {
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
-            vector_layout: compression_config.vector_layout.unwrap_or(VectorEncodingLayout::FullVector),
+            vector_layout: compression_config.vector_layout,
             quantized_section: None,
             metadata: FastLanesBlockMetadata {
                 record_count,
@@ -772,19 +772,17 @@ impl FastLanesDataBlock {
         };
 
         // Apply SIMD encoding if layout requires it
-        if compression_config.vector_layout.is_some() {
-            let layout = compression_config.vector_layout.unwrap();
-            if layout != VectorEncodingLayout::FullVector && !records.is_empty() {
-                // Extract vectors for SIMD encoding
-                let vectors: Vec<Vec<f32>> = records.iter()
-                    .filter(|r| !r.vector.is_empty())
-                    .map(|r| r.vector.clone())
-                    .collect();
+        if compression_config.vector_layout != VectorEncodingLayout::FullVector && !records.is_empty() {
+            // Extract vectors for SIMD encoding
+            let vectors: Vec<Vec<f32>> = records.iter()
+                .filter(|r| !r.vector.is_empty())
+                .map(|r| r.vector.clone())
+                .collect();
 
-                if !vectors.is_empty() {
-                    // Determine engine profile from compression config or use default
-                    let engine_profile = EngineProfile::SST; // Default, can be overridden
-                    if let Err(e) = block.apply_simd_encoding(&vectors, layout, engine_profile) {
+            if !vectors.is_empty() {
+                // Determine engine profile from compression config or use default
+                let engine_profile = EngineProfile::SST; // Default, can be overridden
+                if let Err(e) = block.apply_simd_encoding(&vectors, compression_config.vector_layout, engine_profile) {
                         debug!("Failed to apply SIMD encoding: {}, falling back to FullVector", e);
                         block.vector_layout = VectorEncodingLayout::FullVector;
                     }
@@ -851,7 +849,7 @@ impl FastLanesDataBlock {
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
-            vector_layout: compression_config.vector_layout.unwrap_or(VectorEncodingLayout::FullVector),
+            vector_layout: compression_config.vector_layout,
             quantized_section: None,
             metadata: FastLanesBlockMetadata {
                 record_count,
@@ -880,16 +878,14 @@ impl FastLanesDataBlock {
         };
 
         // Apply SIMD encoding with specific engine profile
-        if compression_config.vector_layout.is_some() {
-            let layout = compression_config.vector_layout.unwrap();
-            if layout != VectorEncodingLayout::FullVector && !records.is_empty() {
-                let vectors: Vec<Vec<f32>> = records.iter()
-                    .filter(|r| !r.vector.is_empty())
-                    .map(|r| r.vector.clone())
-                    .collect();
+        if compression_config.vector_layout != VectorEncodingLayout::FullVector && !records.is_empty() {
+            let vectors: Vec<Vec<f32>> = records.iter()
+                .filter(|r| !r.vector.is_empty())
+                .map(|r| r.vector.clone())
+                .collect();
 
-                if !vectors.is_empty() {
-                    if let Err(e) = block.apply_simd_encoding(&vectors, layout, engine_profile) {
+            if !vectors.is_empty() {
+                if let Err(e) = block.apply_simd_encoding(&vectors, compression_config.vector_layout, engine_profile) {
                         debug!("Failed to apply SIMD encoding: {}, falling back to FullVector", e);
                         block.vector_layout = VectorEncodingLayout::FullVector;
                     }

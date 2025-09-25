@@ -512,7 +512,7 @@ impl SwiftFile {
             let mut compression_config = RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
 
             // Enable SIMD optimization for SWIFT (low-latency focus)
-            compression_config.vector_layout = Some(crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector);
+            compression_config.vector_layout = crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
 
             // Create block with SWIFT engine profile for optimized SIMD encoding
             let block = FastLanesDataBlock::new_with_engine_profile(
@@ -593,7 +593,7 @@ impl SwiftFile {
             let mut block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config.as_ref());
 
             // Enable SIMD optimization for SWIFT (hierarchical low-latency focus)
-            block_compression_config.vector_layout = Some(crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector);
+            block_compression_config.vector_layout = crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
 
             // ✅ FastLanes automatically handles quantization, bloom filters, and metadata statistics
             // Now with SIMD-optimized encoding!
@@ -714,7 +714,7 @@ impl SwiftFile {
                 max_memory_bytes: 4 * 1024 * 1024 * 1024, // 4GB
                 current_usage: std::sync::atomic::AtomicUsize::new(0),
             }),
-            simd_encoder: UnifiedFastLanesSIMD::new(EngineProfile::Swift),
+            simd_encoder: UnifiedFastLanesSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder"),
         }
     }
 
@@ -927,6 +927,7 @@ impl SwiftFile {
                 max_memory_bytes: 4 * 1024 * 1024 * 1024,
                 current_usage: std::sync::atomic::AtomicUsize::new(0),
             }),
+            simd_encoder: UnifiedFastLanesSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder"),
         })
     }
 

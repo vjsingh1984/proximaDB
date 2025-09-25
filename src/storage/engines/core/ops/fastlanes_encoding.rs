@@ -120,6 +120,14 @@ pub mod markers {
             super::FastLanesScheme::PatchedBase { .. } => FASTLANES_PATCHED_BASE,
             super::FastLanesScheme::Dictionary => FASTLANES_DICTIONARY,
             super::FastLanesScheme::RunLength => FASTLANES_RUN_LENGTH,
+            // New schemes from SIMD optimization
+            super::FastLanesScheme::PForDelta { .. } => 0x07,
+            super::FastLanesScheme::Zigzag { .. } => 0x08,
+            super::FastLanesScheme::Simple8b => 0x09,
+            super::FastLanesScheme::VByte => 0x0A,
+            super::FastLanesScheme::DoubleDelta { .. } => 0x0B,
+            super::FastLanesScheme::Gorilla => 0x0C,
+            super::FastLanesScheme::Adaptive => 0x0D,
         }
     }
 
