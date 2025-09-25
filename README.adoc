@@ -134,22 +134,27 @@ graph TB
 |Analytics, batch operations
 |Columnar format, up to 69% compression
 
-|**NOVA**
+|**NOVA***
 |Mixed workloads
 |Progressive search capabilities
 
-|**SWIFT**
+|**SWIFT***
 |Low-latency operations
 |FastLanes encoding optimization
 
-|**RAPTOR**
+|**RAPTOR***
 |Dynamic workloads
 |Adaptive optimization strategies
 
-|**HELIX**
+|**HELIX***
 |Spatial/graph data
 |Hilbert curve clustering
 |===
+
+[NOTE]
+====
+**Benchmark Status**: SST and VIPER engines have **benchmark-validated performance data**. Engines marked with * (NOVA, SWIFT, RAPTOR, HELIX) require additional benchmarking to validate performance claims.
+====
 
 === Performance Benchmarks
 

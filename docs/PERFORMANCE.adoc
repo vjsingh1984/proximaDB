@@ -241,87 +241,66 @@ _Note: Normalized using core count, SIMD capabilities, and memory bandwidth rati
 
 === Storage Engine Encoding Performance
 
-==== Encoding/Decoding Benchmarks (M4 Pro)
+==== Chart 1: Compression Strategy Performance (M4 Pro, 10K Vectors)
 
-[cols="4,3,3,3,3", options="header"]
-|===
-|Encoding Strategy |Encode Time |Decode Time |Compression Ratio |Use Case
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "Encoding Strategy: Performance vs Compression Trade-offs"
+    x-axis ["GroupedField", "RowWise", "Columnar", "FastLanes", "Adaptive"]
+    y-axis "Time (ms)" 0 --> 90
+    bar [65.79, 12.45, 89.23, 23.56, 45.0]
+    line [2.31, 1.89, 3.45, 1.02, 2.5]
+----
 
-|**GroupedFieldEncoded**
-|65.79ms/10K vectors
-|2.31ms/10K vectors
-|2.09x
-|Balanced performance
+**Legend**: Bar = Encode Time, Line = Decode Time
 
-|**RowWise**
-|12.45ms/10K vectors
-|1.89ms/10K vectors
-|1.0x (baseline)
-|Low-latency queries
+==== Compression Ratios by Strategy
 
-|**Columnar**
-|89.23ms/10K vectors
-|3.45ms/10K vectors
-|3.21x
-|Maximum compression
-
-|**FastLanes**
-|23.56ms/10K vectors
-|1.02ms/10K vectors
-|1.85x
-|High-speed retrieval
-
-|**Adaptive**
-|Variable
-|Variable
-|1.5-4.0x
-|Auto-optimized
-|===
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "Compression Ratios by Encoding Strategy"
+    x-axis ["GroupedField", "RowWise", "Columnar", "FastLanes", "Adaptive"]
+    y-axis "Compression Ratio (x)" 0 --> 3.5
+    bar [2.09, 1.0, 3.21, 1.85, 2.75]
+----
 
 === Storage Engine Comparison (Benchmark Validated)
 
 **Based on Sep 2025 bench_04_storage_unified results:**
 
-[cols="3,3,3,3,3", options="header"]
-|===
-|Engine |Search Latency |Compression |Space Savings |Flush Time
+==== Chart 2: Engine Performance by Compression Type (768D, 1000 vectors)
 
-|**SST (none)**
-|74.18µs
-|No compression
-|Baseline
-|29ms
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "Storage Engine: Search Latency vs Space Savings"
+    x-axis ["SST-none", "SST-zstd", "SST-lz4", "VIPER-none", "VIPER-zstd", "VIPER-lz4"]
+    y-axis "Search Latency (µs)" 70 --> 85
+    bar [74.18, 78.83, 81.74, 76.31, 76.49, 78.60]
+    line [0, 16.2, 4.9, -58.4, 69.5, 69.5]
+----
 
-|**SST (zstd)**
-|78.83µs
-|ZSTD compression
-|16.2%
-|58ms
+**Legend**: Bar = Search Latency (µs), Line = Space Savings (%)
 
-|**SST (lz4)**
-|81.74µs
-|LZ4 compression
-|4.9%
-|37ms
+==== Chart 3: Engine Flush Performance vs Compression Efficiency
 
-|**VIPER (none)**
-|76.31µs
-|No compression
-|+58.4% size
-|17ms
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "Flush Time vs Compression Trade-offs"
+    x-axis ["SST-none", "SST-zstd", "SST-lz4", "VIPER-none", "VIPER-zstd", "VIPER-lz4"]
+    y-axis "Flush Time (ms)" 0 --> 60
+    bar [29, 58, 37, 17, 21, 16]
+    line [0, 16.2, 4.9, -58.4, 69.5, 69.5]
+----
 
-|**VIPER (zstd)**
-|76.49µs
-|ZSTD compression
-|69.5% savings
-|21ms
-
-|**VIPER (lz4)**
-|78.60µs
-|LZ4 compression
-|69.5% savings
-|16ms
-|===
+**Legend**: Bar = Flush Time (ms), Line = Space Savings (%)
 
 [NOTE]
 ====
@@ -332,66 +311,67 @@ _Note: Normalized using core count, SIMD capabilities, and memory bandwidth rati
 - All engines show consistent sub-100µs search latency
 ====
 
-==== Vector Operations Performance (M4 Pro)
+==== Chart 4: Dimension Scaling Performance (Batch Size = 1000)
 
-[cols="3,3,3,3", options="header"]
-|===
-|Operation |Vectors |Time |Throughput
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "Vector Processing Time by Dimension"
+    x-axis ["384D", "768D", "784D", "1024D", "1536D", "2048D"]
+    y-axis "Time per Vector (μs)" 0 --> 95
+    bar [17.00, 34.43, 34.98, 46.51, 69.33, 92.79]
+    line [17.51, 34.02, 34.85, 45.68, 69.18, 93.24]
+----
 
-|**Create Records**
-|100x768D
-|12.96µs
-|7.71M records/sec
+**Legend**: Bar = No Compression, Line = LZ4 Compression
 
-|**Normalize**
-|1000x768D
-|575.7µs
-|1.74M vectors/sec
+==== Chart 5: Batch Size Scaling Analysis
 
-|**Scale**
-|1000x768D
-|142.4µs
-|7.02M vectors/sec
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "Batch Processing Efficiency (Time per Vector)"
+    x-axis ["784D-1K", "784D-5K", "1536D-1K", "1536D-5K"]
+    y-axis "Time per Vector (μs)" 0 --> 75
+    bar [35.79, 35.86, 69.17, 68.25]
+    line [35.96, 35.49, 58.34, 58.01]
+----
 
-|**Metadata Filter**
-|1000 records
-|13.18µs
-|75.9M filters/sec
+**Legend**: Bar = No Compression, Line = LZ4 Compression
 
-|**Extract Metadata**
-|1000 records
-|29.28µs
-|34.2M extracts/sec
-|===
+==== Chart 6: Vector Operations Throughput (M4 Pro)
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "Vector Operations: Time vs Throughput"
+    x-axis ["Create Records", "Normalize", "Scale", "Metadata Filter", "Extract Metadata"]
+    y-axis "Processing Time (µs)" 0 --> 580
+    bar [12.96, 575.7, 142.4, 13.18, 29.28]
+    line [7.71, 1.74, 7.02, 75.9, 34.2]
+----
+
+**Legend**: Bar = Processing Time (µs), Line = Throughput (M ops/sec)
 
 === System Resource Utilization
 
-==== Resource Usage During Benchmarks (M4 Pro)
+==== Chart 7: Resource Usage During Benchmarks (M4 Pro)
 
-[cols="3,3,3,3", options="header"]
-|===
-|Metric |Baseline (Idle) |During Benchmark |Peak Usage
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "System Resource Utilization (Baseline vs Benchmark)"
+    x-axis ["CPU User %", "CPU Sys %", "Memory GB", "Wired GB", "Free GB"]
+    y-axis "Resource Usage" 0 --> 35
+    bar [12.12, 11.58, 33, 3.631, 14]
+    line [7.15, 7.43, 33, 3.577, 14]
+----
 
-|**CPU Usage**
-|12.12% user, 11.58% sys
-|7.15% user, 7.43% sys
-|<25% total
-
-|**Memory Usage**
-|33GB (system)
-|33GB (stable)
-|No growth during test
-
-|**Memory Allocation**
-|3631MB wired
-|3577MB wired
-|Efficient memory pooling
-
-|**Available Memory**
-|14GB free
-|14GB free
-|No memory pressure
-|===
+**Legend**: Bar = Baseline (Idle), Line = During Benchmark
 
 [NOTE]
 ====
@@ -400,6 +380,28 @@ _Note: Normalized using core count, SIMD capabilities, and memory bandwidth rati
 - Memory usage is stable with no growth, demonstrating effective pooling
 - System maintains 14GB free memory throughout testing
 - Wired memory slightly decreases during operation (memory pool efficiency)
+====
+
+==== Chart 8: Overall Engine Performance Summary (Available Data)
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
+xychart-beta
+    title "Storage Engines: Encoding+Decoding Time vs Compression"
+    x-axis ["SST-none", "SST-zstd", "SST-lz4", "VIPER-none", "VIPER-zstd", "VIPER-lz4", "NOVA*", "SWIFT*", "RAPTOR*", "HELIX*"]
+    y-axis "Combined Time (encode+decode)" 0 --> 85
+    bar [74.18, 78.83, 81.74, 76.31, 76.49, 78.60, 0, 0, 0, 0]
+    line [0, 16.2, 4.9, -58.4, 69.5, 69.5, 0, 0, 0, 0]
+----
+
+**Legend**: Bar = Search Latency (µs), Line = Space Savings (%)
+
+[IMPORTANT]
+====
+**Benchmark Coverage Limitation**: Current benchmarks only include SST and VIPER engines. The remaining 4 engines (NOVA, SWIFT, RAPTOR, HELIX) are marked with * to indicate **no benchmark data available** from Sep 2025 tests.
+
+**Recommendation**: Claims for NOVA, SWIFT, RAPTOR, and HELIX engines should be marked as **unvalidated** until comprehensive benchmarks are available for all 6 storage engines.
 ====
 
 === Performance Comparison Overview
