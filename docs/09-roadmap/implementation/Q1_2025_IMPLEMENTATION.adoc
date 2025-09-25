@@ -1,0 +1,520 @@
+= Q1 2025 Implementation Guide: Search Optimization & Quantization
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+[.lead]
+**Detailed implementation instructions for Q1 2025 features: Advanced Search Optimization and Quantized Vector Precomputation**
+
+== Advanced Search Optimization
+
+=== Overview
+Implement intelligent search routing and cost-based optimization across all 6 storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX).
+
+=== Implementation Steps
+
+==== Step 1: Create AdvancedSearchOptimizer Module
+Location: `src/search/optimizer/mod.rs`
+
+[source,rust]
+----
+// Create new module structure
+src/search/
+├── optimizer/
+│   ├── mod.rs              // Main optimizer module
+│   ├── cost_estimator.rs   // Cost estimation logic
+│   ├── route_planner.rs    // Query routing logic
+│   ├── index_selector.rs   // Index selection logic
+│   └── engine_strategy.rs  // Engine-specific strategies
+----
+
+==== Step 2: Implement Cost Estimator
+File: `src/search/optimizer/cost_estimator.rs`
+
+[source,rust]
+----
+use crate::index::axis::AxisManager;
+use crate::storage::engines::traits::UnifiedStorageEngine;
+
+pub struct CostEstimator {
+    axis_manager: Arc<AxisManager>,
+    cache_stats: Arc<CacheStatistics>,
+}
+
+impl CostEstimator {
+    pub async fn estimate_cost(
+        &self,
+        query: &SearchQuery,
+        engine: &EngineType,
+    ) -> Result<CostEstimate> {
+        // 1. Check HNSW index availability
+        let has_hnsw = self.axis_manager.has_index(
+            &query.collection_id,
+            IndexType::HNSW
+        ).await?;
+
+        // 2. Estimate I/O cost based on cache hit ratio
+        let cache_hit_ratio = self.cache_stats.get_hit_ratio();
+
+        // 3. Calculate engine-specific costs
+        let engine_cost = match engine {
+            EngineType::SST => self.estimate_sst_cost(query, has_hnsw),
+            EngineType::VIPER => self.estimate_viper_cost(query, has_hnsw),
+            EngineType::NOVA => self.estimate_nova_cost(query, has_hnsw),
+            // ... other engines
+        };
+
+        Ok(CostEstimate {
+            cpu_cycles: engine_cost.cpu,
+            memory_bytes: engine_cost.memory,
+            io_operations: engine_cost.io * (1.0 - cache_hit_ratio),
+            estimated_latency_ms: engine_cost.total_ms,
+        })
+    }
+}
+----
+
+==== Step 3: Integrate with Storage Engines
+Modify each engine in `src/storage/engines/impls/*/mod.rs`:
+
+[source,rust]
+----
+// Add to each engine's search method
+impl UnifiedStorageEngine for SSTEngine {
+    async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
+        // NEW: Get optimizer from context
+        let optimizer = self.context.get_search_optimizer()?;
+
+        // NEW: Check if we should use optimized path
+        if let Some(optimized_plan) = optimizer.create_plan(&request).await? {
+            return self.execute_optimized_search(optimized_plan).await;
+        }
+
+        // Existing search logic as fallback
+        self.search_standard(request).await
+    }
+
+    // NEW: Optimized search execution
+    async fn execute_optimized_search(
+        &self,
+        plan: OptimizedSearchPlan,
+    ) -> Result<SearchResponse> {
+        match plan.strategy {
+            SearchStrategy::UseHNSW => {
+                let hnsw_results = self.axis_manager
+                    .search_hnsw(&plan.query)
+                    .await?;
+                self.rerank_with_exact_distance(hnsw_results).await
+            },
+            SearchStrategy::UseQuantized(level) => {
+                self.search_with_quantization(plan.query, level).await
+            },
+            SearchStrategy::Hybrid(primary, secondary) => {
+                self.execute_hybrid_search(primary, secondary).await
+            },
+        }
+    }
+}
+----
+
+==== Step 4: Testing Requirements
+Create test file: `tests/search_optimizer_test.rs`
+
+[source,rust]
+----
+#[tokio::test]
+async fn test_optimizer_routing() {
+    // Test that optimizer correctly routes to HNSW when available
+    let engine = create_test_engine_with_hnsw().await;
+    let query = create_test_query();
+
+    let result = engine.search(query).await.unwrap();
+
+    // Verify HNSW was used
+    assert!(result.metadata.contains("search_method:hnsw"));
+    assert!(result.latency_ms < 50.0); // Should be fast
+}
+
+#[tokio::test]
+async fn test_cost_estimation_accuracy() {
+    // Verify cost estimates are within 20% of actual
+    let estimator = CostEstimator::new();
+    let estimate = estimator.estimate_cost(&query, &EngineType::SST).await?;
+    let actual = measure_actual_cost(&query).await?;
+
+    assert!((estimate.latency_ms - actual.latency_ms).abs()
+            < actual.latency_ms * 0.2);
+}
+----
+
+== Quantized Vector Precomputation
+
+=== Overview
+Precompute quantized representations (Binary, INT8, PQ) during flush operations to eliminate runtime quantization overhead.
+
+=== Implementation Steps
+
+==== Step 1: Extend VectorRecord Proto
+File: `proto/proximadb.proto`
+
+[source,protobuf]
+----
+message VectorRecord {
+    string id = 1;
+    repeated float values = 2;
+    map<string, Value> metadata = 3;
+    int64 timestamp = 4;
+
+    // NEW: Precomputed quantized representations
+    optional QuantizedVectors quantized = 20;
+}
+
+message QuantizedVectors {
+    optional bytes binary = 1;      // 1 bit per dimension
+    optional bytes int8 = 2;        // 8 bits per dimension
+    optional bytes pq4 = 3;         // 4-bit PQ codes
+    optional bytes pq8 = 4;         // 8-bit PQ codes
+    optional bytes pq16 = 5;        // 16-bit PQ codes
+    optional bytes pq32 = 6;        // 32-bit PQ codes
+
+    // Codebook reference for PQ
+    optional string codebook_id = 10;
+}
+----
+
+==== Step 2: Create Precompute Service
+File: `src/compute/quantization/precompute.rs`
+
+[source,rust]
+----
+use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::storage::cache::global::GlobalQuantizationCache;
+
+pub struct QuantizationPrecomputeService {
+    engine: Arc<UnifiedQuantizationEngine>,
+    cache: Arc<GlobalQuantizationCache>,
+}
+
+impl QuantizationPrecomputeService {
+    pub async fn precompute_batch(
+        &self,
+        records: Vec<VectorRecord>,
+        config: &QuantizationConfig,
+    ) -> Result<Vec<VectorRecord>> {
+        // Get or create codebook for this collection
+        let codebook = self.cache
+            .get_or_create_codebook(&config.collection_id)
+            .await?;
+
+        // Process in parallel batches
+        let chunk_size = 1000;
+        let mut handles = Vec::new();
+
+        for chunk in records.chunks(chunk_size) {
+            let engine = self.engine.clone();
+            let cb = codebook.clone();
+            let levels = config.levels.clone();
+
+            let handle = tokio::spawn(async move {
+                Self::precompute_chunk(chunk, &levels, engine, cb).await
+            });
+            handles.push(handle);
+        }
+
+        // Collect results
+        let mut precomputed = Vec::new();
+        for handle in handles {
+            precomputed.extend(handle.await??);
+        }
+
+        Ok(precomputed)
+    }
+
+    async fn precompute_chunk(
+        chunk: &[VectorRecord],
+        levels: &[QuantizationLevel],
+        engine: Arc<UnifiedQuantizationEngine>,
+        codebook: Arc<Codebook>,
+    ) -> Result<Vec<VectorRecord>> {
+        let mut results = Vec::new();
+
+        for record in chunk {
+            let mut quantized = QuantizedVectors::default();
+
+            for level in levels {
+                match level {
+                    QuantizationLevel::Binary => {
+                        quantized.binary = Some(
+                            engine.quantize_binary(&record.values)?
+                        );
+                    },
+                    QuantizationLevel::Int8 => {
+                        quantized.int8 = Some(
+                            engine.quantize_int8(&record.values)?
+                        );
+                    },
+                    QuantizationLevel::PQ(bits) => {
+                        let pq_data = engine.quantize_pq(
+                            &record.values,
+                            *bits,
+                            &codebook
+                        )?;
+                        match bits {
+                            4 => quantized.pq4 = Some(pq_data),
+                            8 => quantized.pq8 = Some(pq_data),
+                            16 => quantized.pq16 = Some(pq_data),
+                            32 => quantized.pq32 = Some(pq_data),
+                            _ => {}
+                        }
+                    },
+                }
+            }
+
+            quantized.codebook_id = Some(codebook.id.clone());
+
+            let mut new_record = record.clone();
+            new_record.quantized = Some(quantized);
+            results.push(new_record);
+        }
+
+        Ok(results)
+    }
+}
+----
+
+==== Step 3: Integrate with Flush Operations
+Modify all engines' flush operations:
+
+File: `src/storage/engines/impls/sst/flush.rs`
+
+[source,rust]
+----
+impl SSTEngine {
+    async fn do_flush(&self, params: FlushParameters) -> Result<FlushResult> {
+        let records = self.write_buffer.drain_batch(params.batch_size)?;
+
+        // NEW: Precompute quantized vectors if enabled
+        let records = if params.collection_config.quantization.enabled {
+            let precompute = QuantizationPrecomputeService::new(
+                self.quantization_engine.clone()
+            );
+            precompute.precompute_batch(
+                records,
+                &params.collection_config.quantization
+            ).await?
+        } else {
+            records
+        };
+
+        // Write to storage with quantized data
+        let sstable = SSTableBuilder::new()
+            .add_records(records)
+            .with_compression(params.compression)
+            .build()?;
+
+        self.filesystem.write_sstable(&sstable).await?;
+
+        Ok(FlushResult {
+            records_flushed: records.len(),
+            bytes_written: sstable.size_bytes(),
+            has_quantized: params.collection_config.quantization.enabled,
+        })
+    }
+}
+----
+
+==== Step 4: Update Search to Use Precomputed Vectors
+File: `src/storage/engines/impls/*/search.rs`
+
+[source,rust]
+----
+impl SSTEngine {
+    async fn search_with_quantization(
+        &self,
+        request: SearchRequest,
+        level: QuantizationLevel,
+    ) -> Result<SearchResponse> {
+        // Quantize query vector once
+        let query_quantized = self.quantization_engine
+            .quantize(&request.query_vector, level)
+            .await?;
+
+        // Scan using precomputed quantized vectors
+        let mut candidates = Vec::new();
+
+        for sstable in self.get_sstables().await? {
+            // Read only quantized data, not full vectors
+            let quantized_scan = sstable
+                .scan_quantized(level)
+                .await?;
+
+            for (id, quantized_vector) in quantized_scan {
+                let distance = match level {
+                    QuantizationLevel::Binary => {
+                        compute_hamming_distance(&query_quantized, &quantized_vector)
+                    },
+                    QuantizationLevel::Int8 => {
+                        compute_int8_distance(&query_quantized, &quantized_vector)
+                    },
+                    QuantizationLevel::PQ(_) => {
+                        compute_pq_distance(&query_quantized, &quantized_vector)
+                    },
+                };
+
+                candidates.push((id, distance));
+            }
+        }
+
+        // Re-rank top candidates with full precision if needed
+        candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        candidates.truncate(request.top_k * 10); // Overselect
+
+        let final_results = if request.use_exact_reranking {
+            self.rerank_with_full_vectors(candidates, &request.query_vector).await?
+        } else {
+            candidates.into_iter()
+                .take(request.top_k)
+                .collect()
+        };
+
+        Ok(SearchResponse {
+            results: final_results,
+            search_method: format!("quantized_{:?}", level),
+        })
+    }
+}
+----
+
+==== Step 5: Configuration
+File: `config/config.toml`
+
+[source,toml]
+----
+[compute.quantization.precompute]
+enabled = true
+levels = ["binary", "int8", "pq8"]  # Levels to precompute
+max_batch_size = 10000               # Vectors per batch
+parallel_workers = 4                  # Concurrent quantization threads
+cache_codebooks = true                # Cache codebooks in memory
+
+[compute.quantization.storage]
+strategy = "inline"      # inline or columnar
+compression = "lz4"      # Compress quantized vectors
+deduplicate = true       # Deduplicate identical quantized vectors
+----
+
+==== Step 6: Testing and Benchmarks
+File: `benches/bench_17_precomputed_quantization.rs`
+
+[source,rust]
+----
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+fn benchmark_search_performance(c: &mut Criterion) {
+    let mut group = c.benchmark_group("precomputed_quantization");
+
+    // Setup: Create engine with precomputed vectors
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let engine_with_precompute = rt.block_on(create_engine_with_precompute());
+    let engine_without = rt.block_on(create_engine_without_precompute());
+
+    // Benchmark: Search with precomputed quantization
+    group.bench_function("search_with_precomputed", |b| {
+        b.to_async(&rt).iter(|| async {
+            engine_with_precompute
+                .search(black_box(create_test_query()))
+                .await
+                .unwrap()
+        });
+    });
+
+    // Benchmark: Search with runtime quantization
+    group.bench_function("search_with_runtime_quantization", |b| {
+        b.to_async(&rt).iter(|| async {
+            engine_without
+                .search(black_box(create_test_query()))
+                .await
+                .unwrap()
+        });
+    });
+
+    group.finish();
+}
+
+fn benchmark_storage_overhead(c: &mut Criterion) {
+    // Measure storage overhead of precomputed vectors
+    let mut group = c.benchmark_group("storage_overhead");
+
+    group.bench_function("storage_with_quantized", |b| {
+        b.iter(|| {
+            let size = measure_storage_size_with_quantized();
+            black_box(size)
+        });
+    });
+
+    group.bench_function("storage_without_quantized", |b| {
+        b.iter(|| {
+            let size = measure_storage_size_without_quantized();
+            black_box(size)
+        });
+    });
+
+    group.finish();
+}
+----
+
+=== Migration Path
+
+==== Week 1: Core Infrastructure
+1. Implement AdvancedSearchOptimizer module structure
+2. Create CostEstimator with basic cost models
+3. Extend VectorRecord proto with QuantizedVectors
+
+==== Week 2: Engine Integration
+1. Integrate optimizer with SST engine
+2. Integrate optimizer with VIPER engine
+3. Add precomputation to flush operations
+
+==== Week 3: Remaining Engines
+1. Integrate with NOVA, SWIFT, RAPTOR, HELIX engines
+2. Implement columnar storage for quantized vectors
+3. Add configuration management
+
+==== Week 4: Testing and Optimization
+1. Comprehensive testing across all engines
+2. Performance benchmarking
+3. Documentation and examples
+
+=== Success Metrics
+
+==== Performance Targets
+- **Search Latency**: < 10µs for cached quantized searches
+- **Throughput**: > 100K queries/sec with quantization
+- **Storage Overhead**: < 30% increase with all quantization levels
+- **Precomputation Time**: < 100ms per 10K vectors
+
+==== Quality Metrics
+- **Recall@10**: > 95% for INT8, > 90% for binary
+- **Test Coverage**: > 90% for new code
+- **Documentation**: Complete API docs and examples
+
+=== Common Pitfalls to Avoid
+
+1. **Don't block flush operations**: Use async precomputation
+2. **Don't store redundant data**: Deduplicate identical quantized vectors
+3. **Don't ignore memory limits**: Implement streaming for large batches
+4. **Don't break compatibility**: Support reading old data without quantized vectors
+5. **Don't hardcode strategies**: Make optimizer configurable
+
+=== Rollback Plan
+
+If issues arise:
+1. Feature flag to disable optimizer: `search.optimizer.enabled = false`
+2. Fallback to standard search when optimizer fails
+3. Skip precomputation if it fails during flush
+4. Keep existing search code paths intact
+
+---
+
+_This implementation guide should be followed step-by-step, with regular testing after each major component._

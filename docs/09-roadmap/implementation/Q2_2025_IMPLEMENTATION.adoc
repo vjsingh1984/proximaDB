@@ -1,0 +1,888 @@
+= Q2 2025 Implementation Guide: Graph Database & Multi-Modal Search
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+[.lead]
+**Detailed implementation instructions for Q2 2025 features: Graph Database Enhancement and Multi-Modal Search**
+
+== Graph Database Enhancement
+
+=== Overview
+Extend ProximaDB with full-featured graph database capabilities including native graph traversal, distributed processing, and GraphQL API.
+
+=== Implementation Steps
+
+==== Step 1: Create Graph Storage Layer
+Location: `src/graph/storage/mod.rs`
+
+[source,rust]
+----
+// Module structure
+src/graph/
+├── storage/
+│   ├── mod.rs           // Graph storage traits
+│   ├── node.rs          // Node storage
+│   ├── edge.rs          // Edge storage
+│   ├── properties.rs    // Property storage
+│   └── index.rs         // Graph indexes
+├── traversal/
+│   ├── mod.rs           // Traversal engine
+│   ├── bfs.rs           // Breadth-first search
+│   ├── dfs.rs           // Depth-first search
+│   ├── dijkstra.rs     // Shortest path
+│   └── pagerank.rs     // PageRank algorithm
+├── query/
+│   ├── mod.rs           // Query engine
+│   ├── cypher.rs        // Cypher query language
+│   └── graphql.rs       // GraphQL API
+└── distributed/
+    ├── mod.rs           // Distributed graph processing
+    └── partition.rs     // Graph partitioning
+----
+
+==== Step 2: Implement Graph Data Model
+File: `src/graph/storage/node.rs`
+
+[source,rust]
+----
+use crate::storage::engines::traits::UnifiedStorageEngine;
+use crate::proto::proximadb::VectorRecord;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub labels: Vec<String>,
+    pub properties: HashMap<String, Value>,
+    pub vector: Option<Vec<f32>>,  // Optional embedding
+    pub edges_out: Vec<EdgeRef>,
+    pub edges_in: Vec<EdgeRef>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub id: String,
+    pub from_node: String,
+    pub to_node: String,
+    pub edge_type: String,
+    pub properties: HashMap<String, Value>,
+    pub weight: f32,
+}
+
+pub struct GraphStorage {
+    nodes: Arc<dyn UnifiedStorageEngine>,
+    edges: Arc<dyn UnifiedStorageEngine>,
+    node_index: Arc<AxisManager>,  // Reuse AXIS for vector similarity
+}
+
+impl GraphStorage {
+    pub async fn create_node(&self, node: GraphNode) -> Result<String> {
+        // Store node with optional vector embedding
+        let record = VectorRecord {
+            id: node.id.clone(),
+            values: node.vector.unwrap_or_default(),
+            metadata: self.node_to_metadata(&node),
+            timestamp: Utc::now().timestamp_millis(),
+            ..Default::default()
+        };
+
+        // Store in appropriate engine based on access pattern
+        let engine = if node.vector.is_some() {
+            // Use NOVA for vector-enabled nodes
+            self.nodes.get_engine(EngineType::NOVA)?
+        } else {
+            // Use SST for pure graph nodes
+            self.nodes.get_engine(EngineType::SST)?
+        };
+
+        engine.insert(vec![record]).await?;
+
+        // Index node for fast lookup
+        self.index_node(&node).await?;
+
+        Ok(node.id)
+    }
+
+    pub async fn create_edge(&self, edge: GraphEdge) -> Result<String> {
+        // Validate nodes exist
+        self.validate_nodes(&edge.from_node, &edge.to_node).await?;
+
+        // Store edge
+        let edge_record = self.edge_to_record(&edge);
+        self.edges.insert(vec![edge_record]).await?;
+
+        // Update node edge lists
+        self.update_node_edges(&edge).await?;
+
+        Ok(edge.id)
+    }
+
+    async fn index_node(&self, node: &GraphNode) -> Result<()> {
+        // Create label index
+        for label in &node.labels {
+            self.node_index.add_to_label_index(label, &node.id).await?;
+        }
+
+        // Create property indexes
+        for (key, value) in &node.properties {
+            if self.is_indexed_property(key) {
+                self.node_index.add_to_property_index(key, value, &node.id).await?;
+            }
+        }
+
+        // Index vector if present
+        if let Some(vector) = &node.vector {
+            self.node_index.add_vector(&node.id, vector).await?;
+        }
+
+        Ok(())
+    }
+}
+----
+
+==== Step 3: Implement Graph Traversal Engine
+File: `src/graph/traversal/mod.rs`
+
+[source,rust]
+----
+pub struct TraversalEngine {
+    storage: Arc<GraphStorage>,
+    cache: Arc<TraversalCache>,
+}
+
+impl TraversalEngine {
+    pub async fn bfs(
+        &self,
+        start_node: &str,
+        max_depth: usize,
+        filter: Option<TraversalFilter>,
+    ) -> Result<Vec<TraversalPath>> {
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        let mut paths = Vec::new();
+
+        queue.push_back((start_node.to_string(), 0, vec![start_node.to_string()]));
+        visited.insert(start_node.to_string());
+
+        while let Some((node_id, depth, path)) = queue.pop_front() {
+            if depth >= max_depth {
+                continue;
+            }
+
+            // Get neighbors with caching
+            let neighbors = self.get_neighbors(&node_id, &filter).await?;
+
+            for neighbor in neighbors {
+                if !visited.contains(&neighbor.id) {
+                    visited.insert(neighbor.id.clone());
+
+                    let mut new_path = path.clone();
+                    new_path.push(neighbor.id.clone());
+
+                    paths.push(TraversalPath {
+                        nodes: new_path.clone(),
+                        total_weight: self.calculate_path_weight(&new_path).await?,
+                        depth: depth + 1,
+                    });
+
+                    queue.push_back((neighbor.id, depth + 1, new_path));
+                }
+            }
+        }
+
+        Ok(paths)
+    }
+
+    pub async fn shortest_path(
+        &self,
+        start: &str,
+        end: &str,
+        weight_fn: Option<WeightFunction>,
+    ) -> Result<Option<TraversalPath>> {
+        // Dijkstra's algorithm with A* optimization if vectors available
+        let mut distances = HashMap::new();
+        let mut previous = HashMap::new();
+        let mut heap = BinaryHeap::new();
+
+        distances.insert(start.to_string(), 0.0);
+        heap.push(HeapNode {
+            node_id: start.to_string(),
+            cost: 0.0,
+        });
+
+        // Use vector similarity for A* heuristic if available
+        let end_vector = self.storage.get_node_vector(end).await?;
+
+        while let Some(HeapNode { node_id, cost }) = heap.pop() {
+            if node_id == end {
+                return Ok(Some(self.reconstruct_path(&previous, end)));
+            }
+
+            if cost > *distances.get(&node_id).unwrap_or(&f32::MAX) {
+                continue;
+            }
+
+            let neighbors = self.storage.get_neighbors(&node_id).await?;
+
+            for neighbor in neighbors {
+                let edge_weight = weight_fn
+                    .as_ref()
+                    .map(|f| f(&node_id, &neighbor.id))
+                    .unwrap_or(1.0);
+
+                let new_cost = cost + edge_weight;
+
+                // A* heuristic using vector similarity
+                let heuristic = if let (Some(neighbor_vec), Some(end_vec)) =
+                    (neighbor.vector.as_ref(), end_vector.as_ref()) {
+                    1.0 - cosine_similarity(neighbor_vec, end_vec)
+                } else {
+                    0.0
+                };
+
+                let priority = new_cost + heuristic;
+
+                if new_cost < *distances.get(&neighbor.id).unwrap_or(&f32::MAX) {
+                    distances.insert(neighbor.id.clone(), new_cost);
+                    previous.insert(neighbor.id.clone(), node_id.clone());
+                    heap.push(HeapNode {
+                        node_id: neighbor.id,
+                        cost: priority,
+                    });
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    pub async fn pagerank(
+        &self,
+        damping_factor: f32,
+        iterations: usize,
+    ) -> Result<HashMap<String, f32>> {
+        // Distributed PageRank implementation
+        let all_nodes = self.storage.get_all_node_ids().await?;
+        let num_nodes = all_nodes.len() as f32;
+
+        let mut ranks = HashMap::new();
+        for node_id in &all_nodes {
+            ranks.insert(node_id.clone(), 1.0 / num_nodes);
+        }
+
+        for _ in 0..iterations {
+            let mut new_ranks = HashMap::new();
+
+            for node_id in &all_nodes {
+                let mut rank = (1.0 - damping_factor) / num_nodes;
+
+                let incoming = self.storage.get_incoming_edges(node_id).await?;
+                for edge in incoming {
+                    let source_outgoing_count = self.storage
+                        .get_outgoing_count(&edge.from_node)
+                        .await? as f32;
+
+                    let source_rank = ranks.get(&edge.from_node).unwrap_or(&0.0);
+                    rank += damping_factor * source_rank / source_outgoing_count;
+                }
+
+                new_ranks.insert(node_id.clone(), rank);
+            }
+
+            ranks = new_ranks;
+        }
+
+        Ok(ranks)
+    }
+}
+----
+
+==== Step 4: Implement GraphQL API
+File: `src/graph/query/graphql.rs`
+
+[source,rust]
+----
+use async_graphql::{Context, Object, Result, Schema, SimpleObject};
+
+#[derive(SimpleObject)]
+struct GraphNodeQL {
+    id: String,
+    labels: Vec<String>,
+    properties: serde_json::Value,
+    vector_similarity: Option<f32>,
+}
+
+#[derive(Default)]
+pub struct QueryRoot;
+
+#[Object]
+impl QueryRoot {
+    async fn node(&self, ctx: &Context<'_>, id: String) -> Result<Option<GraphNodeQL>> {
+        let storage = ctx.data::<Arc<GraphStorage>>()?;
+
+        match storage.get_node(&id).await {
+            Ok(node) => Ok(Some(node.into())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn search_nodes(
+        &self,
+        ctx: &Context<'_>,
+        labels: Option<Vec<String>>,
+        properties: Option<serde_json::Value>,
+        vector: Option<Vec<f32>>,
+        limit: Option<i32>,
+    ) -> Result<Vec<GraphNodeQL>> {
+        let storage = ctx.data::<Arc<GraphStorage>>()?;
+
+        let mut query = NodeQuery::new();
+
+        if let Some(labels) = labels {
+            query = query.with_labels(labels);
+        }
+
+        if let Some(props) = properties {
+            query = query.with_properties(props);
+        }
+
+        if let Some(vec) = vector {
+            query = query.similar_to_vector(vec, 0.8);
+        }
+
+        let results = storage.search_nodes(query, limit.unwrap_or(10)).await?;
+        Ok(results.into_iter().map(Into::into).collect())
+    }
+
+    async fn traverse(
+        &self,
+        ctx: &Context<'_>,
+        start_node: String,
+        pattern: String,  // Cypher-like pattern
+        max_depth: i32,
+    ) -> Result<Vec<TraversalResult>> {
+        let engine = ctx.data::<Arc<TraversalEngine>>()?;
+
+        let pattern = parse_traversal_pattern(&pattern)?;
+        let paths = engine.traverse(&start_node, pattern, max_depth as usize).await?;
+
+        Ok(paths.into_iter().map(Into::into).collect())
+    }
+}
+
+#[derive(Default)]
+pub struct MutationRoot;
+
+#[Object]
+impl MutationRoot {
+    async fn create_node(
+        &self,
+        ctx: &Context<'_>,
+        labels: Vec<String>,
+        properties: serde_json::Value,
+        vector: Option<Vec<f32>>,
+    ) -> Result<GraphNodeQL> {
+        let storage = ctx.data::<Arc<GraphStorage>>()?;
+
+        let node = GraphNode {
+            id: generate_id(),
+            labels,
+            properties: serde_to_properties(properties)?,
+            vector,
+            edges_out: Vec::new(),
+            edges_in: Vec::new(),
+        };
+
+        storage.create_node(node.clone()).await?;
+        Ok(node.into())
+    }
+
+    async fn create_edge(
+        &self,
+        ctx: &Context<'_>,
+        from_node: String,
+        to_node: String,
+        edge_type: String,
+        properties: Option<serde_json::Value>,
+    ) -> Result<GraphEdgeQL> {
+        let storage = ctx.data::<Arc<GraphStorage>>()?;
+
+        let edge = GraphEdge {
+            id: generate_id(),
+            from_node,
+            to_node,
+            edge_type,
+            properties: properties
+                .map(serde_to_properties)
+                .transpose()?
+                .unwrap_or_default(),
+            weight: 1.0,
+        };
+
+        storage.create_edge(edge.clone()).await?;
+        Ok(edge.into())
+    }
+}
+
+pub fn create_schema(storage: Arc<GraphStorage>, engine: Arc<TraversalEngine>) -> Schema<QueryRoot, MutationRoot, async_graphql::EmptySubscription> {
+    Schema::build(QueryRoot, MutationRoot, async_graphql::EmptySubscription)
+        .data(storage)
+        .data(engine)
+        .finish()
+}
+----
+
+== Multi-Modal Search
+
+=== Overview
+Implement unified search across text, vectors, metadata, and graph relationships with hybrid scoring and cross-modal reranking.
+
+=== Implementation Steps
+
+==== Step 1: Create Multi-Modal Index
+File: `src/multimodal/index/mod.rs`
+
+[source,rust]
+----
+pub struct MultiModalIndex {
+    vector_index: Arc<AxisManager>,
+    text_index: Arc<TextSearchEngine>,
+    graph_index: Arc<GraphStorage>,
+    metadata_index: Arc<MetadataIndex>,
+    fusion_engine: Arc<FusionEngine>,
+}
+
+impl MultiModalIndex {
+    pub async fn index_document(&self, doc: MultiModalDocument) -> Result<()> {
+        // Index vector embedding
+        if let Some(vector) = doc.vector {
+            self.vector_index.add_vector(&doc.id, &vector).await?;
+        }
+
+        // Index text content
+        if let Some(text) = doc.text {
+            self.text_index.index_text(&doc.id, &text).await?;
+        }
+
+        // Index metadata
+        self.metadata_index.index_metadata(&doc.id, &doc.metadata).await?;
+
+        // Index graph relationships
+        if let Some(relationships) = doc.relationships {
+            for rel in relationships {
+                self.graph_index.create_edge(rel).await?;
+            }
+        }
+
+        Ok(())
+    }
+}
+----
+
+==== Step 2: Implement Text Search Engine
+File: `src/multimodal/text/engine.rs`
+
+[source,rust]
+----
+use tantivy::{Index, IndexWriter, Document, Field};
+
+pub struct TextSearchEngine {
+    index: Index,
+    writer: Arc<Mutex<IndexWriter>>,
+    analyzer: TextAnalyzer,
+}
+
+impl TextSearchEngine {
+    pub async fn index_text(&self, doc_id: &str, text: &str) -> Result<()> {
+        // Tokenize and analyze text
+        let tokens = self.analyzer.analyze(text)?;
+
+        // Create inverted index entry
+        let mut doc = Document::new();
+        doc.add_text(self.fields.id, doc_id);
+        doc.add_text(self.fields.content, text);
+
+        // Add analyzed tokens
+        for token in tokens {
+            doc.add_text(self.fields.tokens, &token);
+        }
+
+        // Add to index
+        self.writer.lock().await.add_document(doc)?;
+
+        Ok(())
+    }
+
+    pub async fn search_text(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<TextSearchResult>> {
+        let searcher = self.index.reader()?.searcher();
+        let query = self.build_query(query)?;
+
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
+
+        let mut results = Vec::new();
+        for (_score, doc_address) in top_docs {
+            let doc = searcher.doc(doc_address)?;
+            let doc_id = doc.get_first(self.fields.id)
+                .and_then(|v| v.as_text())
+                .ok_or_else(|| anyhow!("Missing doc id"))?;
+
+            results.push(TextSearchResult {
+                doc_id: doc_id.to_string(),
+                score: _score,
+                highlights: self.generate_highlights(&doc, query)?,
+            });
+        }
+
+        Ok(results)
+    }
+
+    fn build_query(&self, query_str: &str) -> Result<Box<dyn Query>> {
+        // Support multiple query types
+        if query_str.contains("AND") || query_str.contains("OR") {
+            // Boolean query
+            self.build_boolean_query(query_str)
+        } else if query_str.contains("*") || query_str.contains("?") {
+            // Wildcard query
+            self.build_wildcard_query(query_str)
+        } else if query_str.starts_with("\"") && query_str.ends_with("\"") {
+            // Phrase query
+            self.build_phrase_query(&query_str[1..query_str.len()-1])
+        } else {
+            // Default: fuzzy matching
+            self.build_fuzzy_query(query_str)
+        }
+    }
+}
+----
+
+==== Step 3: Implement Fusion Engine
+File: `src/multimodal/fusion/engine.rs`
+
+[source,rust]
+----
+pub struct FusionEngine {
+    strategies: HashMap<String, Box<dyn FusionStrategy>>,
+}
+
+pub trait FusionStrategy: Send + Sync {
+    async fn fuse(
+        &self,
+        results: MultiModalResults,
+        weights: &FusionWeights,
+    ) -> Result<Vec<FusedResult>>;
+}
+
+pub struct RecipocalRankFusion;
+
+impl FusionStrategy for RecipocalRankFusion {
+    async fn fuse(
+        &self,
+        results: MultiModalResults,
+        weights: &FusionWeights,
+    ) -> Result<Vec<FusedResult>> {
+        let mut doc_scores = HashMap::new();
+
+        // RRF formula: score = sum(1 / (k + rank))
+        let k = 60.0;
+
+        // Process vector results
+        for (rank, result) in results.vector_results.iter().enumerate() {
+            let score = weights.vector * (1.0 / (k + rank as f32 + 1.0));
+            *doc_scores.entry(result.id.clone()).or_insert(0.0) += score;
+        }
+
+        // Process text results
+        for (rank, result) in results.text_results.iter().enumerate() {
+            let score = weights.text * (1.0 / (k + rank as f32 + 1.0));
+            *doc_scores.entry(result.doc_id.clone()).or_insert(0.0) += score;
+        }
+
+        // Process metadata results
+        for (rank, result) in results.metadata_results.iter().enumerate() {
+            let score = weights.metadata * (1.0 / (k + rank as f32 + 1.0));
+            *doc_scores.entry(result.id.clone()).or_insert(0.0) += score;
+        }
+
+        // Process graph results (with relationship bonus)
+        for (rank, result) in results.graph_results.iter().enumerate() {
+            let base_score = weights.graph * (1.0 / (k + rank as f32 + 1.0));
+            let relationship_bonus = result.path_length as f32 * 0.1;
+            let score = base_score * (1.0 + relationship_bonus);
+            *doc_scores.entry(result.node_id.clone()).or_insert(0.0) += score;
+        }
+
+        // Sort by fused score
+        let mut fused: Vec<_> = doc_scores
+            .into_iter()
+            .map(|(id, score)| FusedResult { id, score, sources: vec![] })
+            .collect();
+
+        fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+
+        Ok(fused)
+    }
+}
+
+pub struct LearnedFusion {
+    model: Arc<RerankingModel>,
+}
+
+impl FusionStrategy for LearnedFusion {
+    async fn fuse(
+        &self,
+        results: MultiModalResults,
+        weights: &FusionWeights,
+    ) -> Result<Vec<FusedResult>> {
+        // Use learned model to rerank
+        let features = self.extract_features(&results)?;
+        let scores = self.model.predict(&features).await?;
+
+        let mut fused = Vec::new();
+        for (idx, doc_id) in self.get_unique_docs(&results).iter().enumerate() {
+            fused.push(FusedResult {
+                id: doc_id.clone(),
+                score: scores[idx],
+                sources: self.get_sources(doc_id, &results),
+            });
+        }
+
+        fused.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        Ok(fused)
+    }
+}
+----
+
+==== Step 4: Implement Multi-Modal Search API
+File: `src/multimodal/search/mod.rs`
+
+[source,rust]
+----
+pub struct MultiModalSearchEngine {
+    index: Arc<MultiModalIndex>,
+    fusion: Arc<FusionEngine>,
+    reranker: Option<Arc<CrossModalReranker>>,
+}
+
+impl MultiModalSearchEngine {
+    pub async fn search(
+        &self,
+        query: MultiModalQuery,
+    ) -> Result<MultiModalSearchResponse> {
+        // Parallel search across modalities
+        let (vector_results, text_results, metadata_results, graph_results) = tokio::join!(
+            self.search_vectors(&query),
+            self.search_text(&query),
+            self.search_metadata(&query),
+            self.search_graph(&query),
+        );
+
+        let results = MultiModalResults {
+            vector_results: vector_results?,
+            text_results: text_results?,
+            metadata_results: metadata_results?,
+            graph_results: graph_results?,
+        };
+
+        // Fuse results
+        let mut fused = self.fusion
+            .fuse(results.clone(), &query.fusion_weights)
+            .await?;
+
+        // Cross-modal reranking if available
+        if let Some(reranker) = &self.reranker {
+            fused = reranker.rerank(fused, &query, &results).await?;
+        }
+
+        // Apply result limit
+        fused.truncate(query.limit);
+
+        Ok(MultiModalSearchResponse {
+            results: fused,
+            search_time_ms: start.elapsed().as_millis() as f32,
+            modalities_used: self.get_used_modalities(&query),
+        })
+    }
+
+    async fn search_vectors(&self, query: &MultiModalQuery) -> Result<Vec<VectorResult>> {
+        if let Some(vector) = &query.vector {
+            self.index.vector_index
+                .search_similar(vector, query.vector_limit.unwrap_or(100))
+                .await
+        } else if let Some(text) = &query.text {
+            // Generate vector from text using embedding model
+            let vector = self.generate_embedding(text).await?;
+            self.index.vector_index
+                .search_similar(&vector, query.vector_limit.unwrap_or(100))
+                .await
+        } else {
+            Ok(Vec::new())
+        }
+    }
+}
+----
+
+==== Step 5: Testing and Benchmarks
+File: `tests/multimodal_test.rs`
+
+[source,rust]
+----
+#[tokio::test]
+async fn test_graph_traversal() {
+    let storage = create_test_graph_storage().await;
+
+    // Create test graph
+    let node1 = storage.create_node(GraphNode {
+        id: "user1".to_string(),
+        labels: vec!["User".to_string()],
+        properties: hashmap!{ "name" => "Alice" },
+        vector: Some(vec![0.1, 0.2, 0.3]),
+        ..Default::default()
+    }).await.unwrap();
+
+    let node2 = storage.create_node(GraphNode {
+        id: "doc1".to_string(),
+        labels: vec!["Document".to_string()],
+        properties: hashmap!{ "title" => "Research Paper" },
+        vector: Some(vec![0.4, 0.5, 0.6]),
+        ..Default::default()
+    }).await.unwrap();
+
+    storage.create_edge(GraphEdge {
+        id: "edge1".to_string(),
+        from_node: node1,
+        to_node: node2,
+        edge_type: "AUTHORED".to_string(),
+        ..Default::default()
+    }).await.unwrap();
+
+    // Test traversal
+    let engine = TraversalEngine::new(storage);
+    let paths = engine.bfs(&node1, 2, None).await.unwrap();
+
+    assert!(!paths.is_empty());
+    assert!(paths[0].nodes.contains(&node2));
+}
+
+#[tokio::test]
+async fn test_multimodal_search() {
+    let engine = create_test_multimodal_engine().await;
+
+    // Index multimodal document
+    engine.index.index_document(MultiModalDocument {
+        id: "doc1".to_string(),
+        text: Some("Machine learning research paper on transformers".to_string()),
+        vector: Some(vec![0.1; 1536]),
+        metadata: hashmap!{
+            "author" => "Alice",
+            "year" => 2024,
+            "category" => "AI"
+        },
+        relationships: Some(vec![
+            GraphEdge {
+                from_node: "doc1".to_string(),
+                to_node: "author1".to_string(),
+                edge_type: "WRITTEN_BY".to_string(),
+                ..Default::default()
+            }
+        ]),
+    }).await.unwrap();
+
+    // Search with multiple modalities
+    let results = engine.search(MultiModalQuery {
+        text: Some("transformers AI".to_string()),
+        vector: Some(vec![0.09; 1536]),
+        metadata_filter: Some(hashmap!{ "year" => 2024 }),
+        graph_traverse: Some(TraversalPattern {
+            start_labels: vec!["Document".to_string()],
+            max_depth: 2,
+        }),
+        fusion_weights: FusionWeights {
+            vector: 0.4,
+            text: 0.3,
+            metadata: 0.2,
+            graph: 0.1,
+        },
+        limit: 10,
+        ..Default::default()
+    }).await.unwrap();
+
+    assert!(!results.results.is_empty());
+    assert_eq!(results.results[0].id, "doc1");
+    assert!(results.modalities_used.contains(&"vector"));
+    assert!(results.modalities_used.contains(&"text"));
+}
+----
+
+=== Configuration
+File: `config/config.toml`
+
+[source,toml]
+----
+[graph]
+enabled = true
+storage_engine = "SST"  # Primary engine for graph data
+vector_enabled_nodes = true
+max_traversal_depth = 10
+cache_traversals = true
+distributed_processing = false
+
+[graph.indexes]
+label_index = true
+property_indexes = ["name", "type", "category"]
+vector_index = true
+
+[multimodal]
+enabled = true
+fusion_strategy = "reciprocal_rank"  # or "learned"
+reranking_enabled = true
+
+[multimodal.text]
+analyzer = "english"
+enable_fuzzy = true
+enable_synonyms = true
+max_edit_distance = 2
+
+[multimodal.weights]
+vector = 0.4
+text = 0.3
+metadata = 0.2
+graph = 0.1
+----
+
+=== Migration Path
+
+==== Week 1: Graph Foundation
+1. Implement graph storage layer
+2. Create node and edge data models
+3. Basic CRUD operations
+
+==== Week 2: Graph Algorithms
+1. Implement BFS/DFS traversal
+2. Add shortest path algorithms
+3. Implement PageRank
+
+==== Week 3: Multi-Modal Foundation
+1. Create multi-modal index structure
+2. Implement text search engine
+3. Add metadata indexing
+
+==== Week 4: Integration & Testing
+1. Implement fusion strategies
+2. Add GraphQL API
+3. Performance testing and optimization
+
+=== Success Metrics
+
+- **Graph Operations**: < 10ms for single-hop traversal
+- **Multi-Modal Search**: < 100ms for fused search
+- **Throughput**: > 10K graph operations/sec
+- **Accuracy**: > 95% precision@10 for multi-modal search
+
+---
+
+_This implementation guide provides the foundation for graph and multi-modal capabilities in ProximaDB._

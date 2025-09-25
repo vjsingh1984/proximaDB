@@ -1,0 +1,1075 @@
+= Q3 2025 Implementation Guide: Advanced Security & Distributed Operations
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+[.lead]
+**Detailed implementation instructions for Q3 2025 features: Enterprise Security and Distributed Operations**
+
+== Advanced Security
+
+=== Overview
+Implement enterprise-grade security features including row-level security, field-level encryption, audit logging, and SSO integration.
+
+=== Implementation Steps
+
+==== Step 1: Create Security Framework
+Location: `src/security/mod.rs`
+
+[source,rust]
+----
+// Module structure
+src/security/
+├── auth/
+│   ├── mod.rs           // Authentication core
+│   ├── jwt.rs           // JWT token handling
+│   ├── oauth.rs         // OAuth 2.0 / OIDC
+│   ├── saml.rs          // SAML integration
+│   └── mfa.rs           // Multi-factor authentication
+├── authorization/
+│   ├── mod.rs           // Authorization core
+│   ├── rbac.rs          // Role-based access control
+│   ├── abac.rs          // Attribute-based access control
+│   └── policies.rs      // Policy engine
+├── encryption/
+│   ├── mod.rs           // Encryption core
+│   ├── field_level.rs   // Field-level encryption
+│   ├── key_manager.rs   // Key management
+│   └── vault.rs         // HashiCorp Vault integration
+├── audit/
+│   ├── mod.rs           // Audit logging
+│   ├── collector.rs     // Event collection
+│   ├── storage.rs       // Audit log storage
+│   └── compliance.rs    // Compliance reporting
+└── rls/
+    ├── mod.rs           // Row-level security
+    ├── predicates.rs    // Security predicates
+    └── filters.rs       // Query filters
+----
+
+==== Step 2: Implement Row-Level Security (RLS)
+File: `src/security/rls/mod.rs`
+
+[source,rust]
+----
+use crate::storage::engines::traits::UnifiedStorageEngine;
+
+#[derive(Clone, Debug)]
+pub struct RLSPolicy {
+    pub name: String,
+    pub table: String,
+    pub operation: Operation,
+    pub predicate: SecurityPredicate,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum SecurityPredicate {
+    /// User can only see their own data
+    OwnerOnly { owner_field: String },
+
+    /// User can see data based on roles
+    RoleBased { allowed_roles: Vec<String> },
+
+    /// Custom SQL-like predicate
+    Custom { expression: String },
+
+    /// Combination of predicates
+    And(Vec<SecurityPredicate>),
+    Or(Vec<SecurityPredicate>),
+}
+
+pub struct RLSEngine {
+    policies: Arc<RwLock<HashMap<String, Vec<RLSPolicy>>>>,
+    context_provider: Arc<dyn SecurityContextProvider>,
+}
+
+impl RLSEngine {
+    pub async fn apply_rls_filter(
+        &self,
+        query: &mut SearchRequest,
+        user_context: &UserContext,
+    ) -> Result<()> {
+        let collection = &query.collection_id;
+        let policies = self.policies.read().await.get(collection).cloned();
+
+        if let Some(policies) = policies {
+            for policy in policies {
+                if !policy.enabled {
+                    continue;
+                }
+
+                if policy.applies_to_operation(&query.operation) {
+                    let filter = self.build_filter(&policy.predicate, user_context)?;
+                    query.add_security_filter(filter);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn build_filter(
+        &self,
+        predicate: &SecurityPredicate,
+        context: &UserContext,
+    ) -> Result<MetadataFilter> {
+        match predicate {
+            SecurityPredicate::OwnerOnly { owner_field } => {
+                Ok(MetadataFilter::Equals {
+                    field: owner_field.clone(),
+                    value: Value::String(context.user_id.clone()),
+                })
+            },
+            SecurityPredicate::RoleBased { allowed_roles } => {
+                let user_roles = &context.roles;
+                let has_access = allowed_roles
+                    .iter()
+                    .any(|role| user_roles.contains(role));
+
+                if has_access {
+                    Ok(MetadataFilter::AlwaysTrue)
+                } else {
+                    Ok(MetadataFilter::AlwaysFalse)
+                }
+            },
+            SecurityPredicate::Custom { expression } => {
+                self.parse_custom_predicate(expression, context)
+            },
+            SecurityPredicate::And(predicates) => {
+                let filters = predicates
+                    .iter()
+                    .map(|p| self.build_filter(p, context))
+                    .collect::<Result<Vec<_>>>()?;
+
+                Ok(MetadataFilter::And(filters))
+            },
+            SecurityPredicate::Or(predicates) => {
+                let filters = predicates
+                    .iter()
+                    .map(|p| self.build_filter(p, context))
+                    .collect::<Result<Vec<_>>>()?;
+
+                Ok(MetadataFilter::Or(filters))
+            },
+        }
+    }
+}
+
+// Integration with storage engines
+impl UnifiedStorageEngine for SecureStorageWrapper {
+    async fn search(&self, mut request: SearchRequest) -> Result<SearchResponse> {
+        // Get user context from request
+        let user_context = self.extract_user_context(&request)?;
+
+        // Apply RLS filters
+        self.rls_engine.apply_rls_filter(&mut request, &user_context).await?;
+
+        // Log access attempt
+        self.audit_logger.log_access(
+            &user_context,
+            "search",
+            &request.collection_id,
+        ).await?;
+
+        // Execute search with filters
+        let response = self.inner_engine.search(request).await?;
+
+        // Filter results again for defense in depth
+        let filtered = self.post_filter_results(response, &user_context).await?;
+
+        Ok(filtered)
+    }
+}
+----
+
+==== Step 3: Implement Field-Level Encryption
+File: `src/security/encryption/field_level.rs`
+
+[source,rust]
+----
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+use ring::rand::{SecureRandom, SystemRandom};
+
+pub struct FieldEncryption {
+    key_manager: Arc<KeyManager>,
+    encryption_configs: HashMap<String, FieldEncryptionConfig>,
+}
+
+#[derive(Clone)]
+pub struct FieldEncryptionConfig {
+    pub collection: String,
+    pub fields: Vec<FieldSpec>,
+    pub algorithm: EncryptionAlgorithm,
+    pub key_rotation_days: u32,
+}
+
+#[derive(Clone)]
+pub struct FieldSpec {
+    pub path: String,  // JSON path like "personal.ssn"
+    pub encryption_type: EncryptionType,
+}
+
+#[derive(Clone)]
+pub enum EncryptionType {
+    /// Deterministic encryption - same input always produces same output
+    Deterministic,
+    /// Random encryption - different output each time
+    Random,
+    /// Format-preserving encryption
+    FormatPreserving { format: String },
+}
+
+impl FieldEncryption {
+    pub async fn encrypt_record(
+        &self,
+        record: &mut VectorRecord,
+        config: &FieldEncryptionConfig,
+    ) -> Result<()> {
+        for field_spec in &config.fields {
+            if let Some(value) = self.get_field_value(&record.metadata, &field_spec.path) {
+                let encrypted = self.encrypt_value(
+                    value,
+                    &field_spec.encryption_type,
+                    &config.algorithm,
+                ).await?;
+
+                self.set_field_value(
+                    &mut record.metadata,
+                    &field_spec.path,
+                    encrypted,
+                )?;
+            }
+        }
+
+        // Add encryption metadata
+        record.metadata.insert(
+            "__encrypted_fields".to_string(),
+            Value::Array(
+                config.fields
+                    .iter()
+                    .map(|f| Value::String(f.path.clone()))
+                    .collect(),
+            ),
+        );
+
+        Ok(())
+    }
+
+    async fn encrypt_value(
+        &self,
+        value: &Value,
+        enc_type: &EncryptionType,
+        algorithm: &EncryptionAlgorithm,
+    ) -> Result<Value> {
+        let plaintext = serde_json::to_vec(value)?;
+
+        let ciphertext = match enc_type {
+            EncryptionType::Deterministic => {
+                // Use deterministic IV based on content hash
+                let iv = self.generate_deterministic_iv(&plaintext);
+                self.encrypt_with_iv(&plaintext, &iv, algorithm).await?
+            },
+            EncryptionType::Random => {
+                // Use random IV for each encryption
+                let iv = self.generate_random_iv();
+                self.encrypt_with_iv(&plaintext, &iv, algorithm).await?
+            },
+            EncryptionType::FormatPreserving { format } => {
+                self.format_preserving_encrypt(&plaintext, format).await?
+            },
+        };
+
+        Ok(Value::Object(hashmap! {
+            "encrypted" => Value::Bool(true),
+            "algorithm" => Value::String(algorithm.to_string()),
+            "ciphertext" => Value::Bytes(ciphertext),
+            "key_version" => Value::Number(self.key_manager.current_version()),
+        }))
+    }
+
+    pub async fn decrypt_record(
+        &self,
+        record: &mut VectorRecord,
+    ) -> Result<()> {
+        if let Some(encrypted_fields) = record.metadata.get("__encrypted_fields") {
+            if let Value::Array(fields) = encrypted_fields {
+                for field in fields {
+                    if let Value::String(path) = field {
+                        if let Some(encrypted_value) = self.get_field_value(&record.metadata, path) {
+                            let decrypted = self.decrypt_value(encrypted_value).await?;
+                            self.set_field_value(&mut record.metadata, path, decrypted)?;
+                        }
+                    }
+                }
+            }
+
+            // Remove encryption metadata
+            record.metadata.remove("__encrypted_fields");
+        }
+
+        Ok(())
+    }
+}
+
+// Key rotation
+pub struct KeyManager {
+    vault_client: Arc<VaultClient>,
+    keys: Arc<RwLock<HashMap<u32, EncryptionKey>>>,
+    current_version: AtomicU32,
+}
+
+impl KeyManager {
+    pub async fn rotate_keys(&self) -> Result<()> {
+        // Generate new key
+        let new_key = self.vault_client.generate_key().await?;
+        let new_version = self.current_version.fetch_add(1, Ordering::SeqCst) + 1;
+
+        // Store in vault
+        self.vault_client.store_key(&format!("v{}", new_version), &new_key).await?;
+
+        // Update local cache
+        self.keys.write().await.insert(new_version, new_key);
+
+        // Re-encrypt data with new key in background
+        tokio::spawn(async move {
+            self.reencrypt_with_new_key(new_version).await
+        });
+
+        Ok(())
+    }
+}
+----
+
+==== Step 4: Implement Audit Logging
+File: `src/security/audit/mod.rs`
+
+[source,rust]
+----
+#[derive(Clone, Debug, Serialize)]
+pub struct AuditEvent {
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub user_id: String,
+    pub session_id: String,
+    pub action: String,
+    pub resource: String,
+    pub result: AuditResult,
+    pub metadata: HashMap<String, Value>,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub enum AuditResult {
+    Success,
+    Failure { reason: String },
+    Denied { policy: String },
+}
+
+pub struct AuditLogger {
+    storage: Arc<AuditStorage>,
+    compliance: Arc<ComplianceEngine>,
+    real_time_stream: Option<Arc<KafkaProducer>>,
+}
+
+impl AuditLogger {
+    pub async fn log(&self, event: AuditEvent) -> Result<()> {
+        // Enrich event with system metadata
+        let mut enriched = event.clone();
+        enriched.metadata.insert(
+            "server_version".to_string(),
+            Value::String(env!("CARGO_PKG_VERSION").to_string()),
+        );
+
+        // Check compliance requirements
+        if self.compliance.requires_immediate_storage(&enriched) {
+            self.storage.store_immediate(&enriched).await?;
+        } else {
+            self.storage.store_buffered(&enriched).await?;
+        }
+
+        // Stream to real-time consumers if configured
+        if let Some(stream) = &self.real_time_stream {
+            stream.send(&enriched).await?;
+        }
+
+        // Alert on suspicious activity
+        if self.is_suspicious(&enriched) {
+            self.trigger_security_alert(&enriched).await?;
+        }
+
+        Ok(())
+    }
+
+    fn is_suspicious(&self, event: &AuditEvent) -> bool {
+        // Detect anomalies
+        match &event.result {
+            AuditResult::Failure { reason } if reason.contains("authentication") => {
+                // Multiple failed auth attempts
+                self.check_failed_auth_rate(&event.user_id) > 5
+            },
+            AuditResult::Success if event.action == "bulk_export" => {
+                // Large data export
+                event.metadata
+                    .get("record_count")
+                    .and_then(|v| v.as_u64())
+                    .map(|count| count > 100000)
+                    .unwrap_or(false)
+            },
+            _ => false,
+        }
+    }
+}
+
+// Compliance reporting
+pub struct ComplianceEngine {
+    regulations: Vec<Box<dyn ComplianceRegulation>>,
+}
+
+#[async_trait]
+pub trait ComplianceRegulation: Send + Sync {
+    fn name(&self) -> &str;
+    fn applies_to(&self, event: &AuditEvent) -> bool;
+    fn retention_days(&self) -> u32;
+    async fn generate_report(&self, events: &[AuditEvent]) -> Result<ComplianceReport>;
+}
+
+pub struct GDPRCompliance;
+
+impl ComplianceRegulation for GDPRCompliance {
+    fn name(&self) -> &str { "GDPR" }
+
+    fn applies_to(&self, event: &AuditEvent) -> bool {
+        // GDPR applies to EU user data
+        event.metadata
+            .get("user_region")
+            .and_then(|v| v.as_str())
+            .map(|region| region.starts_with("EU"))
+            .unwrap_or(false)
+    }
+
+    fn retention_days(&self) -> u32 { 90 }
+
+    async fn generate_report(&self, events: &[AuditEvent]) -> Result<ComplianceReport> {
+        Ok(ComplianceReport {
+            regulation: self.name().to_string(),
+            period: "Last 30 days".to_string(),
+            data_access_requests: self.count_data_access(events),
+            data_deletion_requests: self.count_data_deletion(events),
+            consent_changes: self.count_consent_changes(events),
+            breaches: self.identify_breaches(events),
+        })
+    }
+}
+----
+
+== Distributed Operations
+
+=== Overview
+Implement horizontal scalability with multi-node clustering, automatic sharding, cross-region replication, and zero-downtime upgrades.
+
+=== Implementation Steps
+
+==== Step 1: Create Distributed Coordinator
+File: `src/distributed/coordinator/mod.rs`
+
+[source,rust]
+----
+use etcd_rs::{Client as EtcdClient, Watch, WatchOptions};
+
+pub struct DistributedCoordinator {
+    node_id: String,
+    etcd_client: Arc<EtcdClient>,
+    cluster_state: Arc<RwLock<ClusterState>>,
+    heartbeat_interval: Duration,
+}
+
+#[derive(Clone, Debug)]
+pub struct ClusterState {
+    pub leader: Option<String>,
+    pub nodes: HashMap<String, NodeInfo>,
+    pub shards: HashMap<String, ShardAssignment>,
+    pub replication_groups: HashMap<String, ReplicationGroup>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NodeInfo {
+    pub id: String,
+    pub address: SocketAddr,
+    pub status: NodeStatus,
+    pub capacity: NodeCapacity,
+    pub last_heartbeat: DateTime<Utc>,
+    pub zone: String,
+    pub region: String,
+}
+
+impl DistributedCoordinator {
+    pub async fn start(&self) -> Result<()> {
+        // Register node
+        self.register_node().await?;
+
+        // Start heartbeat
+        let heartbeat_handle = self.start_heartbeat();
+
+        // Watch cluster changes
+        let watch_handle = self.watch_cluster_changes();
+
+        // Participate in leader election
+        if self.should_participate_in_election() {
+            self.participate_in_leader_election().await?;
+        }
+
+        tokio::select! {
+            _ = heartbeat_handle => {},
+            _ = watch_handle => {},
+        }
+
+        Ok(())
+    }
+
+    async fn register_node(&self) -> Result<()> {
+        let node_info = NodeInfo {
+            id: self.node_id.clone(),
+            address: self.get_bind_address(),
+            status: NodeStatus::Starting,
+            capacity: self.calculate_capacity(),
+            last_heartbeat: Utc::now(),
+            zone: env::var("ZONE").unwrap_or_else(|_| "default".to_string()),
+            region: env::var("REGION").unwrap_or_else(|_| "default".to_string()),
+        };
+
+        let key = format!("/proximadb/nodes/{}", self.node_id);
+        let value = serde_json::to_string(&node_info)?;
+
+        self.etcd_client
+            .put(key, value, None)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn participate_in_leader_election(&self) -> Result<()> {
+        let election_key = "/proximadb/leader";
+        let lease = self.etcd_client.lease_grant(10, None).await?;
+
+        loop {
+            // Try to become leader
+            match self.etcd_client
+                .compare_and_swap(
+                    election_key,
+                    self.node_id.clone(),
+                    None,  // No current value expected
+                    Some(lease.id()),
+                )
+                .await
+            {
+                Ok(_) => {
+                    info!("Node {} became leader", self.node_id);
+                    self.run_as_leader().await?;
+                },
+                Err(_) => {
+                    // Not leader, watch for changes
+                    self.watch_leader().await?;
+                }
+            }
+
+            // Keep lease alive if leader
+            if self.is_leader().await {
+                self.etcd_client.lease_keep_alive(lease.id()).await?;
+            }
+
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
+    async fn run_as_leader(&self) -> Result<()> {
+        // Manage shard assignments
+        self.rebalance_shards().await?;
+
+        // Monitor node health
+        self.monitor_cluster_health().await?;
+
+        // Coordinate migrations
+        self.coordinate_migrations().await?;
+
+        Ok(())
+    }
+}
+----
+
+==== Step 2: Implement Sharding
+File: `src/distributed/sharding/mod.rs`
+
+[source,rust]
+----
+pub struct ShardManager {
+    coordinator: Arc<DistributedCoordinator>,
+    local_shards: Arc<RwLock<HashMap<ShardId, Shard>>>,
+    routing_table: Arc<RwLock<RoutingTable>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Shard {
+    pub id: ShardId,
+    pub collection: String,
+    pub range: ShardRange,
+    pub primary: String,  // Node ID
+    pub replicas: Vec<String>,
+    pub status: ShardStatus,
+    pub engine: Arc<dyn UnifiedStorageEngine>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ShardRange {
+    Hash { start: u64, end: u64 },
+    Range { start: Vec<u8>, end: Vec<u8> },
+    Geo { region: GeoRegion },
+}
+
+impl ShardManager {
+    pub async fn route_request(&self, request: &SearchRequest) -> Result<Vec<ShardId>> {
+        let routing_key = self.extract_routing_key(request)?;
+        let routing_table = self.routing_table.read().await;
+
+        let shards = routing_table.get_shards_for_key(
+            &request.collection_id,
+            &routing_key,
+        )?;
+
+        // Filter by locality preference
+        if request.prefer_local {
+            let local_shards = self.filter_local_shards(&shards).await;
+            if !local_shards.is_empty() {
+                return Ok(local_shards);
+            }
+        }
+
+        Ok(shards)
+    }
+
+    pub async fn execute_distributed_search(
+        &self,
+        request: SearchRequest,
+    ) -> Result<SearchResponse> {
+        let shards = self.route_request(&request).await?;
+
+        // Execute search on each shard in parallel
+        let mut handles = Vec::new();
+        for shard_id in shards {
+            let shard = self.get_shard(&shard_id).await?;
+            let req = request.clone();
+
+            let handle = tokio::spawn(async move {
+                shard.engine.search(req).await
+            });
+            handles.push(handle);
+        }
+
+        // Collect and merge results
+        let mut all_results = Vec::new();
+        for handle in handles {
+            let result = handle.await??;
+            all_results.extend(result.results);
+        }
+
+        // Global reranking
+        all_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        all_results.truncate(request.top_k);
+
+        Ok(SearchResponse {
+            results: all_results,
+            metadata: hashmap! {
+                "shards_queried" => Value::Number(shards.len() as i64),
+            },
+        })
+    }
+
+    pub async fn split_shard(&self, shard_id: &ShardId) -> Result<(ShardId, ShardId)> {
+        let shard = self.get_shard(shard_id).await?;
+
+        // Create two new shards
+        let (new_shard1, new_shard2) = match &shard.range {
+            ShardRange::Hash { start, end } => {
+                let midpoint = (start + end) / 2;
+                (
+                    Shard {
+                        id: generate_shard_id(),
+                        collection: shard.collection.clone(),
+                        range: ShardRange::Hash { start: *start, end: midpoint },
+                        ..Default::default()
+                    },
+                    Shard {
+                        id: generate_shard_id(),
+                        collection: shard.collection.clone(),
+                        range: ShardRange::Hash { start: midpoint + 1, end: *end },
+                        ..Default::default()
+                    },
+                )
+            },
+            _ => return Err(anyhow!("Unsupported shard range type for splitting")),
+        };
+
+        // Migrate data
+        self.migrate_shard_data(&shard, &new_shard1, &new_shard2).await?;
+
+        // Update routing table
+        self.update_routing_table_for_split(shard_id, &new_shard1.id, &new_shard2.id).await?;
+
+        Ok((new_shard1.id, new_shard2.id))
+    }
+}
+----
+
+==== Step 3: Implement Replication
+File: `src/distributed/replication/mod.rs`
+
+[source,rust]
+----
+pub struct ReplicationManager {
+    node_id: String,
+    replication_factor: usize,
+    consistency_level: ConsistencyLevel,
+    wal: Arc<WriteAheadLog>,
+}
+
+#[derive(Clone, Debug)]
+pub enum ConsistencyLevel {
+    One,       // Write to at least one replica
+    Quorum,    // Write to majority of replicas
+    All,       // Write to all replicas
+    Local,     // Write to local datacenter only
+    LocalQuorum,  // Quorum within local datacenter
+}
+
+impl ReplicationManager {
+    pub async fn replicate_write(
+        &self,
+        operation: WriteOperation,
+        shard: &Shard,
+    ) -> Result<()> {
+        // Write to WAL first
+        let wal_position = self.wal.append(&operation).await?;
+
+        // Determine required replicas based on consistency level
+        let required_acks = match self.consistency_level {
+            ConsistencyLevel::One => 1,
+            ConsistencyLevel::Quorum => (shard.replicas.len() + 1) / 2 + 1,
+            ConsistencyLevel::All => shard.replicas.len() + 1,
+            ConsistencyLevel::Local => 1,  // Just local write
+            ConsistencyLevel::LocalQuorum => {
+                let local_replicas = self.get_local_replicas(&shard.replicas);
+                (local_replicas.len() + 1) / 2 + 1
+            },
+        };
+
+        // Send to replicas in parallel
+        let mut handles = Vec::new();
+        for replica_node in &shard.replicas {
+            let op = operation.clone();
+            let node = replica_node.clone();
+
+            let handle = tokio::spawn(async move {
+                self.send_to_replica(&node, op).await
+            });
+            handles.push(handle);
+        }
+
+        // Wait for required acknowledgments
+        let mut acks = 1;  // Local write counts as 1
+        let mut errors = Vec::new();
+
+        for handle in handles {
+            match tokio::time::timeout(Duration::from_secs(5), handle).await {
+                Ok(Ok(Ok(_))) => {
+                    acks += 1;
+                    if acks >= required_acks {
+                        // Early return on sufficient acks
+                        return Ok(());
+                    }
+                },
+                Ok(Ok(Err(e))) => errors.push(e),
+                Ok(Err(e)) => errors.push(anyhow!("Join error: {}", e)),
+                Err(_) => errors.push(anyhow!("Timeout waiting for replica")),
+            }
+        }
+
+        if acks < required_acks {
+            return Err(anyhow!(
+                "Insufficient replicas: got {} acks, needed {}. Errors: {:?}",
+                acks, required_acks, errors
+            ));
+        }
+
+        Ok(())
+    }
+
+    async fn send_to_replica(
+        &self,
+        node_id: &str,
+        operation: WriteOperation,
+    ) -> Result<()> {
+        let client = self.get_node_client(node_id).await?;
+
+        client.replicate(ReplicationRequest {
+            operation,
+            source_node: self.node_id.clone(),
+            timestamp: Utc::now().timestamp_millis(),
+        }).await?;
+
+        Ok(())
+    }
+
+    pub async fn handle_node_failure(&self, failed_node: &str) -> Result<()> {
+        // Find all shards where failed node was primary or replica
+        let affected_shards = self.find_affected_shards(failed_node).await?;
+
+        for shard in affected_shards {
+            if shard.primary == failed_node {
+                // Promote replica to primary
+                self.promote_replica(&shard).await?;
+            }
+
+            // Add new replica to maintain replication factor
+            self.add_replacement_replica(&shard, failed_node).await?;
+        }
+
+        Ok(())
+    }
+}
+----
+
+==== Step 4: Implement Zero-Downtime Upgrades
+File: `src/distributed/upgrade/mod.rs`
+
+[source,rust]
+----
+pub struct UpgradeCoordinator {
+    coordinator: Arc<DistributedCoordinator>,
+    migration_manager: Arc<MigrationManager>,
+}
+
+impl UpgradeCoordinator {
+    pub async fn perform_rolling_upgrade(
+        &self,
+        target_version: &str,
+    ) -> Result<()> {
+        let nodes = self.coordinator.get_all_nodes().await?;
+
+        // Group nodes by availability zone for high availability
+        let nodes_by_zone = self.group_by_zone(nodes);
+
+        for (zone, zone_nodes) in nodes_by_zone {
+            info!("Upgrading zone: {}", zone);
+
+            // Upgrade one node at a time within zone
+            for node in zone_nodes {
+                self.upgrade_node(&node, target_version).await?;
+
+                // Wait for cluster to stabilize
+                self.wait_for_cluster_health().await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn upgrade_node(&self, node: &NodeInfo, version: &str) -> Result<()> {
+        // 1. Drain node - stop accepting new requests
+        self.drain_node(&node.id).await?;
+
+        // 2. Migrate primary shards to other nodes
+        self.migrate_primaries_from_node(&node.id).await?;
+
+        // 3. Perform upgrade
+        self.execute_upgrade(&node.id, version).await?;
+
+        // 4. Verify node health
+        self.verify_node_upgraded(&node.id, version).await?;
+
+        // 5. Restore traffic
+        self.restore_node_traffic(&node.id).await?;
+
+        Ok(())
+    }
+
+    async fn migrate_primaries_from_node(&self, node_id: &str) -> Result<()> {
+        let shards = self.coordinator.get_node_primary_shards(node_id).await?;
+
+        for shard in shards {
+            // Select best replica to promote
+            let new_primary = self.select_best_replica(&shard).await?;
+
+            // Perform leader change
+            self.change_shard_leader(&shard, new_primary).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn perform_schema_migration(
+        &self,
+        migration: SchemaMigration,
+    ) -> Result<()> {
+        // Phase 1: Dual write - write to both old and new schema
+        self.enable_dual_write(&migration).await?;
+
+        // Phase 2: Migrate existing data
+        self.migrate_existing_data(&migration).await?;
+
+        // Phase 3: Switch reads to new schema
+        self.switch_reads_to_new_schema(&migration).await?;
+
+        // Phase 4: Stop writing to old schema
+        self.disable_old_schema_writes(&migration).await?;
+
+        // Phase 5: Clean up old data
+        self.cleanup_old_schema(&migration).await?;
+
+        Ok(())
+    }
+}
+----
+
+==== Step 5: Testing
+File: `tests/distributed_test.rs`
+
+[source,rust]
+----
+#[tokio::test]
+async fn test_distributed_search() {
+    let cluster = create_test_cluster(3).await;
+
+    // Create sharded collection
+    cluster.create_collection(CollectionConfig {
+        name: "test_collection".to_string(),
+        dimension: 1536,
+        sharding: ShardingConfig {
+            strategy: ShardingStrategy::Hash,
+            shard_count: 6,
+            replication_factor: 2,
+        },
+    }).await.unwrap();
+
+    // Insert data
+    let records = create_test_records(10000);
+    cluster.insert("test_collection", records).await.unwrap();
+
+    // Search across shards
+    let results = cluster.search(SearchRequest {
+        collection_id: "test_collection".to_string(),
+        query_vector: vec![0.1; 1536],
+        top_k: 10,
+        consistency: ConsistencyLevel::Quorum,
+    }).await.unwrap();
+
+    assert_eq!(results.results.len(), 10);
+}
+
+#[tokio::test]
+async fn test_node_failure_recovery() {
+    let cluster = create_test_cluster(5).await;
+
+    // Kill one node
+    cluster.kill_node(2).await;
+
+    // Cluster should still be functional
+    let result = cluster.health_check().await;
+    assert!(result.is_ok());
+
+    // Data should still be accessible
+    let search_result = cluster.search(create_test_query()).await;
+    assert!(search_result.is_ok());
+}
+
+#[tokio::test]
+async fn test_zero_downtime_upgrade() {
+    let cluster = create_test_cluster(3).await;
+
+    // Start upgrade process
+    let upgrade_handle = tokio::spawn(async move {
+        cluster.perform_rolling_upgrade("v2.0.0").await
+    });
+
+    // Continuously send requests during upgrade
+    let mut success_count = 0;
+    for _ in 0..100 {
+        if cluster.search(create_test_query()).await.is_ok() {
+            success_count += 1;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // Should maintain high availability
+    assert!(success_count > 95);  // Allow < 5% failure
+
+    upgrade_handle.await.unwrap().unwrap();
+}
+----
+
+=== Configuration
+File: `config/distributed.toml`
+
+[source,toml]
+----
+[cluster]
+node_id = "node-1"
+bind_address = "0.0.0.0:5680"
+advertise_address = "10.0.1.5:5680"
+data_dir = "/var/lib/proximadb"
+
+[coordination]
+backend = "etcd"  # or "consul", "zookeeper"
+endpoints = ["http://etcd1:2379", "http://etcd2:2379", "http://etcd3:2379"]
+session_timeout_ms = 30000
+heartbeat_interval_ms = 5000
+
+[sharding]
+strategy = "hash"  # or "range", "geo"
+default_shard_count = 32
+max_shard_size_gb = 100
+auto_split = true
+auto_rebalance = true
+
+[replication]
+factor = 3
+consistency_level = "quorum"
+sync_replication = false
+max_lag_ms = 5000
+
+[security]
+tls_enabled = true
+cert_file = "/etc/proximadb/certs/server.crt"
+key_file = "/etc/proximadb/certs/server.key"
+ca_file = "/etc/proximadb/certs/ca.crt"
+
+[security.rls]
+enabled = true
+default_policy = "deny_all"
+
+[security.encryption]
+field_level_enabled = true
+key_provider = "vault"
+vault_address = "https://vault.example.com"
+vault_token = "${VAULT_TOKEN}"
+
+[security.audit]
+enabled = true
+storage = "postgres"
+connection_string = "${AUDIT_DB_URL}"
+retention_days = 90
+real_time_streaming = true
+kafka_brokers = ["kafka1:9092", "kafka2:9092"]
+----
+
+=== Success Metrics
+
+- **Security**: Zero security breaches, 100% audit coverage
+- **Availability**: 99.99% uptime during upgrades
+- **Scalability**: Linear scaling to 100+ nodes
+- **Performance**: < 10ms cross-region replication lag
+
+---
+
+_This implementation provides enterprise-grade security and distributed operations for ProximaDB._
