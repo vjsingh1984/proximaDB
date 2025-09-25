@@ -294,6 +294,7 @@ use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::
     BlockCompressionConfig, BlockStatistics, ColumnStatistics, FastLanesBlockMetadata,
     FastLanesDataBlock,
 };
+use crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout;
 
 // SST filename operations are handled by unified FilenameCodec from compaction_orchestrator
 
@@ -1158,6 +1159,7 @@ pub fn optimal_block_size(vector_dim: usize) -> usize {
 // SST-specific utility functions for FastLanesDataBlock
 mod block_utils {
     use super::*;
+    use crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout;
 
     /// Create a new FastLanesDataBlock for SST usage
     pub fn create_sst_block(records: Vec<VectorRecord>, block_id: u32) -> FastLanesDataBlock {

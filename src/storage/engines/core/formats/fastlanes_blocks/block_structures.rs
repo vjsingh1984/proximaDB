@@ -783,9 +783,8 @@ impl FastLanesDataBlock {
                 // Determine engine profile from compression config or use default
                 let engine_profile = EngineProfile::SST; // Default, can be overridden
                 if let Err(e) = block.apply_simd_encoding(&vectors, compression_config.vector_layout, engine_profile) {
-                        debug!("Failed to apply SIMD encoding: {}, falling back to FullVector", e);
-                        block.vector_layout = VectorEncodingLayout::FullVector;
-                    }
+                    debug!("Failed to apply SIMD encoding: {}, falling back to FullVector", e);
+                    block.vector_layout = VectorEncodingLayout::FullVector;
                 }
             }
         }
@@ -886,9 +885,8 @@ impl FastLanesDataBlock {
 
             if !vectors.is_empty() {
                 if let Err(e) = block.apply_simd_encoding(&vectors, compression_config.vector_layout, engine_profile) {
-                        debug!("Failed to apply SIMD encoding: {}, falling back to FullVector", e);
-                        block.vector_layout = VectorEncodingLayout::FullVector;
-                    }
+                    debug!("Failed to apply SIMD encoding: {}, falling back to FullVector", e);
+                    block.vector_layout = VectorEncodingLayout::FullVector;
                 }
             }
         }
