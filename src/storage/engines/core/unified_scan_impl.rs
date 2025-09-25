@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::unified_scan_strategy::{ScanStrategy, ScanIterator, ScanStatistics};
 use crate::storage::traits::UnifiedStorageEngine;
 

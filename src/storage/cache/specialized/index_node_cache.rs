@@ -2,7 +2,6 @@ use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::metrics::CacheMetrics;
 use crate::storage::cache::traits::{BaseCache, CacheValue};
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Index node that can be cached
@@ -55,7 +54,7 @@ impl IndexNodeCache {
     }
 
     /// Get cache metrics
-    pub fn metrics(&self) -> &CacheMetrics {
+    pub fn metrics(&self) -> &crate::storage::traits::UnifiedMetricsCollector {
         self.base.metrics()
     }
 }
@@ -65,7 +64,7 @@ impl IndexNodeCache {
 // ========================================================================================
 
 /// SSTable index entry with block metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstIndexEntry {
     pub key: String,
     pub block_offset: u64,
@@ -77,7 +76,7 @@ pub struct SstIndexEntry {
 }
 
 /// Complete SSTable index structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstableIndex {
     pub file_path: String,
     pub entries: Vec<SstIndexEntry>,
@@ -87,7 +86,7 @@ pub struct SstableIndex {
 }
 
 /// Metadata statistics for predicate pushdown
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetadataStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,

@@ -21,7 +21,6 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -94,7 +93,7 @@ impl Default for MetadataWALConfig {
 }
 
 /// Collection metadata with versioning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VersionedCollectionMetadata {
     pub id: String,
     pub name: String,
@@ -116,7 +115,7 @@ pub struct VersionedCollectionMetadata {
 }
 
 /// Access pattern hints for optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AccessPattern {
     /// Frequently accessed, keep hot
     Hot,
@@ -129,7 +128,7 @@ pub enum AccessPattern {
 }
 
 /// Retention policy for collections
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetentionPolicy {
     pub retain_days: u32,
     pub auto_archive: bool,
@@ -614,7 +613,7 @@ impl MetadataWriteAheadLog {
     fn metadata_to_vector_record(
         &self,
         metadata: &VersionedCollectionMetadata,
-    ) -> Result<crate::core::VectorRecord> {
+    ) -> Result<crate::proto::proximadb_v1::VectorRecord> {
         // Serialize metadata to JSON, then to bytes as a "vector"
         let json = serde_json::to_vec(metadata)?;
         let vector = json.iter().map(|&b| b as f32).collect();
@@ -636,7 +635,7 @@ impl MetadataWriteAheadLog {
     /// Convert vector record back to metadata
     fn vector_record_to_metadata(
         &self,
-        record: &crate::core::VectorRecord,
+        record: &crate::proto::proximadb_v1::VectorRecord,
     ) -> Result<VersionedCollectionMetadata> {
         // Convert float vector back to bytes
         let bytes: Vec<u8> = record.vector.iter().map(|&f| f as u8).collect();

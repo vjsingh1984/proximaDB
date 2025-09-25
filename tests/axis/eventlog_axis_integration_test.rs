@@ -19,10 +19,10 @@ use proximadb::core::VectorRecord;
 use proximadb::index::axis::{AxisManager, AxisConfig};
 use proximadb::index::axis::eventlog::{EventLogService, EventType, StorageEngineType};
 use proximadb::index::axis::eventlog_consumer::{start_axis_consumer, ConsumerConfig};
-use proximadb::proto::proximadb::{Collection, CollectionConfig, DistanceMetric};
+use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, DistanceMetric};
 use proximadb::services::event_log_service::EventLogServiceImpl;
-use proximadb::storage::engines::sst::SstEngine;
-use proximadb::storage::engines::viper::ViperEngine;
+use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use dashmap::DashMap;
 
@@ -371,7 +371,7 @@ async fn test_viper_event_processing() -> Result<()> {
         config: Some(CollectionConfig {
             dimension: 384,
             distance_metric: DistanceMetric::Cosine as i32,
-            quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
+            quantization: Some(proximadb::proto::proximadb_v1::QuantizationConfig {
                 enabled: true,
                 method: 1, // ProductQuantization
                 num_subvectors: Some(48),
@@ -620,7 +620,7 @@ async fn test_extraction_modes() -> Result<()> {
             config: Some(CollectionConfig {
                 dimension: 256,
                 distance_metric: DistanceMetric::Cosine as i32,
-                quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
+                quantization: Some(proximadb::proto::proximadb_v1::QuantizationConfig {
                     enabled: true,
                     method: 2, // ScalarQuantization
                     num_subvectors: Some(32),
@@ -647,7 +647,7 @@ async fn test_extraction_modes() -> Result<()> {
             config: Some(CollectionConfig {
                 dimension: 384,
                 distance_metric: DistanceMetric::DotProduct as i32,
-                quantization: Some(proximadb::proto::proximadb::QuantizationConfig {
+                quantization: Some(proximadb::proto::proximadb_v1::QuantizationConfig {
                     enabled: true,
                     method: 1, // ProductQuantization
                     num_subvectors: Some(48),

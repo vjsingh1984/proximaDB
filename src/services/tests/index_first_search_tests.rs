@@ -43,20 +43,15 @@ mod tests {
             let mut collections = self.collections.write().await;
 
             let config = CollectionConfig {
+                name: id.to_string(),
                 dimension: 128,
                 distance_metric: DistanceMetric::Cosine as i32,
                 storage_engine: StorageEngine::Viper as i32,
-                primary_indexing_algorithm: if has_index {
-                    IndexingAlgorithm::Hnsw as i32
-                } else {
-                    IndexingAlgorithm::IndexingAlgorithmUnspecified as i32
-                },
                 ..Default::default()
             };
 
             let collection = Collection {
                 id: id.to_string(),
-                name: id.to_string(),
                 config: Some(config),
                 ..Default::default()
             };
@@ -242,10 +237,10 @@ mod tests {
         // This test verifies that metadata filters are properly
         // converted to HybridQuery metadata_filters and pushed to indexes
 
-        let search_params = SearchParams {
+        let _search_params = SearchParams {
             filter_expression: Some(FilterExpression::Comparison {
                 field: "category".to_string(),
-                operator: ComparisonOperator::Equal,
+                operator: ComparisonOperator::Equals,
                 value: serde_json::json!("electronics"),
             }),
             ..Default::default()

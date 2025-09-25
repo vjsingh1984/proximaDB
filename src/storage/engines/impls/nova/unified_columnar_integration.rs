@@ -14,12 +14,12 @@ use crate::compute::distance_computation::{
     Int8VectorData, QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedVectorData,
     SelectedFormat,
 };
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::common::{
     NovaOptimizations, StreamingProcessingConfig, ZoneMapOptimization,
 };
 use crate::storage::engines::core::formats::columnar::{
-    CommonColumnarConfig, CommonColumnarOperations, FilterableColumnSpec, QuantizationConfig,
+    CommonColumnarConfig, CommonColumnarOperations, ColumnarFilterableSpec, QuantizationConfig,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -163,7 +163,7 @@ struct NovaCollectionMetadata {
     collection_id: String,
     dimension: usize,
     quantization: Option<QuantizationConfig>,
-    filterable_columns: Vec<FilterableColumnSpec>,
+    filterable_columns: Vec<ColumnarFilterableSpec>,
     schema: Arc<arrow_schema::Schema>,
     compression_metadata: crate::storage::engines::core::formats::columnar::CompressionMetadata,
     hierarchical_stats: HierarchicalStatistics,

@@ -9,12 +9,9 @@
 //! with dynamic schema generation and metadata separation.
 
 use anyhow::{Context, Result};
-use arrow_array::builder::{Int8Builder, UInt8Builder};
-use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
-use arrow_schema::{DataType, Field, Schema};
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
 use crate::storage::engines::core::formats::columnar::{
-    ParquetWriterConfig, QuantizationConfig as ColumnarQuantizationConfig, StreamingParquetWriter,
+    ParquetWriterConfig, StreamingParquetWriter,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -476,459 +473,41 @@ impl Flush {
             return Ok(Vec::new());
         }
 
-        // 🎯 OPTIMIZED PARQUET SCHEMA: Designed for multi-stage query execution
-        //
-        // QUERY OPTIMIZATION ORDER:
-        // 1. FILTERABLE METADATA → Parquet predicate pushdown (fastest, reduces I/O)
-        // 2. VECTOR SEARCH → Similarity search on reduced candidate set
-        // 3. EXTRA_METADATA → Post-processing filter (slowest, applied to smallest set)
-        //
-        // This ordering maximizes performance by eliminating rows early using efficient
-        // columnar filters before expensive vector operations
-        // Check if quantization is enabled to determine schema columns
-        let quantization = if let Some(collection) = collection_config {
+        // 🎯 DELEGATING TO SHARED COLUMNAR MODULE:
+        // StreamingParquetWriter handles all schema creation and data serialization
+        // This ensures consistency between VIPER and NOVA engines
+        // Extract quantization config for StreamingParquetWriter
+        let quantization_config = if let Some(collection) = collection_config {
             collection
                 .config
                 .as_ref()
-                .and_then(|c| c.quantization.as_ref())
+                .and_then(|c| c.quantization.clone())
+                .unwrap_or_default()
         } else {
-            None
+            Default::default()
         };
 
-        let mut schema_fields = vec![
-            Field::new("id", DataType::Utf8, true), // Can be null for append-only vectors
-            Field::new("collection_id", DataType::Utf8, false),
-            Field::new(
-                "vector",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
-                true, // Vector field can be null
-            ), // Primary FP32 vector column for 100% fidelity
-            Field::new("version", DataType::Int8, true), // Version field for MVCC - using tinyint
-            Field::new("updated_at", DataType::Int64, true), // Audit field - stores create or update time
-            Field::new("expires_at", DataType::Int64, true), // Only keep expires_at for TTL
-        ];
-
-        // Phase 2: Add quantized vector columns for compression + fast approximation
-        if let Some(quant_config) = quantization {
-            if quant_config.enabled {
-                debug!(
-                    "🗜️ VIPER: Adding quantized vector columns for collection {}",
-                    collection_id
-                );
-
-                // Add INT8 quantized column (highest quality quantization)
-                schema_fields.push(Field::new(
-                    "vector_int8",
-                    DataType::List(Arc::new(Field::new("item", DataType::Int8, true))),
-                    true,
-                ));
-
-                // Add PQ8 (Product Quantization 8-bit) column for high compression
-                schema_fields.push(Field::new(
-                    "vector_pq8",
-                    DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
-                    true,
-                ));
-
-                // Add PQ4 (Product Quantization 4-bit) column for maximum compression
-                // Stored as UInt8 but each byte contains two 4-bit values
-                schema_fields.push(Field::new(
-                    "vector_pq4",
-                    DataType::List(Arc::new(Field::new("item", DataType::UInt8, true))),
-                    true,
-                ));
-
-                info!("✅ VIPER: Dual storage enabled - FP32 + INT8 + PQ8 + PQ4 quantized columns");
-            }
-        }
-
-        // 🎯 DYNAMIC FILTERABLE METADATA: Use proto filterable_columns directly
-        let filterable_metadata: Vec<&crate::proto::proximadb_v1::FilterableColumnSpec> =
-            if let Some(collection) = collection_config {
-                if let Some(ref config) = collection.config {
-                    config.filterable_columns.iter().collect()
-                } else {
-                    Vec::new()
-                }
+        // Extract filterable columns for bloom filter configuration
+        let filterable_columns: Vec<String> = if let Some(collection) = collection_config {
+            if let Some(ref config) = collection.config {
+                config.filterable_columns.iter().map(|col| col.name.clone()).collect()
             } else {
-                info!(
-                    "Collection {} config not available, using empty filterable metadata_info",
-                    collection_id
-                );
                 Vec::new()
-            };
-
-        // Add filterable metadata columns based on collection configuration using proto types
-        for filterable_column in &filterable_metadata {
-            // TODO: Implement convert_proto_type_to_arrow method on ColumnarSchema
-            // For now, use String as default for filterable columns
-            let arrow_data_type = arrow_schema::DataType::Utf8;
-
-            schema_fields.push(Field::new(
-                &filterable_column.name,
-                arrow_data_type,
-                true, // Filterable metadata is always nullable
-            ));
-        }
-
-        // Add extra_meta column for remaining metadata as list of key-value pairs
-        let key_value_struct = DataType::Struct(arrow_schema::Fields::from(vec![
-            Field::new("key", DataType::Utf8, false),
-            Field::new("value", DataType::Utf8, false),
-        ]));
-        schema_fields.push(Field::new(
-            "extra_meta",
-            DataType::List(Arc::new(Field::new("item", key_value_struct, true))),
-            true,
-        ));
-
-        let schema = Arc::new(Schema::new(schema_fields));
-
-        // Process records for Arrow array creation - pre-allocate with capacity for performance
-        let capacity = records.len();
-        let mut ids = Vec::with_capacity(capacity);
-        let mut collection_ids = Vec::with_capacity(capacity);
-        let mut vectors = Vec::with_capacity(capacity);
-        let mut versions: Vec<Option<i8>> = Vec::with_capacity(capacity);
-        let mut updated_at_values = Vec::with_capacity(capacity);
-        let mut expires_at_values = Vec::with_capacity(capacity);
-        let mut filterable_arrays: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
-        let mut extra_metadata_data = Vec::with_capacity(capacity);
-
-        // Initialize filterable arrays with capacity
-        for filterable_column in &filterable_metadata {
-            filterable_arrays.insert(filterable_column.name.clone(), Vec::with_capacity(capacity));
-        }
-
-        // Phase 2: Initialize quantized vector arrays if quantization is enabled
-        let mut vector_int8_data: Vec<Vec<i8>> = Vec::with_capacity(capacity);
-        let mut vector_pq8_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
-        let mut vector_pq4_data: Vec<Vec<u8>> = Vec::with_capacity(capacity);
-        let has_quantization = quantization.as_ref().map(|q| q.enabled).unwrap_or(false);
-
-        let filterable_field_names: std::collections::HashSet<String> = filterable_metadata
-            .iter()
-            .map(|col| col.name.clone())
-            .collect();
-
-        for record in records {
-            ids.push(record.id.clone());
-            collection_ids.push(collection_id.to_string());
-            vectors.push(record.vector.clone());
-
-            // Phase 2: Generate quantized versions using unified quantization infrastructure
-            if has_quantization {
-                // Use collection-specific quantization config for VIPER columnar optimization
-                let fp32_vector = &record.vector;
-
-                if let Some(quant_config) = quantization {
-                    debug!(
-                        "🔧 VIPER: Applying collection quantization config for vector {}",
-                        &record.id
-                    );
-
-                    info!(
-                        "🎯 VIPER: Collection quantization enabled - strategy={:?}",
-                        quant_config.strategy
-                    );
-
-                    // Apply collection-aware quantization using config parameters
-                    let int8_vector = self.quantize_to_int8(fp32_vector, quant_config);
-                    vector_int8_data.push(int8_vector);
-
-                    // Use unified quantization engine for PQ8
-                    let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-                    let codebook_store = Arc::new(InMemoryCodebookStore::new());
-                    let quant_engine =
-                        UnifiedQuantizationEngine::new(distance_compute, codebook_store);
-
-                    // Default to 8 subvectors for PQ - TODO: get from unified config
-                    let num_subvectors = 8usize;
-
-                    let pq8_vector = quant_engine.quantize_to_pq(fp32_vector, num_subvectors, 8)?;
-                    vector_pq8_data.push(pq8_vector);
-
-                    let pq4_vector = quant_engine.quantize_to_pq(fp32_vector, num_subvectors, 4)?;
-                    vector_pq4_data.push(pq4_vector);
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "Quantization enabled but no collection config provided"
-                    ));
-                }
             }
+        } else {
+            Vec::new()
+        };
 
-            // Process filterable metadata
-            for filterable_column in &filterable_metadata {
-                let values = filterable_arrays.get_mut(&filterable_column.name).unwrap();
-                let value = record
-                    .metadata
-                    .get(&filterable_column.name)
-                    .map(|sql_value| {
-                        // Convert SqlValue to serde_json::Value
-                        // This is a placeholder - actual implementation depends on SqlValue structure
-                        serde_json::Value::String(format!("{:?}", sql_value))
-                    })
-                    .unwrap_or(serde_json::Value::Null);
-                values.push(value);
-            }
+        // No manual schema creation needed - StreamingParquetWriter handles this
 
-            // Collect remaining metadata as extra key-value pairs
-            let mut extra_kvs = Vec::new();
-            for (key, sql_value) in &record.metadata {
-                // Skip filterable fields - they're handled dynamically above
-                if !filterable_field_names.contains(key) {
-                    // Convert SqlValue to string for storage
-                    let value_str = format!("{:?}", sql_value); // Placeholder conversion
-                    extra_kvs.push((key.clone(), value_str));
-                }
-            }
-            extra_metadata_data.push(extra_kvs);
+        // No manual data processing needed - StreamingParquetWriter handles everything
 
-            // Include version for MVCC, updated_at for audit, and expires_at for TTL support
-            // Version should be null if id is null (for append-only vectors)
-            if record.id.is_empty() {
-                versions.push(None);
-            } else {
-                versions.push(record.version.map(|v| v as i8));
-            }
-            // Use timestamp as updated_at (represents either creation or last update time)
-            updated_at_values.push(record.timestamp as i64);
-            expires_at_values.push(record.expires_at.unwrap_or(0) as i64);
-        }
+        // StreamingParquetWriter will handle all data transformation internally
+        // No need for manual data processing - directly use StreamingParquetWriter
 
-        // Create Arrow arrays with proper List<Float32> for vectors
-        let id_array = StringArray::from(ids);
-        let collection_array = StringArray::from(collection_ids);
-
-        // 🎯 CRITICAL: Create ListArray for proper row-based f32 vector storage
-        // Build ListArray using optimized capacity: records.len() * vector_dimensions
-        let total_capacity = records.len() * vector_dimensions;
-        let mut builder = arrow_array::builder::ListBuilder::with_capacity(
-            arrow_array::builder::Float32Builder::with_capacity(total_capacity),
-            records.len(), // Pre-allocate list capacity
-        );
-
-        debug!(
-            "🔧 VIPER SERIALIZE: Using {} capacity for {} records × {} dimensions",
-            total_capacity,
-            records.len(),
-            vector_dimensions
-        );
-
-        let mut _value_idx = 0;
-        for record in records {
-            let values = builder.values();
-            for &val in &record.vector {
-                values.append_value(val);
-            }
-            builder.append(true);
-        }
-
-        let vector_array = builder.finish();
-
-        let version_array = arrow_array::Int8Array::from(versions);
-        let updated_at_array = Int64Array::from(updated_at_values);
-        let expires_at_array = Int64Array::from(expires_at_values);
-
-        // 🎯 DYNAMIC FILTERABLE METADATA: Create Arrow arrays for each filterable column
-        let mut dynamic_filterable_arrays: Vec<Arc<dyn Array>> = Vec::new();
-        for filterable_column in &filterable_metadata {
-            let values = filterable_arrays.get(&filterable_column.name).unwrap();
-
-            let arrow_array: Arc<dyn Array> = {
-                use crate::proto::proximadb_v1::FilterableDataType;
-                match FilterableDataType::try_from(filterable_column.data_type) {
-                    Ok(FilterableDataType::FilterableString) => {
-                        let string_values: Vec<Option<String>> = values
-                            .iter()
-                            .map(|v| {
-                                if v.is_null() {
-                                    None
-                                } else {
-                                    v.as_str().map(|s| s.to_string())
-                                }
-                            })
-                            .collect();
-                        Arc::new(StringArray::from(string_values))
-                    }
-                    Ok(FilterableDataType::FilterableInteger) => {
-                        let int_values: Vec<Option<i64>> = values
-                            .iter()
-                            .map(|v| if v.is_null() { None } else { v.as_i64() })
-                            .collect();
-                        Arc::new(arrow_array::Int64Array::from(int_values))
-                    }
-                    Ok(FilterableDataType::FilterableFloat) => {
-                        let float_values: Vec<Option<f64>> = values
-                            .iter()
-                            .map(|v| if v.is_null() { None } else { v.as_f64() })
-                            .collect();
-                        Arc::new(arrow_array::Float64Array::from(float_values))
-                    }
-                    Ok(FilterableDataType::FilterableBoolean) => {
-                        let bool_values: Vec<Option<bool>> = values
-                            .iter()
-                            .map(|v| if v.is_null() { None } else { v.as_bool() })
-                            .collect();
-                        Arc::new(arrow_array::BooleanArray::from(bool_values))
-                    }
-                    Ok(FilterableDataType::FilterableDatetime) => {
-                        let ts_values: Vec<Option<i64>> = values
-                            .iter()
-                            .map(|v| if v.is_null() { None } else { v.as_i64() })
-                            .collect();
-                        Arc::new(arrow_array::TimestampMicrosecondArray::from(ts_values))
-                    }
-                    Ok(FilterableDataType::FilterableArrayString)
-                    | Ok(FilterableDataType::FilterableArrayInteger)
-                    | Ok(FilterableDataType::FilterableArrayFloat) => {
-                        // For array types, serialize as JSON strings for now
-                        let json_values: Vec<Option<String>> = values
-                            .iter()
-                            .map(|v| {
-                                if v.is_null() {
-                                    None
-                                } else {
-                                    Some(v.to_string())
-                                }
-                            })
-                            .collect();
-                        Arc::new(StringArray::from(json_values))
-                    }
-                    _ => {
-                        // Default to string for unknown types
-                        let string_values: Vec<Option<String>> = values
-                            .iter()
-                            .map(|v| {
-                                if v.is_null() {
-                                    None
-                                } else {
-                                    Some(v.to_string())
-                                }
-                            })
-                            .collect();
-                        Arc::new(StringArray::from(string_values))
-                    }
-                }
-            };
-
-            dynamic_filterable_arrays.push(arrow_array);
-        }
-
-        // 🎯 EXTRA METADATA: Serialize as list of key-value pairs for structured data management
-        use arrow_array::builder::{ListBuilder, StringBuilder, StructBuilder};
-
-        let mut extra_meta_builder = ListBuilder::new(StructBuilder::new(
-            vec![
-                Field::new("key", DataType::Utf8, false),
-                Field::new("value", DataType::Utf8, false),
-            ],
-            vec![
-                Box::new(StringBuilder::new()),
-                Box::new(StringBuilder::new()),
-            ],
-        ));
-
-        for kvs in extra_metadata_data {
-            if kvs.is_empty() {
-                extra_meta_builder.append(false); // NULL value for empty metadata
-            } else {
-                let struct_builder = extra_meta_builder.values();
-
-                for (key, value) in kvs {
-                    struct_builder
-                        .field_builder::<StringBuilder>(0)
-                        .unwrap()
-                        .append_value(key);
-                    struct_builder
-                        .field_builder::<StringBuilder>(1)
-                        .unwrap()
-                        .append_value(value);
-                    struct_builder.append(true);
-                }
-                extra_meta_builder.append(true);
-            }
-        }
-
-        let extra_meta_array = extra_meta_builder.finish();
-
-        // Combine all arrays into columns
-        let mut columns: Vec<Arc<dyn Array>> = vec![
-            Arc::new(id_array),
-            Arc::new(collection_array),
-            Arc::new(vector_array),
-            Arc::new(version_array),
-            Arc::new(updated_at_array),
-            Arc::new(expires_at_array),
-        ];
-
-        // Add dynamic filterable columns
-        columns.extend(dynamic_filterable_arrays);
-
-        // Phase 2: Add quantized vector columns if quantization is enabled
-        if has_quantization {
-            // Create INT8 quantized vector array
-            let mut int8_list_builder = ListBuilder::new(Int8Builder::new());
-            for int8_vector in vector_int8_data {
-                let value_builder = int8_list_builder.values();
-                for &val in &int8_vector {
-                    value_builder.append_value(val);
-                }
-                int8_list_builder.append(true);
-            }
-            let int8_array = int8_list_builder.finish();
-            columns.push(Arc::new(int8_array));
-
-            // Create PQ8 quantized vector array
-            let mut pq8_list_builder = ListBuilder::new(UInt8Builder::new());
-            for pq8_vector in vector_pq8_data {
-                let value_builder = pq8_list_builder.values();
-                for &val in &pq8_vector {
-                    value_builder.append_value(val);
-                }
-                pq8_list_builder.append(true);
-            }
-            let pq8_array = pq8_list_builder.finish();
-            columns.push(Arc::new(pq8_array));
-
-            // Create PQ4 quantized vector array
-            let mut pq4_list_builder = ListBuilder::new(UInt8Builder::new());
-            for pq4_vector in vector_pq4_data {
-                let value_builder = pq4_list_builder.values();
-                for &val in &pq4_vector {
-                    value_builder.append_value(val);
-                }
-                pq4_list_builder.append(true);
-            }
-            let pq4_array = pq4_list_builder.finish();
-            columns.push(Arc::new(pq4_array));
-
-            info!(
-                "📦 VIPER FLUSH: Added {} quantized vector columns (INT8, PQ8, PQ4)",
-                3
-            );
-        }
-
-        // Add extra_meta column
-        columns.push(Arc::new(extra_meta_array));
-
-        // Create RecordBatch
-        let batch = RecordBatch::try_new(schema, columns)?;
-
-        info!(
-            "📝 VIPER FLUSH: Created RecordBatch with {} rows for {} records",
-            batch.num_rows(),
-            records.len()
-        );
-
-        // Verify batch has correct number of rows
-        if batch.num_rows() != records.len() {
-            error!(
-                "❌ VIPER FLUSH: Batch row count mismatch! Expected {}, got {}",
-                records.len(),
-                batch.num_rows()
-            );
-        }
+        /* REMOVED: Manual data processing code (lines 507-852)
+           This was creating arrays for RecordBatch that was never actually used.
+           StreamingParquetWriter accepts VectorRecord directly. */
 
         // Create a temporary file for StreamingParquetWriter
         let temp_dir = std::env::temp_dir();
@@ -998,7 +577,8 @@ impl Flush {
         // For Mixed compression, apply per-column optimization
         if compression_algorithm == crate::core::compression::CompressionAlgorithm::Mixed {
             info!("🎯 VIPER: Applying Mixed compression per-column optimization");
-            props_builder = self.apply_mixed_compression_strategy(props_builder, &batch)?;
+            // Note: Mixed compression strategy is now handled by StreamingParquetWriter
+            // props_builder = self.apply_mixed_compression_strategy(props_builder, &batch)?;
         }
 
         // Set optimal encoding for vector column based on quantization
@@ -1069,12 +649,17 @@ impl Flush {
         }*/
 
         // Configure ParquetWriterConfig from VIPER settings
+        // Include filterable columns in bloom filters for fast filtering
+        let mut bloom_columns = vec!["id".to_string()];
+        // Add filterable columns that were extracted earlier
+        bloom_columns.extend(filterable_columns.clone());
+
         let writer_config = ParquetWriterConfig {
             row_group_size: viper_config.row_group_size,
-            enable_bloom_filters: true, // Enable for efficient ID lookups
+            enable_bloom_filters: true, // Enable for efficient ID and metadata lookups
             bloom_filter_fpp: 0.01,
             expected_ndv: Some(records.len()),
-            bloom_filter_columns: vec!["id".to_string()],
+            bloom_filter_columns: bloom_columns,
             compression: compression_algorithm,
             enable_column_statistics: true,
             enable_page_index: true,
@@ -1084,8 +669,8 @@ impl Flush {
             enable_dictionary: true,
             dictionary_threshold: 0.5,
             enable_delta_encoding: true,
-            quantization: ColumnarQuantizationConfig {
-                enabled: has_quantization,
+            quantization: crate::proto::proximadb_v1::QuantizationConfig {
+                enabled: is_quantized,
                 strategy: 0, // SMART_DEFAULTS
                 custom_levels: vec![],
                 enable_progressive_search: true,
@@ -1099,11 +684,11 @@ impl Flush {
                 optimize_for_memory: false,
                 enable_simd_acceleration: true,
                 enable_binary: false,
-                enable_int8: has_quantization,
-                enable_pq: has_quantization,
+                enable_int8: is_quantized,
+                enable_pq: false, // DISABLED: PQ codebook storage causes 15-25x file bloat
                 pq_segments: 32,
                 pq_bits: 8,
-                pq_codebooks: 0,
+                pq_codebooks: 256,
                 binary_threshold: 0.5,
                 int8_threshold: 0.3,
                 pq_threshold: 0.1,
@@ -1115,7 +700,9 @@ impl Flush {
             enable_pq_sorting: false,
             pq_sorting_segments: 16,
             pq_sorting_codebook_size: 256,
-            enable_native_metadata: true,
+            // TODO: Re-enable native metadata after fixing schema update logic
+            // Currently disabled due to schema mismatch when metadata fields are dynamically added
+            enable_native_metadata: false,
             metadata_inference_samples: 100,
         };
 
@@ -1137,11 +724,11 @@ impl Flush {
 
         debug!("   ✅ VIPER Parquet written using StreamingParquetWriter:");
         debug!("      File: {:?}", temp_file_path);
-        debug!("      Records: {}", stats.total_records);
-        debug!("      Row groups: {}", stats.total_row_groups);
-        debug!("      File size: {} bytes", stats.file_size);
-        debug!("      Compression ratio: {:.2}", stats.compression_ratio);
-        debug!("      Bloom filters: {}", stats.bloom_filter_count);
+        debug!("      Records: {}", stats.0.total_records);
+        debug!("      Row groups: {}", stats.0.total_row_groups);
+        debug!("      File size: {} bytes", stats.0.file_size);
+        debug!("      Compression ratio: {:.2}", stats.0.compression_ratio);
+        debug!("      Bloom filters: {}", stats.0.bloom_filter_count);
 
         info!(
             "📝 VIPER FLUSH: Created Parquet file with bloom filters at {:?}",
@@ -1236,14 +823,14 @@ impl Flush {
             temp_file_path, final_path
         );
 
-        // Check if we have ZeroCopyFilesystem for optimal performance
-        if let Some(zero_copy_fs) =
+        // Check if we have UnifiedCachingFilesystem for optimal performance
+        if let Some(unified_fs) =
             fs.as_any()
-                .downcast_ref::<crate::storage::persistence::filesystem::ZeroCopyFilesystem>()
+                .downcast_ref::<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>()
         {
-            info!("✅ Using ZeroCopyFilesystem with intelligent staging and caching");
+            info!("✅ Using UnifiedCachingFilesystem with intelligent staging and caching");
 
-            // Read data once for zero-copy write
+            // Read data once for optimized write
             let data = std::fs::read(temp_file_path)?;
 
             // Configure write options for atomic operation
@@ -1254,13 +841,12 @@ impl Flush {
                 ..Default::default()
             };
 
-            // Use intelligent staging which:
+            // Use unified filesystem which:
             // 1. Writes to optimal temp location
             // 2. Populates local cache for fast reads (hydrates indexes)
             // 3. Asynchronously uploads to cloud
             // 4. Returns immediately after local cache write
-            zero_copy_fs
-                .write_with_intelligent_staging(&final_path, &data, &write_options)
+            fs.write(&final_path, &data, Some(write_options.clone()))
                 .await?;
 
             info!("✅ Zero-copy write complete with cache population for index hydration");

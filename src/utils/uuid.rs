@@ -99,6 +99,13 @@ impl Uuid {
 
     /// Parses a UUID from a hyphenated string
     pub fn parse(s: &str) -> Result<Self, UuidError> {
+        // First check for invalid characters (non-hex and non-hyphen)
+        for c in s.chars() {
+            if !c.is_ascii_hexdigit() && c != '-' {
+                return Err(UuidError::InvalidHex);
+            }
+        }
+
         let cleaned: String = s.chars().filter(|c| c.is_ascii_hexdigit()).collect();
 
         if cleaned.len() != 32 {

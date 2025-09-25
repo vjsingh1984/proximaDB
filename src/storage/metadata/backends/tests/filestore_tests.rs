@@ -33,6 +33,6 @@ mod tests {
         // Backend was created successfully - test basic operations instead
         // Since there's no health check method, we'll test a simple operation
         let collection_uuids = backend.list_collection_uuids();
-        assert!(collection_uuids.is_none()); // New backend should have no collections
+        assert!(collection_uuids.is_empty()); // New backend should have no collections
     }
 }

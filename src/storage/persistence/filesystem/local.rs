@@ -21,7 +21,6 @@
 //! files are moved/renamed before data is fully flushed to disk.
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -902,7 +901,7 @@ mod tests {
 
         // Clean up any existing test directories/files first
         // Check if the metadata directory exists and clean it up
-        if fs.exists("file://./metadata_info").await {
+        if fs.exists("file://./metadata_info").await.unwrap_or(false) {
             // List and delete all files in the directory
             if let Ok(entries) = fs.list("file://./metadata/current").await {
                 for entry in entries {
@@ -931,8 +930,8 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let entry_url = &entries[0].url;
 
-        // Count occurrences of "metadata_info" in the URL
-        let metadata_count = entry_url.matches("metadata_info").count();
+        // Count occurrences of "metadata" in the URL path segments
+        let metadata_count = entry_url.matches("metadata").count();
         assert_eq!(
             metadata_count, 1,
             "Path 'metadata' should appear only once in URL: {}",
@@ -956,7 +955,7 @@ mod tests {
         let fs = LocalFileSystem::new(config).await.unwrap();
 
         // Clean up any existing test directories first
-        if fs.exists("file://./test_metadata_info").await {
+        if fs.exists("file://./test_metadata_info").await.unwrap_or(false) {
             // List and delete all files recursively
             if let Ok(entries) = fs.list("file://./test_metadata/current").await {
                 for entry in entries {
@@ -1137,7 +1136,7 @@ mod tests {
         debug!("🔍 Testing file creation: {}", test_file_url);
 
         // Clean up any existing file first
-        if fs.exists(test_file_url).await {
+        if fs.exists(test_file_url).await.unwrap_or(false) {
             debug!("🧹 Cleaning up existing file: {}", test_file_url);
             let _ = fs.delete(test_file_url).await;
         }
@@ -1162,7 +1161,7 @@ mod tests {
         let test_dir_url = "file://./test_exists_dir";
 
         // Clean up any existing directory first
-        if fs.exists(test_dir_url).await {
+        if fs.exists(test_dir_url).await.unwrap_or(false) {
             debug!("🧹 Cleaning up existing directory: {}", test_dir_url);
             let _ = fs.delete(test_dir_url).await;
         }

@@ -3,7 +3,7 @@
 //! This module provides clean serialization/deserialization interfaces
 //! without any I/O operations, memtable management, or other concerns.
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 
 /// Trait for vector batch serialization
@@ -104,9 +104,9 @@ mod tests {
 
     #[test]
     fn test_format_string_representation() {
-        assert_eq!(SerializationFormat::ProtocolBuffers.as_deref(), "proto");
-        assert_eq!(SerializationFormat::Bincode.as_deref(), "bincode");
-        assert_eq!(SerializationFormat::Avro.as_deref(), "avro");
+        assert_eq!(SerializationFormat::ProtocolBuffers.as_str(), "proto");
+        assert_eq!(SerializationFormat::Bincode.as_str(), "bincode");
+        assert_eq!(SerializationFormat::Avro.as_str(), "avro");
     }
 
     #[test]

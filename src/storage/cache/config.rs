@@ -1,10 +1,9 @@
 //! Cache configuration for production deployment
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 /// Complete cache configuration for production deployment
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CacheConfig {
     /// Global cache settings
     pub global: GlobalCacheConfig,
@@ -24,7 +23,7 @@ pub struct CacheConfig {
 }
 
 /// Global cache configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GlobalCacheConfig {
     /// Total memory budget in MB
     pub total_memory_mb: usize,
@@ -58,7 +57,7 @@ pub struct GlobalCacheConfig {
 }
 
 /// Eviction policy options
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum EvictionPolicy {
     LRU,
     LFU,
@@ -69,7 +68,7 @@ pub enum EvictionPolicy {
 }
 
 /// Vector data cache configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VectorCacheConfig {
     /// Enable vector cache
     pub enabled: bool,
@@ -97,7 +96,7 @@ pub struct VectorCacheConfig {
 }
 
 /// Query result cache configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QueryCacheConfig {
     /// Enable query cache
     pub enabled: bool,
@@ -122,7 +121,7 @@ pub struct QueryCacheConfig {
 }
 
 /// Filter bitmap cache configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FilterCacheConfig {
     /// Enable filter cache
     pub enabled: bool,
@@ -144,7 +143,7 @@ pub struct FilterCacheConfig {
 }
 
 /// Index structure cache configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexCacheConfig {
     /// Enable index cache
     pub enabled: bool,
@@ -163,7 +162,7 @@ pub struct IndexCacheConfig {
 }
 
 /// Metadata cache configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetadataStoreConfig {
     /// Enable metadata cache
     pub enabled: bool,
@@ -182,7 +181,7 @@ pub struct MetadataStoreConfig {
 }
 
 /// Cross-cache coordination configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CoordinationConfig {
     /// Enable cross-cache coordination
     pub enabled: bool,
@@ -216,7 +215,7 @@ pub struct CoordinationConfig {
 }
 
 /// Monitoring and observability configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MonitoringConfig {
     /// Enable metrics collection
     pub enable_metrics: bool,
@@ -244,7 +243,7 @@ pub struct MonitoringConfig {
 }
 
 /// Alert thresholds for monitoring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AlertThresholds {
     /// Minimum hit rate before alerting
     pub min_hit_rate: f64,

@@ -87,8 +87,6 @@
 
 /// Shared infrastructure components for cross-cutting concerns
 pub mod infrastructure;
-/// Transport adapters for wire types (REST/gRPC v1) ↔ native domain types
-pub mod transport;
 
 /// High-performance compute layer with SIMD/GPU acceleration for vector operations
 pub mod compute;
@@ -108,6 +106,33 @@ pub mod graph;
 
 /// Unified API handlers for REST and gRPC with proto-first zero-copy design
 pub mod api_handlers;
+
+/// Enhanced authentication and authorization for multi-tenant enterprise
+pub mod auth;
+
+/// Comprehensive audit system for enterprise compliance
+pub mod audit;
+
+/// Unified security architecture consolidating auth, RBAC, and audit
+pub mod security;
+
+/// AI-powered intelligence for Release 2 enterprise platform
+pub mod ai;
+
+/// Enterprise deployment automation for one-click setup
+pub mod deployment;
+
+/// Enterprise revenue engine for billing and customer success
+pub mod revenue;
+
+/// Sales enablement platform for customer-facing sales automation
+pub mod sales_enablement;
+
+/// License management and tier enforcement for all deployment models
+pub mod licensing;
+
+/// Executive intelligence platform for C-level strategic analytics
+pub mod executive;
 
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
 pub mod index;
@@ -135,6 +160,7 @@ pub mod version;
 pub use core::{Config, VectorRecord, error::ProximaDBError as Error};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::info;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -142,8 +168,6 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 pub struct ProximaDB {
     storage: Arc<RwLock<storage::StorageEngine>>,
     // consensus: consensus::ConsensusEngine,  // Disabled - requires raft dependency
-    // 🔴 UNUSED FIELD - Query engine never used (placeholder only)
-    // _query_engine: query::QueryEngine,
     multi_server: Option<network::MultiServer>,
     _config: core::Config,
 }
@@ -166,12 +190,32 @@ impl ProximaDB {
         );
         // Build global Cross-Cache Orchestrator from [cache] or fallback to storage.cache_size_mb
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-        let cache_budget_mb = config
-            .cache
-            .as_ref()
-            .map(|c| c.total_memory_mb)
-            .unwrap_or(config.storage.cache_size_mb);
-        let orchestrator = Arc::new(CrossCacheOrchestrator::new((cache_budget_mb * 1024 * 1024) as usize));
+        let cache_config = config.cache.clone().unwrap_or_default();
+        let cache_budget_mb = cache_config.total_memory_mb;
+        let mut orchestrator = CrossCacheOrchestrator::new((cache_budget_mb * 1024 * 1024) as usize);
+
+        // Start cache eviction service if enabled
+        if cache_config.eviction.enabled {
+            // Convert our config to the cache eviction config format
+            orchestrator.start_eviction_service(None); // TODO: Wire up eviction config conversion
+        }
+
+        // Start cache warming service if enabled (disabled by default)
+        if cache_config.enable_warming {
+            info!("Cache warming enabled via configuration");
+            // Convert our config to the cache warming config format
+            orchestrator.start_warming_service(None); // TODO: Wire up warming config conversion
+        } else {
+            info!("Cache warming disabled (default)");
+        }
+
+        let orchestrator = Arc::new(orchestrator);
+
+        // Start periodic memory rebalancing service if enabled
+        if cache_config.rebalancing.enabled {
+            info!("Starting cache memory rebalancing service (interval: {}s)", cache_config.rebalancing.interval_seconds);
+            orchestrator.clone().start_rebalancing_service();
+        }
         CrossCacheOrchestrator::register_global(orchestrator.clone());
 
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(
@@ -199,15 +243,6 @@ impl ProximaDB {
         let storage = Arc::new(RwLock::new(storage_engine));
 
         // let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?; // Disabled
-
-        // 🔴 UNUSED MODULE - Query engine is only a placeholder
-        // The entire SQL engine infrastructure appears unused
-        // Vector search functionality is handled by VectorOperationsService
-        // Note: query_engine needs to be updated to work with Arc<RwLock<StorageEngine>>
-        // For now, we'll create a placeholder
-        // tracing::debug!("🔧 ProximaDB::new - Creating query engine...");
-        // let query_engine = query::QueryEngine::new_placeholder().await?;
-        // tracing::debug!("✅ ProximaDB::new - Query engine created successfully");
 
         // Create multi-server configuration from actual config values
         use std::net::SocketAddr;
@@ -260,7 +295,6 @@ impl ProximaDB {
         Ok(Self {
             storage,
             // consensus,  // Disabled
-            // _query_engine: query_engine,  // Commented out - unused
             multi_server: Some(multi_server),
             _config: config,
         })

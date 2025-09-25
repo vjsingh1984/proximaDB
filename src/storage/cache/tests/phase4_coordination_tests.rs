@@ -3,7 +3,7 @@
 use super::super::orchestrator::*;
 use super::super::specialized::{
     bitmap_filter_cache::BitmapFilterCache, index_node_cache::IndexNodeCache,
-    metadata_store::MetadataStore, query_cache::QueryCache, vector_store::VectorStore,
+    metadata_store::MetadataStore, query_cache::QueryCache,
 };
 use super::super::*;
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ async fn test_access_pattern_tracker() {
 
     // Test prediction
     let predictions = tracker.get_predicted_accesses("vec1", 3).await;
-    assert!(!predictions.is_none());
+    assert!(!predictions.is_empty());
     assert!(predictions.iter().any(|(key, _)| key == "filter1"));
 
     // Test hot item detection
@@ -110,9 +110,9 @@ async fn test_unified_memory_allocator() {
     let new_allocations = allocator.rebalance().await;
 
     // FilterBitmap should get more memory due to high hit rate and frequency
-    let filter_allocation = new_allocations.get(key).unwrap();
-    let vector_allocation = new_allocations.get(key).unwrap();
-    let query_allocation = new_allocations.get(key).unwrap();
+    let filter_allocation = new_allocations.get(&CacheType::FilterBitmap).unwrap_or(&0);
+    let vector_allocation = new_allocations.get(&CacheType::VectorData).unwrap_or(&0);
+    let query_allocation = new_allocations.get(&CacheType::QueryResult).unwrap_or(&0);
 
     // Verify allocations sum to total budget
     let total = filter_allocation + vector_allocation + query_allocation;
@@ -196,20 +196,20 @@ async fn test_invalidation_invalidator() {
 
     // Test cascade when vec1 changes
     let cascade = invalidator.get_invalidation_cascade("vec1").await;
-    assert!(cascade.contains_hash(&"query1".to_string()));
-    assert!(cascade.contains_hash(&"filter1".to_string()));
-    assert!(cascade.contains_hash(&"query2".to_string())); // Transitive
+    assert!(cascade.contains(&"query1".to_string()));
+    assert!(cascade.contains(&"filter1".to_string()));
+    assert!(cascade.contains(&"query2".to_string())); // Transitive
 
     // Test cascade when vec2 changes
     let cascade = invalidator.get_invalidation_cascade("vec2").await;
-    assert!(cascade.contains_hash(&"query1".to_string()));
-    assert!(!cascade.contains_hash(&"filter1".to_string()));
+    assert!(cascade.contains(&"query1".to_string()));
+    assert!(!cascade.contains(&"filter1".to_string()));
 
     // Test dependency removal
     invalidator.remove_dependencies("query1").await;
     let cascade = invalidator.get_invalidation_cascade("vec1").await;
-    assert!(!cascade.contains_hash(&"query1".to_string()));
-    assert!(cascade.contains_hash(&"filter1".to_string()));
+    assert!(!cascade.contains(&"query1".to_string()));
+    assert!(cascade.contains(&"filter1".to_string()));
 }
 
 /// Test full cache orchestrator integration
@@ -221,24 +221,32 @@ async fn test_cache_orchestrator_integration() {
     let orchestrator = CrossCacheOrchestrator::new(1024 * 1024 * 100); // 100MB
 
     // Register caches (API takes MB, not bytes!)
-    let vector_cache = Arc::new(VectorStore::new(40)); // 40MB
+    // Use MetadataStore for vector metadata serialization
+    let vector_cache = Arc::new(MetadataStore::new(40)); // 40MB using MetadataStore
     let query_cache = Arc::new(QueryCache::new(30)); // 30MB
     let filter_cache = Arc::new(BitmapFilterCache::new(15)); // 15MB
 
     let orchestrator = orchestrator
-        .with_vector_cache(vector_cache.clone())
+        .with_metadata_cache(vector_cache.clone())
         .with_query_cache(query_cache.clone())
         .with_filter_cache(filter_cache.clone());
 
     // Put some data in the cache first
-    let test_vector = VectorRecord {
-        id: Some("vec1".to_string()),
+    let test_vector = crate::proto::proximadb_v1::VectorRecord {
+        id: "vec1".to_string(),
         vector: vec![1.0; 128],
-        metadata: vec![],
-        ..Default::default()
+        metadata: std::collections::HashMap::new(),
+        timestamp: 0,
+        updated_at: None,
+        expires_at: None,
+        version: Some(1),
+        quantized_vector: vec![],
+        source: None,
     };
+    // Convert VectorRecord to serde_json::Value for MetadataStore
+    let vector_json = serde_json::to_value(&test_vector).unwrap();
     vector_cache
-        .put_with_hooks("vec1".to_string(), test_vector)
+        .put_with_hooks("vec1".to_string(), vector_json)
         .await;
 
     // Test vector access coordination
@@ -261,11 +269,13 @@ async fn test_cache_orchestrator_integration() {
     let orchestrator_metrics = orchestrator.metrics();
 
     // Either the vector cache or orchestrator should have recorded operations
+    let vector_snapshot = vector_metrics.get_snapshot().await;
+    let orchestrator_snapshot = orchestrator_metrics.snapshot();
+
     assert!(
-        vector_metrics.total_gets() > 0
-            || vector_metrics.total_puts() > 0
-            || orchestrator_metrics.total_gets() > 0
-            || orchestrator_metrics.total_puts() > 0,
+        vector_snapshot.total_operations > 0
+            || orchestrator_snapshot.total_gets > 0
+            || orchestrator_snapshot.total_puts > 0,
         "No cache operations recorded"
     );
 }
@@ -297,7 +307,7 @@ async fn test_pattern_based_optimization() {
     let predictions = pattern_tracker.get_predicted_accesses("vec5", 3).await;
 
     // If no predictions, the test can still pass - pattern tracking is optional optimization
-    if !predictions.is_none() {
+    if !predictions.is_empty() {
         assert!(
             predictions.iter().any(|(key, _)| key == "vec6"),
             "vec6 should be predicted after vec5. Predictions: {:?}",
@@ -321,7 +331,7 @@ async fn test_pattern_based_optimization() {
         .await;
 
     // Pattern tracking is optional - only check if predictions exist
-    if !predictions.is_none() {
+    if !predictions.is_empty() {
         // Should predict other members of the cluster
         let has_vec2 = predictions.iter().any(|(key, _)| key == "cluster1_vec2");
         let has_vec3 = predictions.iter().any(|(key, _)| key == "cluster1_vec3");
@@ -373,8 +383,8 @@ async fn test_memory_pressure_handling() {
         CacheType::IndexStructure,
         CacheType::Metadata,
     ] {
-        assert!(allocations.get(key).is_some());
-        assert!(*allocations.get(key).unwrap() > 0);
+        assert!(allocations.get(cache_type).is_some());
+        assert!(*allocations.get(cache_type).unwrap() > 0);
     }
 
     // Verify total doesn't exceed budget

@@ -9,7 +9,7 @@
 //! without depending on VectorOperationsService.
 
 use anyhow::Result;
-use proximadb::proto::proximadb::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::persistence::write_ahead_log::serialization::{
     SerializationFormat, SerializerFactory, VectorBatchSerializer,
 };
@@ -24,34 +24,26 @@ fn create_test_vectors_with_metadata(
     dimension: usize,
 ) -> Vec<VectorRecord> {
     (start_id..start_id + count)
-        .map(|i| VectorRecord {
-            id: Some(format!("vec_{}", i)),
-            vector: vec![(i % 256) as f32; dimension],
-            metadata: vec![
-                proximadb::proto::proximadb::MetadataItem {
-                    key: "batch_id".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            (i / 100).to_string(),
-                        ),
-                    ),
-                },
-                proximadb::proto::proximadb::MetadataItem {
-                    key: "timestamp".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            chrono::Utc::now().timestamp().to_string(),
-                        ),
-                    ),
-                },
-            ],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
-            expires_at: None,
-            version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+        .map(|i| {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("batch_id".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue((i / 100).to_string())),
+            });
+            metadata.insert("timestamp".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(chrono::Utc::now().timestamp().to_string())),
+            });
+
+            VectorRecord {
+                id: format!("vec_{}", i),
+                vector: vec![(i % 256) as f32; dimension],
+                metadata,
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
+            }
         })
         .collect()
 }

@@ -10,8 +10,9 @@ mod tests {
     };
     use super::super::{
         MetadataFilter, MetadataOperation, MetadataStorageStats, MetadataStoreInterface,
-        SystemMetadata, write_ahead_log::MetadataWALConfig,
+        SystemMetadata, write_ahead_log::{MetadataWALConfig, AccessPattern}, VersionedCollectionMetadata,
     };
+    use crate::proto::proximadb_v1;
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
     };
@@ -53,27 +54,56 @@ mod tests {
     }
 
     /// Create test collection metadata
-    fn create_test_collection_metadata(collection_id: &str) -> CollectionMetadata {
-        CollectionMetadata {
+    fn create_test_collection_metadata(collection_id: &str) -> proximadb_v1::Collection {
+        proximadb_v1::Collection {
             id: collection_id.to_string(),
-            name: format!("Test Collection {}", collection_id),
-            dimension: 128,
-            distance_metric: "cosine".to_string(),
-            indexing_algorithm: "hnsw".to_string(),
-            timestamp: Utc::now(),
-            updated_at: Utc::now(),
-            vector_count: 0,
-            total_size_bytes: 0,
-            config: HashMap::new(),
-            access_pattern: AccessPattern::Normal,
-            retention_policy: None,
-            tags: vec!["test".to_string()],
-            owner: Some("test_user".to_string()),
-            description: Some("Test collection".to_string()),
-            strategy_config: Default::default(),
-            strategy_change_history: Vec::new(),
-            flush_config: None,
+            config: Some(proximadb_v1::CollectionConfig {
+                name: format!("Test Collection {}", collection_id),
+                dimension: 128,
+                distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
+                storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                tags: vec!["test".to_string()],
+                description: Some("Test collection".to_string()),
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
+                storage_config: None,
+                primary_index: "default".to_string(),
+                auto_index_selection: true,
+                owner: Some("test_user".to_string()),
+                embedding_models: vec![],
+            }),
+            stats: Some(proximadb_v1::CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
+            created_at: Utc::now().timestamp(),
+            updated_at: Utc::now().timestamp(),
             storage_assignment: None,
+        }
+    }
+
+    /// Convert protobuf Collection to VersionedCollectionMetadata
+    fn proto_to_versioned_metadata(collection: &proximadb_v1::Collection) -> VersionedCollectionMetadata {
+        let default_config = proximadb_v1::CollectionConfig::default();
+        let config = collection.config.as_ref().unwrap_or(&default_config);
+        VersionedCollectionMetadata {
+            id: collection.id.clone(),
+            name: config.name.clone(),
+            dimension: config.dimension as usize,
+            distance_metric: format!("{:?}", proximadb_v1::DistanceMetric::try_from(config.distance_metric).unwrap_or_default()),
+            indexing_algorithm: "hnsw".to_string(),
+            timestamp: collection.created_at as u32,
+            version: Some(1),
+            vector_count: collection.stats.as_ref().map(|s| s.vector_count).unwrap_or(0) as u64,
+            total_size_bytes: collection.stats.as_ref().map(|s| s.data_size_bytes).unwrap_or(0) as u64,
+            config: std::collections::HashMap::new(),
+            description: config.description.clone(),
+            tags: config.tags.clone(),
+            owner: config.owner.clone(),
+            access_pattern: AccessPattern::Normal, // Default since no access_pattern in proto
+            retention_policy: None,
         }
     }
 
@@ -89,7 +119,7 @@ mod tests {
 
     /// Mock implementation for testing that avoids write buffer complexity
     struct MockAtomicMetadataStore {
-        metadata: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
+        metadata: Arc<RwLock<HashMap<String, VersionedCollectionMetadata>>>,
         transactions: Arc<RwLock<HashMap<TransactionId, MetadataTransaction>>>,
         version_counter: Arc<Mutex<u64>>,
     }
@@ -137,19 +167,21 @@ mod tests {
                     for op in &tx.operations {
                         match op {
                             MetadataOperation::CreateCollection(metadata) => {
+                                let versioned = proto_to_versioned_metadata(metadata);
                                 self.metadata
                                     .write()
                                     .await
-                                    .insert(metadata.id.clone(), metadata.clone());
+                                    .insert(metadata.id.clone(), versioned);
                             }
                             MetadataOperation::UpdateCollection {
                                 collection_id,
                                 metadata,
                             } => {
+                                let versioned = proto_to_versioned_metadata(metadata);
                                 self.metadata
                                     .write()
                                     .await
-                                    .insert(collection_id.clone(), metadata.clone());
+                                    .insert(collection_id.clone(), versioned);
                             }
                             MetadataOperation::DeleteCollection(collection_id) => {
                                 self.metadata.write().await.remove(collection_id);
@@ -195,27 +227,60 @@ mod tests {
     // Implement MetadataStoreInterface for MockAtomicMetadataStore
     #[async_trait]
     impl MetadataStoreInterface for MockAtomicMetadataStore {
-        async fn create_collection(&self, metadata: CollectionMetadata) -> Result<()> {
+        async fn create_collection(&self, metadata: crate::proto::proximadb_v1::Collection) -> Result<()> {
+            let versioned_metadata = proto_to_versioned_metadata(&metadata);
             self.metadata
                 .write()
                 .await
-                .insert(metadata.id.clone(), metadata);
+                .insert(metadata.id.clone(), versioned_metadata);
             Ok(())
         }
 
-        async fn get_collection(&self, collection_id: &str) -> Result<Option<CollectionMetadata>> {
-            Ok(self.metadata.read().await.get(collection_id).cloned())
+        async fn get_collection(&self, collection_id: &str) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
+            if let Some(versioned) = self.metadata.read().await.get(collection_id) {
+                let collection = crate::proto::proximadb_v1::Collection {
+                    id: versioned.id.clone(),
+                    config: Some(proximadb_v1::CollectionConfig {
+                        name: versioned.name.clone(),
+                        dimension: versioned.dimension as u32,
+                        distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
+                        storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                        tags: versioned.tags.clone(),
+                        description: versioned.description.clone(),
+                        filterable_columns: vec![],
+                        index_configs: vec![],
+                        quantization: None,
+                        storage_config: None,
+                        primary_index: "default".to_string(),
+                        auto_index_selection: true,
+                        owner: versioned.owner.clone(),
+                        embedding_models: vec![],
+                    }),
+                    stats: Some(proximadb_v1::CollectionStats {
+                        vector_count: versioned.vector_count as i64,
+                        index_size_bytes: 0,
+                        data_size_bytes: versioned.total_size_bytes as i64,
+                    }),
+                    created_at: versioned.timestamp as i64,
+                    updated_at: versioned.timestamp as i64,
+                    storage_assignment: None,
+                };
+                Ok(Some(collection))
+            } else {
+                Ok(None)
+            }
         }
 
         async fn update_collection(
             &self,
             collection_id: &str,
-            metadata: CollectionMetadata,
+            metadata: crate::proto::proximadb_v1::Collection,
         ) -> Result<()> {
+            let versioned_metadata = proto_to_versioned_metadata(&metadata);
             self.metadata
                 .write()
                 .await
-                .insert(collection_id.to_string(), metadata);
+                .insert(collection_id.to_string(), versioned_metadata);
             Ok(())
         }
 
@@ -226,8 +291,37 @@ mod tests {
         async fn list_collections(
             &self,
             _filter: Option<MetadataFilter>,
-        ) -> Result<Vec<CollectionMetadata>> {
-            Ok(self.metadata.read().await.values().cloned().collect())
+        ) -> Result<Vec<crate::proto::proximadb_v1::Collection>> {
+            let collections: Vec<_> = self.metadata.read().await.values().map(|versioned| {
+                crate::proto::proximadb_v1::Collection {
+                    id: versioned.id.clone(),
+                    config: Some(proximadb_v1::CollectionConfig {
+                        name: versioned.name.clone(),
+                        dimension: versioned.dimension as u32,
+                        distance_metric: proximadb_v1::DistanceMetric::Cosine as i32,
+                        storage_engine: proximadb_v1::StorageEngine::Sst as i32,
+                        tags: versioned.tags.clone(),
+                        description: versioned.description.clone(),
+                        filterable_columns: vec![],
+                        index_configs: vec![],
+                        quantization: None,
+                        storage_config: None,
+                        primary_index: "default".to_string(),
+                        auto_index_selection: true,
+                        owner: versioned.owner.clone(),
+                        embedding_models: vec![],
+                    }),
+                    stats: Some(proximadb_v1::CollectionStats {
+                        vector_count: versioned.vector_count as i64,
+                        index_size_bytes: 0,
+                        data_size_bytes: versioned.total_size_bytes as i64,
+                    }),
+                    created_at: versioned.timestamp as i64,
+                    updated_at: versioned.timestamp as i64,
+                    storage_assignment: None,
+                }
+            }).collect();
+            Ok(collections)
         }
 
         async fn update_stats(
@@ -295,6 +389,31 @@ mod tests {
             })
         }
 
+        async fn begin_transaction(&self) -> Result<Option<String>> {
+            Ok(Some(Uuid::new_v4().to_string()))
+        }
+
+        async fn commit_transaction(&self, _transaction_id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn rollback_transaction(&self, _transaction_id: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn backup(&self, location: &str) -> Result<String> {
+            Ok(format!("backup-{}-test", location))
+        }
+
+        async fn restore(&self, backup_id: &str, location: &str) -> Result<()> {
+            tracing::info!("Restoring from backup_id: {}, location: {}", backup_id, location);
+            Ok(())
+        }
+
+        async fn close(&self) -> Result<()> {
+            Ok(())
+        }
+
         async fn health_check(&self) -> Result<bool> {
             Ok(true)
         }
@@ -358,13 +477,13 @@ mod tests {
         // Test initial state
         assert_eq!(transaction.state, TransactionState::Active);
         assert_eq!(transaction.isolation_level, isolation_level);
-        assert!(transaction.operations.is_none());
+        assert!(transaction.operations.is_empty());
         assert!(!transaction.is_expired()); // Should not be expired immediately
 
         // Test timeout calculation
         let now = Utc::now();
         assert!(transaction.timeout_at > now);
-        assert!(transaction.created_at <= now);
+        assert!(transaction.timestamp <= now);
     }
 
     #[test]
@@ -467,7 +586,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains_hash("Transaction not found")
+                .contains("Transaction not found")
         );
     }
 
@@ -508,7 +627,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains_hash("Transaction not found")
+                .contains("Transaction not found")
         );
     }
 
@@ -576,15 +695,15 @@ mod tests {
 
         // Should retrieve collection
         let retrieved = store
-            .collection("test_collection")
+            .get_collection("test_collection")
             .await
             .expect("Failed to get collection");
 
         assert!(retrieved.is_some());
         let retrieved_metadata = retrieved.unwrap();
         assert_eq!(retrieved_metadata.id, metadata.id);
-        assert_eq!(retrieved_metadata.name, metadata.name);
-        assert_eq!(retrieved_metadata.dimension, metadata.dimension);
+        assert_eq!(retrieved_metadata.config.as_ref().unwrap().name, metadata.config.as_ref().unwrap().name);
+        assert_eq!(retrieved_metadata.config.as_ref().unwrap().dimension, metadata.config.as_ref().unwrap().dimension);
     }
 
     #[tokio::test]
@@ -593,7 +712,7 @@ mod tests {
 
         // Should return None for non-existent collection
         let result = store
-            .collection("nonexistent")
+            .get_collection("nonexistent")
             .await
             .expect("Get collection should not fail");
 
@@ -613,8 +732,10 @@ mod tests {
             .expect("Failed to create collection");
 
         // Update metadata
-        metadata.name = "Updated Collection Name".to_string();
-        metadata.description = Some("Updated description".to_string());
+        if let Some(ref mut config) = metadata.config {
+            config.name = "Updated Collection Name".to_string();
+            config.description = Some("Updated description".to_string());
+        }
 
         // Should update successfully
         store
@@ -744,7 +865,7 @@ mod tests {
             .await
             .expect("Failed to get system metadata_info");
 
-        assert!(!system_metadata.node_id.is_none());
+        assert!(!system_metadata.node_id.is_empty());
 
         // Should update system metadata (currently no-op)
         store
@@ -759,13 +880,13 @@ mod tests {
 
         // Should get storage stats
         let stats = store
-            .get_storage_stats()
+            .get_stats()
             .await
             .expect("Failed to get storage stats");
 
         assert_eq!(stats.total_collections, 0); // No collections yet
         assert!(stats.cache_hit_rate >= 0.0);
-        assert!(!stats.storage_backend.is_none());
+        assert!(!stats.storage_backend.is_empty());
     }
 
     #[tokio::test]
@@ -811,7 +932,7 @@ mod tests {
             },
             MetadataOperation::UpdateAccessPattern {
                 collection_id: "multi_op_collection".to_string(),
-                pattern: AccessPattern::Hot,
+                access_pattern: "Hot".to_string(),
             },
             MetadataOperation::UpdateTags {
                 collection_id: "multi_op_collection".to_string(),
@@ -844,6 +965,6 @@ mod tests {
         assert_eq!(tx1, tx2);
 
         let tx_str = format!("{}", tx1);
-        assert!(!tx_str.is_none());
+        assert!(!tx_str.is_empty());
     }
 }

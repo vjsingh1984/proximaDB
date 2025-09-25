@@ -9,7 +9,6 @@
 //! inserting, flushing, compacting, and generating indexes. This configuration
 //! is persisted with the collection metadata and used throughout its lifetime.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // Use proto enums as base types for consistency

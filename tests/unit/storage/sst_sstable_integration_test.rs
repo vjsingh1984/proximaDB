@@ -6,11 +6,11 @@ use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use tempfile::TempDir;
 use proximadb::core::{VectorRecord, MetadataItem};
-use proximadb::storage::engines::sst::sstable_writer::SstableWriter;
-use proximadb::storage::engines::sst::readers::unified_sstable_reader::{
+use proximadb::storage::engines::impls::sst::sstable_writer::SstableWriter;
+use proximadb::storage::engines::impls::sst::readers::unified_sstable_reader::{
     UnifiedSstableReader, CollectionContext, ReaderConfig
 };
-use proximadb::storage::engines::sst::SstRecord;
+use proximadb::storage::engines::impls::sst::SstEntry;
 use proximadb::core::bloom::BloomFilterConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::compute::distance_computation::DistanceMetric;
@@ -35,7 +35,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
+                    value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string())),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
@@ -52,7 +52,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("B".to_string())),
+                    value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("B".to_string())),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
@@ -69,7 +69,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
             metadata: vec![
                 MetadataItem {
                     key: "category".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string())),
+                    value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string())),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
@@ -93,7 +93,7 @@ async fn test_sstable_write_read_integration() -> Result<()> {
     // Convert to SST records
     let mut entries = std::collections::BTreeMap::new();
     for (i, vec) in vectors.iter().enumerate() {
-        let mut lsm_record = SstRecord::from_vector_record(vec.clone(), "test_collection");
+        let mut lsm_record = SstEntry::from_vector_record(vec.clone(), "test_collection");
         lsm_record.sequence_number = i as u64;
         lsm_0 /* TODO: VectorRecord no longer has level field */ = 0;
         entries.insert(vec.id.as_ref().unwrap().clone(), lsm_record);

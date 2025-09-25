@@ -186,7 +186,6 @@ pub mod types;
 pub mod unified_scan_strategy;
 pub mod validation;
 
-pub mod backup;
 
 // Common reusable components
 pub mod common;
@@ -219,6 +218,9 @@ pub mod strategy;
 // Specialized cache system with shared infrastructure
 pub mod cache;
 
+// Multi-tenant architecture modules
+pub mod tenant;
+
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;
 pub mod provenance;
@@ -243,7 +245,7 @@ pub use traits::{
 };
 
 // Engine exports
-pub use engines::impls::sst::SstStorage;
+pub use engines::impls::sst::SstEngine;
 // Arrow integration re-enabled - compilation conflicts resolved
 // pub use engines::viper::ViperEngine;
 

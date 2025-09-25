@@ -3,10 +3,10 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Integration test for FilestoreMetadataBackend with real filesystem operations
+//! Integration test for UniversalMetadataBackend with real filesystem operations
 //! 
 //! This test verifies the entire stack:
-//! CollectionService → FilestoreMetadataBackend → filesystem Avro files
+//! CollectionService → UniversalMetadataBackend → filesystem Avro files
 
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -15,11 +15,11 @@ use tokio;
 use anyhow::Result;
 
 use proximadb::services::collection_service::CollectionService;
-use proximadb::storage::metadata::backends::filestore_backend::{
-    FilestoreMetadataBackend, FilestoreMetadataConfig, CollectionRecord
+use proximadb::storage::metadata::backends::universal_backend::{
+    UniversalMetadataBackend, UniversalMetadataConfig
 };
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::proto::proximadb::CollectionConfig;
+use proximadb::proto::proximadb_v1::CollectionConfig;
 
 /// Helper to create a test collection config
 fn create_test_collection_config(name: &str) -> CollectionConfig {
@@ -72,7 +72,7 @@ fn list_files_recursive(dir: &std::path::Path, files: &mut Vec<std::path::PathBu
 #[tokio::test]
 async fn test_filestore_backend_direct_operations() -> Result<()> {
     setup_hardware_capabilities();
-    debug!("🧪 Testing FilestoreMetadataBackend direct operations");
+    debug!("🧪 Testing UniversalMetadataBackend direct operations");
     
     // Create temporary directory for test
     let temp_dir = TempDir::new()?;
@@ -81,7 +81,7 @@ async fn test_filestore_backend_direct_operations() -> Result<()> {
     debug!("📁 Test directory: {}", temp_path.display());
     
     // Configure filestore to use temp directory
-    let filestore_config = FilestoreMetadataConfig {
+    let filestore_config = UniversalMetadataConfig {
         filestore_url: format!("file://{}", temp_path.display()),
         enable_compression: true,
         enable_backup: true,
@@ -96,12 +96,12 @@ async fn test_filestore_backend_direct_operations() -> Result<()> {
     );
     
     // Create filestore backend
-    debug!("🔧 Creating FilestoreMetadataBackend...");
+    debug!("🔧 Creating UniversalMetadataBackend...");
     let filestore_backend = Arc::new(
-        FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?
+        UniversalMetadataBackend::new(filestore_config, filesystem_factory).await?
     );
     
-    debug!("✅ FilestoreMetadataBackend created successfully");
+    debug!("✅ UniversalMetadataBackend created successfully");
     
     // Check initial file count
     let metadata_dir = temp_path.join("metadata");
@@ -212,7 +212,7 @@ async fn test_filestore_backend_direct_operations() -> Result<()> {
 #[tokio::test]
 async fn test_collection_service_with_filestore_backend() -> Result<()> {
     setup_hardware_capabilities();
-    debug!("🧪 Testing CollectionService with FilestoreMetadataBackend integration");
+    debug!("🧪 Testing CollectionService with UniversalMetadataBackend integration");
     
     // Create temporary directory for test
     let temp_dir = TempDir::new()?;
@@ -221,7 +221,7 @@ async fn test_collection_service_with_filestore_backend() -> Result<()> {
     debug!("📁 Test directory: {}", temp_path.display());
     
     // Configure filestore to use temp directory
-    let filestore_config = FilestoreMetadataConfig {
+    let filestore_config = UniversalMetadataConfig {
         filestore_url: format!("file://{}", temp_path.display()),
         enable_compression: true,
         enable_backup: true,
@@ -236,9 +236,9 @@ async fn test_collection_service_with_filestore_backend() -> Result<()> {
     );
     
     // Create filestore backend
-    debug!("🔧 Creating FilestoreMetadataBackend...");
+    debug!("🔧 Creating UniversalMetadataBackend...");
     let filestore_backend = Arc::new(
-        FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?
+        UniversalMetadataBackend::new(filestore_config, filesystem_factory).await?
     );
     
     // Create CollectionService with the filestore backend
@@ -328,7 +328,7 @@ async fn test_collection_service_with_filestore_backend() -> Result<()> {
 #[tokio::test]
 async fn test_filestore_persistence_across_restarts() -> Result<()> {
     setup_hardware_capabilities();
-    debug!("🧪 Testing FilestoreMetadataBackend persistence across restarts");
+    debug!("🧪 Testing UniversalMetadataBackend persistence across restarts");
     
     // Create temporary directory for test
     let temp_dir = TempDir::new()?;
@@ -337,7 +337,7 @@ async fn test_filestore_persistence_across_restarts() -> Result<()> {
     debug!("📁 Test directory: {}", temp_path.display());
     
     // Configure filestore to use temp directory
-    let filestore_config = FilestoreMetadataConfig {
+    let filestore_config = UniversalMetadataConfig {
         filestore_url: format!("file://{}", temp_path.display()),
         enable_compression: true,
         enable_backup: true,
@@ -354,7 +354,7 @@ async fn test_filestore_persistence_across_restarts() -> Result<()> {
     debug!("\n🔧 Phase 1: Creating collections...");
     {
         let filestore_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config.clone(), filesystem_factory.clone()).await?
+            UniversalMetadataBackend::new(filestore_config.clone(), filesystem_factory.clone()).await?
         );
         
         let collection_service = CollectionService::new(filestore_backend);
@@ -386,7 +386,7 @@ async fn test_filestore_persistence_across_restarts() -> Result<()> {
     debug!("\n🔄 Phase 2: Simulating restart - creating new backend instance...");
     {
         let filestore_backend = Arc::new(
-            FilestoreMetadataBackend::new(filestore_config, filesystem_factory).await?
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory).await?
         );
         
         let collection_service = CollectionService::new(filestore_backend);
@@ -426,7 +426,7 @@ async fn test_filestore_persistence_across_restarts() -> Result<()> {
     debug!("\n🔄 Phase 3: Second restart to verify deletion persistence...");
     {
         let filestore_backend = Arc::new(
-            FilestoreMetadataBackend::new(FilestoreMetadataConfig {
+            UniversalMetadataBackend::new(UniversalMetadataConfig {
                 filestore_url: format!("file://{}", temp_path.display()),
                 enable_compression: true,
                 enable_backup: true,

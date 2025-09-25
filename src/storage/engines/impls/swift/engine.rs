@@ -19,8 +19,7 @@ use tracing::{debug, info};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
-use crate::core::metadata_types::TypedMetadata;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
@@ -60,9 +59,12 @@ pub struct SwiftEngine {
     /// Direct compression provider (no adapter indirection)
     compression_provider: StandardCompression,
 
-    /// Unified quantization engine from compute module
-    quantization_engine:
+    /// Storage-aware quantization engine for persistent collection-based PQ
+    storage_quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+    /// Fallback stateless quantization engine for ad-hoc queries
+    fallback_quantization_engine:
+        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
     /// Filesystem factory for storage operations
     filesystem: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
@@ -80,8 +82,15 @@ pub struct SwiftEngine {
 }
 
 impl SwiftEngine {
-    /// Create new SWIFT engine instance with service dependencies
-    pub async fn new(
+    /// Create a new SWIFT engine instance (stateless)
+    /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    pub async fn new() -> Result<Self> {
+        let distance_engine = Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
+        Self::new_with_config(distance_engine, None).await
+    }
+
+    /// Create SWIFT engine with specific config (internal use)
+    pub async fn new_with_config(
         distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
         axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
     ) -> Result<Self> {
@@ -132,11 +141,21 @@ impl SwiftEngine {
                 enable_hardware_acceleration: true,
             };
 
-        let quantization_engine = Arc::new(
+        let storage_quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
-                unified_engine,
+                unified_engine.clone(),
                 distance_engine.clone(),
                 storage_config,
+            ),
+        );
+
+        // Create fallback stateless quantization engine for ad-hoc queries
+        let fallback_codebook_store =
+            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let fallback_quantization_engine = Arc::new(
+            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                distance_engine.clone(),
+                fallback_codebook_store,
             ),
         );
 
@@ -162,7 +181,8 @@ impl SwiftEngine {
             hardware,
             metrics_collector: None,
             compression_provider,
-            quantization_engine,
+            storage_quantization_engine,
+            fallback_quantization_engine,
             filesystem,
             universal_optimizer,
             // Service dependencies
@@ -401,7 +421,7 @@ impl SwiftEngine {
             let superblock = &superblocks[superblock_idx];
 
             // Phase 3: Use quantization engine for progressive search within superblock
-            if let Some(ref _quantization_engine) = Some(&self.quantization_engine) {
+            if let Some(ref _quantization_engine) = Some(&self.storage_quantization_engine) {
                 // TODO: Implement progressive search using quantization engine
                 // For now, simulate with placeholder results
                 for block in &superblock.blocks {
@@ -423,6 +443,22 @@ impl SwiftEngine {
         results.truncate(top_k);
 
         Ok(results)
+    }
+
+    /// Check if we should use persistent quantization for this operation
+    /// Returns true for collection-based operations with quantization enabled
+    pub fn should_use_persistent_quantization(&self, params: &FlushParameters) -> bool {
+        crate::compute::quantization::QuantizationSelector::should_use_persistent_quantization(params, "SWIFT")
+    }
+
+    /// Get the storage quantization engine for persistent collection operations
+    pub fn get_storage_quantization_engine(&self) -> &Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine> {
+        &self.storage_quantization_engine
+    }
+
+    /// Get the fallback quantization engine for stateless operations
+    pub fn get_fallback_quantization_engine(&self) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+        &self.fallback_quantization_engine
     }
 }
 
@@ -458,10 +494,7 @@ impl UnifiedStorageEngine for SwiftEngine {
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         let start_time = std::time::Instant::now();
 
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow!("Collection ID required for flush"))?;
+        let collection_id = self.get_collection_id_from_params(params)?;
         info!(
             "SWIFT flush: collection={}, vectors={}",
             collection_id,
@@ -477,29 +510,73 @@ impl UnifiedStorageEngine for SwiftEngine {
             .unwrap_or(384);
 
         // Create new SWIFT file from flush parameters
-        let swift_file = SwiftFile::new(
+        let mut swift_file = SwiftFile::new(
             collection_id.to_string(),
             dimension as usize,
-            DistanceMetric::Euclidean,
+            "euclidean".to_string(),
         );
 
-        // Build blocks from vectors (would come from memtable in production)
-        // For now, simulate with empty records
-        let records: Vec<crate::core::VectorRecord> = Vec::new();
+        // Build blocks from vectors passed in flush parameters
+        // This is the actual data that needs to be persisted
+        let records = params.vector_records.clone();
 
-        // Use universal adapters for quantization - simplified implementation
-        // TODO: Implement proper quantization integration when SstFile API is stabilized
-        // For now, just add records without quantization
-        // sst.build_blocks_from_records(records)?;
+        // Get compression config from storage config
+        let compression_config = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .and_then(|cfg| cfg.storage_config.as_ref())
+            .and_then(|s| {
+                if s.compression != 0 {
+                    Some(crate::proto::proximadb_v1::CompressionConfig {
+                        algorithm: s.compression,
+                        level: None,
+                        adaptive: false,
+                        min_ratio: None,
+                        enable_quantization: false,
+                        quantization_type: None,
+                        normalization_method: None,
+                        block_size_kb: 64,
+                        dynamic_block_sizing: false,
+                    })
+                } else {
+                    None
+                }
+            });
 
-        // Write SWIFT file to storage with embedded statistics
-        // TODO: Implement actual SST file writing to storage_path
-        // Statistics will be embedded in SST file header for atomicity:
-        // - File creation time, vector count, dimension, compression ratio
-        // - Min/max values per dimension for pruning
-        // - Bloom filter parameters and false positive rate
-        // Also update {storage_path}/{collection_id}/global.stats
-        self.update_global_stats(collection_id, "/tmp").await?;
+        // Add records to the SwiftFile structure with compression config
+        swift_file.build_blocks_from_records_with_compression(records.clone(), compression_config)?;
+
+        // Get storage path from collection config (always present)
+        // UnifiedCachingFilesystem will handle cloud storage transparently
+        let storage_path = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .map(|s| format!("{}/{}/data", s.base_location, collection_id))
+            .ok_or_else(|| anyhow!("SWIFT: Collection '{}' has no storage assignment", collection_id))?;
+
+        // Storage path already includes collection ID
+        let collection_path = storage_path.clone();
+        let fs = self.filesystem.get_filesystem("file://")?;
+        fs.create_dir_all(&collection_path).await?;
+
+        // Generate filename using FilenameCodec for consistency with compaction framework
+        use crate::storage::common::compaction_orchestrator::FilenameCodec;
+        let codec = FilenameCodec::new();
+        let swift_filename = codec.generate(0, "swift"); // Level 0 for flush
+        let filename = format!("{}/{}", collection_path, swift_filename);
+
+        // Actually write the SWIFT file to disk using filesystem factory (SST pattern)
+        let bytes_written = swift_file.write_to_disk(
+            &self.filesystem,
+            &filename,
+        ).await?;
+
+        info!("SWIFT flush complete: wrote {} bytes to {}", bytes_written, filename);
+
+        // Update global statistics file
+        self.update_global_stats(&collection_id, collection_path.as_str()).await?;
 
         // Notify EventLog service about the flush
         // This allows AXIS to asynchronously index the flushed data
@@ -512,16 +589,12 @@ impl UnifiedStorageEngine for SwiftEngine {
                 .map(|q| q.enabled)
                 .unwrap_or(false);
 
-            // Create flushed file paths (simulated for now)
-            let flushed_files = vec![format!(
-                "{}/swift_flush_{}.dat",
-                "/tmp",
-                chrono::Utc::now().timestamp()
-            )];
+            // Use the actual file that was written
+            let flushed_files = vec![filename.clone()];
 
             if let Err(e) = event_log
                 .notify_flush(
-                    collection_id,
+                    &collection_id,
                     flushed_files.clone(),
                     params.vector_records.len(),
                     has_quantized,
@@ -535,19 +608,19 @@ impl UnifiedStorageEngine for SwiftEngine {
             }
         }
 
-        // Update statistics
+        // Update statistics with actual bytes written
         let mut stats = self.statistics.write().await;
         stats.pending_flushes = stats.pending_flushes.saturating_sub(1);
         stats.last_flush = Some(chrono::Utc::now());
-        stats.total_storage_bytes += params.estimated_size as u64;
+        stats.total_storage_bytes += bytes_written;
 
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
         Ok(FlushResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_flushed: Some(params.vector_records.len() as u64),
-            bytes_written: Some(params.estimated_size as u64),
+            entries_flushed: Some(records.len() as u64),
+            bytes_written: Some(bytes_written),
             files_created: Some(1),
             duration_ms: Some(duration_ms),
             completed_at: chrono::Utc::now(),
@@ -560,10 +633,7 @@ impl UnifiedStorageEngine for SwiftEngine {
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         let start_time = std::time::Instant::now();
 
-        let collection_id = params
-            .collection_id
-            .as_ref()
-            .ok_or_else(|| anyhow!("Collection ID required for compaction"))?;
+        let collection_id = self.get_collection_id_from_compaction_params(params)?;
         info!("SWIFT compaction: collection={}", collection_id);
 
         // Load files from storage for compaction
@@ -594,16 +664,23 @@ impl UnifiedStorageEngine for SwiftEngine {
 
         // Notify EventLog about compaction (fire-and-forget)
         if let Some(event_log) = crate::services::events::log::event_log_service() {
-            // Create compacted file paths (simulated for now)
+            // Create compacted file paths using collection's storage path
+            let storage_path = params
+                .collection_config
+                .as_ref()
+                .and_then(|c| c.storage_assignment.as_ref())
+                .map(|s| format!("{}/{}/data", s.base_location, collection_id))
+                .ok_or_else(|| anyhow!("No storage assignment for collection {}", collection_id))?;
+
             let output_files_paths = vec![format!(
                 "{}/swift_compacted_{}.dat",
-                "/tmp",
+                storage_path,
                 chrono::Utc::now().timestamp()
             )];
 
             // Fire-and-forget notification - compaction is already complete
             event_log.notify_compaction(
-                collection_id,
+                &collection_id,
                 output_files_paths,
                 0, // TODO: actual vector count
                 crate::index::axis::eventlog::StorageEngineType::SWIFT,
@@ -666,20 +743,45 @@ impl UnifiedStorageEngine for SwiftEngine {
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
+        // Access global unified cache through CrossCacheOrchestrator
+        let cache_key = format!("vector:{}:{}", collection_id, vector_id);
+        if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+            // Try to get from vector cache first
+            if let Some(vector_cache) = orchestrator.get_vector_cache() {
+                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
+                    // Track cache hit for access pattern learning
+                    orchestrator.pattern_tracker().track_access_async(
+                        cache_key.clone(),
+                        crate::storage::cache::orchestrator::CacheType::VectorData,
+                    );
+                    return Ok(Some(cached_vector));
+                }
+            }
+
+            // Track cache miss
+            orchestrator.pattern_tracker().track_access_async(
+                cache_key.clone(),
+                crate::storage::cache::orchestrator::CacheType::VectorData,
+            );
+        }
+
         let _timer = self.start_operation_timer("get_by_id");
         debug!(
-            "SWIFT get vector: collection={}, id={}",
-            collection_id, vector_id
+            "SWIFT get vector: collection={}, base_path={}, id={}",
+            collection_id, base_path, vector_id
         );
 
-        // TODO: Load actual files from storage based on collection_id
+        // Construct data directory from base_path and collection_id
+        let data_dir = format!("{}/{}/data", base_path, collection_id);
+
+        // TODO: Load actual SST files from data_dir
         // For now, return None as placeholder
         // In production, would:
-        // 1. Get storage path from collection metadata
-        // 2. Load SST files from that path
-        // 3. Search through ID indexes
+        // 1. Load SST files from data_dir
+        // 2. Search through ID indexes
         Ok(None)
     }
 
@@ -710,12 +812,46 @@ impl UnifiedStorageEngine for SwiftEngine {
         // ========================================================================
         // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
         // ========================================================================
-
+        // TODO: Integrate with AdvancedSearchOptimizer for intelligent search routing
+        //
+        // The AdvancedSearchOptimizer provides significant value for SWIFT engine:
+        // 1. **Ultra-low latency routing**: Chooses fastest path based on data locality
+        // 2. **FastLanes optimization**: Leverages SWIFT's columnar blocks intelligently
+        // 3. **SIMD acceleration**: Routes to hardware-optimized paths automatically
+        // 4. **Memory-mapped I/O**: Optimizes based on available memory and cache
+        // 5. **Predictive prefetching**: Uses access patterns for zero-copy operations
+        //
+        // Implementation pattern:
+        // ```rust
+        // let axis_manager = self.get_axis_manager().await?;
+        // let cost_estimator = self.get_cost_estimator().await?;
+        //
+        // let orchestrator = AdvancedSearchOptimizer::new(
+        //     ctx.clone(),
+        //     axis_manager,
+        //     cost_estimator,
+        // ).await?;
+        //
+        // let strategy = orchestrator.select_optimal_strategy().await?;
+        // match strategy {
+        //     ExecutionStrategy::IndexFirst { .. } => // Use memory-mapped index
+        //     ExecutionStrategy::DirectFP32 { .. } => // FastLanes direct scan
+        //     ExecutionStrategy::ProgressiveQuantization { .. } => // Multi-resolution
+        // }
+        // ```
+        //
+        // SWIFT-specific benefits:
+        // - Leverage FastLanes encoding for 10x faster scans
+        // - Zero-copy operations with SharedSstFormatReader
+        // - Hardware-aware SIMD path selection
+        //
+        // Current blocker: Service infrastructure for AXIS and cost estimation
+        //
         // Check if orchestration should be used based on context metadata
         let use_orchestration = _ctx.metadata.use_axis_indexes || _ctx.metadata.has_quantization;
 
         if use_orchestration {
-            info!("🎯 SWIFT: Orchestration requested but not yet implemented");
+            info!("🎯 SWIFT: Orchestration requested - using direct FastLanes search until AdvancedSearchOptimizer integrated");
             // TODO: Implement proper orchestration when the API is ready
             // For now, fall back to direct search
             return self
@@ -1030,10 +1166,10 @@ mod tests {
         // Need to create distance engine and axis manager for new()
         let distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::core::hardware_capabilities::get_hardware_capabilities(),
+                crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
         );
-        let engine = SwiftEngine::new(distance_engine, None).await.unwrap();
+        let engine = SwiftEngine::new().await.unwrap();
         assert_eq!(engine.engine_name(), "SWIFT");
         assert_eq!(engine.engine_version(), "1.0.0");
     }
@@ -1044,10 +1180,10 @@ mod tests {
         // Need to create distance engine and axis manager for new()
         let distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                crate::core::hardware_capabilities::get_hardware_capabilities(),
+                crate::compute::distance_computation::DistanceMetric::Euclidean,
             ),
         );
-        let engine = SwiftEngine::new(distance_engine, None).await.unwrap();
+        let engine = SwiftEngine::new().await.unwrap();
 
         assert!(engine.supports_feature("id_lookup"));
         assert!(engine.supports_feature("similarity_search"));

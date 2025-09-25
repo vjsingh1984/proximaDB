@@ -670,6 +670,9 @@ impl PatternMatcher {
             Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
                 serde_json::Value::Object(serde_json::Map::new()) // Simplified
             }
+            Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
+                serde_json::Value::String("VECTOR".to_string()) // Simplified vector representation
+            }
             None => serde_json::Value::Null,
         }
     }

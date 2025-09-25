@@ -123,7 +123,7 @@ pub struct GraphIndexUsage {
 }
 
 /// Graph planner statistics used for cost estimation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphPlannerStats {
     /// Total node count in graph
     pub total_nodes: usize,

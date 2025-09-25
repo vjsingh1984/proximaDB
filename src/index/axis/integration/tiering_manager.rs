@@ -58,7 +58,6 @@ use crate::infrastructure::tier_policy_engine::{
 };
 use crate::storage::cache::orchestrator::{AccessPatternTracker, CacheType};
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -1237,7 +1236,9 @@ impl AxisTieringManager {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::index::axis::*;
+    use std::sync::Arc;
 
     #[test]
     fn test_axis_tiering_integration() {
@@ -1247,23 +1248,40 @@ mod tests {
         assert!(config.integration_config.use_adaptive_store_backend);
     }
 
-    #[test]
-    #[ignore] // TODO: Fix test - API has changed
-    fn test_tier_ordering() {
-        /*
+    #[tokio::test]
+    async fn test_tier_ordering() {
+        // Create the necessary components with proper constructors
+        let global_tier_manager = Arc::new(GlobalTier::new());
+        let access_pattern_tracker = Arc::new(AccessPatternTracker::new(1000));
+
+        // Create a proper IndexBackend using the same pattern as adaptive_structures tests
+        let tier_manager = Arc::new({
+            let global_tier = Arc::new(GlobalTier::new());
+            crate::infrastructure::adaptive_structures::UniversalTier::new(global_tier).await.unwrap()
+        });
+        let index_backend = Arc::new(
+            crate::infrastructure::adaptive_structures::IndexBackend::<String, Vec<u8>>::new_dashmap(
+                "test_tiering".to_string(),
+                1000,
+                None,
+                create_test_unified_tier_policy(),
+                create_test_adaptive_store_config(),
+                tier_manager,
+            ).await.unwrap()
+        );
+
+        let collection_state_manager = Arc::new(CollectionStateManager::new());
+        let memory_tracker = Arc::new(IndexMemoryTracker::new(1.0)); // 1 GB max
+
         let config = AxisTieringConfig::default();
-        let tiering_manager = AxisTieringManager {
+        let tiering_manager = AxisTieringManager::new(
             config,
-            global_tier_manager: Arc::new(GlobalTier::new()),
-            access_pattern_tracker: Arc::new(AccessPatternTracker::new(1000)),
-            index_backend: Arc::new(IndexBackend::new()),
-            collection_state_manager: Arc::new(CollectionStateManager::new()),
-            memory_tracker: Arc::new(IndexMemoryTracker::new(1024 * 1024 * 1024)),
-            format_strategy: Arc::new(IndexFormatStrategy::new()),
-            serializer: Arc::new(IndexSerializer::new()),
-            stats: Arc::new(RwLock::new(TieringStats::default())),
-            active_operations: Arc::new(DashMap::new()),
-        };
+            global_tier_manager,
+            access_pattern_tracker,
+            index_backend,
+            collection_state_manager,
+            memory_tracker,
+        );
 
         let memory = InfrastructureTier::Memory;
         let nvme = InfrastructureTier::NvmeSsd { mount_path: "/fast".to_string() };
@@ -1278,6 +1296,54 @@ mod tests {
 
         assert!(tiering_manager.tier_order(&memory) < tiering_manager.tier_order(&nvme));
         assert!(tiering_manager.tier_order(&nvme) < tiering_manager.tier_order(&cloud));
-        */
+    }
+
+    // Helper functions for the test
+    fn create_test_unified_tier_policy() -> crate::infrastructure::adaptive_structures::UnifiedTierPolicy {
+        crate::infrastructure::adaptive_structures::UnifiedTierPolicy {
+            eviction_policy: crate::infrastructure::adaptive_structures::EvictionPolicy::SizeBased { max_memory_mb: 100 },
+            promotion_criteria: crate::infrastructure::adaptive_structures::PromotionCriteria {
+                min_access_frequency: 10,
+                frequency_window: std::time::Duration::from_secs(60),
+                min_promotion_tier: InfrastructureTier::Memory,
+            },
+            demotion_criteria: crate::infrastructure::adaptive_structures::DemotionCriteria {
+                max_idle_time: std::time::Duration::from_secs(300),
+                memory_pressure_threshold: 0.8,
+                min_tier: InfrastructureTier::NvmeSsd {
+                    mount_path: "/tmp/nvme".to_string(),
+                },
+            },
+            reload_strategy: crate::infrastructure::adaptive_structures::ReloadStrategy {
+                load_on_startup: false,
+                prefetch_hot_data: false,
+                max_initial_load: 0,
+                axis_storage_path: "/tmp/test/indexes/".to_string(),
+            },
+        }
+    }
+
+    fn create_test_adaptive_store_config() -> crate::infrastructure::adaptive_structures::AdaptiveStoreConfig {
+        crate::infrastructure::adaptive_structures::AdaptiveStoreConfig {
+            collection_id: "test_tiering".to_string(),
+            backend_type: crate::infrastructure::adaptive_structures::BackendType::Index {
+                structure: crate::infrastructure::adaptive_structures::IndexStructure::DashMap {
+                    initial_capacity: 1000,
+                    memory_limit_mb: None,
+                },
+                tier_policy: create_test_unified_tier_policy(),
+            },
+            tier_config: crate::infrastructure::adaptive_structures::TierConfig {
+                enable_tiering: true,
+                rebalance_interval: std::time::Duration::from_secs(60),
+                memory_pressure_threshold: 0.8,
+                max_concurrent_operations: 2,
+            },
+            metrics_config: crate::infrastructure::adaptive_structures::MetricsConfig {
+                enable_workload_metrics: true,
+                collection_interval: std::time::Duration::from_secs(30),
+                history_retention: std::time::Duration::from_secs(300),
+            },
+        }
     }
 }

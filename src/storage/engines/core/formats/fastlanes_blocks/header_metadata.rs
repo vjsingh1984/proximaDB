@@ -2,7 +2,6 @@
 
 use crate::utils::uuid::Uuid;
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
@@ -798,7 +797,7 @@ mod tests {
         assert!(
             sst_meta
                 .supported_features
-                .contains_hash(&"bloom_filters".to_string())
+                .contains(&"bloom_filters".to_string())
         );
         assert!(sst_meta.optimization_hints.prefer_sequential_access);
 
@@ -806,7 +805,7 @@ mod tests {
         assert!(
             swift_meta
                 .supported_features
-                .contains_hash(&"dual_mode".to_string())
+                .contains(&"dual_mode".to_string())
         );
         assert!(swift_meta.optimization_hints.prefer_random_access);
     }

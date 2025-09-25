@@ -2,7 +2,6 @@
 //!
 //! This module provides configuration structures for the universal adapter system.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::progressive_refinement::RefinementStage;

@@ -2,14 +2,15 @@
 //!
 //! Refactored to use unified test utilities for consistent path handling and configuration.
 
-mod common {
-    include!("../../common/mod.rs");
-}
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+// Import the common test helpers
+#[path = "../../common/mod.rs"]
+mod common;
+
+use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::VectorRecord;
 use proximadb::core::search::{ComparisonOperator, FilterExpression};
-use proximadb::proto::proximadb::MetadataItem;
+use proximadb::proto::proximadb_v1::MetadataItem;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 use tracing::{debug, info};

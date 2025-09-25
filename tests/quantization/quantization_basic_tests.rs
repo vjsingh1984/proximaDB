@@ -7,11 +7,11 @@ mod tests {
     use tracing::debug;
     use std::sync::Arc;
     use proximadb::compute::{
-        UnifiedQuantizationEngine, UnifiedQuantizationLevel, QuantizationLevelType,
+        UnifiedQuantizationEngine, UnifiedQuantizationLevel, QuantizationLevel,
         ProductQuantization, BinaryQuantization, UniformQuantization, ScalarQuantization,
         UnifiedDistanceCompute, InMemoryCodebookStore, DistanceMetric
     };
-    use proximadb::storage::engines::viper::{
+    use proximadb::storage::engines::impls::viper::{
         VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, 
         QuantizationLevel
     };
@@ -62,7 +62,7 @@ mod tests {
         
         // Test basic Product Quantization functionality using UnifiedQuantizationEngine
         let _level = UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
                 bits_per_code: 8,
                 num_subvectors: 8,
                 codebook_id: None,
@@ -125,21 +125,21 @@ mod tests {
         
         let levels = vec![
             UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Uniform(UniformQuantization {
+                level_type: Some(QuantizationLevel::Uniform(UniformQuantization {
                     bits: 8,
                     scale: Some(1.0),
                     offset: Some(0.0),
                 })),
             },
             UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Uniform(UniformQuantization {
+                level_type: Some(QuantizationLevel::Uniform(UniformQuantization {
                     bits: 4,
                     scale: Some(1.0),
                     offset: Some(0.0),
                 })),
             },
             UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Scalar(ScalarQuantization {
+                level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
                     bits: 8,
                     scale: 1.0,
                     offset: 0.0,
@@ -147,7 +147,7 @@ mod tests {
                 })),
             },
             UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                     threshold: Some(0.0),
                     sign_based: false,
                 })),
@@ -299,7 +299,7 @@ mod tests {
         assert!(!serialized.is_empty());
         
         // Deserialize model
-        let deserialized_model: proximadb::storage::engines::viper::quantization::QuantizationModel = 
+        let deserialized_model: proximadb::storage::engines::impls::viper::quantization::QuantizationModel = 
             serde_json::from_str(&serialized).unwrap();
         
         // Verify model integrity
@@ -442,7 +442,7 @@ mod tests {
         // Configure PQ quantization
         let mut config = StorageQuantizationConfig::default();
         config.primary_level = Some(UnifiedQuantizationLevel {
-            level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
                 num_subvectors: 8,
                 bits_per_code: 8,
                 codebook_id: None,

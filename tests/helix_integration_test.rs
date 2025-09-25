@@ -7,8 +7,7 @@
 mod helix_integration_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::core::search::SearchParams;
-    use proximadb::proto::proximadb::{Collection, MetadataItem, VectorRecord, metadata_item};
-    use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
+    use proximadb::proto::proximadb_v1::{Collection, VectorRecord};
     use proximadb::storage::engines::impls::helix::{HelixConfig, HelixEngine};
     use proximadb::storage::traits::{
         CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
@@ -27,23 +26,23 @@ mod helix_integration_tests {
             .map(|i| VectorRecord {
                 id: format!("test_vec_{}", i),
                 vector: (0..dims).map(|_| rng.gen_range(-1.0..1.0)).collect(),
-                metadata: vec![
-                    MetadataItem {
-                        key: "source".to_string(),
-                        value: Some(metadata_item::Value::StringValue(
-                            "integration_test".to_string(),
-                        )),
-                    },
-                    MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(metadata_item::Value::StringValue(i.to_string())),
-                    },
-                ],
-                timestamp: i as u32,
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("source".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
+                            "integration_test".to_string()
+                        ))
+                    });
+                    metadata.insert("index".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
+                    });
+                    metadata
+                },
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             })
             .collect()
@@ -56,12 +55,7 @@ mod helix_integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
 
-        let engine = HelixEngine::new(
-            "test_collection".to_string(),
-            config,
-            temp_dir.path().to_path_buf(),
-            None,
-        )
+        let engine = HelixEngine::new()
         .await
         .unwrap();
 
@@ -86,7 +80,7 @@ mod helix_integration_tests {
         };
 
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
-        assert_eq!(flush_result.entries_flushed, Some(100));
+        assert_eq!(flush_result.entries_flushed.unwrap_or(0), 100);
         assert!(flush_result.bytes_written.unwrap_or(0) > 0);
 
         // Test search
@@ -99,14 +93,14 @@ mod helix_integration_tests {
 
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
-            config: Some(proximadb::proto::proximadb::CollectionConfig {
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
                 distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
                 ..Default::default()
             }),
-            stats: Some(proximadb::proto::proximadb::CollectionStats {
+            stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
                 data_size_bytes: 0,
@@ -128,7 +122,7 @@ mod helix_integration_tests {
 
         // The first result should be the query vector itself
         assert_eq!(results[0].id, "test_vec_0");
-        assert!(results[0].similarity > Some(0.999)); // Should be very close to 1 for cosine similarity
+        assert!(results[0].similarity.unwrap_or(0.0) > 0.999); // Should be very close to 1 for cosine similarity
     }
 
     #[tokio::test]
@@ -139,12 +133,7 @@ mod helix_integration_tests {
         let mut config = HelixConfig::default();
         config.level0_file_num_compaction_trigger = 2;
 
-        let engine = HelixEngine::new(
-            "test_collection".to_string(),
-            config,
-            temp_dir.path().to_path_buf(),
-            None,
-        )
+        let engine = HelixEngine::new()
         .await
         .unwrap();
 
@@ -153,7 +142,7 @@ mod helix_integration_tests {
             let vectors = create_test_vectors(50, 128, batch);
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),
-                vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+                vector_records: vectors,
                 force: true,
                 synchronous: true,
                 hints: HashMap::new(),
@@ -180,7 +169,7 @@ mod helix_integration_tests {
 
         let compact_result = engine.do_compact(&compact_params).await.unwrap();
         assert!(compact_result.success);
-        assert!(compact_result.bytes_written > Some(0));
+        assert!(compact_result.bytes_written.unwrap_or(0) > 0);
 
         // Verify data is still searchable after compaction
         let query = vec![0.0; 128];
@@ -193,14 +182,14 @@ mod helix_integration_tests {
 
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
-            config: Some(proximadb::proto::proximadb::CollectionConfig {
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
                 distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
                 ..Default::default()
             }),
-            stats: Some(proximadb::proto::proximadb::CollectionStats {
+            stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
                 data_size_bytes: 0,
@@ -227,12 +216,7 @@ mod helix_integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
 
-        let engine = HelixEngine::new(
-            "test_collection".to_string(),
-            config,
-            temp_dir.path().to_path_buf(),
-            None,
-        )
+        let engine = HelixEngine::new()
         .await
         .unwrap();
 
@@ -246,15 +230,18 @@ mod helix_integration_tests {
             all_vectors.push(VectorRecord {
                 id: format!("cluster1_vec_{}", i),
                 vector,
-                metadata: vec![MetadataItem {
-                    key: "cluster".to_string(),
-                    value: Some(metadata_item::Value::StringValue("1".to_string())),
-                }],
-                timestamp: i as u32,
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("cluster".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("1".to_string()))
+                    });
+                    metadata
+                },
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Some(vec![]),
+                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -266,15 +253,18 @@ mod helix_integration_tests {
             all_vectors.push(VectorRecord {
                 id: format!("cluster2_vec_{}", i),
                 vector,
-                metadata: vec![MetadataItem {
-                    key: "cluster".to_string(),
-                    value: Some(metadata_item::Value::StringValue("2".to_string())),
-                }],
-                timestamp: (50 + i) as u32,
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("cluster".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("2".to_string()))
+                    });
+                    metadata
+                },
+                timestamp: (50 + i) as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Some(vec![]),
+                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -305,14 +295,14 @@ mod helix_integration_tests {
 
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
-            config: Some(proximadb::proto::proximadb::CollectionConfig {
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
                 distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
                 ..Default::default()
             }),
-            stats: Some(proximadb::proto::proximadb::CollectionStats {
+            stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
                 data_size_bytes: 0,
@@ -350,12 +340,7 @@ mod helix_integration_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
 
-        let engine = HelixEngine::new(
-            "test_collection".to_string(),
-            config,
-            temp_dir.path().to_path_buf(),
-            None,
-        )
+        let engine = HelixEngine::new()
         .await
         .unwrap();
 
@@ -365,25 +350,25 @@ mod helix_integration_tests {
             vectors.push(VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32 / 100.0; 128],
-                metadata: vec![
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(metadata_item::Value::StringValue(if i % 2 == 0 {
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("category".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(if i % 2 == 0 {
                             "even".to_string()
                         } else {
                             "odd".to_string()
-                        })),
-                    },
-                    MetadataItem {
-                        key: "batch".to_string(),
-                        value: Some(metadata_item::Value::NumberValue((i / 10) as f64)),
-                    },
-                ],
-                timestamp: i as u32,
+                        }))
+                    });
+                    metadata.insert("batch".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                        value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue((i / 10) as f64))
+                    });
+                    metadata
+                },
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Some(vec![]),
+                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -421,14 +406,14 @@ mod helix_integration_tests {
 
         let collection = Arc::new(Collection {
             id: "test_collection".to_string(),
-            config: Some(proximadb::proto::proximadb::CollectionConfig {
+            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                 name: "test_collection".to_string(),
                 dimension: 128,
                 distance_metric: DistanceMetric::Euclidean as i32,
-                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
+                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
                 ..Default::default()
             }),
-            stats: Some(proximadb::proto::proximadb::CollectionStats {
+            stats: Some(proximadb::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,
                 index_size_bytes: 0,
                 data_size_bytes: 0,

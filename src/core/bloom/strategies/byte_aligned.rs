@@ -8,12 +8,11 @@
 //! Byte-aligned bloom filter implementation optimized for disk storage
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Byte-aligned bloom filter optimized for SSTable storage
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ByteAlignedBloomFilter {
     /// Bit storage using byte array
     bits: Vec<u8>,

@@ -110,9 +110,9 @@ mod tests {
         let strategies = WALBatchFactory::available_strategies();
 
         assert_eq!(strategies.len(), 3);
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::AvroBatch));
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::BincodeBatch));
-        assert!(strategies.contains_hash(&WriteBufferStrategyType::ProtoBatch));
+        assert!(strategies.iter().any(|s| matches!(s, WriteBufferStrategyType::AvroBatch)));
+        assert!(strategies.iter().any(|s| matches!(s, WriteBufferStrategyType::BincodeBatch)));
+        assert!(strategies.iter().any(|s| matches!(s, WriteBufferStrategyType::ProtoBatch)));
     }
 
     #[test]
@@ -123,8 +123,8 @@ mod tests {
         assert_eq!(info.serialization, "Apache Avro");
         assert!(info.schema_evolution);
         assert!(info.batch_native);
-        assert!(!info.recommended_use_cases.is_none());
-        assert!(!info.description.is_none());
+        assert!(!info.recommended_use_cases.is_empty());
+        assert!(!info.description.is_empty());
     }
 
     #[test]
@@ -135,24 +135,24 @@ mod tests {
         assert_eq!(info.serialization, "Bincode (native Rust)");
         assert!(!info.schema_evolution);
         assert!(info.batch_native);
-        assert!(!info.recommended_use_cases.is_none());
-        assert!(!info.description.is_none());
+        assert!(!info.recommended_use_cases.is_empty());
+        assert!(!info.description.is_empty());
     }
 
     #[test]
     fn test_strategy_comparison() {
         let comparison = WALBatchFactory::compare_strategies();
 
-        assert!(!comparison.avro_advantages.is_none());
-        assert!(!comparison.bincode_advantages.is_none());
-        assert!(!comparison.recommendation.is_none());
+        assert!(!comparison.avro_advantages.is_empty());
+        assert!(!comparison.bincode_advantages.is_empty());
+        assert!(!comparison.recommendation.is_empty());
 
         // Check that Avro advantages mention schema evolution
         assert!(
             comparison
                 .avro_advantages
                 .iter()
-                .any(|adv| adv.to_lowercase().contains_hash("schema"))
+                .any(|adv| adv.to_lowercase().contains("schema"))
         );
 
         // Check that Bincode advantages mention performance
@@ -160,7 +160,7 @@ mod tests {
             comparison
                 .bincode_advantages
                 .iter()
-                .any(|adv| adv.contains_hash("performance"))
+                .any(|adv| adv.contains("performance"))
         );
     }
 
@@ -179,8 +179,8 @@ mod tests {
         assert!(!bincode_info.schema_evolution);
 
         // Both should have performance profiles
-        assert!(!avro_info.performance_profile.is_none());
-        assert!(!bincode_info.performance_profile.is_none());
+        assert!(!avro_info.performance_profile.is_empty());
+        assert!(!bincode_info.performance_profile.is_empty());
     }
 
     #[tokio::test]
@@ -206,7 +206,7 @@ mod tests {
             assert!(strategy.get_wal_behavior().is_none());
 
             // Verify basic operations work
-            let stats = strategy.stats().await.expect("Failed to get stats");
+            let stats = strategy.get_stats().await.expect("Failed to get stats");
             assert_eq!(stats.memory_entries, 0); // Should start empty
         }
     }
@@ -256,21 +256,21 @@ mod tests {
             comparison
                 .recommendation
                 .to_lowercase()
-                .contains_hash("avro")
+                .contains("avro")
         );
         assert!(
             comparison
                 .recommendation
                 .to_lowercase()
-                .contains_hash("bincode")
+                .contains("bincode")
         );
 
         // Should mention key decision factors
         let rec_lower = comparison.recommendation.to_lowercase();
         assert!(
-            rec_lower.contains_hash("schema")
-                || rec_lower.contains_hash("performance")
-                || rec_lower.contains_hash("rust")
+            rec_lower.contains("schema")
+                || rec_lower.contains("performance")
+                || rec_lower.contains("rust")
         );
     }
 
@@ -283,11 +283,11 @@ mod tests {
             let info = WALBatchFactory::get_strategy_info(strategy_type);
 
             // All fields should be populated
-            assert!(!info.name.is_none());
-            assert!(!info.description.is_none());
-            assert!(!info.serialization.is_none());
-            assert!(!info.performance_profile.is_none());
-            assert!(!info.recommended_use_cases.is_none());
+            assert!(!info.name.is_empty());
+            assert!(!info.description.is_empty());
+            assert!(!info.serialization.is_empty());
+            assert!(!info.performance_profile.is_empty());
+            assert!(!info.recommended_use_cases.is_empty());
 
             // batch_native should always be true for new strategies
             assert!(info.batch_native);

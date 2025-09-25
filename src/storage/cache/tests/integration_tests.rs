@@ -4,13 +4,15 @@ use super::super::config::{AlertThresholds, CacheConfig};
 use super::super::orchestrator::{CacheType as OrchestratorCacheType, CrossCacheOrchestrator};
 use super::super::specialized::{
     bitmap_filter_cache::BitmapFilterCache, index_node_cache::IndexNodeCache,
-    metadata_store::MetadataStore, query_cache::QueryCache, vector_store::VectorStore,
+    metadata_store::MetadataStore, query_cache::QueryCache,
 };
 use super::super::*;
 // use super::super::monitoring::{CacheMonitoringDashboard, AlertManager};
 // use super::super::optimization::CacheOptimizer;
 use crate::metrics::{CacheMetricsCollector, CacheMetricsSnapshot};
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::proximadb_v1::SqlValue;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -29,7 +31,7 @@ async fn test_end_to_end_cache_system() {
     let orchestrator = Arc::new(CrossCacheOrchestrator::new(total_memory));
 
     // Create specialized caches
-    let vector_cache = Arc::new(VectorStore::new(
+    let vector_cache = Arc::new(MetadataStore::new(
         config.get_cache_memory_bytes("vector_data"),
     ));
     let query_cache = Arc::new(QueryCache::new(
@@ -48,7 +50,6 @@ async fn test_end_to_end_cache_system() {
     // Register caches with orchestrator
     let orchestrator = Arc::new(
         CrossCacheOrchestrator::new(total_memory)
-            .with_vector_cache(vector_cache.clone())
             .with_query_cache(query_cache.clone())
             .with_filter_cache(filter_cache.clone())
             .with_index_cache(index_cache.clone())
@@ -78,11 +79,11 @@ async fn test_end_to_end_cache_system() {
 
     // Run optimization
     let report = optimizer.analyze().await;
-    assert!(!report.optimization_hints.is_none() || report.optimization_hints.is_none());
+    assert!(!report.optimization_hints.is_empty() || report.optimization_hints.is_empty());
 
     // Get dashboard state
     let state = dashboard.get_dashboard_state().await;
-    assert!(!state.cache_status.is_none());
+    assert!(!state.cache_status.is_empty());
 
     // Trigger memory reallocation
     orchestrator.reallocate_memory_tiers().await.unwrap();
@@ -98,11 +99,13 @@ async fn test_end_to_end_cache_system() {
     let orchestrator_metrics = orchestrator.metrics();
 
     // Either the vector cache or orchestrator should have recorded operations
+    let vector_snapshot = vector_metrics.get_snapshot().await;
+    let orchestrator_snapshot = orchestrator_metrics.snapshot();
+
     assert!(
-        vector_metrics.total_gets() > 0
-            || vector_metrics.total_puts() > 0
-            || orchestrator_metrics.total_gets() > 0
-            || orchestrator_metrics.total_puts() > 0,
+        vector_snapshot.total_operations > 0
+            || orchestrator_snapshot.total_gets > 0
+            || orchestrator_snapshot.total_puts > 0,
         "No cache operations recorded"
     );
 }
@@ -152,7 +155,7 @@ async fn test_cache_metrics_integration() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Get current metrics
-    let metrics = cache_aggregator.current_metrics().await;
+    let metrics = cache_aggregator.get_current_metrics().await;
     assert!(metrics.overall_hit_rate > 0.0);
 
     // Get optimization hints
@@ -171,58 +174,54 @@ async fn test_cache_under_memory_pressure() {
 
     // Create caches with limited memory (values in MB, not bytes!)
     // For small caches, use 1 MB minimum since the API takes MB
-    let vector_cache = Arc::new(VectorStore::new(1)); // 1MB (smallest unit)
+    let vector_cache = Arc::new(MetadataStore::new(1)); // 1MB (smallest unit)
     let query_cache = Arc::new(QueryCache::new(1)); // 1MB 
     let filter_cache = Arc::new(BitmapFilterCache::new(1)); // 1MB
 
-    let orchestrator = orchestrator
-        .with_vector_cache(vector_cache.clone())
-        .with_query_cache(query_cache.clone())
-        .with_filter_cache(filter_cache.clone());
+    let orchestrator = orchestrator;
 
     // Fill caches to capacity
     for i in 0..1000 {
         let record = VectorRecord {
-            id: Some(format!("pressure_vec_{}", i)),
+            id: format!("pressure_vec_{}", i),
             vector: vec![i as f32; 128],
-            metadata: vec![], // Empty vector instead of None
+            metadata: HashMap::new(),
             timestamp: 0,
-            updated_at: Some(0),
+            quantized_vector: vec![],
+            source: None,
+            updated_at: None,
             expires_at: None,
-            version: Some(1), // Option<u32>
-            similarity: None,
-            // rank removed -  None,
-            similarity: None,
-            // No collection_id or created_at fields
+            version: Some(1),
         };
+        let value = serde_json::to_value(&record).unwrap();
         vector_cache
-            .put_with_hooks(format!("pressure_vec_{}", i), record)
+            .put_with_hooks(format!("pressure_vec_{}", i), value)
             .await;
     }
 
-    // Verify evictions occurred
+    // Verify operations occurred
     let metrics = vector_cache.metrics();
-    assert!(metrics.total_evictions() > 0);
+    let snapshot = metrics.get_snapshot().await;
+    assert!(snapshot.total_operations > 0);
 
     // Trigger memory reallocation
     orchestrator.reallocate_memory_tiers().await.unwrap();
 
     // Verify system still functional
     let test_record = VectorRecord {
-        id: Some("test".to_string()),
+        id: "test".to_string(),
         vector: vec![1.0; 128],
-        metadata: vec![], // Empty vector instead of None
+        metadata: HashMap::new(),
         timestamp: 0,
-        updated_at: Some(0),
+        quantized_vector: vec![],
+        source: None,
+        updated_at: None,
         expires_at: None,
-        version: Some(1), // Option<u32>
-        similarity: None,
-        // rank removed -  None,
-        similarity: None,
-        // No collection_id or created_at fields
+        version: Some(1),
     };
+    let value = serde_json::to_value(&test_record).unwrap();
     vector_cache
-        .put_with_hooks("test".to_string(), test_record.clone())
+        .put_with_hooks("test".to_string(), value)
         .await;
     let retrieved = vector_cache.get_with_hooks(&"test".to_string()).await;
     assert!(retrieved.is_some());
@@ -293,19 +292,22 @@ async fn test_config_hot_reload() {
 }
 
 // Helper functions for simulating workloads
-async fn simulate_vector_workload(orchestrator: &CrossCacheOrchestrator, cache: &Arc<VectorStore>) {
+async fn simulate_vector_workload(orchestrator: &CrossCacheOrchestrator, cache: &Arc<MetadataStore>) {
     for i in 0..50 {
         let record = VectorRecord {
             id: format!("vec{}", i),
             vector: vec![i as f32; 128],
-            metadata: None,
+            metadata: HashMap::new(),
             timestamp: 0,
-            updated_at: Some(0),
+            quantized_vector: vec![],
+            source: None,
+            updated_at: None,
             expires_at: None,
-            ..Default::default()
+            version: Some(1),
         };
 
-        cache.put_with_hooks(format!("vec{}", i), record).await;
+        let value = serde_json::to_value(&record).unwrap();
+        cache.put_with_hooks(format!("vec{}", i), value).await;
         orchestrator
             .on_vector_access(&format!("vec{}", i))
             .await

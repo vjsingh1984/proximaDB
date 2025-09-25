@@ -21,7 +21,7 @@ use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
 /// Index event for async processing
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexEvent {
     /// Unique event ID
     pub event_id: String,
@@ -58,7 +58,7 @@ pub enum StorageEngineType {
     NOVA,
     RAPTOR,
     SWIFT,
-    PRISM,
+    HELIX,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,7 +72,7 @@ pub enum OperationType {
 pub type EventType = OperationType;
 
 /// File indexing status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileIndexingStatus {
     /// File path
     pub file_path: String,
@@ -182,9 +182,9 @@ impl EventLogQueue {
     }
 
     /// Add event to queue (fire-and-forget for producers)
-    pub fn add_event(&self, event: IndexEvent) {
-        // Add to in-memory queue immediately (non-blocking)
-        self.active_events.blocking_write().push_back(event.clone());
+    pub async fn add_event(&self, event: IndexEvent) {
+        // Add to in-memory queue immediately (async)
+        self.active_events.write().await.push_back(event.clone());
 
         // Track file status
         for file_path in &event.file_paths {
@@ -216,15 +216,15 @@ impl EventLogQueue {
     }
 
     /// Mark event as processed by an index
-    pub fn mark_processed(&self, event_id: &str, index_name: &str) {
+    pub async fn mark_processed(&self, event_id: &str, index_name: &str) {
         // Update processed offset
-        if let Some(offset) = self.find_event_offset(event_id) {
+        if let Some(offset) = self.find_event_offset(event_id).await {
             self.processed_offsets
                 .insert(index_name.to_string(), offset);
         }
 
         // Update file status for all files in the event
-        if let Some(event) = self.find_event(event_id) {
+        if let Some(event) = self.find_event(event_id).await {
             for file_path in &event.file_paths {
                 if let Some(mut status) = self.file_status.get_mut(file_path) {
                     // Move from pending to completed
@@ -263,14 +263,14 @@ impl EventLogQueue {
     }
 
     /// Clean up after compaction
-    pub fn cleanup_compacted_files(&self, deleted_files: Vec<String>) {
+    pub async fn cleanup_compacted_files(&self, deleted_files: Vec<String>) {
         for file in &deleted_files {
             self.file_status.remove(file);
         }
 
         // Remove events for deleted files
         self.active_events
-            .blocking_write()
+            .write().await
             .retain(|e| !e.file_paths.iter().any(|f| deleted_files.contains(f)));
 
         // Persist changes
@@ -353,18 +353,18 @@ impl EventLogQueue {
     }
 
     /// Find event by ID
-    fn find_event(&self, event_id: &str) -> Option<IndexEvent> {
+    async fn find_event(&self, event_id: &str) -> Option<IndexEvent> {
         self.active_events
-            .blocking_read()
+            .read().await
             .iter()
             .find(|e| e.event_id == event_id)
             .cloned()
     }
 
     /// Find event offset by ID
-    fn find_event_offset(&self, event_id: &str) -> Option<usize> {
+    async fn find_event_offset(&self, event_id: &str) -> Option<usize> {
         self.active_events
-            .blocking_read()
+            .read().await
             .iter()
             .position(|e| e.event_id == event_id)
     }
@@ -535,10 +535,10 @@ mod tests {
         assert!(!queue.can_compact("file1.sstable"));
 
         // Mark as processed by indexes
-        queue.mark_processed(&event.event_id, "hnsw");
+        queue.mark_processed(&event.event_id, "hnsw").await;
         assert!(!queue.can_compact("file1.sstable")); // Still one pending
 
-        queue.mark_processed(&event.event_id, "ivf");
+        queue.mark_processed(&event.event_id, "ivf").await;
         assert!(queue.can_compact("file1.sstable")); // Now ready
     }
 
@@ -609,7 +609,7 @@ mod tests {
             );
 
             queue.add_event(event.clone());
-            queue.mark_processed(&event.event_id, "hnsw");
+            queue.mark_processed(&event.event_id, "hnsw").await;
 
             // Force persist
             queue.persist_state().await.unwrap();

@@ -35,7 +35,7 @@ mod tests {
 
         // Test compression - server default is none (no compression)
         assert_eq!(
-            config.storage.as_ref().and_then(|s| s.compression.as_ref()),
+            config.compression,
             "none"
         );
     }

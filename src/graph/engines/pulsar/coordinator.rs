@@ -24,12 +24,12 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::sharding::ConsistentHashRing;
 use crate::graph::engines::orion::OrionGraphEngine;
 use crate::graph::engines::GraphEngine;
-use crate::graph::{Edge, EdgeId, Node, NodeId};
+use crate::graph::{Node, NodeId};
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 
 /// Query coordinator for distributed graph operations
 #[derive(Debug)]
@@ -358,13 +358,13 @@ impl QueryCoordinator {
 
                     for neighbor in neighbors {
                         if !context.visited.contains(&neighbor.id) {
-                            self.execute_distributed_dfs(
+                            Box::pin(self.execute_distributed_dfs(
                                 &neighbor.id,
                                 context,
                                 result_nodes,
                                 current_path,
                                 all_paths,
-                            )
+                            ))
                             .await?;
                         }
                     }
@@ -560,11 +560,11 @@ mod tests {
         let (shards, hash_ring) = create_test_setup();
         let coordinator = QueryCoordinator::new(shards, hash_ring, 10);
 
-        let shard_id = coordinator.get_shard_for_node("test_node").await.unwrap();
+        let shard_id = coordinator.get_shard_for_node(&"test_node".to_string()).await.unwrap();
         assert!(shard_id < 4);
 
         // Same node should always map to same shard
-        let shard_id2 = coordinator.get_shard_for_node("test_node").await.unwrap();
+        let shard_id2 = coordinator.get_shard_for_node(&"test_node".to_string()).await.unwrap();
         assert_eq!(shard_id, shard_id2);
     }
 
@@ -574,7 +574,7 @@ mod tests {
         let coordinator = QueryCoordinator::new(shards, hash_ring, 10);
 
         // For this test, BFS on a non-existent node should return empty results
-        let results = coordinator.distributed_bfs("nonexistent", 2).await.unwrap();
+        let results = coordinator.distributed_bfs(&"nonexistent".to_string(), 2).await.unwrap();
         assert!(results.is_empty());
 
         let stats = coordinator.get_stats().await;

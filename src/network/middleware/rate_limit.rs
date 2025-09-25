@@ -22,7 +22,7 @@ use axum::{
     middleware::Next,
     response::{Json, Response},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Rate limiting configuration - consolidated from network module
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RateLimitConfig {
     /// Enable rate limiting (if false, all requests pass through)
     pub enabled: bool,

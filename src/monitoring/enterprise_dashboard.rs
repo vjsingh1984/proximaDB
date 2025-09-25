@@ -489,3 +489,134 @@ impl EnterpriseDashboard {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    async fn create_test_dashboard() -> EnterpriseDashboard {
+        let system_collector = Arc::new(SystemMetricsCollector::new());
+        let query_collector = Arc::new(QueryMetricsCollector::new());
+        let storage_collector = Arc::new(StorageMetricsCollector::new());
+        let engine_collector = Arc::new(EngineMetricsCollector::new());
+        
+        EnterpriseDashboard::new(
+            system_collector,
+            query_collector,
+            storage_collector,
+            engine_collector,
+            None, // No cache orchestrator for basic tests
+        ).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_creation() {
+        let dashboard = create_test_dashboard().await;
+        
+        // Dashboard should be created successfully
+        let state = dashboard.get_dashboard_state().await.unwrap();
+        assert_eq!(state.system_health.overall_health, HealthLevel::Unknown); // Initial state
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_metrics_update() {
+        let dashboard = create_test_dashboard().await;
+        
+        // Update metrics
+        dashboard.update_metrics().await.unwrap();
+        
+        // Verify state is updated
+        let state = dashboard.get_dashboard_state().await.unwrap();
+        assert!(state.last_updated.elapsed().unwrap().as_secs() < 5); // Recently updated
+    }
+
+    #[tokio::test]
+    async fn test_alert_system() {
+        let dashboard = create_test_dashboard().await;
+        
+        // Should start with no alerts
+        let alerts = dashboard.get_active_alerts().await;
+        assert!(alerts.is_empty());
+        
+        // Update metrics to potentially trigger alerts
+        dashboard.update_metrics().await.unwrap();
+        
+        // Dashboard should handle alert checking without errors
+        assert!(true);
+    }
+
+    #[tokio::test]
+    async fn test_alert_clearance() {
+        let dashboard = create_test_dashboard().await;
+        
+        // Try to clear a non-existent alert (should not panic)
+        let result = dashboard.clear_alert("non_existent_alert").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_json_export() {
+        let dashboard = create_test_dashboard().await;
+        
+        // Update metrics first
+        dashboard.update_metrics().await.unwrap();
+        
+        // Export to JSON
+        let json_export = dashboard.export_json().await.unwrap();
+        
+        // Should be valid JSON
+        assert!(json_export.contains("system_health"));
+        assert!(json_export.contains("query_performance"));
+        assert!(json_export.contains("cache_efficiency"));
+    }
+
+    #[test]
+    fn test_health_level_enum() {
+        let healthy = HealthLevel::Healthy;
+        let warning = HealthLevel::Warning;
+        let critical = HealthLevel::Critical;
+        let unknown = HealthLevel::Unknown;
+        
+        assert_eq!(healthy, HealthLevel::Healthy);
+        assert_ne!(healthy, warning);
+        assert_ne!(warning, critical);
+        assert_ne!(critical, unknown);
+    }
+
+    #[test]
+    fn test_alert_level_enum() {
+        let info = AlertLevel::Info;
+        let warning = AlertLevel::Warning;
+        let critical = AlertLevel::Critical;
+        
+        // Test that alert levels are properly differentiated
+        assert_ne!(info, warning);
+        assert_ne!(warning, critical);
+        assert_ne!(info, critical);
+    }
+
+    #[test]
+    fn test_alert_configuration_defaults() {
+        let config = AlertConfiguration::default();
+        
+        // Verify reasonable default thresholds
+        assert_eq!(config.cpu_threshold_percent, 80.0);
+        assert_eq!(config.memory_threshold_percent, 85.0);
+        assert_eq!(config.disk_threshold_percent, 90.0);
+        assert_eq!(config.error_rate_threshold_percent, 5.0);
+        assert_eq!(config.latency_threshold_ms, 1000.0);
+        assert_eq!(config.cache_hit_rate_threshold_percent, 80.0);
+    }
+
+    #[test]
+    fn test_dashboard_state_serialization() {
+        let state = EnterpriseDashboard::initial_dashboard_state();
+        
+        // Should be able to serialize and deserialize
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: DashboardState = serde_json::from_str(&json).unwrap();
+        
+        assert_eq!(state.system_health.overall_health, deserialized.system_health.overall_health);
+    }
+}

@@ -19,13 +19,13 @@
 use crate::network::auth::{AuthError, AuthResult, AuthService, Permission, PermissionContext, ResourceType};
 use axum::{
     extract::State,
-    http::{Request, HeaderValue, StatusCode},
+    http::{Request, StatusCode},
     middleware::Next,
     response::{Json, Response},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Authentication middleware state
 pub struct AuthMiddlewareState {

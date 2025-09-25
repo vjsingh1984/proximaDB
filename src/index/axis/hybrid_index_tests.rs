@@ -63,7 +63,7 @@ mod tests {
         // Test routing queries to appropriate indexes based on selectivity
         let indexes = vec![
             IndexSpecification {
-                // data_type removed -  Data::DenseVector { dimension: 512 },
+                data_type: crate::index::axis::types::Data::DenseVector { dimension: 512 },
                 algorithm: IndexAlgorithm::HNSW {
                     m: 16,
                     ef_construction: 200,
@@ -75,7 +75,7 @@ mod tests {
                 selectivity_threshold: Some(0.1), // Use for selective queries
             },
             IndexSpecification {
-                // data_type removed -  Data::DenseVector { dimension: 512 },
+                data_type: crate::index::axis::types::Data::DenseVector { dimension: 512 },
                 algorithm: IndexAlgorithm::IVF {
                     nlist: 1000,
                     nprobe: 100,
@@ -86,7 +86,7 @@ mod tests {
                 selectivity_threshold: Some(0.5), // Use for bulk queries
             },
             IndexSpecification {
-                // data_type removed -  Data::Metadata,
+                data_type: crate::index::axis::types::Data::Metadata,
                 algorithm: IndexAlgorithm::BTree {
                     max_keys_per_node: 100,
                 },

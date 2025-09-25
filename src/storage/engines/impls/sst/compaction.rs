@@ -21,11 +21,12 @@
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::compactor_impl::{SstCompactor, ZeroCopyCompactionStats};
-use crate::core::VectorRecord; // OPTIMIZED: Added VectorRecord import
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Added VectorRecord import
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::core::{SstConfig, String}; // OPTIMIZED: VectorRecord imported above
 use crate::storage::Result;
-use crate::storage::engines::core::io::zero_copy::{ZeroCopyIOConfig, ZeroCopyIOSystem};
+// Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -180,29 +181,27 @@ impl Compaction {
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
-            .map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?,
+            .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?,
         );
-        let zero_copy_config = ZeroCopyIOConfig {
-            metadata_cache:
-                crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
-                    max_memory_mb: 100,
-                    ..Default::default()
-                },
-            ..Default::default()
-        };
-        let zero_copy_system = Arc::new(
-            ZeroCopyIOSystem::new(zero_copy_config, filesystem_factory.clone(), Vec::new())
-                .await
-                .map_err(|e| {
-                    crate::core::StorageError::SstStorage(format!(
-                        "Failed to create zero-copy system: {}",
-                        e
-                    ))
-                })?,
+        // Create unified caching filesystem for compaction
+        let base_fs = filesystem_factory
+            .get_filesystem("file://")
+            .map_err(|e| {
+                crate::core::StorageError::SstEngine(format!(
+                    "Failed to get base filesystem: {}",
+                    e
+                ))
+            })?;
+        let unified_fs = Arc::new(
+            UnifiedCachingFilesystem::new(
+                base_fs,
+                "compaction".to_string(), // collection_id
+                "sst_compaction".to_string(),
+            )
         );
         let unified_reader = Arc::new(UnifiedSstableReader::new(
             filesystem_factory.clone(),
-            zero_copy_system,
+            unified_fs,
             String::from("compaction"),
         ));
 
@@ -457,7 +456,7 @@ impl Compaction {
             self.filesystem_factory.clone(),
         )
         .await
-        .map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?;
+        .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
 
         let unified_task = task_info.map(|info| LevelBasedCompactionTask {
             level: info.source_level,
@@ -720,11 +719,11 @@ impl Compaction {
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
-            .map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?,
+            .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?,
         );
         let fs = filesystem_factory
             .get_filesystem("file:///")
-            .map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?;
+            .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
 
         for input_file in &task.input_files {
             let input_path = input_file.to_string_lossy();
@@ -967,7 +966,7 @@ impl Compaction {
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
-            .map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?,
+            .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?,
         );
 
         let bytes_written = if let Some(ref coordinator) = atomic_coordinator {
@@ -981,7 +980,7 @@ impl Compaction {
                     .output_file
                     .parent()
                     .ok_or_else(|| {
-                        crate::core::StorageError::SstStorage(
+                        crate::core::StorageError::SstEngine(
                             "Invalid output file path".to_string(),
                         )
                     })?
@@ -998,7 +997,7 @@ impl Compaction {
                 .begin_atomic_operation(&staging_config)
                 .await
                 .map_err(|e| {
-                    crate::core::StorageError::SstStorage(format!(
+                    crate::core::StorageError::SstEngine(format!(
                         "Failed to begin atomic operation: {}",
                         e
                     ))
@@ -1014,7 +1013,7 @@ impl Compaction {
                 .output_file
                 .file_name()
                 .ok_or_else(|| {
-                    crate::core::StorageError::SstStorage("Invalid output filename".to_string())
+                    crate::core::StorageError::SstEngine("Invalid output filename".to_string())
                 })?
                 .to_string_lossy()
                 .to_string();
@@ -1071,7 +1070,7 @@ impl Compaction {
                 .finalize_atomic_operation(&atomic_op.operation_id)
                 .await
                 .map_err(|e| {
-                    crate::core::StorageError::SstStorage(format!(
+                    crate::core::StorageError::SstEngine(format!(
                         "Failed to finalize atomic operation: {}",
                         e
                     ))
@@ -1258,7 +1257,7 @@ impl Compaction {
                 .registry
                 .discover_files(&orchestrator.filesystem, &collection_path, "sst")
                 .await
-                .map_err(|e| crate::core::StorageError::SstStorage(e.to_string()))?
+                .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?
         } else {
             // Fallback to empty result if no orchestrator
             HashMap::new()
@@ -1298,7 +1297,7 @@ impl Compaction {
         debug!("Parsing SSTable format for {} ({} bytes)", file_path, file_data.len());
 
         if file_data.len() < 16 {
-            return Err(crate::core::StorageError::SstStorage(
+            return Err(crate::core::StorageError::SstEngine(
                 format!("SSTable file too small: {} bytes", file_data.len())
             ));
         }
@@ -1309,17 +1308,17 @@ impl Compaction {
 
         // Skip magic header (SST1)
         if offset + 4 > file_data.len() {
-            return Err(crate::core::StorageError::SstStorage("File too small for magic header".into()));
+            return Err(crate::core::StorageError::SstEngine("File too small for magic header".into()));
         }
         let magic = &file_data[offset..offset + 4];
         if magic != b"SST1" {
-            return Err(crate::core::StorageError::SstStorage("Invalid SSTable magic header".into()));
+            return Err(crate::core::StorageError::SstEngine("Invalid SSTable magic header".into()));
         }
         offset += 4;
 
         // Skip header: [header_len:4][header_data]
         if offset + 4 > file_data.len() {
-            return Err(crate::core::StorageError::SstStorage("File too small for header length".into()));
+            return Err(crate::core::StorageError::SstEngine("File too small for header length".into()));
         }
         let header_len = u32::from_le_bytes([
             file_data[offset], file_data[offset + 1], file_data[offset + 2], file_data[offset + 3]
@@ -1328,7 +1327,7 @@ impl Compaction {
 
         // Skip bloom filter: [bloom_len:4][bloom_data]
         if offset + 4 > file_data.len() {
-            return Err(crate::core::StorageError::SstStorage("File too small for bloom length".into()));
+            return Err(crate::core::StorageError::SstEngine("File too small for bloom length".into()));
         }
         let bloom_len = u32::from_le_bytes([
             file_data[offset], file_data[offset + 1], file_data[offset + 2], file_data[offset + 3]
@@ -1337,7 +1336,7 @@ impl Compaction {
 
         // Skip index: [index_len:4][index_data]
         if offset + 4 > file_data.len() {
-            return Err(crate::core::StorageError::SstStorage("File too small for index length".into()));
+            return Err(crate::core::StorageError::SstEngine("File too small for index length".into()));
         }
         let index_len = u32::from_le_bytes([
             file_data[offset], file_data[offset + 1], file_data[offset + 2], file_data[offset + 3]
@@ -1434,11 +1433,11 @@ impl Compaction {
         // Read and validate magic header
         let mut magic = [0u8; 4];
         cursor.read_exact(&mut magic).map_err(|e| {
-            crate::core::StorageError::SstStorage(format!("Failed to read magic header: {}", e))
+            crate::core::StorageError::SstEngine(format!("Failed to read magic header: {}", e))
         })?;
 
         if &magic != b"BLK1" {
-            return Err(crate::core::StorageError::SstStorage(format!(
+            return Err(crate::core::StorageError::SstEngine(format!(
                 "Invalid DataBlock format - expected BLK1 magic, got {:?}",
                 magic
             )));
@@ -1447,7 +1446,7 @@ impl Compaction {
         // Read DataBlock header: [magic:4][block_id:4][uncompressed_size:4][record_count:4]
         let mut header = [0u8; 12];
         cursor.read_exact(&mut header).map_err(|e| {
-            crate::core::StorageError::SstStorage(format!("Failed to read block header: {}", e))
+            crate::core::StorageError::SstEngine(format!("Failed to read block header: {}", e))
         })?;
 
         let stored_block_id = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
@@ -1587,7 +1586,7 @@ impl Compaction {
             }
             Err(e) => {
                 warn!("❌ COMPACTION UNIFIED: Failed to read {}: {}", file_path, e);
-                Err(crate::core::StorageError::SstStorage(format!(
+                Err(crate::core::StorageError::SstEngine(format!(
                     "Unified reader failed for {}: {}",
                     file_path, e
                 )))

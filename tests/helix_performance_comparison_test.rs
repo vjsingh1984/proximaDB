@@ -6,10 +6,10 @@
 #[cfg(test)]
 mod performance_comparison_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
-    use proximadb::proto::proximadb::{MetadataItem, VectorRecord, metadata_item};
-    use proximadb::storage::engines::factory::{StorageEngineFactory, WorkloadType};
+    use proximadb::proto::proximadb_v1::VectorRecord;
+    
     use proximadb::storage::engines::impls::helix::{HelixConfig, HelixEngine};
-    use proximadb::storage::engines::impls::sst::SstStorage;
+    use proximadb::storage::engines::impls::sst::SstEngine;
     use proximadb::storage::engines::impls::viper::engine::ViperEngine;
     use proximadb::storage::traits::StorageQueryMetadata;
     use proximadb::storage::traits::{
@@ -43,15 +43,18 @@ mod performance_comparison_tests {
                     .map(|i| VectorRecord {
                         id: format!("vec_{}", i),
                         vector: (0..dims).map(|_| rng.gen_range(-1.0..1.0)).collect(),
-                        metadata: vec![MetadataItem {
-                            key: "distribution".to_string(),
-                            value: Some(metadata_item::Value::StringValue("uniform".to_string())),
-                        }],
-                        timestamp: i as u32,
+                        metadata: {
+                            let mut metadata = std::collections::HashMap::new();
+                            metadata.insert("distribution".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("uniform".to_string()))
+                            });
+                            metadata
+                        },
+                        timestamp: i as i64,
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized_vector: Some(vec![]),
+                        quantized_vector: vec![],
                         source: None,
                     })
                     .collect()
@@ -76,25 +79,21 @@ mod performance_comparison_tests {
                         vectors.push(VectorRecord {
                             id: format!("cluster_{}_vec_{}", cluster_id, i),
                             vector,
-                            metadata: vec![
-                                MetadataItem {
-                                    key: "distribution".to_string(),
-                                    value: Some(metadata_item::Value::StringValue(
-                                        "clustered".to_string(),
-                                    )),
-                                },
-                                MetadataItem {
-                                    key: "cluster_id".to_string(),
-                                    value: Some(metadata_item::Value::StringValue(
-                                        cluster_id.to_string(),
-                                    )),
-                                },
-                            ],
-                            timestamp: (cluster_id * vectors_per_cluster + i) as u32,
+                            metadata: {
+                                let mut metadata = std::collections::HashMap::new();
+                                metadata.insert("distribution".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("clustered".to_string()))
+                                });
+                                metadata.insert("cluster_id".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(cluster_id.to_string()))
+                                });
+                                metadata
+                            },
+                            timestamp: (cluster_id * vectors_per_cluster + i) as i64,
                             updated_at: None,
                             expires_at: None,
                             version: None,
-                            quantized_vector: Some(vec![]),
+                            quantized_vector: vec![],
                             source: None,
                         });
                     }
@@ -109,17 +108,18 @@ mod performance_comparison_tests {
                         VectorRecord {
                             id: format!("vec_{}", i),
                             vector: (0..dims).map(|_| rng.gen_range(-1.0..1.0) * skew).collect(),
-                            metadata: vec![MetadataItem {
-                                key: "distribution".to_string(),
-                                value: Some(metadata_item::Value::StringValue(
-                                    "skewed".to_string(),
-                                )),
-                            }],
-                            timestamp: i as u32,
+                            metadata: {
+                                let mut metadata = std::collections::HashMap::new();
+                                metadata.insert("distribution".to_string(), proximadb::proto::proximadb_v1::SqlValue {
+                                    value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue("skewed".to_string()))
+                                });
+                                metadata
+                            },
+                            timestamp: i as i64,
                             updated_at: None,
                             expires_at: None,
                             version: None,
-                            quantized_vector: Some(vec![]),
+                            quantized_vector: vec![],
                             source: None,
                         }
                     })
@@ -258,14 +258,23 @@ mod performance_comparison_tests {
                 ..Default::default()
             });
 
-            let collection = Arc::new(proximadb::proto::proximadb::Collection {
+            let collection = Arc::new(proximadb::proto::proximadb_v1::Collection {
                 id: collection_id.to_string(),
-                config: Some(proximadb::proto::proximadb::CollectionConfig {
+                config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                     name: collection_id.to_string(),
                     dimension: VECTOR_DIMS as u32,
                     distance_metric: DistanceMetric::Euclidean as i32,
-                    storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
-                    ..Default::default()
+                    storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                    tags: vec![],
+                    description: None,
+                    filterable_columns: vec![],
+                    index_configs: vec![],
+                    quantization: None,
+                    primary_index: "HNSW".to_string(),
+                    auto_index_selection: false,
+                    owner: None,
+                    embedding_models: vec![],
+                    storage_config: None,
                 }),
                 stats: None,
                 created_at: 0,
@@ -330,12 +339,7 @@ mod performance_comparison_tests {
         let helix_engine = {
             let config = HelixConfig::default();
             Arc::new(
-                HelixEngine::new(
-                    "test_collection".to_string(),
-                    config,
-                    base_path.join("helix"),
-                    None,
-                )
+                HelixEngine::new()
                 .await
                 .unwrap(),
             ) as Arc<dyn UnifiedStorageEngine>
@@ -351,7 +355,7 @@ mod performance_comparison_tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone())
+            SstEngine::new()
                 .await
                 .unwrap(),
         ) as Arc<dyn UnifiedStorageEngine>;
@@ -360,12 +364,7 @@ mod performance_comparison_tests {
         let viper_config = ViperConfig::default();
 
         let viper_engine = Arc::new(
-            ViperEngine::new(
-                "test_collection".to_string(),
-                viper_config,
-                filesystem.clone(),
-                distance_compute.clone(),
-            )
+            ViperEngine::new()
             .await
             .unwrap(),
         ) as Arc<dyn UnifiedStorageEngine>;
@@ -418,12 +417,7 @@ mod performance_comparison_tests {
         let helix_engine = {
             let config = HelixConfig::default();
             Arc::new(
-                HelixEngine::new(
-                    "test_collection".to_string(),
-                    config,
-                    base_path.join("helix"),
-                    None,
-                )
+                HelixEngine::new()
                 .await
                 .unwrap(),
             ) as Arc<dyn UnifiedStorageEngine>
@@ -439,7 +433,7 @@ mod performance_comparison_tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone())
+            SstEngine::new()
                 .await
                 .unwrap(),
         ) as Arc<dyn UnifiedStorageEngine>;
@@ -489,12 +483,7 @@ mod performance_comparison_tests {
                 let temp_dir = TempDir::new().unwrap();
                 let config = HelixConfig::default();
                 let engine = Arc::new(
-                    HelixEngine::new(
-                        "test_collection".to_string(),
-                        config,
-                        temp_dir.path().to_path_buf(),
-                        None,
-                    )
+                    HelixEngine::new()
                     .await
                     .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>;
@@ -521,7 +510,7 @@ mod performance_comparison_tests {
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 let engine = Arc::new(
-                    SstStorage::new(sst_config, filesystem, distance_compute)
+                    SstEngine::new()
                         .await
                         .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>;
@@ -582,12 +571,7 @@ mod performance_comparison_tests {
         };
 
         let engine = Arc::new(
-            HelixEngine::new(
-                "test_collection".to_string(),
-                config,
-                temp_dir.path().to_path_buf(),
-                None,
-            )
+            HelixEngine::new()
             .await
             .unwrap(),
         );
@@ -639,14 +623,23 @@ mod performance_comparison_tests {
                 ..Default::default()
             });
 
-            let collection = Arc::new(proximadb::proto::proximadb::Collection {
+            let collection = Arc::new(proximadb::proto::proximadb_v1::Collection {
                 id: "test_collection".to_string(),
-                config: Some(proximadb::proto::proximadb::CollectionConfig {
+                config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                     name: "test_collection".to_string(),
                     dimension: VECTOR_DIMS as u32,
                     distance_metric: DistanceMetric::Euclidean as i32,
-                    storage_engine: proximadb::proto::proximadb::StorageEngine::Sst as i32,
-                    ..Default::default()
+                    storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                    tags: vec![],
+                    description: None,
+                    filterable_columns: vec![],
+                    index_configs: vec![],
+                    quantization: None,
+                    primary_index: "HNSW".to_string(),
+                    auto_index_selection: false,
+                    owner: None,
+                    embedding_models: vec![],
+                    storage_config: None,
                 }),
                 stats: None,
                 created_at: 0,
@@ -671,8 +664,8 @@ mod performance_comparison_tests {
                     // Convert to tuple access for HashMap-style metadata
                     r.metadata.iter().any(|(key, value)| {
                         key == "cluster_id"
-                            && match value {
-                                serde_json::Value::String(s) => s == &expected_cluster,
+                            && match &value.value {
+                                Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s == &expected_cluster,
                                 _ => false,
                             }
                     })
@@ -709,12 +702,7 @@ mod performance_comparison_tests {
                 let temp_dir = TempDir::new().unwrap();
                 let config = HelixConfig::default();
                 Arc::new(
-                    HelixEngine::new(
-                        "test_collection".to_string(),
-                        config,
-                        temp_dir.path().to_path_buf(),
-                        None,
-                    )
+                    HelixEngine::new()
                     .await
                     .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>
@@ -734,7 +722,7 @@ mod performance_comparison_tests {
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 Arc::new(
-                    SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone())
+                    SstEngine::new()
                         .await
                         .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>
@@ -754,12 +742,7 @@ mod performance_comparison_tests {
                     Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
                 Arc::new(
-                    ViperEngine::new(
-                        "test_collection".to_string(),
-                        viper_config,
-                        filesystem,
-                        distance_compute,
-                    )
+                    ViperEngine::new()
                     .await
                     .unwrap(),
                 ) as Arc<dyn UnifiedStorageEngine>
@@ -818,12 +801,7 @@ mod performance_comparison_tests {
         let temp_dir = TempDir::new().unwrap();
         let config = HelixConfig::default();
         let engine = Arc::new(
-            HelixEngine::new(
-                "test_collection".to_string(),
-                config,
-                temp_dir.path().to_path_buf(),
-                None,
-            )
+            HelixEngine::new()
             .await
             .unwrap(),
         );
@@ -861,16 +839,27 @@ mod performance_comparison_tests {
                             ..Default::default()
                         });
 
-                        let collection = Arc::new(proximadb::proto::proximadb::Collection {
+                        let collection = Arc::new(proximadb::proto::proximadb_v1::Collection {
                             id: "test_collection".to_string(),
-                            config: Some(proximadb::proto::proximadb::CollectionConfig {
+                            config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                                 name: "test_collection".to_string(),
                                 dimension: VECTOR_DIMS as u32,
                                 distance_metric: DistanceMetric::Euclidean as i32,
-                                storage_engine: proximadb::proto::proximadb::StorageEngine::Sst
-                                    as i32,
-                                ..Default::default()
-                            }),
+                                storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+                                tags: vec![],
+                                description: None,
+                                filterable_columns: vec![],
+                                index_configs: vec![],
+                                quantization: None,
+                                storage_config: None,
+                                primary_index: "default".to_string(),
+                                auto_index_selection: true,
+                                owner: Some("test".to_string()),
+                                embedding_models: vec![],
+            //                    auto_create_shards: None, // Field not in proto
+            //                    auto_balance: None, // Field not in proto
+            //                    replication_factor: None, // Field not in proto
+                                        }),
                             stats: None,
                             created_at: 0,
                             updated_at: 0,

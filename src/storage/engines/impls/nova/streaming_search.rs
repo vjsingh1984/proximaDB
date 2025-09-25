@@ -18,7 +18,7 @@ use super::zone_maps::{
     ZoneMapConfig,
 };
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Unified streaming search engine for NOVA
 pub struct StreamingSearchEngine {
@@ -191,7 +191,7 @@ impl StreamingSearchEngine {
 
         let progressive_search = ProgressiveColumnarSearch::new(
             config.progressive_config.clone(),
-            crate::core::DistanceMetric::Euclidean, // Default metric
+            DistanceMetric::Euclidean, // Default metric
             distance_compute,
             unified_quantization_engine.clone(),
         );
@@ -424,7 +424,7 @@ impl StreamingSearchEngine {
 
                     let intersects = superblock.can_contain_candidates(
                         query_vector,
-                        DistanceMetric::Euclidean,
+                        "euclidean".to_string(),
                         f32::INFINITY,
                     );
 
@@ -438,7 +438,7 @@ impl StreamingSearchEngine {
             // Use advanced zone map for intersection
             let intersection_result = advanced_zone_map.can_intersect_advanced(
                 query_vector,
-                DistanceMetric::Euclidean,
+                "euclidean".to_string(),
                 f32::INFINITY,
                 execution_plan.optimization_strategy.clone(),
             );
@@ -822,6 +822,6 @@ mod tests {
         let plan = ExecutionPlan::new();
         assert_eq!(plan.parallelism_level, 4);
         assert_eq!(plan.memory_budget_per_stage, 64 * 1024 * 1024);
-        assert!(plan.selected_superblocks.is_none());
+        assert!(plan.selected_superblocks.is_empty());
     }
 }

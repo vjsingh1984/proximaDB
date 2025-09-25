@@ -12,7 +12,7 @@ mod tests {
     use tokio::sync::{Mutex, RwLock};
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::proto::proximadb_v1::{Collection, MetadataItem};
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
@@ -23,7 +23,7 @@ mod tests {
         FlushDataSource, WALFlushCoordinator,
     };
     use crate::storage::traits::{
-        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
+        CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext, UnifiedStorageEngine,
     };
 
     /// Mock storage engine for testing
@@ -59,7 +59,7 @@ mod tests {
         }
 
         async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
-            let collection_id = params.collection_id.as_ref().clone();
+            let collection_id = params.collection_id.as_ref().unwrap().clone();
 
             // Track that flush was called
             self.flush_calls.lock().await.push(collection_id.clone());
@@ -67,10 +67,10 @@ mod tests {
             Ok(FlushResult {
                 success: true,
                 collections_affected: vec![collection_id],
-                entries_flushed: params.vector_records.len() as u64,
-                bytes_written: (params.vector_records.len() * 1024) as u64, // Mock size
-                files_created: 1,
-                duration_ms: 10,
+                entries_flushed: Some(params.vector_records.len() as u64),
+                bytes_written: Some((params.vector_records.len() * 1024) as u64), // Mock size
+                files_created: Some(1),
+                duration_ms: Some(10),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
                 compaction_triggered: false,
@@ -79,7 +79,7 @@ mod tests {
         }
 
         async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-            let collection_id = params.collection_id.as_ref().clone();
+            let collection_id = params.collection_id.as_ref().unwrap().clone();
 
             // Track that compaction was called
             self.compaction_calls
@@ -90,13 +90,13 @@ mod tests {
             Ok(CompactionResult {
                 success: true,
                 collections_affected: vec![collection_id],
-                entries_processed: 1000,
-                entries_removed: 100,
-                bytes_read: 5000,
-                bytes_written: 3000,
-                input_files: 3,
-                output_files: 1,
-                duration_ms: 50,
+                entries_processed: Some(1000),
+                entries_removed: Some(100),
+                bytes_read: Some(5000),
+                bytes_written: Some(3000),
+                input_files: Some(3),
+                output_files: Some(1),
+                duration_ms: Some(50),
                 completed_at: chrono::Utc::now(),
                 engine_metrics: HashMap::new(),
             })
@@ -120,22 +120,16 @@ mod tests {
         async fn vector_by_id(
             &self,
             _collection_id: &str,
+            _base_path: &str,
             _vector_id: &str,
-        ) -> Result<Option<crate::core::VectorRecord>> {
+        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
             Ok(None)
         }
 
         async fn search_vectors_unified(
             &self,
-            _collection_id: &str,
-            _storage_url: &str,
-            _query_vector: &[f32],
-            _k: usize,
-            _distance_metric: &crate::compute::distance_computation::DistanceMetric,
-            _filter_expression: Option<&crate::core::search::FilterExpression>,
-            _include_vectors: bool,
-            _include_metadata: bool,
-        ) -> Result<Vec<crate::core::search::SearchResult>> {
+            _ctx: &crate::storage::traits::StorageQueryContext,
+        ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
             Ok(Vec::new())
         }
 
@@ -169,16 +163,13 @@ mod tests {
     fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
         (0..count)
             .map(|i| VectorRecord {
-                id: Some(format!("test_vector_{}", i)),
+                id: format!("test_vector_{}", i),
                 vector: vec![0.1; 384],
-                metadata: Vec::new(),
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
-                similarity: None,
-                // rank removed -  None,
-                similarity: None,
-                version: None,
+                version: Some(1),
                 ..Default::default()
             })
             .collect()
@@ -300,7 +291,7 @@ mod tests {
 
         let flush_result = result.unwrap();
         assert!(flush_result.base.success);
-        assert_eq!(flush_result.base.entries_flushed, 10);
+        assert_eq!(flush_result.base.entries_flushed, Some(10));
         assert_eq!(flush_result.base.collections_affected[0], "context_test");
 
         // Verify the correct engine was used based on context
@@ -439,7 +430,7 @@ mod tests {
 
         let flush_result = result.unwrap();
         assert!(flush_result.base.success);
-        assert_eq!(flush_result.base.entries_flushed, 3);
+        assert_eq!(flush_result.base.entries_flushed, Some(3));
 
         // Verify engine was called correctly
         let engine_calls = mock_engine.get_flush_calls().await;
@@ -491,7 +482,7 @@ mod tests {
             .unwrap();
 
         assert!(flush_result.base.success);
-        assert_eq!(flush_result.base.entries_flushed, 15);
+        assert_eq!(flush_result.base.entries_flushed, Some(15));
 
         // Step 5: Execute compaction with same context
         let storage_engines = Arc::new(RwLock::new({
@@ -511,7 +502,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(!compaction_result.is_none());
+        assert!(!compaction_result.is_empty());
 
         // Step 6: Verify both operations used the same context without additional service calls
         let flush_calls = viper_engine.get_flush_calls().await;

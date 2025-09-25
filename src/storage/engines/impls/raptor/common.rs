@@ -356,7 +356,7 @@ pub struct CentroidStats {
 /// Lightweight reference stored in each rowgroup's metadata
 /// Only stores INDICES, not distances - distances computed at query time
 /// Optimized with u16 IDs: supports 65,536 rowgroups = 67M vectors per file
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RowGroupNeighbor {
     pub rowgroup_id: u16, // Direct index into footer centroids array (67M vectors max)
     pub neighbor_cluster_id: u16, // Cluster assignment of neighbor (65k clusters max)
@@ -387,7 +387,7 @@ pub enum NeighborType {
 }
 
 /// Pre-computed distance bounds for fast pruning
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DistanceBounds {
     pub min: f32, // Minimum possible distance to any vector in rowgroup
     pub max: f32, // Maximum possible distance to any vector in rowgroup
@@ -444,7 +444,7 @@ pub struct VectorStats {
     pub encoding: VectorEncoding,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum VectorEncoding {
     Raw,
     ProductQuantization {
@@ -481,7 +481,7 @@ pub struct ColumnStats {
     pub uncompressed_size: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ColumnEncoding {
     Dictionary { num_entries: usize },
     Integer { bits: usize },
@@ -504,7 +504,7 @@ pub struct MetadataColumn {
     pub size: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MetadataData {
     Boolean,
     Integer,
@@ -611,7 +611,7 @@ pub struct LocalityClusterInfo {
     pub vector_count: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FieldDescriptor {
     pub name: String,
     pub data_type: MetadataData,
@@ -654,28 +654,19 @@ pub enum ReadPattern {
     Adaptive, // Detect pattern at runtime
 }
 
-// ====== Search Results (unified) ======
-
-#[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub vector_id: String,
-    pub distance: f32,
-    pub vector: Option<Vec<f32>>,
-    pub metadata: Option<HashMap<String, MetadataValue>>,
-    pub rowgroup_id: u16,
-    pub ranking_score: f32, // For boosting
-}
+// ====== Search Results ======
+// Note: Using OptimizedSearchRecord from core::search::results instead of custom SearchResult struct
 
 // ====== Predicates for filtering ======
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Predicate {
     pub field: String,
     pub op: PredicateOp,
     pub value: MetadataValue,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PredicateOp {
     Eq,
     Ne,
@@ -1694,7 +1685,7 @@ pub struct VectorCentroidMatrixRef {
 
 /// Compression metadata for vector-centroid matrices
 /// Uses sophisticated encoding since distances have different characteristics per centroid
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct VectorCentroidCompressionMetadata {
     /// Per-centroid statistics for adaptive encoding
     /// Each centroid column may have different distance distribution
@@ -1710,7 +1701,7 @@ pub struct VectorCentroidCompressionMetadata {
 }
 
 /// Per-centroid distance statistics for adaptive compression
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CentroidDistanceStats {
     /// Centroid ID
     pub centroid_id: u16,

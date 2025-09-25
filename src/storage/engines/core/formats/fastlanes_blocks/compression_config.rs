@@ -1,7 +1,6 @@
 // Shared Compression Configuration for SST and SWIFT engines
 // Unified compression strategies and configuration management
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::core::compression::{CompressionAlgorithm, CompressionContext};
@@ -390,6 +389,41 @@ impl RowBasedCompressionConfig {
             None
         }
     }
+
+    /// Centralized conversion from proto config to BlockCompressionConfig
+    /// Used by all engines (SST, SWIFT, HELIX) to avoid duplication
+    pub fn to_block_compression_config(&self) -> crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+        use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig;
+
+        BlockCompressionConfig {
+            algorithm: self.algorithm,
+            compression_level: self.compression_level,
+            enable_vector_compression: self.enabled && self.algorithm != CompressionAlgorithm::None,
+            enable_metadata_compression: self.metadata_compression.enabled,
+            compression_threshold_bytes: self.compression_thresholds.min_compression_size,
+            dictionary_compression: self.adaptive_compression.enabled,
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            metadata_algorithm: None, // Use main algorithm for metadata
+        }
+    }
+
+    /// Create BlockCompressionConfig from proto config directly
+    /// Convenience method that combines from_proto_config() and to_block_compression_config()
+    pub fn create_block_config_from_proto(proto_config: Option<&ProtoCompressionConfig>) -> crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+        match proto_config {
+            Some(config) => {
+                let unified_config = Self::from_proto_config(config);
+                unified_config.to_block_compression_config()
+            }
+            None => {
+                // Create config with None compression when no config provided
+                let mut config = Self::default();
+                config.enabled = false;
+                config.algorithm = CompressionAlgorithm::None;
+                config.to_block_compression_config()
+            }
+        }
+    }
 }
 
 impl Default for RowBasedCompressionConfig {
@@ -567,24 +601,29 @@ mod tests {
         let config = RowBasedCompressionConfig::default();
 
         // Should compress large data
-        assert!(config.should_compress(100 * 1024, &CompressionContext::VectorData));
+        assert!(config.should_compress(100 * 1024, &CompressionContext::VectorSerialization));
 
         // Should not compress tiny data
-        assert!(!config.should_compress(100, &CompressionContext::VectorData));
+        assert!(!config.should_compress(100, &CompressionContext::VectorSerialization));
 
         // Disabled config should not compress
         let mut disabled_config = config.clone();
         disabled_config.enabled = false;
-        assert!(!disabled_config.should_compress(100 * 1024, &CompressionContext::VectorData));
+        assert!(!disabled_config.should_compress(100 * 1024, &CompressionContext::VectorSerialization));
     }
 
     #[test]
     fn test_proto_config_conversion() {
         let proto_config = ProtoCompressionConfig {
-            enabled: true,
-            algorithm: "lz4".to_string(),
-            level: 2,
-            compression_ratio: 0.6,
+            algorithm: 1, // LZ4 algorithm enum value
+            level: Some(2),
+            adaptive: false,
+            min_ratio: None,
+            enable_quantization: false,
+            quantization_type: None,
+            normalization_method: None,
+            block_size_kb: 32,
+            dynamic_block_sizing: false,
         };
 
         let config = RowBasedCompressionConfig::from_proto_config(&proto_config);

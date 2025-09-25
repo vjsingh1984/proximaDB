@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::FilterExpression;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
@@ -454,7 +454,7 @@ mod tests {
             .filter_vector_records_fast(&records, &filter)
             .unwrap();
 
-        assert!(!indices.is_none(), "Should find some matching records");
+        assert!(!indices.is_empty(), "Should find some matching records");
         debug!(
             "SST Row Filter found {} matches out of {} records",
             indices.len(),
@@ -493,7 +493,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!indices.is_none(), "Should find some matching records");
+        assert!(!indices.is_empty(), "Should find some matching records");
         debug!("Parallel filter found {} matches", indices.len());
     }
 
@@ -535,17 +535,37 @@ mod tests {
                 ),
             });
 
+            let mut map_metadata = std::collections::HashMap::new();
+            for item in metadata {
+                if let Some(value) = item.value {
+                    // Convert metadata_item::Value to sql_value::Value
+                    let sql_value = match value {
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s)
+                        },
+                        crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n) => {
+                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)
+                        },
+                        crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
+                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)
+                        },
+                    };
+                    map_metadata.insert(item.key, crate::proto::proximadb_v1::SqlValue {
+                        value: Some(sql_value)
+                    });
+                }
+            }
+
             records.push(VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vec![0.1; 128], // Dummy vector
-                metadata,
-                timestamp: 1000000 + i as u32,
+                metadata: map_metadata,
+                timestamp: 1000000 + i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             });
         }
 

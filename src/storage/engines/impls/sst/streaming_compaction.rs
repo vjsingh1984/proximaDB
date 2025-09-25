@@ -20,7 +20,7 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::proto::proximadb_v1::CompressionConfig;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
@@ -210,22 +210,21 @@ impl StreamingCompactor {
                 total_input_size += metadata.size;
             }
 
-            // Create streaming reader - for compaction, we use simplified zero-copy and collection ID
-            let zero_copy_config =
-                crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig::default();
-            let zero_copy_system = Arc::new(
-                crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
-                    zero_copy_config,
-                    self.filesystem.clone(),
-                    Vec::new(),
+            // Create streaming reader - for compaction, we use unified caching filesystem
+            let base_fs = self.filesystem.get_filesystem("file://").map_err(|e| {
+                anyhow::anyhow!("Failed to get base filesystem: {}", e)
+            })?;
+            let unified_fs = Arc::new(
+                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                    base_fs,
+                    "compaction".to_string(), // Use generic collection_id for compaction
+                    "sst_compaction".to_string(),
                 )
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to create zero-copy system: {}", e))?,
             );
 
             let reader = UnifiedSstableReader::new(
                 self.filesystem.clone(),
-                zero_copy_system,
+                unified_fs,
                 "compaction".to_string(),
             );
 
@@ -443,7 +442,7 @@ mod tests {
     fn test_merge_record_ordering() {
         let record1 = MergeRecord {
             record: VectorRecord {
-                id: Some("key1".to_string()),
+                id: "key1".to_string(),
                 version: Some(1),
                 ..Default::default()
             },
@@ -453,7 +452,7 @@ mod tests {
 
         let record2 = MergeRecord {
             record: VectorRecord {
-                id: Some("key1".to_string()),
+                id: "key1".to_string(),
                 version: Some(2),
                 ..Default::default()
             },

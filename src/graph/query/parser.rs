@@ -22,9 +22,7 @@
 //! It uses the `nom` parser-combinator library for robust and efficient parsing.
 
 use super::ast::{
-    CompiledPattern, EdgeDirection, EdgePattern, LogicalOperator, NodePattern, OrderBy,
-    PathElement, PathPattern, PropertyConstraint, PropertyProjection, ReturnSpec, VariableBinding,
-    WhereClause,
+    CompiledPattern, NodePattern, PropertyConstraint, ReturnSpec,
 };
 use crate::core::error::ProximaDBError;
 use nom::{

@@ -61,16 +61,20 @@ impl MatrixBuilder {
         let mut min_dist = f32::MAX;
         let mut max_dist = f32::MIN;
 
-        for i in 0..num_vectors {
-            for j in 0..num_vectors {
-                let dist = if i == j {
-                    0.0
-                } else {
-                    self.distance_compute
-                        .calculate_distance(&vectors[i], &vectors[j], &self.distance_metric)
-                        .raw_value
-                };
+        // Process row by row using batch distance computation
+        let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
+        for i in 0..num_vectors {
+            // Compute distances from vector i to all vectors using batch method
+            let row_distances = self.distance_compute.batch_distance_pooled_simd(
+                &vectors[i],
+                &vector_refs,
+                &self.distance_metric,
+            );
+
+            // Process the row results
+            for (j, dist_result) in row_distances.into_iter().enumerate() {
+                let dist = if i == j { 0.0 } else { dist_result.distance };
                 distances.push(dist);
                 if dist > 0.0 {
                     min_dist = min_dist.min(dist);
@@ -485,8 +489,8 @@ mod tests {
     fn test_p2_matrix_building() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = get_hardware_capabilities();
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
         let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Cosine);
 
@@ -498,7 +502,7 @@ mod tests {
 
         let matrix = builder.build_p2_matrix(&vectors, 3).unwrap();
         assert_eq!(matrix.num_vectors, 3);
-        assert!(!matrix.distances.is_none());
+        assert!(!matrix.distances.is_empty());
         assert!(matrix.compressed_size > 0);
     }
 
@@ -506,8 +510,8 @@ mod tests {
     fn test_k2_matrix_building() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = get_hardware_capabilities();
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
         let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Euclidean);
 
@@ -515,7 +519,7 @@ mod tests {
 
         let matrix = builder.build_k2_matrix(&centroids, 2).unwrap();
         assert_eq!(matrix.num_centroids, 3);
-        assert!(!matrix.compressed_data.is_none());
+        assert!(!matrix.compressed_data.is_empty());
         assert_eq!(matrix.lookup_table.len(), 3);
     }
 
@@ -524,10 +528,11 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         // Test coverage formula for different k and d values
+        // Formula: exp(-2 * ln(k/d + 1)) produces HIGH values for LOW k/d ratios
         let test_cases = vec![
-            (10, 100, 0.1),   // Low k/d ratio -> minimum coverage
-            (100, 100, 0.37), // k = d -> moderate coverage
-            (1000, 100, 0.9), // High k/d ratio -> high coverage
+            (10, 100, 0.8),   // Low k/d ratio (0.1) -> high coverage (~0.82)
+            (100, 100, 0.2),  // k = d (1.0) -> moderate coverage (~0.25)
+            (1000, 100, 0.1), // High k/d ratio (10) -> minimum coverage (0.1)
         ];
 
         for (k, d, expected_min) in test_cases {

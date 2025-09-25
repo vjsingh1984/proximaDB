@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::time::SystemTime;
 
 /// Alert for threshold violations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Alert {
     pub id: String,
     pub level: AlertLevel,
@@ -23,7 +23,7 @@ pub struct Alert {
 }
 
 /// Alert severity level
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertLevel {
     Info,
     Warning,
@@ -91,7 +91,7 @@ pub struct CollectionMetrics {
 }
 
 /// Statistics for a filterable column
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FilterableColumnStats {
     pub column_name: String,
     pub data_type: String, // Data type of the column
@@ -105,7 +105,7 @@ pub struct FilterableColumnStats {
 }
 
 /// Information about an available index
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexInfo {
     pub index_name: String,
     pub algorithm: String, // "HNSW", "IVF", "FLAT", etc.
@@ -117,7 +117,7 @@ pub struct IndexInfo {
 }
 
 /// Index build status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum IndexBuildStatus {
     NotStarted,
     Building { progress_percent: f32 },
@@ -189,7 +189,7 @@ pub enum HintPriority {
 }
 
 /// Estimated improvement from applying the hint
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ImprovementEstimate {
     pub latency_reduction_percent: Option<f32>,
     pub throughput_increase_percent: Option<f32>,

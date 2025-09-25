@@ -1,10 +1,11 @@
 //! Test for SSTable format fix - verifies bloom filter read/write
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::config::SstConfig;
 use crate::storage::engines::impls::sst::SstableWriter;
 use crate::storage::engines::impls::sst::readers::UnifiedSstableReader;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -42,17 +43,16 @@ async fn test_sstable_format_with_bloom_filter() {
     // Create test records
     let mut records = BTreeMap::new();
     for i in 0..10 {
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_{:03}", i),
             vector: vec![i as f32; 3],
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: i as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         records.insert(record.id.clone(), record);
     }
@@ -66,7 +66,18 @@ async fn test_sstable_format_with_bloom_filter() {
         .unwrap();
 
     // Read SSTable metadata (this will test bloom filter reading)
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+    let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
+    let reader = UnifiedSstableReader::new(
+        filesystem_factory,
+        unified_fs,
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", sstable_path.display());
 
     // This should not panic with "unexpected end of file"
@@ -97,7 +108,7 @@ async fn test_sstable_format_with_bloom_filter() {
     match reader.vector(&file_url, "vec_005").await {
         Ok(Some(vector)) => {
             debug!("✓ Found vector: {:?}", vector.id);
-            assert_eq!(vector.id, Some("vec_005".to_string()));
+            assert_eq!(vector.id, "vec_005".to_string());
         }
         Ok(None) => {
             panic!("Vector vec_005 not found in SSTable");
@@ -113,13 +124,23 @@ async fn test_sstable_empty_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
 
     // Create an empty file
     let empty_file = temp_path.join("empty.sstable");
     tokio::fs::write(&empty_file, b"").await.unwrap();
 
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
+    let reader = UnifiedSstableReader::new(
+        filesystem_factory,
+        unified_fs,
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", empty_file.display());
 
     // Should handle empty file gracefully
@@ -128,10 +149,10 @@ async fn test_sstable_empty_file_handling() {
     let error_msg = result.unwrap_err().to_string();
     debug!("Actual error: {}", error_msg);
     assert!(
-        error_msg.contains_hash("Failed to read header length")
-            || error_msg.contains_hash("expected at least 4 bytes")
-            || error_msg.contains_hash("unexpected end of file")
-            || error_msg.contains_hash("SSTable file too small"),
+        error_msg.contains("Failed to read header length")
+            || error_msg.contains("expected at least 4 bytes")
+            || error_msg.contains("unexpected end of file")
+            || error_msg.contains("SSTable file too small"),
         "Expected error about file size/header, got: {}",
         error_msg
     );
@@ -142,7 +163,7 @@ async fn test_sstable_truncated_file_handling() {
     let temp_dir = TempDir::new().unwrap();
     let temp_path = temp_dir.path();
     let config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
 
     // Create a file with only header length but no header data
     let truncated_file = temp_path.join("truncated.sstable");
@@ -151,7 +172,17 @@ async fn test_sstable_truncated_file_handling() {
         .await
         .unwrap();
 
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
+    let reader = UnifiedSstableReader::new(
+        filesystem_factory,
+        unified_fs,
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", truncated_file.display());
 
     // Should handle truncated file gracefully
@@ -160,11 +191,11 @@ async fn test_sstable_truncated_file_handling() {
     let error_msg = result.unwrap_err().to_string();
     debug!("Actual error for truncated file: {}", error_msg);
     assert!(
-        error_msg.contains_hash("Failed to read complete header")
-            || error_msg.contains_hash("Failed to read header")
-            || error_msg.contains_hash("unexpected end of file")
-            || error_msg.contains_hash("failed to fill whole buffer")
-            || error_msg.contains_hash("SSTable file too small"),
+        error_msg.contains("Failed to read complete header")
+            || error_msg.contains("Failed to read header")
+            || error_msg.contains("unexpected end of file")
+            || error_msg.contains("failed to fill whole buffer")
+            || error_msg.contains("SSTable file too small"),
         "Expected error about incomplete header or file size, got: {}",
         error_msg
     );

@@ -7,7 +7,6 @@ use anyhow::{Result, anyhow};
 use arrow_array::RecordBatch;
 use arrow_array::array::{ArrayRef, BinaryArray, Float32Array, Int8Array};
 use arrow_schema::{DataType, Field};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::debug;
 
@@ -54,7 +53,7 @@ pub struct PQColumnInfo {
     pub codebook_id: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct QuantizationStats {
     pub num_vectors: usize,
     pub compression_ratio: f32,

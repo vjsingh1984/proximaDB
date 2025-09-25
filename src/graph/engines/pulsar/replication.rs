@@ -24,10 +24,10 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use crate::graph::{Edge, EdgeId, Node, NodeId};
 use dashmap::DashMap;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, Instant};
+use tokio::time::Instant;
 
 /// Replication manager for PULSAR engine
 #[derive(Debug)]
@@ -352,10 +352,10 @@ impl ReplicationManager {
                 shard.update_edge(edge)?;
             }
             ReplicationOperation::DeleteNode(node_id) => {
-                shard.delete_node(&node_id)?;
+                GraphEngine::delete_node(shard, &node_id)?;
             }
             ReplicationOperation::DeleteEdge(edge_id) => {
-                shard.delete_edge(&edge_id)?;
+                GraphEngine::delete_edge(shard, &edge_id)?;
             }
         }
 
@@ -493,8 +493,8 @@ mod tests {
             labels: vec!["Test".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
 
         // Test replication
@@ -502,7 +502,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Check stats
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         let stats = manager.get_stats().await;
         assert_eq!(stats.successful_replications, 1);
     }
@@ -547,8 +547,8 @@ mod tests {
             labels: vec!["Test".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
 
         let op1 = ReplicationOperation::InsertNode(node);

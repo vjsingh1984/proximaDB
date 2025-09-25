@@ -23,7 +23,6 @@ use crate::core::error::{ProximaDBError, StorageError, VectorDBError};
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::ColdStorageBackend as BackendType;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
-use prost_types;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -546,8 +545,8 @@ impl ColdStorageBackend {
                 .embedding
                 .as_ref()
                 .and_then(|e: &crate::proto::proximadb_v1::EmbeddingVersion| Some(e.vector.clone())),
-            created_at: node.created_at_ms.as_ref().map(|t| t.seconds as u64),
-            updated_at: node.updated_at_ms.as_ref().map(|t| t.seconds as u64),
+            created_at: Some(node.created_at_ms as u64),
+            updated_at: Some(node.updated_at_ms as u64),
         })
     }
 
@@ -575,7 +574,6 @@ impl ColdStorageBackend {
         &self,
         value: &crate::graph::PropertyValue,
     ) -> Result<StorablePropertyValue> {
-        // PropertyValue is now a struct, not enum - use direct field access;
 
         use crate::proto::proximadb_v1::property_value::Value;
         match &value.value {
@@ -586,6 +584,7 @@ impl ColdStorageBackend {
             Some(Value::BytesValue(b)) => Ok(StorablePropertyValue::Bytes(b.clone())),
             Some(Value::ArrayValue(_)) => Ok(StorablePropertyValue::Array(Vec::new())), // Simplified
             Some(Value::ObjectValue(_)) => Ok(StorablePropertyValue::Object(HashMap::new())), // Simplified
+            Some(Value::VectorValue(_)) => Ok(StorablePropertyValue::String("vector".to_string())), // Vector as string representation
             None => Ok(StorablePropertyValue::String("null".to_string())),
         }
     }
@@ -608,7 +607,7 @@ impl ColdStorageBackend {
                     model_version: "1".to_string(),
                     vector: values,
                     dimension,
-                    created_at: None,
+                    created_at_ms: 0,
                     model_params: std::collections::HashMap::new(),
                     modality: crate::proto::proximadb_v1::Modality::Text.into(),
                 }
@@ -642,7 +641,6 @@ impl ColdStorageBackend {
         &self,
         storable: StorablePropertyValue,
     ) -> Result<crate::graph::PropertyValue> {
-        // PropertyValue is now a struct, not enum - use direct field access;
 
         use crate::proto::proximadb_v1::property_value::Value;
         let value = match storable {
@@ -719,19 +717,19 @@ mod tests {
             properties: HashMap::from([(
                 "name".to_string(),
                 crate::graph::PropertyValue {
-                    value: Some(Value::StringValue("Test Node".to_string())),
+                    value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("Test Node".to_string())),
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Store node
         backend.store_node(node.clone()).await.unwrap();
 
         // Retrieve node
-        let retrieved = backend.get_node("test_node").await.unwrap().unwrap();
+        let retrieved = backend.get_node(&"test_node".to_string()).await.unwrap().unwrap();
         assert_eq!(retrieved.id, "test_node");
         assert_eq!(retrieved.labels, vec!["TestLabel"]);
 
@@ -756,15 +754,15 @@ mod tests {
             edge_type: "CONNECTS".to_string(),
             properties: HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Store edge
         backend.store_edge(edge.clone()).await.unwrap();
 
         // Retrieve edge
-        let retrieved = backend.get_edge("test_edge").await.unwrap().unwrap();
+        let retrieved = backend.get_edge(&"test_edge".to_string()).await.unwrap().unwrap();
         assert_eq!(retrieved.id, "test_edge");
         assert_eq!(retrieved.from_node_id, "node1");
         assert_eq!(retrieved.to_node_id, "node2");
@@ -787,18 +785,18 @@ mod tests {
             labels: vec!["Test".to_string()],
             properties: HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Store then delete
         backend.store_node(node).await.unwrap();
-        let deleted = backend.delete_node("delete_me").await.unwrap().unwrap();
+        let deleted = backend.delete_node(&"delete_me".to_string()).await.unwrap().unwrap();
 
         assert_eq!(deleted.id, "delete_me");
 
         // Should not be retrievable anymore
-        let not_found = backend.get_node("delete_me").await.unwrap();
+        let not_found = backend.get_node(&"delete_me".to_string()).await.unwrap();
         assert!(not_found.is_none());
     }
 }

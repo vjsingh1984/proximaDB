@@ -2,7 +2,7 @@
 // ID indexing, bloom filters, and hierarchical index management
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 
 use super::block_structures::BlockLocation;
@@ -672,7 +672,7 @@ mod tests {
 
         let location = BlockLocation {
             superblock_id: 1,
-            block_id: Uuid::new_v4(),
+            block_id: 123,
             block_offset: 0,
             record_offset: 0,
             estimated_load_time_ms: 1.0,
@@ -706,7 +706,7 @@ mod tests {
 
         let location = BlockLocation {
             superblock_id: 1,
-            block_id: Uuid::new_v4(),
+            block_id: 123,
             block_offset: 0,
             record_offset: 0,
             estimated_load_time_ms: 1.0,
@@ -736,7 +736,7 @@ mod tests {
 
         let location = BlockLocation {
             superblock_id: 1,
-            block_id: Uuid::new_v4(),
+            block_id: 123,
             block_offset: 0,
             record_offset: 0,
             estimated_load_time_ms: 1.0,

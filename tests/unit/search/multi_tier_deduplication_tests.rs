@@ -4,7 +4,7 @@ use chrono::{Duration, Utc};
 use proximadb::core::search::multi_tier_deduplication::{
     DataFreshnessTier, DeduplicationStorageEngine, MultiTierDeduplicator, TieredSearchCandidate,
 };
-use proximadb::proto::proximadb::{MetadataItem, VectorRecord, metadata_item};
+use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -29,15 +29,18 @@ fn test_basic_deduplication() {
     let base_record = VectorRecord {
         id: "vec1".to_string(),
         vector: vec![1.0, 0.0, 0.0],
-        metadata: vec![MetadataItem {
-            key: "type".to_string(),
-            value: Some(metadata_item::Value::StringValue("test".to_string())),
-        }],
-        timestamp: Utc::now().timestamp() as u32,
-        updated_at: Some(Utc::now().timestamp() as u32),
+        metadata: {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("type".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue("test".to_string())),
+            });
+            metadata
+        },
+        timestamp: Utc::now().timestamp_micros(),
+        updated_at: Some(Utc::now().timestamp_micros()),
         expires_at: None,
         version: Some(1),
-        quantized_vector: None,
+        quantized_vector: vec![],
         source: None,
     };
 
@@ -86,12 +89,12 @@ fn test_deduplication_without_ids() {
             vector_record: VectorRecord {
                 id: String::new(),
                 vector: vec![1.0, 0.0, 0.0],
-                metadata: vec![],
-                timestamp: Utc::now().timestamp() as u32,
-                updated_at: Some(Utc::now().timestamp() as u32),
+                metadata: std::collections::HashMap::new(),
+                timestamp: Utc::now().timestamp_micros(),
+                updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             },
             similarity: 0.9,
@@ -105,12 +108,12 @@ fn test_deduplication_without_ids() {
             vector_record: VectorRecord {
                 id: String::new(),
                 vector: vec![0.0, 1.0, 0.0],
-                metadata: vec![],
-                timestamp: Utc::now().timestamp() as u32,
-                updated_at: Some(Utc::now().timestamp() as u32),
+                metadata: std::collections::HashMap::new(),
+                timestamp: Utc::now().timestamp_micros(),
+                updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             },
             similarity: 0.85,
@@ -145,57 +148,41 @@ fn test_metadata_filtering() {
         VectorRecord {
             id: "doc1".to_string(),
             vector: vec![1.0, 0.0],
-            metadata: vec![
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            "science".to_string(),
-                        ),
-                    ),
-                },
-                MetadataItem {
-                    key: "published".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            "true".to_string(),
-                        ),
-                    ),
-                },
-            ],
-            timestamp: Utc::now().timestamp() as u32,
-            updated_at: Some(Utc::now().timestamp() as u32),
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("science".to_string())),
+                });
+                metadata.insert("published".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("true".to_string())),
+                });
+                metadata
+            },
+            timestamp: Utc::now().timestamp_micros(),
+            updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         },
         VectorRecord {
             id: "doc2".to_string(),
             vector: vec![0.0, 1.0],
-            metadata: vec![
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            "history".to_string(),
-                        ),
-                    ),
-                },
-                MetadataItem {
-                    key: "published".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            "true".to_string(),
-                        ),
-                    ),
-                },
-            ],
-            timestamp: Utc::now().timestamp() as u32,
-            updated_at: Some(Utc::now().timestamp() as u32),
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("history".to_string())),
+                });
+                metadata.insert("published".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("true".to_string())),
+                });
+                metadata
+            },
+            timestamp: Utc::now().timestamp_micros(),
+            updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         },
     ];
@@ -235,57 +222,41 @@ fn test_simple_metadata_query() {
         VectorRecord {
             id: "doc1".to_string(),
             vector: vec![1.0, 0.0],
-            metadata: vec![
-                MetadataItem {
-                    key: "language".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            "en".to_string(),
-                        ),
-                    ),
-                },
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            "tech".to_string(),
-                        ),
-                    ),
-                },
-            ],
-            timestamp: Utc::now().timestamp() as u32,
-            updated_at: Some(Utc::now().timestamp() as u32),
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("language".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("en".to_string())),
+                });
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("tech".to_string())),
+                });
+                metadata
+            },
+            timestamp: Utc::now().timestamp_micros(),
+            updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         },
         VectorRecord {
             id: "doc2".to_string(),
             vector: vec![0.0, 1.0],
-            metadata: vec![
-                MetadataItem {
-                    key: "language".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            "fr".to_string(),
-                        ),
-                    ),
-                },
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            "tech".to_string(),
-                        ),
-                    ),
-                },
-            ],
-            timestamp: Utc::now().timestamp() as u32,
-            updated_at: Some(Utc::now().timestamp() as u32),
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("language".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("fr".to_string())),
+                });
+                metadata.insert("category".to_string(), SqlValue {
+                    value: Some(sql_value::Value::StringValue("tech".to_string())),
+                });
+                metadata
+            },
+            timestamp: Utc::now().timestamp_micros(),
+            updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         },
     ];
@@ -319,12 +290,12 @@ fn test_mixed_engine_deduplication() {
     let base_record = VectorRecord {
         id: "vec1".to_string(),
         vector: vec![1.0, 0.0, 0.0],
-        metadata: vec![],
-        timestamp: Utc::now().timestamp() as u32,
-        updated_at: Some(Utc::now().timestamp() as u32),
+        metadata: std::collections::HashMap::new(),
+        timestamp: Utc::now().timestamp_micros(),
+        updated_at: Some(Utc::now().timestamp_micros()),
         expires_at: None,
         version: Some(1),
-        quantized_vector: None,
+        quantized_vector: vec![],
         source: None,
     };
 
@@ -387,12 +358,12 @@ fn test_k_limit_enforcement() {
             vector_record: VectorRecord {
                 id: format!("vec{}", i),
                 vector: vec![i as f32, 0.0, 0.0],
-                metadata: vec![],
-                timestamp: Utc::now().timestamp() as u32,
-                updated_at: Some(Utc::now().timestamp() as u32),
+                metadata: std::collections::HashMap::new(),
+                timestamp: Utc::now().timestamp_micros(),
+                updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             },
             similarity: (i as f32 * 0.01), // Increasing scores (ascending order)
@@ -451,19 +422,18 @@ fn test_complex_deduplication_scenario() {
             vector_record: VectorRecord {
                 id: "vecA".to_string(),
                 vector: vec![1.0, 0.0, 0.0],
-                metadata: vec![MetadataItem {
-                    key: "version".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            version.to_string(),
-                        ),
-                    ),
-                }],
-                timestamp: Utc::now().timestamp() as u32,
-                updated_at: Some(Utc::now().timestamp() as u32),
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("version".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(version.to_string())),
+                    });
+                    metadata
+                },
+                timestamp: Utc::now().timestamp_micros(),
+                updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(version),
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             },
             similarity: 0.95,
@@ -494,19 +464,18 @@ fn test_complex_deduplication_scenario() {
             vector_record: VectorRecord {
                 id: "vecB".to_string(),
                 vector: vec![0.0, 1.0, 0.0],
-                metadata: vec![MetadataItem {
-                    key: "version".to_string(),
-                    value: Some(
-                        proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                            version.to_string(),
-                        ),
-                    ),
-                }],
-                timestamp: Utc::now().timestamp() as u32,
-                updated_at: Some(Utc::now().timestamp() as u32),
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("version".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(version.to_string())),
+                    });
+                    metadata
+                },
+                timestamp: Utc::now().timestamp_micros(),
+                updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(version),
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             },
             similarity: 0.90,
@@ -523,12 +492,12 @@ fn test_complex_deduplication_scenario() {
         vector_record: VectorRecord {
             id: String::new(),
             vector: vec![0.0, 0.0, 1.0],
-            metadata: vec![],
-            timestamp: Utc::now().timestamp() as u32,
-            updated_at: Some(Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: Utc::now().timestamp_micros(),
+            updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: None,
+            quantized_vector: vec![],
             source: None,
         },
         similarity: 0.85,

@@ -51,6 +51,28 @@ where
             max_size_bytes: max_size_mb.saturating_mul(1024).saturating_mul(1024),
         }
     }
+
+    /// Get the number of entries in the cache
+    pub async fn size(&self) -> usize {
+        self.storage.len()
+    }
+
+    /// Remove a specific entry from the cache and return the value
+    pub async fn remove_and_get(&self, key: &K) -> Option<V> {
+        if let Some((_, value)) = self.storage.remove(key) {
+            // Update size tracking
+            let entry_size = estimate_size(&value);
+            self.size_bytes.fetch_sub(entry_size, Ordering::Relaxed);
+            Some(value)
+        } else {
+            None
+        }
+    }
+
+    /// Get memory usage in bytes
+    pub async fn memory_usage(&self) -> usize {
+        self.size_bytes.load(Ordering::Relaxed)
+    }
 }
 
 // Helper function to get size based on type

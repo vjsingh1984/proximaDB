@@ -445,7 +445,7 @@ impl SearchCandidate {
             let mut metadata_map = std::collections::HashMap::new();
             for (key, sql_value) in &self.record.metadata {
                 if let Some(value) = &sql_value.value {
-                    use crate::proto::proximadb_v1::sql_value;
+                    
                     let typed_value = match value {
                         crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                             MetadataValue::String(Arc::from(s.as_str()))

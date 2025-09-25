@@ -102,6 +102,8 @@ pub async fn write_helix_sstable(
             enable_metadata_compression: true,
             compression_threshold_bytes: 512, // Lower threshold for better compression
             dictionary_compression: chunk.len() > 500, // Use dictionary for large blocks
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            metadata_algorithm: None, // Use main algorithm for metadata
         };
 
         // Create FastLanes block with proper block ID
@@ -171,8 +173,10 @@ pub async fn write_helix_sstable(
 
     // Write metadata in binary format
     let metadata_bytes = bincode::serialize(&block_metadata)?;
-    file_data.put_u32_le(metadata_bytes.len() as u32);
     file_data.put_slice(&metadata_bytes);
+
+    // Write metadata size as footer (for reader to locate metadata)
+    file_data.put_u32_le(metadata_bytes.len() as u32);
 
     // Write to filesystem
     let bytes_written = file_data.len() as u64;

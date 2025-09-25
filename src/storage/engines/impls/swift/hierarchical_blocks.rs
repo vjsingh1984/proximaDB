@@ -2,10 +2,10 @@
 // Clean implementation with no backward compatibility
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, SuperBlock};
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Metadata index for efficient filtering
 #[derive(Debug)]
@@ -499,28 +499,74 @@ mod tests {
 
         // Create test block
         let block = FastLanesDataBlock {
-            id: 0,
-            offset_in_superblock: 0,
-            compressed_size: 0,
-            uncompressed_size: 0,
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 0,
             records: vec![VectorRecord {
-                id: Some("1".to_string()),
+                id: "1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: Some(HashMap::from([
-                    ("category".to_string(), serde_json::json!("electronics")),
-                    ("price".to_string(), serde_json::json!(99.99)),
-                ])),
+                metadata: {
+                    let mut meta = std::collections::HashMap::new();
+                    meta.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())),
+                    });
+                    meta.insert("price".to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(99.99)),
+                    });
+                    meta
+                },
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
+                quantized_vector: vec![],
+                source: Some("test".to_string()),
             }],
-            // TODO: Fix after quantization_blocks module is available
-            // quantized_block: super::super::quantization_blocks::QuantizedBlock::new(3),
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata {
+                record_count: 1,
+                size_bytes: 0,
+                compressed_size: 0,
+                timestamp: 0,
+                compaction_level: 0,
+                has_deletes: false,
+                has_updates: false,
+                version_range: (0, 0),
+                column_stats: std::collections::HashMap::new(),
+                quantization_stats: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::QuantizationStatistics::default(),
+                data_checksum: 0,
+                metadata_checksum: 0,
+            },
+            compression_config: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+                algorithm: crate::core::compression::CompressionAlgorithm::Lz4,
+                compression_level: 1,
+                enable_vector_compression: true,
+                enable_metadata_compression: true,
+                compression_threshold_bytes: 8192,
+                dictionary_compression: false,
+                vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+                metadata_algorithm: None,
+            },
+            compression_algorithm: crate::core::compression::CompressionAlgorithm::Lz4,
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
             id_range: ("1".to_string(), "1".to_string()),
-            // min_timestamp removed -  0,
-            // max_timestamp removed -  0,
-            metadata_stats: HashMap::new(),
+            timestamp_range: (0, 0),
+            statistics: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockStatistics {
+                read_count: 0,
+                write_count: 0,
+                search_count: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+                avg_read_time_ms: 0.0,
+                avg_search_time_ms: 0.0,
+                last_accessed_at: 0,
+            },
+            metadata_stats: None,
+            has_deletes: false,
         };
 
         // Index the block

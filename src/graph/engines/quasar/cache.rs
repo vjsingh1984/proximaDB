@@ -19,7 +19,6 @@
 //! Tracks access patterns for nodes and edges to make intelligent tiering decisions.
 //! Uses LRU eviction policy with access frequency and recency tracking.
 
-use crate::graph::NodeId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;

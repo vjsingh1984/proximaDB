@@ -91,14 +91,14 @@ enabled = false
     let parsed: toml::Value = toml::from_str(toml_content).expect("Failed to parse TOML");
 
     // Verify the structure can be parsed
-    if let Some(network) = parsed.get(key) {
-        if let Some(enabled) = network.get(key) {
+    if let Some(network) = parsed.get("network") {
+        if let Some(enabled) = network.get("enabled") {
             assert_eq!(enabled.as_bool(), Some(false));
         }
     }
 
-    if let Some(rate_limit) = parsed.get(key) {
-        if let Some(enabled) = rate_limit.get(key) {
+    if let Some(rate_limit) = parsed.get("rate_limit") {
+        if let Some(enabled) = rate_limit.get("enabled") {
             assert_eq!(enabled.as_bool(), Some(false));
         }
     }

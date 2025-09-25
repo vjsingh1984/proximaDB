@@ -16,7 +16,7 @@ pub enum StorageEngineType {
     NOVA,
     RAPTOR,
     SWIFT,
-    PRISM,
+    HELIX,
 }
 
 /// File operation types
@@ -124,8 +124,8 @@ pub struct GeneralFilesystemMetrics {
     pub raptor_files_written: AtomicU64,
     pub swift_files_read: AtomicU64,
     pub swift_files_written: AtomicU64,
-    pub prism_files_read: AtomicU64,
-    pub prism_files_written: AtomicU64,
+    pub helix_files_read: AtomicU64,
+    pub helix_files_written: AtomicU64,
 
     // Engine-specific byte tracking
     pub sst_bytes_read: AtomicU64,
@@ -138,8 +138,8 @@ pub struct GeneralFilesystemMetrics {
     pub raptor_bytes_written: AtomicU64,
     pub swift_bytes_read: AtomicU64,
     pub swift_bytes_written: AtomicU64,
-    pub prism_bytes_read: AtomicU64,
-    pub prism_bytes_written: AtomicU64,
+    pub helix_bytes_read: AtomicU64,
+    pub helix_bytes_written: AtomicU64,
 }
 
 impl FilesystemMetricsCollector {
@@ -248,20 +248,20 @@ impl FilesystemMetricsCollector {
                     .swift_bytes_written
                     .fetch_add(bytes, Ordering::Relaxed);
             }
-            (StorageEngineType::PRISM, FileOperation::Read) => {
+            (StorageEngineType::HELIX, FileOperation::Read) => {
                 self.general_metrics
-                    .prism_files_read
+                    .helix_files_read
                     .fetch_add(1, Ordering::Relaxed);
                 self.general_metrics
-                    .prism_bytes_read
+                    .helix_bytes_read
                     .fetch_add(bytes, Ordering::Relaxed);
             }
-            (StorageEngineType::PRISM, FileOperation::Write) => {
+            (StorageEngineType::HELIX, FileOperation::Write) => {
                 self.general_metrics
-                    .prism_files_written
+                    .helix_files_written
                     .fetch_add(1, Ordering::Relaxed);
                 self.general_metrics
-                    .prism_bytes_written
+                    .helix_bytes_written
                     .fetch_add(bytes, Ordering::Relaxed);
             }
         }
@@ -368,22 +368,22 @@ impl FilesystemMetricsCollector {
                     .swift_bytes_written
                     .load(Ordering::Relaxed),
             },
-            StorageEngineType::PRISM => EngineFileStats {
+            StorageEngineType::HELIX => EngineFileStats {
                 files_read: self
                     .general_metrics
-                    .prism_files_read
+                    .helix_files_read
                     .load(Ordering::Relaxed),
                 files_written: self
                     .general_metrics
-                    .prism_files_written
+                    .helix_files_written
                     .load(Ordering::Relaxed),
                 bytes_read: self
                     .general_metrics
-                    .prism_bytes_read
+                    .helix_bytes_read
                     .load(Ordering::Relaxed),
                 bytes_written: self
                     .general_metrics
-                    .prism_bytes_written
+                    .helix_bytes_written
                     .load(Ordering::Relaxed),
             },
         }
@@ -734,25 +734,25 @@ impl FilesystemMetricsCollector {
         metrics.insert(
             "fs.engine.prism.files_read".to_string(),
             self.general_metrics
-                .prism_files_read
+                .helix_files_read
                 .load(Ordering::Relaxed) as f64,
         );
         metrics.insert(
             "fs.engine.prism.files_written".to_string(),
             self.general_metrics
-                .prism_files_written
+                .helix_files_written
                 .load(Ordering::Relaxed) as f64,
         );
         metrics.insert(
             "fs.engine.prism.bytes_read".to_string(),
             self.general_metrics
-                .prism_bytes_read
+                .helix_bytes_read
                 .load(Ordering::Relaxed) as f64,
         );
         metrics.insert(
             "fs.engine.prism.bytes_written".to_string(),
             self.general_metrics
-                .prism_bytes_written
+                .helix_bytes_written
                 .load(Ordering::Relaxed) as f64,
         );
 
@@ -914,10 +914,10 @@ impl GeneralFilesystemMetrics {
             swift_files_written: AtomicU64::new(0),
             swift_bytes_read: AtomicU64::new(0),
             swift_bytes_written: AtomicU64::new(0),
-            prism_files_read: AtomicU64::new(0),
-            prism_files_written: AtomicU64::new(0),
-            prism_bytes_read: AtomicU64::new(0),
-            prism_bytes_written: AtomicU64::new(0),
+            helix_files_read: AtomicU64::new(0),
+            helix_files_written: AtomicU64::new(0),
+            helix_bytes_read: AtomicU64::new(0),
+            helix_bytes_written: AtomicU64::new(0),
         }
     }
 }

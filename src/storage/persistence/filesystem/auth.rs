@@ -559,9 +559,11 @@ mod tests {
     #[tokio::test]
     async fn test_environment_credential_provider() {
         // Set environment variables for test
-        env::set_var("AWS_ACCESS_KEY_ID", "env_access_key");
-        env::set_var("AWS_SECRET_ACCESS_KEY", "env_secret_key");
-        env::set_var("AWS_SESSION_TOKEN", "env_session_token");
+        unsafe {
+            env::set_var("AWS_ACCESS_KEY_ID", "env_access_key");
+            env::set_var("AWS_SECRET_ACCESS_KEY", "env_secret_key");
+            env::set_var("AWS_SESSION_TOKEN", "env_session_token");
+        }
 
         let provider = EnvironmentCredentialProvider::new();
         let credentials = provider.get_credentials().await.unwrap();
@@ -574,8 +576,10 @@ mod tests {
         );
 
         // Clean up
-        env::remove_var("AWS_ACCESS_KEY_ID");
-        env::remove_var("AWS_SECRET_ACCESS_KEY");
-        env::remove_var("AWS_SESSION_TOKEN");
+        unsafe {
+            env::remove_var("AWS_ACCESS_KEY_ID");
+            env::remove_var("AWS_SECRET_ACCESS_KEY");
+            env::remove_var("AWS_SESSION_TOKEN");
+        }
     }
 }

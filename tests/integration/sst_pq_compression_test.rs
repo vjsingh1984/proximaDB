@@ -3,9 +3,14 @@
 //! This test validates that SST engine with integrated quantization
 //! achieves better compression through block-based quantization.
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
 use anyhow::Result;
-use proximadb::proto::proximadb::{VectorRecord, Collection, CollectionConfig, CompressionConfig};
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, CompressionConfig};
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::core::SstConfig;
@@ -16,8 +21,7 @@ use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
 
 // Use the unified test utilities for test environment only
-mod common;
-use common::unified_test_utils::UnifiedTestEnvironment;
+use common::integration_test_helpers::UnifiedTestEnvironment;
 
 /// Test SST compression with integrated quantization features
 #[tokio::test]
@@ -69,7 +73,7 @@ async fn test_sst_quantization_compression() -> Result<()> {
         let distance_compute = Arc::new(
             proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::new()
         );
-        let sst_storage = SstStorage::new(
+        let sst_storage = SstEngine::new(
             sst_config.clone(),
             filesystem,
             distance_compute,
@@ -90,7 +94,7 @@ async fn test_sst_quantization_compression() -> Result<()> {
             name: "test_collection".to_string(),
             dimension: dimension as u32,
             distance_metric: "cosine".to_string(),
-            storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
                 base_location: format!("file://{}", base_path),
                 assignment_id: "test".to_string(),
                 tier: "hot".to_string(),
@@ -122,9 +126,9 @@ async fn test_sst_quantization_compression() -> Result<()> {
         let flush_result = sst_storage.do_flush(&flush_params).await?;
         
         info!("\n  📊 Results for {}:", algorithm);
-        info!("    • Entries flushed: {}", flush_result.entries_flushed);
+        info!("    • Entries flushed: {:?}", flush_result.entries_flushed);
         info!("    • Bytes written: {:.2} MB", flush_result.bytes_written as f64 / (1024.0 * 1024.0));
-        info!("    • Files created: {}", flush_result.files_created);
+        info!("    • Files created: {:?}", flush_result.files_created);
         
         // Calculate compression ratio
         let uncompressed_size = num_vectors * dimension * 4; // FP32
@@ -270,7 +274,7 @@ async fn test_compression_with_different_block_sizes() -> Result<()> {
         let distance_compute = Arc::new(
             proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::new()
         );
-        let sst_storage = SstStorage::new(
+        let sst_storage = SstEngine::new(
             sst_config.clone(),
             filesystem,
             distance_compute,
@@ -291,7 +295,7 @@ async fn test_compression_with_different_block_sizes() -> Result<()> {
             name: "test_collection".to_string(),
             dimension: dimension as u32,
             distance_metric: "cosine".to_string(),
-            storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
+            storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
                 base_location: format!("file://{}", base_path),
                 assignment_id: "test".to_string(),
                 tier: "hot".to_string(),
@@ -333,7 +337,7 @@ async fn test_compression_with_different_block_sizes() -> Result<()> {
             1.0
         };
         info!("  • Compression ratio: {:.2}x", compression_ratio);
-        info!("  • Files created: {}", flush_result.files_created);
+        info!("  • Files created: {:?}", flush_result.files_created);
         
         // Smaller blocks should generally achieve better compression due to locality
         if block_size_kb == 256 {

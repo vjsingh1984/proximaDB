@@ -1,8 +1,8 @@
 use crate::storage::cache::backend::{
     CacheTier, MemoryBackend, NetworkBackend, NvmeBackend, StorageBackend,
 };
-use crate::storage::cache::eviction::{CacheState, EvictionStrategy, LRUStrategy};
-use crate::storage::cache::metrics::CacheMetrics;
+// Note: Using new eviction system through CrossCacheOrchestrator
+use crate::storage::traits::{UnifiedMetricsCollector, MetricsOperationType};
 use crate::storage::cache::traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
 use async_trait::async_trait;
 use std::hash::Hash;
@@ -20,15 +20,31 @@ where
     l2_backend: Option<Arc<NvmeBackend<K, CacheEntry<V>>>>,
     l3_backend: Option<Arc<NetworkBackend<K, CacheEntry<V>>>>,
 
-    // Eviction strategy
-    eviction_strategy: Arc<RwLock<Box<dyn EvictionStrategy<Key = K> + Send + Sync>>>,
+    // Note: Eviction now handled by global CrossCacheOrchestrator
 
     // Metrics
-    metrics: Arc<CacheMetrics>,
+    metrics: Arc<UnifiedMetricsCollector>,
 
     // Configuration
     promotion_threshold: u32,
     max_entry_size_for_l1: usize,
+}
+
+impl<K, V> std::fmt::Debug for BaseCacheImpl<K, V>
+where
+    K: CacheKey,
+    V: CacheValue,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BaseCacheImpl")
+            .field("l1_backend", &"<MemoryBackend>")
+            .field("l2_backend", &self.l2_backend.as_ref().map(|_| "<NvmeBackend>"))
+            .field("l3_backend", &self.l3_backend.as_ref().map(|_| "<NetworkBackend>"))
+            .field("metrics", &"<UnifiedMetricsCollector>")
+            .field("promotion_threshold", &self.promotion_threshold)
+            .field("max_entry_size_for_l1", &self.max_entry_size_for_l1)
+            .finish()
+    }
 }
 
 impl<K, V> BaseCacheImpl<K, V>
@@ -41,8 +57,8 @@ where
             l1_backend: Arc::new(MemoryBackend::new(max_memory_mb)),
             l2_backend: None,
             l3_backend: None,
-            eviction_strategy: Arc::new(RwLock::new(Box::new(LRUStrategy::new()))),
-            metrics: Arc::new(CacheMetrics::new()),
+            // eviction_strategy now handled by global orchestrator
+            metrics: Arc::new(UnifiedMetricsCollector::new()),
             promotion_threshold: 3,
             max_entry_size_for_l1: 1024 * 1024, // 1MB
         }
@@ -58,12 +74,40 @@ where
         self
     }
 
-    pub fn with_eviction_strategy<E>(mut self, strategy: E) -> Self
-    where
-        E: EvictionStrategy<Key = K> + Send + Sync + 'static,
-    {
-        self.eviction_strategy = Arc::new(RwLock::new(Box::new(strategy)));
-        self
+    // Note: Eviction strategy now handled by global CrossCacheOrchestrator
+
+    /// Get the number of entries in the cache
+    pub async fn size(&self) -> usize {
+        self.l1_backend.size().await
+    }
+
+    /// Remove a specific entry from the cache
+    pub async fn remove(&self, key: &K) -> Option<V> {
+        if let Some(entry) = self.l1_backend.remove_and_get(key).await {
+            // Record eviction in unified metrics
+            let metrics = self.metrics.clone();
+            tokio::spawn(async move {
+                metrics.record_operation(
+                    MetricsOperationType::Delete,
+                    true,
+                    0,
+                    std::time::Duration::from_secs(0),
+                ).await;
+            });
+            Some(entry.value)
+        } else {
+            None
+        }
+    }
+
+    /// Get memory usage in bytes
+    pub async fn memory_usage(&self) -> usize {
+        self.l1_backend.memory_usage().await
+    }
+
+    /// Get cache metrics
+    pub fn metrics(&self) -> &UnifiedMetricsCollector {
+        &self.metrics
     }
 }
 
@@ -115,61 +159,67 @@ where
         }
     }
 
-    async fn put_l1(&self, key: Self::Key, value: Self::Value) {
+    async fn put_l1(&self, key: Self::Key, value: Self::Value) -> () {
         let entry = CacheEntry::new(value);
 
         // Try to insert
         match self.l1_backend.put(key.clone(), entry.clone()).await {
             Ok(_) => {
-                // Success - update eviction strategy and metrics
-                let mut strategy = self.eviction_strategy.write().await;
-                strategy.update_on_insert(&key, 0);
-                self.metrics.record_put();
+                // Success - update metrics (eviction handled by global orchestrator)
+                let metrics = self.metrics.clone();
+                tokio::spawn(async move {
+                    metrics.record_operation(
+                        MetricsOperationType::Write,
+                        true,
+                        0,
+                        std::time::Duration::from_secs(0),
+                    ).await;
+                });
             }
             Err(crate::storage::cache::backend::StorageError::CapacityExceeded) => {
-                // Cache is full - need to evict
-                // Try to select a victim using the eviction strategy
-                let victim_key = {
-                    let strategy = self.eviction_strategy.read().await;
-                    let cache_state = CacheState {
-                        total_capacity: self.l1_backend.size_bytes().await,
-                        current_size: self.l1_backend.size_bytes().await,
-                        entry_count: self.l1_backend.entry_count().await,
-                    };
-                    strategy.select_victim(&cache_state)
-                };
+                // Cache is full - trigger eviction through global orchestrator
+                if let Some(orchestrator) = crate::storage::cache::orchestrator::CrossCacheOrchestrator::global() {
+                    // Try to trigger eviction
+                    if let Err(e) = orchestrator.trigger_eviction_if_needed().await {
+                        tracing::warn!("Failed to trigger cache eviction: {:?}", e);
+                    }
 
-                // If we found a victim, evict it
-                if let Some(victim) = victim_key {
-                    // Remove the victim
-                    if self.l1_backend.remove(&victim).await {
-                        // Update eviction strategy
-                        let mut strategy = self.eviction_strategy.write().await;
-                        strategy.update_on_evict(&victim);
-                        self.metrics.record_eviction();
-
-                        // Now try to insert the new entry
-                        if self.l1_backend.put(key.clone(), entry.clone()).await.is_ok() {
-                            strategy.update_on_insert(&key, 0);
-                            self.metrics.record_put();
-                        } else {
-                            // Still failed after eviction
-                            self.metrics.record_put();
+                    // Retry the insert after eviction
+                    match self.l1_backend.put(key.clone(), entry.clone()).await {
+                        Ok(_) => {
+                            let metrics = self.metrics.clone();
+                            tokio::spawn(async move {
+                                metrics.record_operation(
+                                    MetricsOperationType::Write,
+                                    true,
+                                    0,
+                                    std::time::Duration::from_secs(0),
+                                ).await;
+                            });
                         }
-                    } else {
-                        // Eviction failed
-                        self.metrics.record_put();
+                        Err(_) => {
+                            // Still fails after eviction - cache is critically full
+                            tracing::error!("Cache capacity exceeded even after eviction attempt");
+                            return;
+                        }
                     }
                 } else {
-                    // No victim found - this means the LRU doesn't have any keys tracked
-                    // Record eviction to maintain metrics consistency
-                    self.metrics.record_eviction();
-                    self.metrics.record_put();
+                    // No global orchestrator available
+                    tracing::error!("Cache capacity exceeded and no orchestrator available for eviction");
+                    return;
                 }
             }
             Err(_) => {
                 // Other error - just record the put attempt
-                self.metrics.record_put();
+                let metrics = self.metrics.clone();
+                tokio::spawn(async move {
+                    metrics.record_operation(
+                        MetricsOperationType::Write,
+                        false,
+                        0,
+                        std::time::Duration::from_secs(0),
+                    ).await;
+                });
             }
         }
     }
@@ -178,7 +228,15 @@ where
         if let Some(ref l2) = self.l2_backend {
             let entry = CacheEntry::new(value);
             let _ = l2.put(key, entry).await;
-            self.metrics.record_put();
+            let metrics = self.metrics.clone();
+            tokio::spawn(async move {
+                metrics.record_operation(
+                    MetricsOperationType::Write,
+                    true,
+                    0,
+                    std::time::Duration::from_secs(0),
+                ).await;
+            });
         }
     }
 
@@ -186,11 +244,20 @@ where
         if let Some(ref l3) = self.l3_backend {
             let entry = CacheEntry::new(value);
             let _ = l3.put(key, entry).await;
-            self.metrics.record_put();
+            let metrics = self.metrics.clone();
+            tokio::spawn(async move {
+                metrics.record_operation(
+                    MetricsOperationType::Write,
+                    true,
+                    0,
+                    std::time::Duration::from_secs(0),
+                ).await;
+            });
         }
     }
 
     async fn invalidate_l1(&self, key: &Self::Key) -> bool {
+        // Use the trait remove method that returns bool
         self.l1_backend.remove(key).await
     }
 
@@ -242,7 +309,7 @@ where
         }
     }
 
-    fn metrics(&self) -> &CacheMetrics {
+    fn metrics(&self) -> &UnifiedMetricsCollector {
         &self.metrics
     }
 }

@@ -14,10 +14,10 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::{Config, VectorRecord};
     use crate::proto::proximadb_v1::{
-        MetadataItem, VectorRecord as ProtoVectorRecord, metadata_item,
+        VectorRecord as ProtoVectorRecord,
     };
     use crate::services::operations::vectors::VectorOperationsService;
-    use crate::storage::engines::impls::sst::SstStorage;
+    use crate::storage::engines::impls::sst::SstEngine;
     use crate::storage::engines::impls::viper::ViperEngine;
     use crate::storage::persistence::write_ahead_log::WALConfig;
 
@@ -28,20 +28,23 @@ mod tests {
         metadata: Vec<(&str, &str)>,
     ) -> ProtoVectorRecord {
         ProtoVectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector,
-            metadata: metadata
-                .into_iter()
-                .map(|(k, v)| MetadataItem {
-                    key: k.to_string(),
-                    value: Some(metadata_item::Value::StringValue(v.to_string())),
-                })
-                .collect(),
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: {
+                let mut map = std::collections::HashMap::new();
+                for (k, v) in metadata {
+                    map.insert(k.to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string())),
+                    });
+                }
+                map
+            },
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -49,13 +52,14 @@ mod tests {
     fn create_core_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
         VectorRecord {
             id: id.to_string(),
-            collection_id: "test_collection".to_string(),
             vector,
             metadata: HashMap::new(),
             timestamp: chrono::Utc::now().timestamp(),
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -77,18 +81,14 @@ mod tests {
                 .await
                 .expect("Failed to create filesystem factory"),
         );
-        let distance_compute = Arc::new(
+        let _distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 DistanceMetric::Cosine,
             ),
         );
 
         let sst_engine = Arc::new(
-            SstStorage::new(
-                config.storage.sst_config.clone(),
-                filesystem.clone(),
-                distance_compute,
-            )
+            SstEngine::new()
             .await
             .expect("Failed to create SST engine"),
         );
@@ -96,7 +96,7 @@ mod tests {
         // Create WAL manager
         let wal_config = WALConfig::default();
         let strategy_type =
-            crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::Bincode;
+            crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
         let strategy = crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
             strategy_type,
             &wal_config,
@@ -110,14 +110,31 @@ mod tests {
             .expect("Failed to create WAL manager"),
         );
 
-        let service = VectorOperationsService::new(sst_engine, wal_manager);
+        // Create required services for VectorOperationsService
+        let axis_manager = Arc::new(crate::index::axis::management::manager::AxisManager::new(crate::index::axis::types::AxisConfig::default()).await.unwrap());
+        let metadata_backend = Arc::new(
+            crate::storage::metadata::MetadataStore::new(crate::storage::metadata::MetadataStoreConfig::default()).await.unwrap()
+        ) as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
+        let collection_service = Arc::new(
+            crate::services::collection::manager::CollectionService::new(
+                metadata_backend,
+                config.storage.clone(),
+            ).await.unwrap()
+        );
+
+        let service = VectorOperationsService::new(
+            sst_engine,
+            wal_manager,
+            axis_manager,
+            collection_service,
+        );
 
         (service, temp_dir)
     }
 
     #[tokio::test]
     async fn test_service_creation() {
-        let (service, _temp_dir) = create_test_service().await;
+        let (_service, _temp_dir) = create_test_service().await;
 
         // Test basic service creation works
         assert!(true, "Service created successfully");
@@ -129,19 +146,19 @@ mod tests {
         let metadata = vec![("key1", "value1"), ("key2", "value2")];
 
         let proto_record = create_test_vector_record("test_id", vector.clone(), metadata);
-        assert_eq!(proto_record.id, Some("test_id".to_string()));
+        assert_eq!(proto_record.id, "test_id".to_string());
         assert_eq!(proto_record.vector, vector);
         assert_eq!(proto_record.metadata.len(), 2);
 
         let core_record = create_core_test_vector("test_id", vector.clone());
         assert_eq!(core_record.id, "test_id");
         assert_eq!(core_record.vector, vector);
-        assert_eq!(core_record.collection_id, "test_collection");
+        // Core VectorRecord no longer has collection_id field
     }
 
     #[tokio::test]
     async fn test_service_with_vectors() {
-        let (service, _temp_dir) = create_test_service().await;
+        let (_service, _temp_dir) = create_test_service().await;
         let test_vector = create_core_test_vector("test_vector", vec![1.0, 2.0, 3.0]);
 
         // Test that service can handle vector records
@@ -176,9 +193,9 @@ mod tests {
         assert_eq!(record.metadata.len(), 3);
 
         // Check metadata structure
-        for meta in &record.metadata {
-            assert!(!meta.key.is_empty());
-            assert!(meta.value.is_some());
+        for (key, value) in &record.metadata {
+            assert!(!key.is_empty());
+            assert!(value.value.is_some());
         }
     }
 

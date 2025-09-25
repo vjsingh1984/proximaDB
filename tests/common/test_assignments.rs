@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::{RwLock, Semaphore};
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 /// Test assignment data stored on disk
 #[derive(Debug, Clone, Serialize, Deserialize)]

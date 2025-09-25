@@ -232,17 +232,17 @@ mod tests {
         }
 
         // Get predictions
-        let predictions = collector.get_predictions().await;
+        let predictions = collector.predictions().await;
 
         // We should have some predictions based on patterns
         // Note: Actual prediction logic would need to be implemented
         // This test verifies the API works
-        assert!(predictions.is_none() || !predictions.is_none()); // Tautology for now
+        assert!(predictions.is_empty() || !predictions.is_empty()); // Tautology for now
 
         // Check for correlated files
-        let correlations = collector.get_correlated_files("hot_file_001").await;
+        let correlations = collector.correlated_files("hot_file_001").await;
         // Should potentially have correlations after repeated access
-        assert!(correlations.is_none() || !correlations.is_none());
+        assert!(correlations.is_empty() || !correlations.is_empty());
     }
 
     #[tokio::test]

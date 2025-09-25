@@ -9,7 +9,8 @@ use tracing::{debug, info};
 
 use super::{ColumnarConfig, ParquetLocation, UnifiedParquetReader};
 use crate::core::memory::pool::VectorMemoryPool;
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Batch operations for columnar storage
 pub struct ColumnarBatchOperations {
@@ -506,7 +507,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let parquet_reader = Arc::new(UnifiedParquetReader::new(filesystem));
+        let parquet_reader = Arc::new(UnifiedParquetReader::new(filesystem).await.unwrap());
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
         let config = ColumnarConfig::default();
@@ -527,13 +528,15 @@ mod tests {
         // Create test vectors
         let vectors: Vec<VectorRecord> = (0..25000)
             .map(|i| VectorRecord {
-                id: Some(format!("test_{}", i)),
+                id: format!("test_{}", i),
                 vector: vec![i as f32; 768],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
-                updated_at: None,
+                updated_at: Some(0),
                 expires_at: None,
-                version: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: Some("test".to_string()),
             })
             .collect();
 
@@ -556,7 +559,7 @@ mod tests {
                     .unwrap(),
             );
 
-            let parquet_reader = Arc::new(UnifiedParquetReader::new(filesystem));
+            let parquet_reader = Arc::new(UnifiedParquetReader::new(filesystem).await.unwrap());
             let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
             let memory_pool = Arc::new(VectorMemoryPool::new());
             let config = ColumnarConfig::default();

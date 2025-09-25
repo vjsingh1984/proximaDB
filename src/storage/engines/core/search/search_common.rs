@@ -12,8 +12,7 @@ use std::sync::Arc;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-use crate::core::VectorRecord;
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 
 /// Configuration for the universal search pipeline
@@ -275,17 +274,37 @@ impl UniversalSearchPipeline {
             return Ok(candidates);
         }
 
-        // Recompute distances with full precision
+        // Recompute distances with full precision using batch method
         let mut reranked = Vec::with_capacity(candidates.len());
 
-        for mut result in candidates {
+        // Collect vectors for batch processing
+        let mut vectors_to_rerank = Vec::new();
+        let mut indices_with_vectors = Vec::new();
+
+        for (idx, result) in candidates.iter().enumerate() {
             if let Some(ref vector) = result.vector {
-                let similarity_result = self.distance_compute.as_ref().calculate_distance(
-                    query_vector,
-                    vector,
-                    &config.distance_metric,
-                );
-                result.similarity = Some(similarity_result.raw_value);
+                vectors_to_rerank.push(vector.as_slice());
+                indices_with_vectors.push(idx);
+            }
+        }
+
+        // Batch compute distances if we have vectors
+        let distances = if !vectors_to_rerank.is_empty() {
+            self.distance_compute.as_ref().batch_distance_pooled_simd(
+                query_vector,
+                &vectors_to_rerank,
+                &config.distance_metric,
+            )
+        } else {
+            Vec::new()
+        };
+
+        // Apply distances back to results
+        let mut distance_idx = 0;
+        for (idx, mut result) in candidates.into_iter().enumerate() {
+            if indices_with_vectors.contains(&idx) {
+                result.similarity = Some(distances[distance_idx].distance);
+                distance_idx += 1;
             }
             reranked.push(result);
         }
@@ -464,7 +483,7 @@ impl UniversalSearchPipeline {
             // Convert metadata_map (HashMap<String, serde_json::Value>) to TypedMetadata
             let mut typed_metadata_map = std::collections::HashMap::new();
             for (key, value) in metadata_map {
-                use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
+                use crate::proto::proximadb_v1::{self as proximadb_v1};
                 let sql_value = match value {
                     serde_json::Value::String(s) => proximadb_v1::SqlValue {
                         value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),

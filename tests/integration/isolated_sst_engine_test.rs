@@ -6,17 +6,20 @@
 //! This module has been refactored to use the unified test utilities for consistent
 //! and reliable test infrastructure across all ProximaDB test modules.
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use anyhow::Result;
 use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
-mod common {
-    include!("../common/mod.rs");
-}
-use common::unified_test_utils::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
+use common::integration_test_helpers::{MultiUnifiedEnvironmentTest, UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-use proximadb::proto::proximadb::{MetadataItem, StorageEngine, VectorRecord, metadata_item};
+use proximadb::proto::proximadb_v1::{StorageEngine, VectorRecord};
 use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
 use std::sync::Arc;
 
@@ -198,9 +201,9 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
                         (global_id + 1) as f32,
                         (global_id + 2) as f32,
                     ],
-                    (1000 + global_id) as u32,
+                    (1000 + global_id) as i64,
                     None,
-                    vec![],
+                    std::collections::HashMap::new(),
                 )
             })
             .collect();
@@ -298,12 +301,7 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
 
     // Let's also check what the collection_config looks like
     if let Some(ref config) = compact_params.collection_config {
-        if let Some(ref storage) = config.storage_assignment {
-            println!(
-                "   Storage assignment base_location: {}",
-                storage.base_location
-            );
-        }
+        println!("   Collection config found");
     }
 
     let result = engine.compact(compact_params).await?;
@@ -412,16 +410,22 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
                         (batch_id * 10 + i + 1) as f32,
                         (batch_id * 10 + i + 2) as f32,
                     ],
-                    metadata: vec![MetadataItem {
-                        key: "batch_id".to_string(),
-                        value: Some(metadata_item::Value::StringValue(batch_id.to_string())),
-                    }],
-                    timestamp: chrono::Utc::now().timestamp() as u32,
-                    updated_at: None,
+                    metadata: {
+                        let mut metadata = std::collections::HashMap::new();
+                        metadata.insert(
+                            "batch_id".to_string(),
+                            proximadb::proto::proximadb_v1::SqlValue {
+                                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(batch_id.to_string())),
+                            },
+                        );
+                        metadata
+                    },
+                    timestamp: chrono::Utc::now().timestamp(),
+                    updated_at: Some(chrono::Utc::now().timestamp()),
                     expires_at: None,
-                    quantized_vector: Some(vec![]),
+                    version: Some(1),
+                    quantized_vector: vec![],
                     source: None,
-                    version: None,
                 })
                 .collect();
 
@@ -731,33 +735,33 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
         VectorRecord {
             id: format!("{}_identical", env.collection_id()),
             vector: vec![1.0, 0.0, 0.0], // Identical to query
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
             updated_at: None,
             expires_at: None,
-            quantized_vector: Some(vec![]),
+            quantized_vector: vec![],
             source: None,
             version: None,
         },
         VectorRecord {
             id: format!("{}_orthogonal", env.collection_id()),
             vector: vec![0.0, 1.0, 0.0], // Orthogonal to query
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
             updated_at: None,
             expires_at: None,
-            quantized_vector: Some(vec![]),
+            quantized_vector: vec![],
             source: None,
             version: None,
         },
         VectorRecord {
             id: format!("{}_opposite", env.collection_id()),
             vector: vec![-1.0, 0.0, 0.0], // Opposite to query
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
             updated_at: None,
             expires_at: None,
-            quantized_vector: Some(vec![]),
+            quantized_vector: vec![],
             source: None,
             version: None,
         },
@@ -869,22 +873,28 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
                         ((global_id + 1) as f32) / 100.0,
                         ((global_id + 2) as f32) / 100.0,
                     ],
-                    metadata: vec![
-                        MetadataItem {
-                            key: "batch".to_string(),
-                            value: Some(metadata_item::Value::NumberValue(batch as f64)),
-                        },
-                        MetadataItem {
-                            key: "id_mod_10".to_string(),
-                            value: Some(metadata_item::Value::NumberValue((global_id % 10) as f64)),
-                        },
-                    ],
-                    timestamp: chrono::Utc::now().timestamp() as u32,
-                    updated_at: None,
+                    metadata: {
+                        let mut metadata = std::collections::HashMap::new();
+                        metadata.insert(
+                            "batch".to_string(),
+                            proximadb::proto::proximadb_v1::SqlValue {
+                                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(batch as f64)),
+                            },
+                        );
+                        metadata.insert(
+                            "id_mod_10".to_string(),
+                            proximadb::proto::proximadb_v1::SqlValue {
+                                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue((global_id % 10) as f64)),
+                            },
+                        );
+                        metadata
+                    },
+                    timestamp: chrono::Utc::now().timestamp(),
+                    updated_at: Some(chrono::Utc::now().timestamp()),
                     expires_at: None,
-                    quantized_vector: Some(vec![]),
+                    version: Some(1),
+                    quantized_vector: vec![],
                     source: None,
-                    version: None,
                 }
             })
             .collect();

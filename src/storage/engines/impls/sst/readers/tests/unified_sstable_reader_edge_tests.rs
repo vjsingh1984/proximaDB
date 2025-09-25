@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod edge_tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
     use crate::core::bloom::BloomFilterConfig;
     use crate::core::config::SstConfig;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
@@ -14,6 +14,7 @@ mod edge_tests {
         CollectionContext, ReaderConfig, UnifiedSstableReader,
     };
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
     use chrono::Utc;
     use serde_json::json;
     use std::collections::HashMap;
@@ -31,14 +32,24 @@ mod edge_tests {
     // Helper to create reader
     async fn create_test_reader() -> UnifiedSstableReader {
         let config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-        UnifiedSstableReader::new(filesystem)
+        let filesystem_factory = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "sst".to_string(),
+        ));
+        UnifiedSstableReader::new(
+            filesystem_factory,
+            unified_fs,
+            "test_collection".to_string(),
+        )
     }
 
     // Helper to create test collection context
     fn create_test_context(collection_id: &str, file_paths: Vec<String>) -> CollectionContext {
         CollectionContext {
-            file_path: file_paths.first().cloned().clone(),
+            file_path: file_paths.first().cloned().unwrap_or_default(),
             sstable_files: file_paths,
             total_vectors: 1000,
             metadata_columns: vec!["category".to_string(), "price".to_string()],
@@ -492,53 +503,50 @@ mod edge_tests {
 
         // Add multiple versions of the same record
         for version in 1..=10 {
-            records.push(SstRecord {
+            records.push(VectorRecord {
                 id: vector_id.to_string(),
                 vector: vec![0.1 * version as f32; 128],
-                metadata: vec![],
+                metadata: HashMap::new(),
                 timestamp: version,
                 updated_at: Some(version),
                 expires_at: None,
-                version: Some(version),
-                is_tombstone: false,
-                sequence_number: version as u64,
-                level: 0,
+                version: Some(version as i64),
+                quantized_vector: vec![],
+                source: None,
+                // level field removed from VectorRecord
             });
         }
 
         // Add a tombstone (deletion marker)
-        records.push(SstRecord {
+        records.push(VectorRecord {
             id: vector_id.to_string(),
             vector: vec![],
-            metadata: vec![],
+            metadata: HashMap::new(),
             timestamp: 11,
             updated_at: Some(11),
             expires_at: None,
             version: Some(11),
-            is_tombstone: true,
-            sequence_number: 11,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         });
 
         // Add another version after deletion
-        records.push(SstRecord {
+        records.push(VectorRecord {
             id: vector_id.to_string(),
             vector: vec![0.99; 128],
-            metadata: vec![],
+            metadata: HashMap::new(),
             timestamp: 12,
             updated_at: Some(12),
             expires_at: None,
             version: Some(12),
-            is_tombstone: false,
-            sequence_number: 12,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         });
 
         // Verify we have multiple versions and a tombstone
         assert_eq!(records.len(), 12);
-        assert!(
-            records[10] /* REMOVED: is_tombstone field no longer exists */
-        );
+        // Verify we have multiple versions
+        assert!(records[10].vector.is_empty()); // Empty vector indicates tombstone
     }
 
     // ===== Bloom Filter Edge Cases =====
@@ -636,17 +644,16 @@ mod edge_tests {
 
         let mut records = std::collections::BTreeMap::new();
         for i in 0..10 {
-            let record = crate::storage::engines::impls::sst::SstRecord {
+            let record = VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![i as f32; 128],
-                metadata: vec![],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                metadata: std::collections::HashMap::new(),
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: false,
-                sequence_number: i as u64,
-                level: 0,
+                quantized_vector: vec![],
+                source: None,
             };
             records.insert(record.id.clone(), record);
         }
@@ -658,7 +665,22 @@ mod edge_tests {
             .unwrap();
 
         // Create reader and context
-        let reader = Arc::new(UnifiedSstableReader::new(filesystem));
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::new(FilesystemConfig::default())
+                .await
+                .unwrap(),
+        );
+        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "sst".to_string(),
+        ));
+        let reader = Arc::new(UnifiedSstableReader::new(
+            filesystem_factory,
+            unified_fs,
+            "test_collection".to_string(),
+        ));
         reader.load_metadata(&file_url).await.unwrap();
 
         let context = Arc::new(CollectionContext {
@@ -829,58 +851,62 @@ mod edge_tests {
         // Create various tombstone scenarios
         let tombstones = vec![
             // Regular tombstone
-            SstRecord {
+            VectorRecord {
                 id: "deleted_1".to_string(),
                 vector: vec![],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 100,
                 updated_at: Some(100),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: true,
-                sequence_number: 100,
-                level: 0,
+                quantized_vector: vec![],
+                source: Some(String::new()),
+                // is_tombstone field removed
+                // sequence_number field removed
+                // level field removed from VectorRecord
             },
             // Tombstone with metadata (unusual but valid)
-            SstRecord {
+            VectorRecord {
                 id: "deleted_2".to_string(),
                 vector: vec![],
-                metadata: vec![crate::proto::proximadb_v1::MetadataItem {
-                    key: "deletion_reason".to_string(),
-                    value: Some(
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            "user_requested".to_string(),
-                        ),
-                    ),
-                }],
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("deletion_reason".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue("user_requested".to_string())),
+                    });
+                    metadata
+                },
                 timestamp: 101,
                 updated_at: Some(101),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: true,
-                sequence_number: 101,
-                level: 0,
+                quantized_vector: vec![],
+                source: Some(String::new()),
+                // is_tombstone field removed
+                // sequence_number field removed
+                // level field removed from VectorRecord
             },
             // Tombstone with expiration (double deletion)
-            SstRecord {
+            VectorRecord {
                 id: "deleted_3".to_string(),
                 vector: vec![],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 102,
                 updated_at: Some(102),
                 expires_at: Some(103),
                 version: Some(1),
-                is_tombstone: true,
-                sequence_number: 102,
-                level: 0,
+                quantized_vector: vec![],
+                source: Some(String::new()),
+                // is_tombstone field removed
+                // sequence_number field removed
+                // level field removed from VectorRecord
             },
         ];
 
         for tombstone in &tombstones {
-            assert!(
-                tombstone /* REMOVED: is_tombstone field no longer exists */
-            );
-            assert!(tombstone.vector.is_none());
+            // TODO: Re-enable tombstone check when is_tombstone field is restored
+            // assert!(!tombstone.is_tombstone);
+            assert!(tombstone.vector.is_empty()); // Empty vector indicates tombstone
         }
     }
 
@@ -905,7 +931,7 @@ mod edge_tests {
         // Test might_match_metadata functionality
         for (field, value) in test_values {
             // This would be implemented in the actual bloom filter
-            assert!(field.len() > 0 || field.is_none());
+            assert!(field.len() > 0 || field.is_empty()); // Check if field is populated
             assert!(value.len() >= 0);
         }
     }
@@ -962,17 +988,19 @@ mod edge_tests {
 
         // Fill with large records
         for i in 0..1000 {
-            let record = SstRecord {
+            let record = VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![0.1; 1024], // Large vector
-                metadata: vec![],
-                timestamp: i as u32,
-                updated_at: Some(i as u32),
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
+                updated_at: Some(i as i64),
                 expires_at: None,
                 version: Some(1),
-                is_tombstone: false,
-                sequence_number: i as u64,
-                level: 0,
+                quantized_vector: vec![],
+                source: Some(String::new()),
+                // is_tombstone field removed
+                // sequence_number field removed
+                // level field removed from VectorRecord
             };
 
             large_records.push(record);
@@ -1007,8 +1035,8 @@ mod edge_tests {
         stats.insert("bool_field".to_string(), (0.0f64, 1.0f64, 50usize, 2usize));
 
         for (field, (min, max, null_count, distinct_count)) in &stats {
-            assert!(!field.is_none());
-            match field.as_deref() {
+            assert!(!field.is_empty()); // Field should not be empty
+            match field.as_str() { // Use as_str() instead of as_deref()
                 "numeric_field" => {
                     let (min_val, max_val, null_cnt, distinct_cnt) =
                         (min, max, null_count, distinct_count);

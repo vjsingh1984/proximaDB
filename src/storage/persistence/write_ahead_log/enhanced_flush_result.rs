@@ -5,7 +5,7 @@
 
 //! Enhanced Flush Result that carries vector data for AXIS indexing
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::FlushResult;
 
 /// Enhanced flush result that includes the actual vector data

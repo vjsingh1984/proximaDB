@@ -15,7 +15,6 @@
 //! Each subsystem has its own focused builder, maintaining separation of concerns.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::storage::builder::{StorageSystem, StorageSystemBuilder};
@@ -330,7 +329,7 @@ impl ServerBuilder {
 
     /// Set hardware acceleration method
     pub fn with_hardware_acceleration(mut self, acceleration: HardwareAcceleration) -> Self {
-        self.server_config.compute.acceleration = acceleration;
+        self.server_config.compute.acceleration = acceleration.clone();
         self.server_config.compute.enable_simd = matches!(
             acceleration,
             HardwareAcceleration::SIMD | HardwareAcceleration::Auto

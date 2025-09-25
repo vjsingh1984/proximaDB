@@ -31,10 +31,111 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Add serde to config types needed for JSON serialization
         .type_attribute("IndexConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
         .type_attribute("QuantizationConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // Add serde to graph types needed for JSON serialization
-        .type_attribute("Node", "#[derive(serde::Serialize, serde::Deserialize)]")
-        .type_attribute("Edge", "#[derive(serde::Serialize, serde::Deserialize)]")
-        // oneof types (SqlValue, PropertyValue) get custom serde from serde_impls.rs but PartialEq works fine
+        // Add serde to specific config types used by IndexConfig
+        .type_attribute("HnswConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("IvfConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("LshConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to embedding types needed for graph serialization
+        .type_attribute("EmbeddingVersion", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // IMPORTANT: Graph types (Node, Edge) have PropertyValue which uses custom serde
+        // These will be handled in serde_impls.rs, NOT here
+
+        // Graph collection message types - most can use auto-generated serde
+        // Only PropertyConstraint has oneof and needs custom impl
+        .type_attribute("GraphSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("NodeLabelSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("EdgeTypeSchema", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("PropertySchema", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("StringConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("NumericConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ArrayConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("RegexConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("UniqueConstraint", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphStorageConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphEngineConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("AccessControl", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Permission", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("UpdateSchemaRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SchemaValidationResult", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ValidationError", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ValidationWarning", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphIndex", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphCollection", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CreateGraphRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+
+        // Enum types for graph collection
+        .type_attribute("PropertyType", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Cardinality", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("PermissionType", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde ONLY to simple request types (responses have custom implementations in serde_impls.rs)
+        .type_attribute("VectorSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("VectorBatchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Now add the simple response types that were removed from serde_impls.rs
+        .type_attribute("VectorOperationResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("VectorRecord", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Collection", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CollectionStats", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Entity", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("EntityResult", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to missing simple types used by Entity and other complex types
+        .type_attribute("TypedMetadata", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Provenance", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Relation", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("TemporalInfo", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("MetadataFilter", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to SQL request/response types for gRPC/REST API
+        .type_attribute("ExecuteSqlRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ExecuteSqlResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SqlRow", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SqlRowField", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to graph request/response types for gRPC/REST API
+        .type_attribute("TraversalRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("TraversalResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("HybridSearchRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("HybridSearchResponse", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CreateNodeRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CreateEdgeRequest", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("NodeQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("EdgeQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add missing simple types found in error analysis
+        .type_attribute("SearchQuery", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("IncludeFields", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SearchParams", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SearchOptimization", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("OperationMetrics", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SearchResult", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("SearchVectorRecord", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("PropertyFilter", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphPath", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("TraversalStats", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("HybridSearchStats", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("FilterableColumnSpec", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("StorageConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("StorageAssignment", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("TemporalVersion", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("VectorData", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("StringArray", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("TimeRange", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("PageInfo", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("ProgressInfo", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("Component", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("LabelStats", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("EdgeTypeStats", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("GraphStats", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("CompressionConfig", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("FilterCondition", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // Add serde to oneof variant enums (needed by custom serde implementations)
+        .type_attribute("sql_value::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("filter_clause::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("property_value::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("metadata_item::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("metadata_value::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("source_content::Data", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute("typed_field::Value", "#[derive(serde::Serialize, serde::Deserialize)]")
+        // oneof types (SqlValue, PropertyValue, etc.) get custom serde from serde_impls.rs
         // TODO(migration): Remove "proto/proximadb.proto" once v1 schema is complete
         .compile(
             &[
@@ -48,6 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/proximadb/v1/collection_types.proto",
                 "proto/proximadb/v1/collection.proto",
                 "proto/proximadb/v1/sql.proto",
+                "proto/proximadb/v1/graph_collection.proto",
             ],
             &["proto"],
         )?;

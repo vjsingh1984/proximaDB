@@ -26,7 +26,6 @@
 //! /data/proximadb/2/  (disk 2)  
 //! /data/proximadb/N/  (disk N)
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 

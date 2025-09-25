@@ -3,15 +3,14 @@
 //! This module provides efficient reading and searching of HELIX SSTables
 //! with Hilbert-based pruning and FastLanes decoding.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use futures::future::join_all;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
-use crate::core::metadata_types::TypedMetadata;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
@@ -86,119 +85,45 @@ pub async fn search_sstable(
         sstable.level, sstable.num_vectors
     );
 
-    // Read file data
-    let file_data = filesystem
-        .read(&sstable.path.to_string_lossy())
-        .await
-        .context("Failed to read SSTable file")?;
-    let mut cursor = std::io::Cursor::new(file_data);
+    // Use fastlane search instead of the old format reader
+    let search_results = super::fastlane::search_helix_sstable(
+        filesystem,
+        &sstable.path,
+        query_vector,
+        None, // No Hilbert key pruning needed here
+        k,
+        distance_metric,
+    ).await?;
 
-    // Skip magic and version
-    cursor.set_position(8);
-
-    // Read number of blocks
-    let mut num_blocks_bytes = [0u8; 4];
-    std::io::Read::read_exact(&mut cursor, &mut num_blocks_bytes)?;
-    let num_blocks = u32::from_le_bytes(num_blocks_bytes);
-
-    let mut blocks = Vec::new();
-
-    // Read blocks
-    for _ in 0..num_blocks {
-        // Read block size
-        let mut size_bytes = [0u8; 4];
-        std::io::Read::read_exact(&mut cursor, &mut size_bytes)?;
-        let block_size = u32::from_le_bytes(size_bytes) as usize;
-
-        // Read block data
-        let mut block_data = vec![0u8; block_size];
-        std::io::Read::read_exact(&mut cursor, &mut block_data)?;
-
-        // Deserialize block
-        use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
-        let block = FastLanesDataBlock::deserialize(&block_data)?;
-        blocks.push(block);
-    }
-
+    // Convert the search results to OptimizedSearchRecord format
     let mut results = Vec::new();
-    let current_time = chrono::Utc::now().timestamp() as u64;
-
-    for block in blocks {
-        // Check if block should be pruned based on statistics
-        if should_prune_block(&block.metadata, query_vector) {
-            continue;
+    for (id, distance, metadata_map) in search_results {
+        // Apply filter if provided
+        if let Some(f) = filter.as_ref() {
+            if !f(&metadata_map) {
+                continue;
+            }
         }
 
-        // Search within block
-        for record in block.records {
-            // Filter out expired records (tombstone support via expires_at)
-            if let Some(expires_at) = record.expires_at {
-                if expires_at as u64 <= current_time {
-                    // Record is expired, skip it
-                    debug!(
-                        "Skipping expired record: {} (expired at {})",
-                        record.id, expires_at
-                    );
-                    continue;
-                }
-            }
+        // Convert to OptimizedSearchRecord
+        let score = 1.0 / (1.0 + distance);
 
-            // Apply filter if provided
-            if let Some(f) = filter.as_ref() {
-                // Convert metadata to HashMap<String, String> for filter
-                let metadata_map: HashMap<String, String> = record
-                    .metadata
-                    .iter()
-                    .filter_map(|(key, value)| {
-                        if let Some(value) = &value.value {
-                            let value_str = match value {
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    s,
-                                ) => s.clone(),
-                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                    n,
-                                ) => n.to_string(),
-                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                                    b.to_string()
-                                }
-                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                                    i.to_string()
-                                }
-                                _ => "".to_string()
-                            };
-                            Some((key.clone(), value_str))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+        // Convert metadata from HashMap<String, String> to HashMap<String, SqlValue>
+        let sql_metadata: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> = metadata_map
+            .into_iter()
+            .map(|(k, v)| {
+                (k, crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
+                })
+            })
+            .collect();
 
-                if !f(&metadata_map) {
-                    continue;
-                }
-            }
+        let record = OptimizedSearchRecord::new(id, score)
+            .with_similarity(distance)
+            .with_metadata(sql_metadata);
 
-            // Calculate distance (simple euclidean for now)
-            let distance = query_vector
-                .iter()
-                .zip(record.vector.iter())
-                .map(|(a, b)| (a - b).powi(2))
-                .sum::<f32>()
-                .sqrt();
-
-            results.push(
-                OptimizedSearchRecord::new(record.id.clone(), 1.0 / (1.0 + distance))
-                    .with_similarity(distance)
-                    .add_vector(record.vector)
-                    .with_metadata(std::collections::HashMap::new()) // TODO: Convert record.metadata properly
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp),
-            );
-        }
+        results.push(record);
     }
-
-    // Sort by distance and take top-k
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    results.truncate(k);
 
     Ok(results)
 }

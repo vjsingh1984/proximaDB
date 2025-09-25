@@ -165,7 +165,7 @@ impl VectorSearchEngine {
     /// Add vectors to the index
     pub async fn add_vectors(
         &self,
-        vectors: Vec<(String, Arc<crate::core::VectorRecord>)>,
+        vectors: Vec<(String, Arc<crate::proto::proximadb_v1::VectorRecord>)>,
     ) -> Result<()> {
         if let Some(index) = &self.axis_index {
             for (id, record) in vectors {

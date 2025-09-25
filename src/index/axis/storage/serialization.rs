@@ -99,7 +99,7 @@ pub struct IndexMetadata {
 }
 
 /// Header for serialized index file
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexHeader {
     /// Magic bytes (AXIS)
     pub magic: [u8; 4],
@@ -144,7 +144,7 @@ pub struct IndexDelta {
 }
 
 /// Operations that can be applied as deltas
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DeltaOperation {
     /// Add new vectors
     AddVectors { vectors: Vec<(String, Vec<f32>)> },
@@ -169,7 +169,7 @@ impl IndexSerializer {
 
         // Create metadata
         let metadata = IndexMetadata {
-            index_type: Index::Hnsw,
+            index_type: crate::index::axis::storage::serialization::Index::Hnsw,
             collection_id: collection_id.to_string(),
             num_vectors: index.len(),
             dimension: index.dimension(),
@@ -646,11 +646,20 @@ impl DeltaManager {
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
+    use serde::{Deserialize, Serialize};
+
+    /// Index type enum for testing
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    enum Index {
+        Hnsw,
+        Ivf,
+        Flat,
+    }
 
     #[test]
     fn test_metadata_serialization() {
         let metadata = IndexMetadata {
-            index_type: Index::Hnsw,
+            index_type: crate::index::axis::storage::serialization::Index::Hnsw,
             collection_id: "test_collection".to_string(),
             num_vectors: 1000,
             dimension: 128,
@@ -679,7 +688,7 @@ mod tests {
             timestamp: 1234567890,
             index_data: vec![1, 2, 3, 4, 5],
             metadata: IndexMetadata {
-                index_type: Index::Hnsw,
+                index_type: crate::index::axis::storage::serialization::Index::Hnsw,
                 collection_id: "test".to_string(),
                 num_vectors: 100,
                 dimension: 128,

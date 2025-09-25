@@ -85,6 +85,12 @@ pub enum IndexAlgorithm {
         search_k: i32,      // Number of nodes to inspect (-1 = auto)
         max_leaf_size: u32, // Maximum number of descendants in a leaf
     },
+
+    /// Global ID Index - for O(1) vector ID to storage location mapping
+    GlobalId {
+        cache_size: usize,           // Maximum number of cached entries
+        persistence_enabled: bool,   // Enable persistence for recovery
+    },
 }
 
 /// Text analysis configuration

@@ -4,14 +4,14 @@
 use anyhow::Result;
 use proximadb::{
     compute::distance_computation::DistanceMetric,
-    core::config::{SstConfig, ViperConfig},
+    core::config::SstConfig,
     core::{hardware_capabilities, search::SearchParams},
-    proto::proximadb::{
-        Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, MetadataItem,
-        StorageEngine, VectorRecord, metadata_item,
+    proto::proximadb_v1::{
+        Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric,
+        StorageEngine, VectorRecord, SqlValue, sql_value,
     },
     storage::{
-        engines::impls::sst::SstStorage,
+        engines::impls::sst::SstEngine,
         engines::impls::viper::engine::ViperEngine,
         traits::{
             FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
@@ -23,7 +23,7 @@ use tempfile::tempdir;
 
 /// Test fixture for storage engine testing
 struct StorageTestFixture {
-    sst_engine: Arc<SstStorage>,
+    sst_engine: Arc<SstEngine>,
     viper_engine: Arc<ViperEngine>,
     test_vectors: Vec<VectorRecord>,
     dimension: usize,
@@ -40,31 +40,31 @@ impl StorageTestFixture {
             test_vectors.push(VectorRecord {
                 id: format!("vec_{:06}", i),
                 vector: vec![i as f32 / num_vectors as f32; dimension],
-                metadata: vec![
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(metadata_item::Value::StringValue(if i % 2 == 0 {
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("category".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(if i % 2 == 0 {
                             "even".to_string()
                         } else {
                             "odd".to_string()
                         })),
-                    },
-                    MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(metadata_item::Value::NumberValue(i as f64)),
-                    },
-                ],
-                timestamp: i as u32,
+                    });
+                    metadata.insert("index".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(i as f64)),
+                    });
+                    metadata
+                },
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Some(vec![]),
+                quantized_vector: vec![],
                 source: None,
             });
         }
 
         // Create temporary directories for engines
-        let sst_dir = tempdir()?;
+        let _sst_dir = tempdir()?;
         let viper_dir = tempdir()?;
 
         // Create SST engine
@@ -77,7 +77,7 @@ impl StorageTestFixture {
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
 
         let sst_engine = Arc::new(
-            SstStorage::new(sst_config, filesystem.clone(), distance_compute.clone()).await?,
+            SstEngine::new().await?,
         );
 
         // Create VIPER engine
@@ -86,13 +86,7 @@ impl StorageTestFixture {
         let viper_config = ViperConfig::default();
 
         let viper_engine = Arc::new(
-            ViperEngine::new(
-                "test_collection".to_string(),
-                viper_config,
-                filesystem.clone(),
-                distance_compute.clone(),
-            )
-            .await?,
+            ViperEngine::new().await?,
         );
 
         Ok(Self {
@@ -234,7 +228,7 @@ mod tests {
         // Create mock collection and search params for the test
         use proximadb::{
             core::search::SearchParams,
-            proto::proximadb::{
+            proto::proximadb_v1::{
                 Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine,
             },
             storage::traits::StorageQueryMetadata,

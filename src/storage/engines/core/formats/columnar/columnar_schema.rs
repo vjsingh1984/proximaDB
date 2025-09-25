@@ -521,13 +521,13 @@ mod tests {
         let filterable_columns = vec![
             FilterableColumn {
                 name: "category".to_string(),
-                // data_type removed -  "string".to_string(),
+                data_type: "string".to_string(),
                 nullable: true,
                 indexed: true,
             },
             FilterableColumn {
                 name: "price".to_string(),
-                // data_type removed -  "float".to_string(),
+                data_type: "float".to_string(),
                 nullable: true,
                 indexed: false,
             },
@@ -590,7 +590,7 @@ mod tests {
                 None,
                 &[FilterableColumn {
                     name: "category".to_string(),
-                    // data_type removed -  "string".to_string(),
+                    data_type: "string".to_string(),
                     nullable: true,
                     indexed: true,
                 }],
@@ -607,13 +607,13 @@ mod tests {
                 &[
                     FilterableColumn {
                         name: "category".to_string(),
-                        // data_type removed -  "string".to_string(),
+                        data_type: "string".to_string(),
                         nullable: true,
                         indexed: true,
                     },
                     FilterableColumn {
                         name: "price".to_string(),
-                        // data_type removed -  "float".to_string(),
+                        data_type: "float".to_string(),
                         nullable: true,
                         indexed: false,
                     },

@@ -2,7 +2,6 @@
 // Handles migration between different storage engines (VIPER ↔ SST ↔ SWIFT ↔ NOVA)
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore};
@@ -120,9 +119,9 @@ pub enum RiskLevel {
 impl EngineMigrator {
     /// Create a new migrator
     pub async fn new(config: MigrationConfig) -> Result<Self> {
-        // Create source and target engines
-        let source_engine = StorageEngineFactory::create_from_proto(config.source_engine)?;
-        let target_engine = StorageEngineFactory::create_from_proto(config.target_engine)?;
+        // Create source and target engines using async versions for test compatibility
+        let source_engine = StorageEngineFactory::create_from_proto_async(config.source_engine).await?;
+        let target_engine = StorageEngineFactory::create_from_proto_async(config.target_engine).await?;
 
         let semaphore = Arc::new(Semaphore::new(config.performance.parallel_workers));
 
@@ -553,6 +552,8 @@ mod tests {
     async fn test_migration_progress_tracking() {
         let mut progress = MigrationProgress::new();
 
+        // Set start time in the past to ensure elapsed time > 0
+        progress.start_time = chrono::Utc::now() - chrono::Duration::seconds(1);
         progress.total_records = 1000;
         progress.update_progress(250);
 
@@ -561,13 +562,10 @@ mod tests {
         assert!(progress.estimated_completion.is_some());
     }
 
-    #[test]
-    fn test_resource_requirements_calculation() {
+    #[tokio::test]
+    async fn test_resource_requirements_calculation() {
         let config = MigrationConfig::default();
-        let migrator_result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { EngineMigrator::new(config).await });
-        let migrator = migrator_result.unwrap();
+        let migrator = EngineMigrator::new(config).await.unwrap();
 
         let requirements = migrator.calculate_resource_requirements(10 * 1024 * 1024 * 1024); // 10GB
 
@@ -576,8 +574,8 @@ mod tests {
         assert!(requirements.min_storage_gb > 10.0);
     }
 
-    #[test]
-    fn test_risk_assessment() {
+    #[tokio::test]
+    async fn test_risk_assessment() {
         let collections = vec![CollectionMigrationPlan {
             collection_id: "small_collection".to_string(),
             record_count: 1000,
@@ -589,19 +587,16 @@ mod tests {
         }];
 
         let config = MigrationConfig {
-            // strategy removed -  MigrationStrategy::InPlace,
+            strategy: MigrationStrategy::InPlace,
             ..Default::default()
         };
 
-        let migrator_result = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async { EngineMigrator::new(config).await });
-        let migrator = migrator_result.unwrap();
+        let migrator = EngineMigrator::new(config).await.unwrap();
 
         let risk = migrator.assess_migration_risks(&collections);
 
         // In-place migration should have high data loss risk
         assert!(matches!(risk.data_loss_risk, RiskLevel::High));
-        assert!(!risk.mitigation_strategies.is_none());
+        assert!(!risk.mitigation_strategies.is_empty());
     }
 }

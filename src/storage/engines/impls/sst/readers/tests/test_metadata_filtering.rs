@@ -4,13 +4,14 @@
 //! the CompositeBloomFilter implementation which supports both key
 //! and metadata bloom filters.
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use crate::storage::engines::impls::sst::SstableWriter;
-// use crate::core::config::{BloomFilterConfig, SstConfig};
+use crate::storage::engines::impls::sst::{SstConfig, BloomFilterConfig};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
 use crate::storage::engines::impls::sst::readers::{CollectionContext, UnifiedSstableReader};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -24,6 +25,17 @@ fn create_test_config() -> SstConfig {
 }
 use serde_json::json;
 use tracing::{debug, error, info};
+
+// Helper function to compare SqlValue with JSON
+fn sql_value_matches_json(sql_value: &SqlValue, json_value: &serde_json::Value) -> bool {
+    match (&sql_value.value, json_value) {
+        (Some(sql_value::Value::StringValue(s)), serde_json::Value::String(json_s)) => s == json_s,
+        (Some(sql_value::Value::Int64Value(i)), serde_json::Value::Number(n)) => *i == n.as_i64().unwrap_or(0),
+        (Some(sql_value::Value::NumberValue(f)), serde_json::Value::Number(n)) => (*f - n.as_f64().unwrap_or(0.0)).abs() < f64::EPSILON,
+        (Some(sql_value::Value::BoolValue(b)), serde_json::Value::Bool(json_b)) => b == json_b,
+        _ => false,
+    }
+}
 
 #[tokio::test]
 #[ignore = "Needs investigation - Bincode deserialization issue"]
@@ -52,82 +64,54 @@ async fn test_metadata_filtering_basic() {
 
     // Category A records
     for i in 0..5 {
-        let metadata = vec![
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("A".to_string()),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "score".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue((i * 10) as f64),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "document".to_string(),
-                    ),
-                ),
-            },
-        ];
+        let mut metadata = HashMap::new();
+        metadata.insert("category".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue("A".to_string())),
+        });
+        metadata.insert("score".to_string(), SqlValue {
+            value: Some(sql_value::Value::NumberValue((i * 10) as f64)),
+        });
+        metadata.insert("type".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue("document".to_string())),
+        });
 
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_a_{}", i),
             vector: vec![i as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: i as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         records.insert(record.id.clone(), record);
     }
 
     // Category B records
     for i in 0..5 {
-        let metadata = vec![
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("B".to_string()),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "score".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::NumberValue(
-                        (i * 10 + 5) as f64,
-                    ),
-                ),
-            },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "image".to_string(),
-                    ),
-                ),
-            },
-        ];
+        let mut metadata = HashMap::new();
+        metadata.insert("category".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue("B".to_string())),
+        });
+        metadata.insert("score".to_string(), SqlValue {
+            value: Some(sql_value::Value::NumberValue((i * 10 + 5) as f64)),
+        });
+        metadata.insert("type".to_string(), SqlValue {
+            value: Some(sql_value::Value::StringValue("image".to_string())),
+        });
 
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_b_{}", i),
             vector: vec![(i + 10) as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: (i + 5) as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         records.insert(record.id.clone(), record);
     }
@@ -143,7 +127,17 @@ async fn test_metadata_filtering_basic() {
     info!("Wrote SSTable with 10 records (5 category A, 5 category B)");
 
     // Create reader and load metadata
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
+    let reader = UnifiedSstableReader::new(
+        filesystem.clone(),
+        unified_fs,
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.unwrap();
 
@@ -186,8 +180,8 @@ async fn test_metadata_filtering_basic() {
             result.id.starts_with("vec_a_"),
             "All results should be category A"
         );
-        let category = result.metadata.get(key).unwrap();
-        assert_eq!(category, &json!("A"), "Category should be A");
+        let category = result.metadata.get("category").unwrap();
+        assert!(sql_value_matches_json(category, &json!("A")), "Category should be A");
     }
 
     // Test 2: Filter by type = image
@@ -214,8 +208,8 @@ async fn test_metadata_filtering_basic() {
             result.id.starts_with("vec_b_"),
             "All image results should be category B"
         );
-        let type_val = result.metadata.get(key).unwrap();
-        assert_eq!(type_val, &json!("image"), "Type should be image");
+        let type_val = result.metadata.get("type").unwrap();
+        assert!(sql_value_matches_json(type_val, &json!("image")), "Type should be image");
     }
 
     // Test 3: Filter by score > 25 (numeric filter)
@@ -265,10 +259,10 @@ async fn test_metadata_filtering_basic() {
         "Should find 5 records matching both filters"
     );
     for result in &results {
-        let category = result.metadata.get(key).unwrap();
-        let type_val = result.metadata.get(key).unwrap();
-        assert_eq!(category, &json!("B"), "Category should be B");
-        assert_eq!(type_val, &json!("image"), "Type should be image");
+        let category = result.metadata.get("category").unwrap();
+        let type_val = result.metadata.get("type").unwrap();
+        assert!(sql_value_matches_json(category, &json!("B")), "Category should be B");
+        assert!(sql_value_matches_json(type_val, &json!("image")), "Type should be image");
     }
 
     // Test 5: No results filter
@@ -317,36 +311,34 @@ async fn test_metadata_bloom_filter_optimization() {
     // Create records
     let mut records = BTreeMap::new();
     for i in 0..20 {
-        let metadata = vec![
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        if i % 2 == 0 { "even" } else { "odd" }.to_string(),
-                    ),
-                ),
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "category".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(
+                    if i % 2 == 0 { "even" } else { "odd" }.to_string(),
+                )),
             },
-            crate::proto::proximadb_v1::MetadataItem {
-                key: "status".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        if i < 10 { "active" } else { "inactive" }.to_string(),
-                    ),
-                ),
+        );
+        metadata.insert(
+            "status".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(
+                    if i < 10 { "active" } else { "inactive" }.to_string(),
+                )),
             },
-        ];
+        );
 
-        let record = SstRecord {
+        let record = VectorRecord {
             id: format!("vec_{}", i),
             vector: vec![i as f32; 3],
             metadata,
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            is_tombstone: false,
-            sequence_number: i as u64,
-            level: 0,
+            quantized_vector: vec![],
+            source: None,
         };
         records.insert(record.id.clone(), record);
     }
@@ -361,7 +353,17 @@ async fn test_metadata_bloom_filter_optimization() {
     info!("Wrote SSTable with metadata bloom filters");
 
     // Create reader
-    let reader = UnifiedSstableReader::new(filesystem.clone());
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+        base_fs,
+        "test_collection".to_string(),
+        "sst".to_string(),
+    ));
+    let reader = UnifiedSstableReader::new(
+        filesystem.clone(),
+        unified_fs,
+        "test_collection".to_string(),
+    );
     let file_url = format!("file://{}", sstable_path.display());
     reader.load_metadata(&file_url).await.unwrap();
 

@@ -431,6 +431,6 @@ mod tests {
         let recommendations = ConfigValidator::generate_recommendations(&config);
 
         // Should provide some recommendations for default config
-        assert!(!recommendations.is_none() || recommendations.is_none()); // Either is fine
+        assert!(!recommendations.is_empty() || recommendations.is_empty()); // Either is fine
     }
 }

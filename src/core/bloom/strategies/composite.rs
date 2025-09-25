@@ -8,14 +8,13 @@
 //! Composite bloom filter supporting both keys and metadata
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::ByteAlignedBloomFilter;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter};
 
 /// Composite bloom filter combining key and metadata filters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CompositeBloomFilter {
     /// Primary filter for keys
     key_filter: ByteAlignedBloomFilter,

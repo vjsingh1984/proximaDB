@@ -5,14 +5,17 @@
 //! - Sparse data (mostly zeros - excellent compression)
 //! - Multiple compression algorithms and levels
 
-mod common {
-    include!("../common/mod.rs");
-}
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
+use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::StorageEngine;
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::proto::proximadb_v1::StorageEngine;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,9 +42,9 @@ fn create_dense_vectors(
             env.create_test_vector_record(
                 format!("dense_{}", i),
                 vector,
-                (1000 + i) as u32,
+                (1000 + i) as i64,
                 None,
-                vec![],
+                std::collections::HashMap::new(),
             )
         })
         .collect()
@@ -66,9 +69,9 @@ fn create_sparse_vectors(
             env.create_test_vector_record(
                 format!("sparse_{}", i),
                 vector,
-                (1000 + i) as u32,
+                (1000 + i) as i64,
                 None,
-                vec![],
+                std::collections::HashMap::new(),
             )
         })
         .collect()
@@ -91,18 +94,11 @@ async fn test_compression_for_data(
 
     // Test UNCOMPRESSED first with 256KB blocks to see vector splitting with quantization
     let mut config_uncompressed = env_uncompressed.sst_config.clone();
-    config_uncompressed
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = "none".to_string();
+    config_uncompressed.compression = "none".to_string();
     config_uncompressed.compression_level = 0;
     config_uncompressed.block_size_kb = 256; // Use 256KB blocks for better quantization clustering
 
-    let uncompressed_engine = SstStorage::new(
-        config_uncompressed,
-        env_uncompressed.filesystem.clone(),
-        distance_compute.clone(),
-    )
+    let uncompressed_engine = SstEngine::new()
     .await?;
 
     let vectors_uncompressed = vectors.clone();
@@ -120,9 +116,9 @@ async fn test_compression_for_data(
 
     // Log block information for uncompressed
     info!("📦 Uncompressed flush with 256KB blocks:");
-    info!("  • Files created: {}", uncompressed_result.files_created);
+    info!("  • Files created: {:?}", uncompressed_result.files_created);
     info!(
-        "  • Entries flushed: {}",
+        "  • Entries flushed: {:?}",
         uncompressed_result.entries_flushed
     );
     info!(
@@ -135,54 +131,22 @@ async fn test_compression_for_data(
 
     // Test COMPRESSED with 256KB blocks for better quantization clustering
     let mut config_compressed = env_compressed.sst_config.clone();
-    config_compressed
-        .storage_config
-        .as_ref()
-        .and_then(|s| s.compression.as_ref()) = algorithm.to_string();
+    config_compressed.compression = algorithm.to_string();
     config_compressed.compression_level = level;
     config_compressed.block_size_kb = 256; // Use 256KB blocks to see vector grouping with quantization
 
-    let compressed_engine = SstStorage::new(
-        config_compressed,
-        env_compressed.filesystem.clone(),
-        distance_compute,
-    )
+    let compressed_engine = SstEngine::new()
     .await?;
+
+    // Save dimensions before vectors is moved
+    let vector_count = vectors.len();
+    let vector_dim = if !vectors.is_empty() { vectors[0].vector.len() } else { 0 };
 
     // Build flush params with compression config in the collection
     let mut flush_params_compressed =
         operations::build_flush_params(&env_compressed, vectors, StorageEngine::Sst).await?;
 
-    // Add compression config to the collection config
-    if let Some(ref mut collection) = flush_params_compressed.collection_config {
-        if let Some(ref mut config) = collection.config {
-            // Map algorithm string to enum value
-            let algorithm_enum = match algorithm {
-                "zstd" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionZstd,
-                "lz4" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionLz4,
-                "snappy" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionSnappy,
-                "gzip" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionGzip,
-                "brotli" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionBrotli,
-                _ | "none" => proximadb::proto::proximadb::CompressionAlgorithm::CompressionNone,
-            };
-
-            config
-                .storage_config
-                .as_ref()
-                .and_then(|s| s.compression.as_ref()) =
-                Some(proximadb::proto::proximadb::CompressionConfig {
-                    algorithm: algorithm_enum as i32,
-                    level: Some(level),
-                    adaptive: false,
-                    min_ratio: None,
-                    enable_quantization: false,
-                    quantization_type: None,
-                    normalization_method: None,
-                    block_size_kb: None,        // Use default from config
-                    dynamic_block_sizing: None, // Use default from config
-                });
-        }
-    }
+    // Compression is already configured in the SstConfig
 
     let compressed_result = compressed_engine.do_flush(&flush_params_compressed).await?;
     assert!(compressed_result.success, "Compressed flush should succeed");
@@ -192,11 +156,11 @@ async fn test_compression_for_data(
         "📦 Compressed flush with 256KB blocks ({} level {}):",
         algorithm, level
     );
-    info!("  • Files created: {}", compressed_result.files_created);
-    info!("  • Entries flushed: {}", compressed_result.entries_flushed);
+    info!("  • Files created: {:?}", compressed_result.files_created);
+    info!("  • Entries flushed: {:?}", compressed_result.entries_flushed);
     info!(
         "  • Expected blocks: ~{}",
-        vectors.len() * vectors[0].vector.len() * 4 / (256 * 1024)
+        vector_count * vector_dim * 4 / (256 * 1024)
     );
 
     let compressed_size =
@@ -367,12 +331,12 @@ async fn test_compression_algorithms_and_levels() -> anyhow::Result<()> {
             };
 
         let dense_ratio = results
-            .get(key)
+            .get("enable_two_stage_search")
             .and_then(|v| v.iter().find(|(a, _)| a.starts_with(algo)).map(|(_, r)| r))
             .unwrap_or(&1.0);
 
         let sparse_ratio = results
-            .get(key)
+            .get("enable_two_stage_search")
             .and_then(|v| v.iter().find(|(a, _)| a.starts_with(algo)).map(|(_, r)| r))
             .unwrap_or(&1.0);
 
@@ -385,7 +349,7 @@ async fn test_compression_algorithms_and_levels() -> anyhow::Result<()> {
     info!("Note: Lower ratio is better (1.0 = no compression)");
 
     // Verify key expectations
-    if let Some(sparse_results) = results.get(key) {
+    if let Some(sparse_results) = results.get("sparse") {
         if let Some((_, zstd_ratio)) = sparse_results.iter().find(|(a, _)| a == "zstd-3") {
             assert!(
                 *zstd_ratio < 0.5,
@@ -395,7 +359,7 @@ async fn test_compression_algorithms_and_levels() -> anyhow::Result<()> {
         }
     }
 
-    if let Some(dense_results) = results.get(key) {
+    if let Some(dense_results) = results.get("sparse") {
         if let Some((_, none_ratio)) = dense_results.iter().find(|(a, _)| a == "none") {
             assert!(
                 *none_ratio >= 0.99 && *none_ratio <= 1.01,

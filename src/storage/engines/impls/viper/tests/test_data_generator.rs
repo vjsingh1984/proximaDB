@@ -388,17 +388,17 @@ impl TestDataGenerator {
         // Add metadata columns
         let categories: ArrayRef =
             Arc::new(StringArray::from_iter(metadata.iter().map(|m| {
-                m.get(key).and_then(|v| v.as_deref()).map(|s| s.to_string())
+                m.get("category").and_then(|v| v.as_str()).map(|s| s.to_string())
             })));
         columns.push(categories);
 
         let prices: ArrayRef = Arc::new(Int64Array::from_iter(
-            metadata.iter().map(|m| m.get(key).and_then(|v| v.as_i64())),
+            metadata.iter().map(|m| m.get("price").and_then(|v| v.as_i64())),
         ));
         columns.push(prices);
 
         let scores: ArrayRef = Arc::new(Float64Array::from_iter(
-            metadata.iter().map(|m| m.get(key).and_then(|v| v.as_f64())),
+            metadata.iter().map(|m| m.get("score").and_then(|v| v.as_f64())),
         ));
         columns.push(scores);
 
@@ -558,14 +558,21 @@ mod tests {
         // Test distance calculations with sparse vectors using UnifiedDistanceCompute
         let query = generator.generate_sparse_vector(0.05);
         let distance_compute = UnifiedDistanceCompute::default();
-        let mut results = Vec::new();
 
-        for (idx, vector) in sparse_vectors.iter().enumerate() {
-            // Use UnifiedDistanceCompute for consistent distance calculation
-            let distance_result =
-                distance_compute.calculate_distance(&query, vector, &DistanceMetric::Cosine);
-            results.push((distance_result.rank_value, idx));
-        }
+        // Use batch distance computation for faster tests
+        let vector_refs: Vec<&[f32]> = sparse_vectors.iter().map(|v| v.as_slice()).collect();
+        let distances = distance_compute.batch_distance_pooled_simd(
+            &query,
+            &vector_refs,
+            &DistanceMetric::Cosine,
+        );
+
+        // Combine distances with indices
+        let mut results: Vec<(f32, usize)> = distances
+            .iter()
+            .enumerate()
+            .map(|(idx, result)| (result.distance, idx))
+            .collect();
 
         // Sort by distance (lower = more similar)
         results.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -618,7 +625,7 @@ mod tests {
 
             let quantized_distance =
                 distance_compute.calculate_distance(&query, &dequantized, &DistanceMetric::Cosine);
-            let fp32_distance = fp32_distances[idx];
+            let fp32_distance = &fp32_distances[idx];
             let error = (quantized_distance.rank_value - fp32_distance.rank_value).abs();
 
             // INT8 should have reasonable approximation error
@@ -1215,7 +1222,7 @@ mod tests {
 
         // TODO: Compare compression ratios when compression features are enabled
         // For now just verify uncompressed file was created
-        if let Some(&uncompressed_size) = sizes.get(key) {
+        if let Some(&uncompressed_size) = sizes.get("parquet_uncompressed") {
             debug!("Uncompressed parquet size: {} bytes", uncompressed_size);
             assert!(uncompressed_size > 0, "File should have content");
         }

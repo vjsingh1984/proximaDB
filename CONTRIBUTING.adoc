@@ -1,0 +1,88 @@
+= Contributing to ProximaDB
+:author: ProximaDB Project
+:version: 1.0.0
+:date: 2025-09-13
+:doctype: article
+:toc: left
+:toclevels: 3
+:sectanchors:
+:sectlinks:
+
+Thank you for your interest in contributing to ProximaDB! We welcome contributions from the community.
+
+== How to Contribute
+
+=== Reporting Issues
+* Use the link:https://github.com/vjsingh1984/proximadb/issues[GitHub Issues] tracker
+* Check if the issue already exists
+* Provide detailed reproduction steps
+
+=== Code Contributions
+
+==== Fork the Repository
+[source,bash]
+----
+git clone https://github.com/vjsingh1984/proximadb.git
+cd proximadb
+----
+
+==== Create a Feature Branch
+[source,bash]
+----
+git checkout -b feature/your-feature-name
+----
+
+==== Make Your Changes
+* Follow the existing code style
+* Add tests for new features
+* Update documentation
+
+==== Run Tests
+[source,bash]
+----
+cargo test
+cargo clippy
+cargo fmt --check
+----
+
+==== Submit a Pull Request
+* Describe your changes clearly
+* Reference any related issues
+* Ensure CI passes
+
+== Development Setup
+
+=== Prerequisites
+* Rust 1.70+
+* Docker (optional)
+* Python 3.8+ (for SDK development)
+
+=== Building
+[source,bash]
+----
+cargo build --release
+----
+
+=== Testing
+[source,bash]
+----
+cargo test --all
+----
+
+== Code Style
+* Use `cargo fmt` for formatting
+* Run `cargo clippy` for linting
+* Follow Rust naming conventions
+
+== Documentation
+* Update docs for new features
+* Add inline code comments
+* Include examples
+
+== Questions?
+* Open a link:https://github.com/vjsingh1984/proximadb/discussions[GitHub Discussion]
+* Join GitHub discussions for community support
+* Email: singhvjd@gmail.com
+
+== License
+By contributing, you agree that your contributions will be licensed under the Apache 2.0 License.

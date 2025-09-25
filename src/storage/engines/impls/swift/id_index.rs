@@ -2,7 +2,6 @@
 // Clean B+ tree implementation with no legacy code
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::RwLock;
 

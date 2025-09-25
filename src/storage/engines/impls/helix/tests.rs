@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine,
@@ -21,12 +21,16 @@ fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
         .map(|i| VectorRecord {
             id: format!("vec_{}", i),
             vector: (0..dims).map(|d| (i * dims + d) as f32 / 100.0).collect(),
-            metadata: Some(HashMap::from([
-                ("type".to_string(), "test".to_string()),
-                ("index".to_string(), i.to_string()),
-            ])),
+            metadata: HashMap::from([
+                ("type".to_string(), crate::proto::proximadb_v1::SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string())) }),
+                ("index".to_string(), crate::proto::proximadb_v1::SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string())) }),
+            ]),
             timestamp: i as i64,
             expires_at: None,
+            quantized_vector: vec![],
+            source: None,
+            updated_at: None,
+            version: Some(1),
         })
         .collect()
 }
@@ -38,12 +42,7 @@ async fn test_helix_engine_creation() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -58,12 +57,7 @@ async fn test_flush_operation() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -71,16 +65,22 @@ async fn test_flush_operation() {
 
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        records: records.clone(),
+        force: false,
+        synchronous: true,
+        hints: HashMap::new(),
+        timeout_ms: None,
+        vector_records: records,
+        trigger_compaction: false,
+        batch_ids: vec![],
         collection_config: None,
-        level: None,
+        estimated_size: 0,
     };
 
     let result = engine.do_flush(&params).await.unwrap();
 
-    assert_eq!(result.vectors_flushed, 100);
-    assert!(result.bytes_written > 0);
-    assert_eq!(result.files_created.len(), 1);
+    assert_eq!(result.entries_flushed, Some(100));
+    assert!(result.bytes_written.unwrap_or(0) > 0);
+    assert_eq!(result.files_created, Some(1));
 }
 
 #[tokio::test]
@@ -90,12 +90,7 @@ async fn test_vector_search() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -103,9 +98,11 @@ async fn test_vector_search() {
     let records = create_test_records(50, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        records: records.clone(),
+        vector_records: records,
+        force: false,
+        synchronous: true,
         collection_config: None,
-        level: None,
+        ..Default::default()
     };
 
     engine.do_flush(&params).await.unwrap();
@@ -152,12 +149,7 @@ async fn test_vector_by_id() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -165,16 +157,18 @@ async fn test_vector_by_id() {
     let records = create_test_records(10, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        records: records.clone(),
+        vector_records: records,
+        force: false,
+        synchronous: true,
         collection_config: None,
-        level: None,
+        ..Default::default()
     };
 
     engine.do_flush(&params).await.unwrap();
 
     // Find specific vector
     let result = engine
-        .vector_by_id("test_collection", "vec_5")
+        .vector_by_id("test_collection", "/data/test", "vec_5")
         .await
         .unwrap();
 
@@ -190,12 +184,7 @@ async fn test_compaction() {
     let mut config = HelixConfig::default();
     config.level0_file_num_compaction_trigger = 2;
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -204,9 +193,9 @@ async fn test_compaction() {
         let records = create_test_records(50, 128);
         let params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            records,
+            vector_records: records,
             collection_config: None,
-            level: None,
+            ..Default::default()
         };
 
         engine.do_flush(&params).await.unwrap();
@@ -218,14 +207,14 @@ async fn test_compaction() {
     // Trigger manual compaction
     let compact_params = CompactionParameters {
         collection_id: Some("test_collection".to_string()),
-        level: Some(0),
         collection_config: None,
+        ..Default::default()
     };
 
     let result = engine.do_compact(&compact_params).await.unwrap();
 
-    assert!(result.files_compacted > 0);
-    assert!(result.bytes_written > 0);
+    assert!(result.input_files.unwrap_or(0) > 0);
+    assert!(result.bytes_written.unwrap_or(0) > 0);
 }
 
 #[tokio::test]
@@ -285,7 +274,12 @@ async fn test_fastlanes_integration() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = TempDir::new().unwrap();
-    let filesystem = FilesystemFactory::create_local().unwrap();
+
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some("file:///tmp".to_string());
+    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem = factory.get_filesystem("file:///tmp").unwrap();
 
     let records = create_test_records(100, 128);
     let path = temp_dir.path().join("test.helix");
@@ -328,12 +322,7 @@ async fn test_metrics_collection() {
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
 
-    let engine = HelixEngine::new(
-        "test_collection".to_string(),
-        config,
-        temp_dir.path().to_path_buf(),
-        None,
-    )
+    let engine = HelixEngine::new()
     .await
     .unwrap();
 
@@ -341,9 +330,8 @@ async fn test_metrics_collection() {
     let records = create_test_records(50, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        records,
-        collection_config: None,
-        level: None,
+        vector_records: records,
+        ..Default::default()
     };
 
     engine.do_flush(&params).await.unwrap();
@@ -362,10 +350,12 @@ mod clustering_tests {
 
     #[test]
     fn test_hilbert_2d_ordering() {
-        let key00 = clustering::hilbert_2d(0, 0);
-        let key01 = clustering::hilbert_2d(0, u32::MAX);
-        let key10 = clustering::hilbert_2d(u32::MAX, 0);
-        let key11 = clustering::hilbert_2d(u32::MAX, u32::MAX);
+        use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
+        let curve = HilbertCurve::new(2, 16);
+        let key00 = curve.encode(&[0, 0]);
+        let key01 = curve.encode(&[0, u32::MAX >> 16]);
+        let key10 = curve.encode(&[u32::MAX >> 16, 0]);
+        let key11 = curve.encode(&[u32::MAX >> 16, u32::MAX >> 16]);
 
         // Basic ordering test
         assert!(key00 < key11);

@@ -116,7 +116,7 @@ mod tests {
 
         let mut markers = std::collections::HashSet::new();
         for algorithm in algorithms {
-            let marker = get_compression_marker(&algorithm);
+            let marker = compression_marker(&algorithm);
             assert!(
                 markers.insert(marker),
                 "Duplicate marker 0x{:02x} for {:?}",

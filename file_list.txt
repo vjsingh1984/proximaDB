@@ -1848,9 +1848,6 @@ src/query/sks_extensions.rs:pub enum QueryStage {
 src/storage/metadata/atomic_tests.rs:    struct MockAtomicMetadataStore {
 src/storage/persistence/write_ahead_log/avro_serialization_strategy.rs:pub struct AvroSerializationStrategy {
 src/network/grpc/collection_service.rs:pub struct CollectionServiceImpl {
-src/query/sql_engine/vector_array_parser.rs:pub struct SimdCapabilities {
-src/query/sql_engine/vector_array_parser.rs:pub struct SimdVectorParser {
-src/query/sql_engine/vector_array_parser.rs:pub struct SimdParserStats {
 src/query/explain.rs:pub struct ExplainPlan {
 src/query/explain.rs:pub struct VectorHints {
 src/query/explain.rs:pub struct GraphHints {
@@ -1864,19 +1861,11 @@ src/query/explain.rs:pub struct OperatorTiming {
 src/query/explain.rs:pub struct ResourceUsage {
 src/storage/persistence/write_ahead_log/batch_strategy_tests.rs:    struct MockWALBatchStrategy {
 src/storage/persistence/write_ahead_log/batch_strategy_tests.rs:    struct MockWriteBufferBehavior {
-src/query/sql_engine/planner.rs:pub struct ExecutionPlan {
-src/query/sql_engine/planner.rs:pub struct MetadataFilter {
-src/query/sql_engine/planner.rs:pub struct VectorSearchParams {
-src/query/sql_engine/planner.rs:pub struct QueryPlanner {
 src/query/vector_search/mod.rs:pub struct SearchQuery {
 src/query/vector_search/mod.rs:pub struct SearchConfig {
 src/query/vector_search/mod.rs:pub enum SearchAlgorithm {
 src/query/vector_search/mod.rs:pub struct VectorSearchEngine {
 src/query/vector_search/mod.rs:pub struct SearchAlgorithmFactory;
-src/query/sql_engine/pool.rs:pub struct PoolStats {
-src/query/sql_engine/pool.rs:pub struct ZeroCopyContext {
-src/query/sql_engine/pool.rs:pub struct ReusableParser {
-src/query/sql_engine/pool.rs:pub struct LockFreeParserPool {
 src/storage/persistence/write_ahead_log/compaction_types.rs:pub struct EnhancedEngineCompactionResult {
 src/network/grpc/sql_service.rs:pub struct SqlServiceImpl {
 src/storage/relations.rs:pub trait RelationsStore: Send + Sync {
@@ -2006,9 +1995,6 @@ src/storage/persistence/write_ahead_log/config.rs:pub enum CloudBackupStrategy {
 src/storage/persistence/write_ahead_log/config.rs:pub struct BackupFrequency {
 src/storage/persistence/write_ahead_log/config.rs:pub struct CloudCleanupPolicy {
 src/storage/persistence/write_ahead_log/config.rs:pub struct CloudRetryConfig {
-src/query/sql_engine/comprehensive_sql_tests.rs:    struct SqlTestVector {
-src/query/sql_engine/comprehensive_sql_tests.rs:    struct SqlTestCase {
-src/query/sql_engine/comprehensive_sql_tests.rs:    enum SqlTestEngine {
 src/storage/persistence/write_ahead_log/memtable_manager.rs:pub struct MemtableManager {
 src/storage/persistence/write_ahead_log/memtable_manager.rs:pub struct MemtableStats {
 src/query/unified_query_optimizer.rs:pub struct UnifiedQueryOptimizer {
@@ -2086,10 +2072,6 @@ src/storage/engines/core/ops/fastlanes_encoding.rs:pub struct FastLanesDecoder {
 src/query/mod.rs:pub struct QueryEngine {
 src/storage/persistence/write_ahead_log/batch_strategy.rs:pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 src/storage/persistence/write_ahead_log/batch_strategy.rs:pub struct WriteBufferDiskEntry {
-src/query/sql_engine/executor.rs:pub struct SqlExecutionResult {
-src/query/sql_engine/executor.rs:pub struct ResultRow {
-src/query/sql_engine/executor.rs:pub struct ExecutionStats {
-src/query/sql_engine/executor.rs:pub struct SqlExecutor {
 src/network/auth/jwt.rs:pub struct Claims {
 src/network/auth/jwt.rs:pub enum TokenType {
 src/network/auth/jwt.rs:pub struct TokenPair {
@@ -2101,21 +2083,6 @@ src/storage/engines/core/formats/fastlanes_blocks/sst_metadata.rs:pub struct Sst
 src/storage/engines/core/formats/fastlanes_blocks/sst_metadata.rs:pub struct SstBlockHeader {
 src/storage/engines/core/formats/fastlanes_blocks/sst_metadata.rs:pub struct SstMetadata {
 src/storage/engines/core/formats/fastlanes_blocks/sst_metadata.rs:pub struct SstMetadataSerializer {
-src/query/sql_engine/mod.rs:pub struct SqlEngine {
-src/query/sql_engine/mod.rs:pub struct QueryCacheKey {
-src/query/sql_engine/mod.rs:pub struct CachedQueryResult {
-src/query/sql_engine/mod.rs:pub struct QueryCache {
-src/query/sql_engine/mod.rs:pub struct CacheStats {
-src/query/sql_engine/parser.rs:pub struct ParsedQuery {
-src/query/sql_engine/parser.rs:pub enum SelectField {
-src/query/sql_engine/parser.rs:pub struct WhereClause {
-src/query/sql_engine/parser.rs:pub enum Condition {
-src/query/sql_engine/parser.rs:pub enum ComparisonOp {
-src/query/sql_engine/parser.rs:pub enum Value {
-src/query/sql_engine/parser.rs:pub struct OrderByClause {
-src/query/sql_engine/parser.rs:pub enum OrderType {
-src/query/sql_engine/parser.rs:pub enum SortDirection {
-src/query/sql_engine/parser.rs:pub struct SqlParser {
 src/storage/engines/core/formats/fastlanes_blocks/batch_operations.rs:pub struct RowBasedBatchOperations {
 src/storage/engines/core/formats/fastlanes_blocks/batch_operations.rs:pub struct BatchConfig {
 src/storage/engines/core/formats/fastlanes_blocks/batch_operations.rs:pub enum BatchProcessingStrategy {

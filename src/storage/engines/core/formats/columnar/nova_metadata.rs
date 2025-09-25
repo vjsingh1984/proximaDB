@@ -1010,17 +1010,18 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_nova_metadata_serialization() {
-        let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
-        let serializer = NovaMetadataSerializer::new(filesystem);
+    #[tokio::test]
+    async fn test_nova_metadata_serialization() {
+        let _temp_dir = TempDir::new().unwrap();
+        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         // Test serialization
         let serialized = serializer
             .serialize_metadata("/test/file.nova", "test_collection")
             .unwrap();
-        assert!(!serialized.is_none());
+        assert!(!serialized.is_empty());
 
         // Test deserialization
         let metadata = serializer.deserialize_metadata(&serialized).unwrap();
@@ -1028,11 +1029,12 @@ mod tests {
         assert!(metadata.memory_footprint() > 0);
     }
 
-    #[test]
-    fn test_nova_columnar_optimization() {
+    #[tokio::test]
+    async fn test_nova_columnar_optimization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
-        let serializer = NovaMetadataSerializer::new(filesystem);
+        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
             .serialize_metadata("/test/file.nova", "test_collection")
@@ -1053,16 +1055,17 @@ mod tests {
         let ranges = serializer.get_required_ranges(metadata.as_ref(), &query_context);
         if let Some(ranges) = ranges {
             // Should not need all columns for metadata filtering
-            assert!(!ranges.is_none());
+            assert!(!ranges.is_empty());
             // Should be more selective than full file
         }
     }
 
-    #[test]
-    fn test_nova_similarity_search_optimization() {
+    #[tokio::test]
+    async fn test_nova_similarity_search_optimization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
-        let serializer = NovaMetadataSerializer::new(filesystem);
+        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let serializer = NovaMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
             .serialize_metadata("/test/file.nova", "test_collection")

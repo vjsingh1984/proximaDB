@@ -100,7 +100,7 @@ pub trait EventLogService: EventLogQuery + EventLogCommand {
 }
 
 /// Event filter for queries
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EventFilter {
     /// Collection ID filter
     pub collection_id: Option<String>,
@@ -123,7 +123,7 @@ pub struct EventFilter {
 }
 
 /// Event processing status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EventStatus {
     Pending,
     Processing,
@@ -140,7 +140,7 @@ pub struct ProcessedUpdate {
 }
 
 /// Service health information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceHealth {
     pub status: HealthStatus,
     pub mode: String,
@@ -151,7 +151,7 @@ pub struct ServiceHealth {
     pub last_sync: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HealthStatus {
     Healthy,
     Degraded,

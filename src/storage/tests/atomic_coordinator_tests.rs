@@ -10,8 +10,8 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::proximadb_v1::{SqlValue, sql_value};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType, TransactionState,
@@ -21,21 +21,21 @@ use crate::storage::transaction_coordinator::{
 /// Create test vector
 fn create_test_vector(id: &str) -> VectorRecord {
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: vec![0.1; 128],
-        metadata: vec![MetadataItem {
-            key: "atomic_test".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue("true".to_string()),
-            ),
-        }],
-        timestamp: chrono::Utc::now().timestamp() as u32,
-        updated_at: Some(chrono::Utc::now().timestamp() as u32),
+        metadata: {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("atomic_test".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue("true".to_string()))
+            });
+            metadata
+        },
+        timestamp: chrono::Utc::now().timestamp(),
+        updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
 
@@ -102,7 +102,7 @@ async fn test_begin_atomic_operation() {
         .await
         .expect("Failed to begin atomic operation");
 
-    assert!(!operation.operation_id.is_none());
+    assert!(!operation.operation_id.is_empty());
     match operation.status {
         TransactionalOperationStatus::Preparing | TransactionalOperationStatus::Staging => {}
         _ => panic!("Operation should be Preparing or Staging"),
@@ -667,7 +667,7 @@ async fn test_staging_config_with_custom_staging_dir() {
         .await
         .expect("Failed to begin atomic operation with custom staging dir");
 
-    assert!(!operation.operation_id.is_none());
+    assert!(!operation.operation_id.is_empty());
 }
 
 #[tokio::test]
@@ -703,7 +703,7 @@ async fn test_operation_without_collection_id() {
         .await
         .expect("Failed to begin atomic operation without collection ID");
 
-    assert!(!operation.operation_id.is_none());
+    assert!(!operation.operation_id.is_empty());
 }
 
 #[tokio::test]

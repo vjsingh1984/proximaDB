@@ -2,7 +2,7 @@ use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheKey, CacheValue};
 
 // CacheKey for String already implemented in vector_data.rs
-impl CacheKey for u64 {}
+// CacheKey for u64 already implemented in traits.rs
 
 #[derive(Debug, Clone)]
 struct TestValue {
@@ -18,7 +18,7 @@ impl CacheValue for TestValue {
 #[tokio::test]
 async fn test_basic_get_put() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -28,7 +28,7 @@ async fn test_basic_get_put() {
     };
 
     // Put value
-    cache.put_with_hooks(item.clone(), item.clone()).await;
+    cache.put_with_hooks(key.clone(), value.clone()).await;
 
     // Get value
     let retrieved = cache.get_with_hooks(&key).await;
@@ -39,7 +39,7 @@ async fn test_basic_get_put() {
 #[tokio::test]
 async fn test_cache_miss() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -51,7 +51,7 @@ async fn test_cache_miss() {
 #[tokio::test]
 async fn test_invalidation() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -61,7 +61,7 @@ async fn test_invalidation() {
     };
 
     // Put value
-    cache.put_with_hooks(item.clone(), value).await;
+    cache.put_with_hooks(key.clone(), value).await;
 
     // Verify it exists
     assert!(cache.get_with_hooks(&key).await.is_some());
@@ -77,7 +77,7 @@ async fn test_invalidation() {
 #[tokio::test]
 async fn test_tier_selection() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -100,7 +100,7 @@ async fn test_tier_selection() {
 #[tokio::test]
 async fn test_metrics_recording() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
     let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -111,12 +111,12 @@ async fn test_metrics_recording() {
     };
 
     // Put and get
-    cache.put_with_hooks(key1.clone(), item.clone()).await;
+    cache.put_with_hooks(key1.clone(), value.clone()).await;
     let _ = cache.get_with_hooks(&key1).await; // Hit
     let _ = cache.get_with_hooks(&key2).await; // Miss
 
-    let metrics = cache.metrics().snapshot();
-    assert_eq!(metrics.total_gets, 2);
-    assert_eq!(metrics.misses, 1);
-    assert!(metrics.l1_hits > 0);
+    let snapshot = cache.metrics().get_snapshot().await;
+    assert_eq!(snapshot.total_operations, 2);
+    assert_eq!(snapshot.cache_misses, 1);
+    assert!(snapshot.cache_hits > 0);
 }

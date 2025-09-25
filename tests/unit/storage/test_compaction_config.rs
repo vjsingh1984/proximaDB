@@ -9,17 +9,17 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::core::SstConfig;
-use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::sst::SstRecord;
+use proximadb::storage::engines::impls::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::impls::sst::SstEntry;
 use proximadb::storage::persistence::write_ahead_log::background_manager::BackgroundMaintenanceManager;
 use proximadb::storage::persistence::write_ahead_log::config::WALConfig;
 
 /// Helper function to create test LSM records
-fn create_test_sst_records(collection_id: &str, count: usize) -> Vec<SstRecord> {
+fn create_test_sst_records(collection_id: &str, count: usize) -> Vec<SstEntry> {
     let now = chrono::Utc::now().timestamp_millis();
     
     (0..count)
-        .map(|i| SstRecord {
+        .map(|i| SstEntry {
             id: format!("lsm_record_{}", i),
             collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 100], // 100-dimensional vector
@@ -39,7 +39,7 @@ fn create_test_sst_records(collection_id: &str, count: usize) -> Vec<SstRecord> 
 /// Helper function to create test SST file with records
 async fn create_test_sst_file(
     file_path: &std::path::Path,
-    records: &[SstRecord],
+    records: &[SstEntry],
 ) -> Result<()> {
     let mut file_data = Vec::new();
     
@@ -199,7 +199,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     
     // Active records (no expiry)
     for i in 0..50 {
-        records.push(SstRecord {
+        records.push(SstEntry {
             id: format!("active_record_{}", i),
             collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 100],
@@ -217,7 +217,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
     
     // Expired records (should be deleted during compaction)
     for i in 50..100 {
-        records.push(SstRecord {
+        records.push(SstEntry {
             id: format!("expired_record_{}", i),
             collection_id: collection_id.to_string(),
             vector: vec![1.0f32; 100],
@@ -277,7 +277,7 @@ async fn test_compaction_with_expired_records() -> Result<()> {
         }
         
         let entry_data = &output_data[offset..offset + entry_len];
-        if let Ok(record) = SstRecord::deserialize(entry_data) {
+        if let Ok(record) = SstEntry::deserialize(entry_data) {
             remaining_records.push(record);
         }
         

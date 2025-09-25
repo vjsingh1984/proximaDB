@@ -439,7 +439,7 @@ impl VectorMemoryPool {
             let vector_data = config.serialize_vector(vector)?;
 
             // Write length prefix
-            buffer.extend_from_slice(&(vector_data.len()).to_le_bytes());
+            buffer.extend_from_slice(&(vector_data.len() as u32).to_le_bytes());
             buffer.extend_from_slice(&vector_data);
         }
 
@@ -709,7 +709,11 @@ mod tests {
             vec![7.0, 8.0, 9.0],
         ];
 
-        let config = crate::core::serialization::VectorSerializationConfig::default();
+        // Use config without compression for small test vectors
+        let mut config = crate::core::serialization::VectorSerializationConfig::default();
+        config.compression_algorithm = crate::core::serialization::CompressionAlgorithm::None;
+        config.compression_threshold = usize::MAX; // Disable compression
+
         let serialized = pool
             .serialize_vector_batch_pooled(&vectors, &config)
             .unwrap();
@@ -721,6 +725,8 @@ mod tests {
             .unwrap();
         assert_eq!(deserialized.len(), 3);
         assert_eq!(deserialized[0], vec![1.0, 2.0, 3.0]);
+        assert_eq!(deserialized[1], vec![4.0, 5.0, 6.0]);
+        assert_eq!(deserialized[2], vec![7.0, 8.0, 9.0]);
     }
 
     #[test]

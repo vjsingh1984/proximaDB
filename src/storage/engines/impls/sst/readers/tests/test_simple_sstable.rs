@@ -4,7 +4,7 @@ use crate::core::config::SstConfig;
 use crate::storage::engines::impls::sst::{
     IndexEntry, SstableHeader, SstableWriter,
 };
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::BTreeMap;
 use std::sync::Arc;

@@ -61,9 +61,9 @@ use anyhow::Result;
 use tracing::info;
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-// Using zero-copy I/O system for efficient caching
+// Using UnifiedCachingFilesystem for efficient caching
 use crate::core::error::{ProximaDBError, StorageError};
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// File type enum for cache key discrimination
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -96,14 +96,45 @@ pub struct SharedSstFormatReader {
     /// Memory mapping strategy (kept for region-specific optimizations)
     mmap_strategy: SstMmapStrategy,
 
-    /// UNIFIED CACHE: Zero-copy system replaces all specialized caches
-    zero_copy_system: Arc<ZeroCopyIOSystem>,
+    /// UNIFIED CACHE: UnifiedCachingFilesystem replaces all specialized caches
+    unified_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
     collection_id: String,
 
     /// Stats for monitoring
     stats: Arc<ReaderStats>,
+
+    /// ✅ Reusable distance compute engine - created once and passed to all search operations
+    distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+}
+
+/// Shared SST format writer with compression and FastLanes encoding
+/// Complements the reader for full read/write support
+pub struct SharedSstFormatWriter {
+    /// Filesystem for I/O operations
+    filesystem: Arc<FilesystemFactory>,
+
+    /// Unified filesystem for write operations
+    unified_filesystem: Arc<UnifiedCachingFilesystem>,
+
+    /// Collection ID for filename-based cache keys
+    collection_id: String,
+
+    /// Compression configuration
+    compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
+
+    /// Stats for monitoring writes
+    stats: Arc<WriterStats>,
+}
+
+/// Writer statistics for monitoring
+pub struct WriterStats {
+    blocks_written: AtomicU64,
+    bytes_written: AtomicU64,
+    bytes_compressed: AtomicU64,
+    compression_time_ms: AtomicU64,
+    writes_total: AtomicU64,
 }
 
 #[derive(Clone)]
@@ -142,16 +173,370 @@ impl SharedSstFormatReader {
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
         mmap_strategy: SstMmapStrategy,
-        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        unified_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
     ) -> Self {
+        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+
         Self {
             filesystem,
             mmap_strategy,
-            zero_copy_system,
+            unified_filesystem,
             collection_id,
             stats: Arc::new(ReaderStats::default()),
+            distance_compute: Arc::new(UnifiedDistanceCompute::default()),  // ✅ Create once and reuse
         }
+    }
+
+    /// Enhanced read with strategy-based delegation to FastLanes blocks
+    pub fn read_with_strategy<'a>(
+        &'a self,
+        file_path: &'a str,
+        strategy: &'a crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy,
+        filter_expression: Option<&'a crate::core::search::FilterExpression>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError>> + Send + 'a>> {
+        Box::pin(async move {
+        use crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy;
+
+        match strategy {
+            SstableReadingStrategy::FullScan { use_block_cache } => {
+                self.full_scan_read(file_path, *use_block_cache).await
+            }
+            SstableReadingStrategy::SelectiveWithCache {
+                use_range_reads,
+                enable_bloom_filters,
+                enable_cache_lookup,
+                enable_metadata_cache,
+            } => {
+                self.selective_cache_read(
+                    file_path,
+                    *use_range_reads,
+                    *enable_bloom_filters,
+                    *enable_cache_lookup,
+                    *enable_metadata_cache,
+                    filter_expression,
+                ).await
+            }
+            SstableReadingStrategy::CompactionFullRead {
+                skip_bloom_filters,
+                skip_indexes,
+                bypass_write_cache,
+                use_disk_cache_if_exists,
+                sequential_io,
+            } => {
+                self.compaction_read(
+                    file_path,
+                    *skip_bloom_filters,
+                    *skip_indexes,
+                    *bypass_write_cache,
+                    *use_disk_cache_if_exists,
+                    *sequential_io,
+                ).await
+            }
+            SstableReadingStrategy::IndexRangeScan {
+                start_block,
+                end_block,
+                use_bloom_filter,
+            } => {
+                self.range_scan_read(file_path, *start_block as u32, *end_block as u32, *use_bloom_filter).await
+            }
+            SstableReadingStrategy::MetadataFiltered {
+                selected_blocks,
+                skip_bloom_check,
+            } => {
+                // Convert Vec<usize> to Vec<u32>
+                let blocks_u32: Vec<u32> = selected_blocks.iter().map(|&b| b as u32).collect();
+                self.metadata_filtered_read(file_path, &blocks_u32, *skip_bloom_check, filter_expression).await
+            }
+            SstableReadingStrategy::Hybrid {
+                primary_strategy,
+                fallback_blocks,
+            } => {
+                // Try primary strategy first, then fallback for specific blocks
+                let mut primary_results = self.read_with_strategy(file_path, primary_strategy, filter_expression).await?;
+
+                // Add fallback blocks if needed
+                if !fallback_blocks.is_empty() {
+                    // Convert Vec<usize> to Vec<u32>
+                    let fallback_u32: Vec<u32> = fallback_blocks.iter().map(|&b| b as u32).collect();
+                    let fallback_results = self.read_specific_blocks(file_path, &fallback_u32).await?;
+                    primary_results.extend(fallback_results);
+                }
+
+                Ok(primary_results)
+            }
+        }
+        })
+    }
+
+    /// Full scan read - reads all blocks without filtering
+    async fn full_scan_read(
+        &self,
+        file_path: &str,
+        use_block_cache: bool,
+    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // Read data from file
+        let data = if use_block_cache {
+            // Use unified filesystem with caching
+            self.unified_filesystem.read(file_path).await?
+        } else {
+            // Direct read without caching
+            self.filesystem.get_filesystem(file_path)?
+                .read(file_path).await?
+        };
+
+        // Deserialize blocks from raw data
+        // For now, try to deserialize as a single block
+        // TODO: Implement multi-block file format
+        let blocks = if let Ok(single_block) =
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            vec![single_block]
+        } else {
+            // If single block fails, assume empty or corrupted file
+            Vec::new()
+        };
+        Ok(blocks)
+    }
+
+    /// Selective cache read with various optimizations
+    async fn selective_cache_read(
+        &self,
+        file_path: &str,
+        use_range_reads: bool,
+        enable_bloom_filters: bool,
+        enable_cache_lookup: bool,
+        enable_metadata_cache: bool,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // Use unified filesystem with selective caching
+        let mut blocks = Vec::new();
+
+        // Read the entire file first
+        let data = if enable_cache_lookup {
+            self.unified_filesystem.read(file_path).await?
+        } else {
+            self.filesystem.get_filesystem(file_path)?.read(file_path).await?
+        };
+
+        // Deserialize blocks
+        // TODO: Implement multi-block file format
+        let all_blocks = if let Ok(single_block) =
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            vec![single_block]
+        } else {
+            Vec::new()
+        };
+
+        for block in all_blocks {
+            // Check bloom filter if enabled
+            if enable_bloom_filters {
+                if let Some(ref filter_expr) = filter_expression {
+                    // FastLanes blocks have auto-generated bloom filters
+                    if let Some(ref bloom) = block.bloom_filter {
+                        // Check if block might contain matching records
+                        // TODO: Implement bloom filter check logic
+                    }
+                }
+            }
+
+            blocks.push(block);
+        }
+
+        Ok(blocks)
+    }
+
+    /// Compaction read - optimized for sequential I/O during compaction
+    async fn compaction_read(
+        &self,
+        file_path: &str,
+        skip_bloom_filters: bool,
+        skip_indexes: bool,
+        bypass_write_cache: bool,
+        use_disk_cache_if_exists: bool,
+        sequential_io: bool,
+    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+        // Compaction needs all blocks for merging
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // Read the entire file
+        let data = self.unified_filesystem.read(file_path).await?;
+
+        // Deserialize blocks
+        // TODO: Implement multi-block file format
+        let blocks = if let Ok(single_block) =
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            vec![single_block]
+        } else {
+            Vec::new()
+        };
+        Ok(blocks)
+    }
+
+    /// Range scan read - reads blocks within a specific range
+    async fn range_scan_read(
+        &self,
+        file_path: &str,
+        start_block: u32,
+        end_block: u32,
+        use_bloom_filter: bool,
+    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // For now, read the entire file and filter blocks in memory
+        // TODO: Implement range-based reading when multi-block format is ready
+        let data = self.unified_filesystem.read(file_path).await?;
+
+        // Deserialize and filter blocks by range
+        let all_blocks = if let Ok(single_block) =
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            vec![single_block]
+        } else {
+            Vec::new()
+        };
+
+        // Filter blocks by range (when we have multi-block support)
+        let blocks: Vec<_> = all_blocks
+            .into_iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx >= start_block as usize && *idx <= end_block as usize)
+            .map(|(_, block)| block)
+            .collect();
+
+        Ok(blocks)
+    }
+
+    /// Metadata filtered read - reads blocks based on metadata predicates
+    async fn metadata_filtered_read(
+        &self,
+        file_path: &str,
+        selected_blocks: &[u32],
+        skip_bloom_check: bool,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+        // Read only selected blocks
+        let mut blocks = Vec::new();
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // Read the entire file once
+        let data = self.unified_filesystem.read(file_path).await?;
+
+        // Deserialize all blocks
+        let all_blocks = if let Ok(single_block) =
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            vec![single_block]
+        } else {
+            Vec::new()
+        };
+
+        // Select specific blocks
+        for &block_id in selected_blocks {
+            if (block_id as usize) < all_blocks.len() {
+                blocks.push(all_blocks[block_id as usize].clone());
+            }
+        }
+        Ok(blocks)
+    }
+
+    /// Read specific blocks by their IDs
+    async fn read_specific_blocks(
+        &self,
+        file_path: &str,
+        block_ids: &[u32],
+    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+        let mut blocks = Vec::new();
+        use crate::storage::persistence::filesystem::FileSystem;
+
+        // Read the entire file once
+        let data = self.unified_filesystem.read(file_path).await?;
+
+        // Deserialize all blocks
+        let all_blocks = if let Ok(single_block) =
+            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            vec![single_block]
+        } else {
+            Vec::new()
+        };
+
+        // Select specific blocks
+        for &block_id in block_ids {
+            if (block_id as usize) < all_blocks.len() {
+                blocks.push(all_blocks[block_id as usize].clone());
+            }
+        }
+        Ok(blocks)
+    }
+
+    /// Search FastLanes blocks with predicate pushdown
+    pub async fn search_blocks_with_predicate(
+        &self,
+        blocks: &[crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock],
+        query_vector: &[f32],
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+        k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        distance_compute: &crate::compute::distance_computation::engine::UnifiedDistanceCompute,  // ✅ Pass from caller for reuse
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, ProximaDBError> {
+        let mut all_results = Vec::new();
+
+        // Process each block with batch distance computation
+        for block in blocks {
+            // Collect vectors from block for batch processing
+            let mut block_records = Vec::new();
+            let mut block_vectors = Vec::new();
+
+            for record in &block.records {
+                // Apply filter expression if provided
+                if let Some(filter) = filter_expression {
+                    // TODO: Implement proper filter evaluation
+                    // For now, pass all records
+                }
+                block_records.push(record);
+                block_vectors.push(record.vector.as_slice());
+            }
+
+            // Batch calculate distances for entire block
+            if !block_vectors.is_empty() {
+                let distances = distance_compute.batch_distance_pooled_simd(
+                    query_vector,
+                    &block_vectors,
+                    &distance_metric
+                );
+
+                // Create search records with batch distances
+                for (record, distance_result) in block_records.into_iter().zip(distances.iter()) {
+                    let search_record = crate::core::search::results::OptimizedSearchRecord {
+                        id: record.id.clone(),
+                        vector_id: Some(record.id.clone()),
+                        score: distance_result.distance,
+                        similarity: Some(distance_result.distance),
+                        metadata: record.metadata.clone(),
+                        vector: Some(Arc::new(record.vector.clone())),
+                        debug_info: None,
+                        version: None,
+                        timestamp: Some(record.timestamp),
+                        updated_at: None,
+                        expires_at: None,
+                        source: None,
+                        expanded_context: Vec::new(),
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                    };
+                    all_results.push(search_record);
+                }
+            }
+        }
+
+        // Sort and truncate to top-k
+        all_results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.truncate(k);
+
+        Ok(all_results)
     }
 
     /// Smart read that minimizes bandwidth usage

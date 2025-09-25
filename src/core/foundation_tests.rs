@@ -7,7 +7,7 @@ mod base_traits_tests {
     use std::collections::HashMap;
 
     // Test implementation of BaseConfig
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestConfig {
         pub name: String,
         pub value: i32,
@@ -15,7 +15,7 @@ mod base_traits_tests {
 
     impl BaseConfig for TestConfig {
         fn validate(&self) -> Result<(), String> {
-            if self.name.is_none() {
+            if self.name.is_empty() {
                 return Err("Name cannot be empty".to_string());
             }
             if self.value < 0 {
@@ -25,7 +25,7 @@ mod base_traits_tests {
         }
 
         fn apply_defaults(&mut self) {
-            if self.name.is_none() {
+            if self.name.is_empty() {
                 self.name = "default".to_string();
             }
             if self.value < 0 {
@@ -42,7 +42,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseMetadata
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestMetadata {
         pub id: String,
         pub version: u64,
@@ -60,7 +60,7 @@ mod base_traits_tests {
         }
 
         fn created_at(&self) -> DateTime<Utc> {
-            self.created_at
+            self.timestamp
         }
 
         fn updated_at(&self) -> DateTime<Utc> {
@@ -69,7 +69,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseStats
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestStats {
         pub count: u64,
         pub sum: f64,
@@ -95,7 +95,7 @@ mod base_traits_tests {
     }
 
     // Test implementation of BaseResult
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     struct TestResult {
         pub success: bool,
         pub data: Option<String>,
@@ -181,7 +181,7 @@ mod base_traits_tests {
         };
         let result = config.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains_hash("Name cannot be empty"));
+        assert!(result.unwrap_err().contains("Name cannot be empty"));
     }
 
     #[test]
@@ -328,12 +328,12 @@ mod base_traits_tests {
             healthy: false,
         };
 
-        let metrics = service.metrics().await;
+        let metrics = service.get_metrics().await;
         assert_eq!(metrics.get("running").unwrap(), &serde_json::Value::Bool(false));
         assert_eq!(metrics.get("healthy").unwrap(), &serde_json::Value::Bool(false));
 
         service.start().await.unwrap();
-        let metrics = service.metrics().await;
+        let metrics = service.get_metrics().await;
         assert_eq!(metrics.get("running").unwrap(), &serde_json::Value::Bool(true));
         assert_eq!(metrics.get("healthy").unwrap(), &serde_json::Value::Bool(true));
     }
@@ -554,7 +554,7 @@ mod generic_types_tests {
         let config = GenericConfig::new(data.clone());
         
         assert_eq!(config.data, data);
-        assert!(config.validation_rules.is_none());
+        assert!(config.validation_rules.is_empty());
     }
 
     #[test]
@@ -597,7 +597,7 @@ mod generic_types_tests {
         let result = config.validate();
         
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains_hash("Validation failed"));
+        assert!(result.unwrap_err().contains("Validation failed"));
     }
 
     #[test]
@@ -611,12 +611,12 @@ mod generic_types_tests {
         assert_eq!(metadata.id, "test_id");
         assert_eq!(metadata.data, data);
         assert_eq!(metadata.version, 1);
-        assert!(metadata.tags.is_none());
-        assert!(metadata.properties.is_none());
+        assert!(metadata.tags.is_empty());
+        assert!(metadata.properties.is_empty());
         
         // Timestamps should be recent
         let now = Utc::now();
-        assert!((now - metadata.created_at).num_seconds() < 1);
+        assert!((now - metadata.created_at()).num_seconds() < 1);
         assert!((now - metadata.updated_at).num_seconds() < 1);
     }
 
@@ -762,22 +762,22 @@ mod generic_types_tests {
         
         assert!(result.success);
         assert_eq!(result.data, Some(data));
-        assert!(result.error_message.is_none());
+        assert!(result.error_code.is_none());
         assert!(result.error_code.is_none());
         assert!(result.processing_time_us.is_none());
-        assert!(result.metadata.is_none());
+        assert!(result.metadata.is_empty());
     }
 
     #[test]
     fn test_generic_result_error() {
-        let result: GenericResult<TestData> = GenericResult::error("Test error".to_string());
+        let mut result: GenericResult<TestData> = GenericResult::error();
+        result.error_code = Some("Test error".to_string());
         
         assert!(!result.success);
         assert!(result.data.is_none());
-        assert_eq!(result.error_message, Some("Test error".to_string()));
-        assert!(result.error_code.is_none());
+        assert_eq!(result.error_code, Some("Test error".to_string()));
         assert!(result.processing_time_us.is_none());
-        assert!(result.metadata.is_none());
+        assert!(result.metadata.is_empty());
     }
 
     #[test]
@@ -793,8 +793,8 @@ mod generic_types_tests {
 
     #[test]
     fn test_generic_result_with_error_code() {
-        let result: GenericResult<TestData> = GenericResult::error("Error message".to_string())
-            .with_error_code("ERR_001".to_string());
+        let mut result: GenericResult<TestData> = GenericResult::error();
+        result.error_code = Some("ERR_001".to_string());
         
         assert_eq!(result.error_code, Some("ERR_001".to_string()));
     }
@@ -816,8 +816,9 @@ mod generic_types_tests {
 
     #[test]
     fn test_generic_result_base_trait_error() {
-        let result: GenericResult<TestData> = GenericResult::error("Trait error".to_string())
+        let mut result: GenericResult<TestData> = GenericResult::error()
             .with_processing_time(500);
+        result.error_code = Some("Trait error".to_string());
         
         // Test BaseResult trait methods
         assert!(!result.is_success());
@@ -843,12 +844,12 @@ mod generic_types_tests {
 
     #[test]
     fn test_generic_result_error_chaining() {
-        let result: GenericResult<TestData> = GenericResult::error("Chain error".to_string())
-            .with_error_code("ERR_CHAIN".to_string())
+        let mut result: GenericResult<TestData> = GenericResult::error()
             .with_processing_time(100);
+        result.error_code = Some("ERR_CHAIN".to_string());
         
         assert!(!result.is_success());
-        assert_eq!(result.error().unwrap(), "Chain error");
+        assert_eq!(result.error().unwrap(), "ERR_CHAIN");
         assert_eq!(result.error_code.as_ref().unwrap(), "ERR_CHAIN");
         assert_eq!(result.processing_time_us().unwrap(), 100);
     }

@@ -6,7 +6,6 @@ use arrow_schema::DataType;
 
 use anyhow::Result;
 use arrow_schema::{Field, Schema, TimeUnit};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -14,6 +13,112 @@ use tracing::{debug, info, trace};
 
 use super::QuantizationConfig;
 use crate::core::compression::CompressionAlgorithm;
+use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
+
+/// Convert proto FilterableColumnSpec to internal ColumnarFilterableSpec
+pub fn convert_filterable_spec(spec: &FilterableColumnSpec) -> ColumnarFilterableSpec {
+    let data_type = match FilterableDataType::try_from(spec.data_type) {
+        Ok(FilterableDataType::FilterableString) | Ok(FilterableDataType::FilterableArrayString) => {
+            FilterableData::String
+        }
+        Ok(FilterableDataType::FilterableInteger) | Ok(FilterableDataType::FilterableArrayInteger) => {
+            FilterableData::Integer
+        }
+        Ok(FilterableDataType::FilterableFloat) | Ok(FilterableDataType::FilterableArrayFloat) => {
+            FilterableData::Float
+        }
+        Ok(FilterableDataType::FilterableBoolean) => {
+            FilterableData::Boolean
+        }
+        Ok(FilterableDataType::FilterableDatetime) => {
+            FilterableData::Datetime
+        }
+        _ => FilterableData::String, // Default fallback
+    };
+
+    ColumnarFilterableSpec {
+        name: spec.name.clone(),
+        data_type,
+        nullable: true,
+        indexed: spec.indexed,
+        estimated_cardinality: spec.estimated_cardinality.map(|c| c as usize),
+    }
+}
+
+/// Create Arrow schema for Parquet files from proto specs
+/// Used by both VIPER and NOVA engines for consistent schema generation
+pub fn create_parquet_schema_from_specs(
+    dimension: usize,
+    filterable_specs: &[FilterableColumnSpec],
+    include_quantization: bool,
+) -> Arc<Schema> {
+    let mut fields = vec![
+        // Core fields
+        Field::new("id", DataType::Utf8, false),
+        Field::new(
+            "vector",
+            DataType::FixedSizeBinary((dimension * 4) as i32), // FP32 vectors
+            false,
+        ),
+        Field::new("timestamp", DataType::Int64, false),
+        Field::new("version", DataType::Int64, true),
+    ];
+
+    // Add quantization fields if enabled
+    if include_quantization {
+        // Binary quantization
+        fields.push(Field::new(
+            "vector_binary",
+            DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
+            true,
+        ));
+
+        // INT8 quantization
+        fields.push(Field::new(
+            "vector_int8",
+            DataType::FixedSizeBinary(dimension as i32),
+            true,
+        ));
+        fields.push(Field::new("int8_scale", DataType::Float32, true));
+        fields.push(Field::new("int8_zero_point", DataType::Int8, true));
+
+        // Product Quantization (default 32 segments)
+        fields.push(Field::new(
+            "vector_pq",
+            DataType::FixedSizeBinary(32),
+            true,
+        ));
+    }
+
+    // Add filterable metadata columns with proper types
+    for spec in filterable_specs {
+        let arrow_data_type = match FilterableDataType::try_from(spec.data_type) {
+            Ok(FilterableDataType::FilterableString) | Ok(FilterableDataType::FilterableArrayString) => {
+                DataType::Utf8
+            }
+            Ok(FilterableDataType::FilterableInteger) | Ok(FilterableDataType::FilterableArrayInteger) => {
+                DataType::Int64
+            }
+            Ok(FilterableDataType::FilterableFloat) | Ok(FilterableDataType::FilterableArrayFloat) => {
+                DataType::Float64
+            }
+            Ok(FilterableDataType::FilterableBoolean) => {
+                DataType::Boolean
+            }
+            Ok(FilterableDataType::FilterableDatetime) => {
+                DataType::Timestamp(TimeUnit::Millisecond, None)
+            }
+            _ => DataType::Utf8, // Default to string for unknown types
+        };
+
+        fields.push(Field::new(&spec.name, arrow_data_type, true));
+    }
+
+    // Add extra_metadata field for non-filterable data
+    fields.push(Field::new("extra_metadata", DataType::Utf8, true));
+
+    Arc::new(Schema::new(fields))
+}
 
 /// Schema configuration with quantization awareness
 #[derive(Debug, Clone)]
@@ -25,7 +130,7 @@ pub struct ColumnarSchemaConfig {
     pub quantization: Option<QuantizationConfig>,
 
     /// Filterable columns specification
-    pub filterable_columns: Vec<FilterableColumnSpec>,
+    pub filterable_columns: Vec<ColumnarFilterableSpec>,
 
     /// Schema optimization settings
     pub optimization: SchemaOptimization,
@@ -34,9 +139,11 @@ pub struct ColumnarSchemaConfig {
     pub compression_strategy: CompressionStrategy,
 }
 
-/// Filterable column specification
+/// Columnar-specific filterable column specification
+/// Different from proto::proximadb_v1::FilterableColumnSpec to avoid confusion
+/// This is used internally for columnar storage schema generation
 #[derive(Debug, Clone)]
-pub struct FilterableColumnSpec {
+pub struct ColumnarFilterableSpec {
     pub name: String,
     pub data_type: FilterableData,
     pub nullable: bool,
@@ -45,7 +152,7 @@ pub struct FilterableColumnSpec {
 }
 
 /// Supported filterable data types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FilterableData {
     String,
     Integer,
@@ -468,11 +575,12 @@ impl ColumnarSchemaBuilder {
         config: &ColumnarSchemaConfig,
     ) -> Result<()> {
         for filterable in &config.filterable_columns {
-            let data_type = self.convert_filterable_type(&filterable.data_type)?;
+            // Convert our local FilterableData enum to Arrow DataType
+            let data_type = filterable.data_type.to_arrow_type();
 
             // Enable dictionary encoding for low-cardinality strings
             let field = if config.optimization.enable_dictionary_encoding
-                && matches!(filterable.data_type, FilterableData::String)
+                && filterable.data_type == FilterableData::String
                 && filterable
                     .estimated_cardinality
                     .map_or(false, |c| c < 10000)
@@ -636,6 +744,51 @@ impl CachedSchema {
     }
 }
 
+impl ColumnarFilterableSpec {
+    /// Convert from proto FilterableColumnSpec to our internal type
+    pub fn from_proto(proto: &crate::proto::proximadb_v1::FilterableColumnSpec) -> Self {
+        let data_type = match proto.data_type {
+            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32 => FilterableData::String,
+            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableInteger as i32 => FilterableData::Integer,
+            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32 => FilterableData::Float,
+            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean as i32 => FilterableData::Boolean,
+            x if x == crate::proto::proximadb_v1::FilterableDataType::FilterableDatetime as i32 => FilterableData::Datetime,
+            _ => FilterableData::String, // Default to string
+        };
+
+        Self {
+            name: proto.name.clone(),
+            data_type,
+            nullable: true, // Default to nullable - any column could be nullable
+            indexed: proto.indexed,
+            estimated_cardinality: proto.estimated_cardinality.map(|c| c as usize),
+        }
+    }
+
+    /// Convert a list of proto specs to internal specs
+    pub fn from_proto_vec(protos: &[crate::proto::proximadb_v1::FilterableColumnSpec]) -> Vec<Self> {
+        protos.iter().map(Self::from_proto).collect()
+    }
+}
+
+impl FilterableData {
+    /// Convert to Arrow DataType
+    pub fn to_arrow_type(&self) -> DataType {
+        match self {
+            FilterableData::String => DataType::Utf8,
+            FilterableData::Integer => DataType::Int64,
+            FilterableData::Float => DataType::Float64,
+            FilterableData::Boolean => DataType::Boolean,
+            FilterableData::Datetime => DataType::Timestamp(arrow_schema::TimeUnit::Millisecond, None),
+            FilterableData::Array(inner) => {
+                let inner_type = inner.to_arrow_type();
+                DataType::List(Arc::new(Field::new("item", inner_type, true)))
+            }
+            FilterableData::Json => DataType::Utf8, // Store JSON as string
+        }
+    }
+}
+
 impl Default for ColumnarSchemaBuilder {
     fn default() -> Self {
         Self::new()
@@ -647,7 +800,7 @@ pub async fn create_schema_from_collection(
     collection_id: &str,
     dimension: usize,
     quantization: Option<&QuantizationConfig>,
-    filterable_columns: &[FilterableColumnSpec],
+    filterable_columns: &[ColumnarFilterableSpec],
 ) -> Result<(Arc<Schema>, CompressionMetadata)> {
     let builder = ColumnarSchemaBuilder::new();
 
@@ -700,9 +853,9 @@ mod tests {
         let config = ColumnarSchemaConfig {
             dimension: 768,
             quantization: None,
-            filterable_columns: vec![FilterableColumnSpec {
+            filterable_columns: vec![ColumnarFilterableSpec {
                 name: "category".to_string(),
-                // data_type removed -  FilterableDataType::String,
+                data_type: FilterableData::String,
                 nullable: true,
                 indexed: false,
                 estimated_cardinality: Some(100),

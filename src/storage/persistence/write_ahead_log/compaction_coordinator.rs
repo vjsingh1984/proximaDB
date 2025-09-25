@@ -22,7 +22,7 @@ use tracing::{debug, info, warn};
 // Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
 // use crate::storage::engines::impls::viper::ViperEngine;
 use crate::index::axis::AxisManager;
-use crate::storage::engines::impls::sst::SstStorage;
+use crate::storage::engines::impls::sst::SstEngine;
 use crate::storage::traits::FlushResult;
 
 use super::compaction_axis_integration::CompactionAxisUpdater;
@@ -41,7 +41,7 @@ pub struct CompactionCoordinator {
 
     /// Storage engines for compaction
     viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
-    sst_engine: Arc<SstStorage>,
+    sst_engine: Arc<SstEngine>,
 
     /// Compaction configuration
     config: Option<CompactionConfig>,
@@ -196,7 +196,7 @@ impl CompactionCoordinator {
     /// Create new compaction coordinator
     pub fn new(
         viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
-        sst_engine: Arc<SstStorage>,
+        sst_engine: Arc<SstEngine>,
         config: Option<CompactionConfig>,
         axis_manager: Option<Arc<AxisManager>>,
     ) -> Self {

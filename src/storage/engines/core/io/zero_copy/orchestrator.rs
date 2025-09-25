@@ -1028,6 +1028,6 @@ mod tests {
 
         assert_eq!(operation.operation_type, OperationType::DownloadFile);
         assert_eq!(operation.target, "/path/to/file.sst");
-        assert!(operation.dependencies.is_none());
+        assert!(operation.dependencies.is_empty());
     }
 }

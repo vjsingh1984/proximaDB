@@ -14,7 +14,7 @@ use super::{BatchId, FlushResult, WALConfig, WALStats};
 use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute,
 };
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -704,7 +704,7 @@ impl ProtoSerializationStrategy {
             .next()
             .and_then(|name| name.strip_suffix(".pbwal"))
             .and_then(|name| name.rsplit('_').next())
-            .and_then(|id| crate::storage::BatchId::from_base62(id).ok())
+            .and_then(|id| crate::storage::BatchId::from_base62(id))
             .unwrap_or_else(|| crate::storage::BatchId::new());
 
         // Create WAL batch from the recovered vectors

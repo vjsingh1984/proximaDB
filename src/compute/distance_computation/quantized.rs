@@ -1190,30 +1190,33 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
     }
 
-    #[tokio::test]
-    async fn test_fp32_distance_computation() {
-        init_hardware_capabilities();
+    #[test]
+    fn test_fp32_distance_computation() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            init_hardware_capabilities();
 
-        let config = QuantizedDistanceConfig::default();
-        let calculator = QuantizedDistanceCalculator::new(config).unwrap();
+            let config = QuantizedDistanceConfig::default();
+            let calculator = QuantizedDistanceCalculator::new(config).unwrap();
 
-        let query = vec![1.0, 2.0, 3.0, 4.0];
-        let quantized_data = QuantizedVectorData {
-            fp32: Some(vec![1.1, 2.1, 3.1, 4.1]),
-            binary: None,
-            int8: None,
-            pq: None,
-        };
+            let query = vec![1.0, 2.0, 3.0, 4.0];
+            let quantized_data = QuantizedVectorData {
+                fp32: Some(vec![1.1, 2.1, 3.1, 4.1]),
+                binary: Some(vec![0b10101010, 0b11001100]), // Add binary data for Binary format test
+                int8: None,
+                pq: None,
+            };
 
-        let result = calculator
-            .compute_distance(&query, &quantized_data, SelectedFormat::Binary)
-            .await
-            .unwrap();
+            let result = calculator
+                .compute_distance(&query, &quantized_data, SelectedFormat::FP32)
+                .await
+                .unwrap();
 
-        assert!(result.similarity >= 0.0);
-        assert_eq!(result.quality_estimate, 1.0);
-        assert!(matches!(result.method, ComputationMethod::ExactFP32));
-        assert!(result.metrics.computation_time_us > 0.0);
+            assert!(result.similarity >= 0.0);
+            assert_eq!(result.quality_estimate, 1.0);
+            assert!(matches!(result.method, ComputationMethod::ExactFP32));
+            assert!(result.metrics.computation_time_us > 0.0);
+        });
     }
 
     #[test]
@@ -1278,7 +1281,7 @@ mod tests {
 
         assert!(result.quality_estimate >= 0.9);
         if let ComputationMethod::ProgressiveRefinement { stages } = result.method {
-            assert!(!stages.is_none());
+            assert!(!stages.is_empty());
         } else {
             panic!("Expected progressive refinement method");
         }

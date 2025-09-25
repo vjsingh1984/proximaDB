@@ -12,16 +12,17 @@ use std::sync::Arc;
 use tempfile::tempdir;
 
 use super::*;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::proto::proximadb_v1::SqlValue;
 
 /// Example: VIPER engine using optimized columnar infrastructure
 pub async fn viper_optimization_example() -> Result<()> {
     println!("=== VIPER Engine Optimization Example ===");
 
     // Initialize hardware capabilities
-    let _ = HardwareCapabilities::initialize_hardware_capabilities_default();
+    let _ = HardwareCapabilities::detect_with_config(Default::default());
 
     // Setup
     let temp_dir = tempdir()?;
@@ -80,9 +81,16 @@ pub async fn viper_optimization_example() -> Result<()> {
             let mut metadata = HashMap::new();
             metadata.insert(
                 "category".to_string(),
-                serde_json::json!(format!("cat_{}", i % 10)),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("cat_{}", i % 10))),
+                },
             );
-            metadata.insert("batch_id".to_string(), serde_json::json!(i / 1000));
+            metadata.insert(
+                "batch_id".to_string(),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i / 1000)),
+                },
+            );
 
             let record = VectorRecord {
                 id: if !recommendations.use_id_less_storage {
@@ -90,10 +98,11 @@ pub async fn viper_optimization_example() -> Result<()> {
                 } else {
                     format!("implicit_{:06}", i) // ID-less storage uses implicit IDs
                 },
-                collection_id: "viper_example".to_string(),
                 vector,
                 metadata,
                 timestamp: i as i64,
+                quantized_vector: vec![],
+                source: None,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
@@ -102,7 +111,7 @@ pub async fn viper_optimization_example() -> Result<()> {
             writer.write_record(record).await?;
         }
 
-        let stats = writer.finalize().await?;
+        let (stats, _collector) = writer.finalize().await?;
 
         println!("✅ VIPER Write Complete:");
         println!("  - File size: {} bytes", stats.file_size);
@@ -255,16 +264,27 @@ pub async fn nova_optimization_example() -> Result<()> {
             let mut metadata = HashMap::new();
             metadata.insert(
                 "department".to_string(),
-                serde_json::json!(format!("dept_{}", i % 50)),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("dept_{}", i % 50))),
+                },
             );
-            metadata.insert("project_id".to_string(), serde_json::json!(i / 5000));
+            metadata.insert(
+                "project_id".to_string(),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i / 5000)),
+                },
+            );
             metadata.insert(
                 "data_source".to_string(),
-                serde_json::json!("analytics_pipeline"),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("analytics_pipeline".to_string())),
+                },
             );
             metadata.insert(
                 "embedding_model".to_string(),
-                serde_json::json!("text-embedding-ada-002"),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("text-embedding-ada-002".to_string())),
+                },
             );
 
             let record = VectorRecord {
@@ -273,10 +293,11 @@ pub async fn nova_optimization_example() -> Result<()> {
                 } else {
                     format!("implicit_{:08}", i) // ID-less saves ~8 bytes per vector
                 },
-                collection_id: "nova_example".to_string(),
                 vector,
                 metadata,
                 timestamp: (1700000000 + i) as i64,
+                quantized_vector: vec![],
+                source: None,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
@@ -285,7 +306,7 @@ pub async fn nova_optimization_example() -> Result<()> {
             writer.write_record(record).await?;
         }
 
-        let stats = writer.finalize().await?;
+        let (stats, _collector) = writer.finalize().await?;
 
         println!("✅ NOVA Write Complete:");
         println!(

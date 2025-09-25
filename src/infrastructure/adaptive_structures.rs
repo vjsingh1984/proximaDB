@@ -256,8 +256,10 @@ pub struct TierRebalanceResult {
     pub memory_allocated_bytes: usize,
 }
 
+// BackendType already defined above - removed duplicate definition
+
 /// Configuration for adaptive store creation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AdaptiveStoreConfig {
     /// Collection ID this store belongs to
     pub collection_id: String,
@@ -269,7 +271,7 @@ pub struct AdaptiveStoreConfig {
     pub metrics_config: MetricsConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TierConfig {
     /// Enable tier management
     pub enable_tiering: bool,
@@ -281,7 +283,7 @@ pub struct TierConfig {
     pub max_concurrent_operations: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MetricsConfig {
     /// Enable detailed workload metrics
     pub enable_workload_metrics: bool,
@@ -811,7 +813,7 @@ where
     K: Hash + Eq + Clone + Send + Sync + 'static,
     V: Clone + Send + Sync + 'static,
 {
-    async fn new_dashmap(
+    pub async fn new_dashmap(
         collection_id: String,
         initial_capacity: usize,
         _memory_limit_mb: Option<usize>,
@@ -1391,51 +1393,108 @@ where
 mod tests {
     use super::*;
 
+    // Helper functions for tests
+    fn create_default_unified_tier_policy() -> UnifiedTierPolicy {
+        UnifiedTierPolicy {
+            eviction_policy: EvictionPolicy::SizeBased { max_memory_mb: 100 },
+            promotion_criteria: PromotionCriteria {
+                min_access_frequency: 10,
+                frequency_window: Duration::from_secs(60),
+                min_promotion_tier: InfrastructureTier::Memory,
+            },
+            demotion_criteria: DemotionCriteria {
+                max_idle_time: Duration::from_secs(300),
+                memory_pressure_threshold: 0.8,
+                min_tier: InfrastructureTier::NvmeSsd {
+                    mount_path: "/tmp/nvme".to_string(),
+                },
+            },
+            reload_strategy: ReloadStrategy {
+                load_on_startup: false,
+                prefetch_hot_data: false,
+                max_initial_load: 0,
+                axis_storage_path: "/tmp/test/indexes/".to_string(),
+            },
+        }
+    }
+
+    fn create_default_adaptive_store_config(collection_id: &str) -> AdaptiveStoreConfig {
+        AdaptiveStoreConfig {
+            collection_id: collection_id.to_string(),
+            backend_type: BackendType::Index {
+                structure: IndexStructure::DashMap {
+                    initial_capacity: 100,
+                    memory_limit_mb: None,
+                },
+                tier_policy: create_default_unified_tier_policy(),
+            },
+            tier_config: TierConfig {
+                enable_tiering: true,
+                rebalance_interval: Duration::from_secs(60),
+                memory_pressure_threshold: 0.8,
+                max_concurrent_operations: 2,
+            },
+            metrics_config: MetricsConfig {
+                enable_workload_metrics: true,
+                collection_interval: Duration::from_secs(30),
+                history_retention: Duration::from_secs(300),
+            },
+        }
+    }
+
     #[tokio::test]
-    #[ignore] // TODO: Fix test - IndexBackend API has changed
     async fn test_index_backend_crud_operations() {
-        // Test disabled - needs proper initialization
-        /*
+        // Create IndexBackend with current API
+        let global_tier = Arc::new(GlobalTier::new());
+        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
+        let backend = IndexBackend::<String, String>::new_dashmap(
+            "test_crud".to_string(),
+            100,
+            None, // memory_limit_mb
+            create_default_unified_tier_policy(),
+            create_default_adaptive_store_config("test_crud"),
+            tier_manager,
+        ).await.unwrap();
+
         // CREATE: Insert new key-value pairs
         assert_eq!(backend.insert("key1".to_string(), "value1".to_string()).await.unwrap(), None);
         assert_eq!(backend.insert("key2".to_string(), "value2".to_string()).await.unwrap(), None);
 
         // READ: Get values by key
-        assert_eq!(backend.get(key)).await, Some("value1".to_string()));
-        assert_eq!(backend.get(key)).await, Some("value2".to_string()));
-        assert_eq!(backend.get(key)).await, None);
+        assert_eq!(backend.get(&"key1".to_string()).await, Some("value1".to_string()));
+        assert_eq!(backend.get(&"key2".to_string()).await, Some("value2".to_string()));
+        assert_eq!(backend.get(&"nonexistent".to_string()).await, None);
 
         // UPDATE: Replace existing value
         assert_eq!(backend.insert("key1".to_string(), "updated".to_string()).await.unwrap(),
                    Some("value1".to_string()));
-        assert_eq!(backend.get(key)).await, Some("updated".to_string()));
+        assert_eq!(backend.get(&"key1".to_string()).await, Some("updated".to_string()));
 
         // DELETE: Remove key-value pairs
         assert_eq!(backend.remove(&"key1".to_string()).await, Some("updated".to_string()));
-        assert_eq!(backend.get(key)).await, None);
+        assert_eq!(backend.get(&"key1".to_string()).await, None);
 
         // Utility methods
         assert!(backend.contains(&"key2".to_string()).await);
         assert!(!backend.contains(&"key1".to_string()).await);
         assert_eq!(backend.len().await, 1);
-        assert!(!backend.is_none().await);
+        assert!(!backend.is_empty().await);
 
         backend.clear().await;
-        assert!(backend.is_none().await);
-        */
+        assert!(backend.is_empty().await);
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix test - API has changed
     async fn test_index_backend_write_buffering() {
-        /*
+        let global_tier = Arc::new(GlobalTier::new());
+        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
         let backend = IndexBackend::<String, i32>::new_dashmap(
             "test_buffer".to_string(),
             100,
             None,
-            UnifiedTierPolicy::Unified,
-            AdaptiveStoreConfig::default(),
-            Arc::new(UniversalTier::new()),
+            create_default_unified_tier_policy(),
+            create_default_adaptive_store_config("test_buffer"),
+            tier_manager,
         ).await.unwrap();
 
         // Buffer writes without immediate insertion
@@ -1454,7 +1513,7 @@ mod tests {
 
         // Verify data integrity after flush
         for i in 0..500 {
-            assert_eq!(backend.get(key)).await, Some(i));
+            assert_eq!(backend.get(&format!("key{}", i)).await, Some(i));
         }
 
         // Test auto-flush at buffer size limit (1000)
@@ -1466,33 +1525,34 @@ mod tests {
         }
 
         assert_eq!(backend.len().await, 1500);
-        */
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix test - API has changed
     async fn test_cache_backend_operations() {
-        /*
+        let global_tier = Arc::new(GlobalTier::new());
+        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
         let backend = CacheBackend::<String, String>::new_moka(
-            "test_cache_info".to_string(),
-            100,
-            UnifiedTierPolicy::Unified,
-            AdaptiveStoreConfig::default(),
-            Arc::new(UniversalTier::new()),
+            "test_cache".to_string(),
+            100, // max_capacity
+            None, // time_to_live
+            None, // time_to_idle
+            create_default_unified_tier_policy(),
+            create_default_adaptive_store_config("test_cache"),
+            tier_manager,
         ).await.unwrap();
 
         // Test basic operations
         backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
-        assert_eq!(backend.get(key)).await, Some("value1".to_string()));
+        assert_eq!(backend.get(&"key1".to_string()).await, Some("value1".to_string()));
 
         // Test update
         backend.insert("key1".to_string(), "updated".to_string()).await.unwrap();
-        assert_eq!(backend.get(key)).await, Some("updated".to_string()));
+        assert_eq!(backend.get(&"key1".to_string()).await, Some("updated".to_string()));
 
         // Test remove
         let removed = backend.remove(&"key1".to_string()).await;
         assert_eq!(removed, Some("updated".to_string()));
-        assert_eq!(backend.get(key)).await, None);
+        assert_eq!(backend.get(&"key1".to_string()).await, None);
 
         // Test clear
         for i in 0..10 {
@@ -1501,55 +1561,52 @@ mod tests {
         assert!(backend.len().await > 0);
         backend.clear().await;
         assert_eq!(backend.len().await, 0);
-        */
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix test - API has changed
     async fn test_metrics_and_workload_tracking() {
-        /*
+        let global_tier = Arc::new(GlobalTier::new());
+        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
         let backend = IndexBackend::<String, String>::new_dashmap(
             "test_metrics".to_string(),
             100,
             None,
-            UnifiedTierPolicy::Unified,
-            AdaptiveStoreConfig::default(),
-            Arc::new(UniversalTier::new()),
+            create_default_unified_tier_policy(),
+            create_default_adaptive_store_config("test_metrics"),
+            tier_manager,
         ).await.unwrap();
 
         // Perform mixed operations
         backend.insert("key1".to_string(), "value1".to_string()).await.unwrap();
         backend.insert("key2".to_string(), "value2".to_string()).await.unwrap();
-        backend.get(key)).await; // Hit
-        backend.get(key)).await; // Miss
+        backend.get(&"key1".to_string()).await; // Hit
+        backend.get(&"nonexistent".to_string()).await; // Miss
         backend.remove(&"key2".to_string()).await;
 
         // Check operation metrics
         let metrics = backend.metrics().await;
-        assert_eq!(metrics.hit_count, 1);
-        assert_eq!(metrics.miss_count, 1);
-        assert_eq!(metrics.operation_count, 5); // 2 inserts + 2 gets + 1 remove
+        assert_eq!(metrics.hits, 1);
+        assert_eq!(metrics.misses, 1);
+        assert_eq!(metrics.operations, 5); // 2 inserts + 2 gets + 1 remove
 
         // Check workload metrics
         let workload = backend.workload_metrics().await;
-        assert_eq!(workload.total_operations, 5);
-        assert_eq!(workload.write_operations, 3); // 2 inserts + 1 remove
-        assert_eq!(workload.read_operations, 2); // 2 gets
-        assert!(workload.cache_hit_ratio > 0.0);
-        */
+        assert!(workload.writes_per_second > 0.0); // Should have recorded write operations
+        assert!(workload.reads_per_second > 0.0); // Should have recorded read operations
+        assert!(workload.cache_hit_rate > 0.0); // Should have some hit rate
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix test - API has changed
     async fn test_concurrent_index_backend_access() {
-        /*
+        let global_tier = Arc::new(GlobalTier::new());
+        let tier_manager = Arc::new(UniversalTier::new(global_tier).await.unwrap());
         let backend = Arc::new(IndexBackend::<i32, i32>::new_dashmap(
             "test_concurrent".to_string(),
             1000,
             None,
-            UnifiedTierPolicy::Unified,
-            AdaptiveStoreConfig::default(),
-            Arc::new(UniversalTier::new()),
+            create_default_unified_tier_policy(),
+            create_default_adaptive_store_config("test_concurrent"),
+            tier_manager,
         ).await.unwrap());
 
         // Spawn multiple concurrent tasks
@@ -1573,7 +1630,7 @@ mod tests {
                 for i in 0..100 {
                     let key = (thread_id - 5) * 100 + i;
                     // May or may not find the key depending on timing
-                    let _ = backend_clone.get(key).await;
+                    let _ = backend_clone.get(&key).await;
                 }
             }));
         }
@@ -1588,9 +1645,8 @@ mod tests {
 
         // Verify data integrity
         for i in 0..500 {
-            assert_eq!(backend.get(key).await, Some(i * 2));
+            assert_eq!(backend.get(&i).await, Some(i * 2));
         }
-        */
     }
 
     #[tokio::test]

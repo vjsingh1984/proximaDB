@@ -19,7 +19,10 @@
 //! This module contains all unit tests organized by functional area.
 //! Unit tests focus on testing individual components in isolation.
 
+pub mod clustering_models_test;
 pub mod compute;
+pub mod config;
+pub mod core;
 pub mod handlers;
 pub mod mvcc_logic_tests;
 pub mod network;
@@ -28,8 +31,7 @@ pub mod search;
 pub mod serialization_compression_tests;
 pub mod server;
 pub mod services;
-pub mod sql_comprehensive_operator_tests;
-pub mod sql_parsing_verification_test;
 pub mod sst_optimization_tests;
 pub mod storage;
-pub mod viper_optimization_tests;
+pub mod write_buffer_recovery_stress_tests;
+pub mod write_buffer_write_optimization_tests;

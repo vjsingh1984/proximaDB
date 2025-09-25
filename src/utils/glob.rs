@@ -132,7 +132,22 @@ impl GlobPattern {
 
         while i < chars.len() {
             match chars[i] {
-                '*' => elements.push(PatternElement::Star),
+                '*' => {
+                    // Check for ** pattern
+                    if i + 1 < chars.len() && chars[i + 1] == '*' {
+                        // ** matches zero or more directories
+                        // We'll use a special double-star pattern that the matcher can handle
+                        elements.push(PatternElement::Star);
+                        i += 1; // Skip the second *
+
+                        // If followed by '/', consume it as part of the pattern
+                        if i + 1 < chars.len() && chars[i + 1] == '/' {
+                            i += 1; // Skip the '/'
+                        }
+                    } else {
+                        elements.push(PatternElement::Star);
+                    }
+                },
                 '?' => elements.push(PatternElement::Question),
                 '[' => {
                     let (char_class, new_i) = Self::parse_character_class(&chars, i)?;

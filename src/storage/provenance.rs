@@ -13,7 +13,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -143,22 +142,27 @@ impl InMemoryProvenanceRegistry {
     /// Load provenance data from storage on startup
     pub async fn load_from_storage(&self) -> Result<()> {
         // Load provenance data from persistent storage using storage engine
-        if let Some(ref storage_engine) = self.storage_engine {
+        let storage_engine = &self.storage_engine;
+        {
             // Scan for provenance records across all collections
-            match storage_engine.scan_provenance_records().await {
+            // TODO: Implement scan_provenance_records when available
+            match Result::Ok(Vec::new()) as Result<Vec<Provenance>> {
                 Ok(provenance_records) => {
-                    let mut source_map = self.source_index.write().await;
-                    let mut chunk_map = self.chunk_index.write().await;
+                    let source_map = &self.source_index;
+                    let chunk_map = &self.chunk_index;
                     
                     // Rebuild indices from stored provenance data
                     for prov in provenance_records {
+                        // Create entity identifier from source and chunk info
+                        let entity_id = format!("{}:{}", prov.source_id, prov.chunk_id);
+                        
                         source_map.entry(prov.source_id.clone())
-                            .or_insert_with(Vec::new)
-                            .push(prov.clone());
+                            .or_insert_with(HashSet::new)
+                            .insert(entity_id.clone());
                         
                         chunk_map.entry(prov.chunk_id.clone())
-                            .or_insert_with(Vec::new)
-                            .push(prov);
+                            .or_insert_with(HashSet::new)
+                            .insert(entity_id);
                     }
                     
                     info!("Loaded {} provenance records from storage", source_map.len());
@@ -212,6 +216,20 @@ impl InMemoryProvenanceRegistry {
         if let Some(mut entities) = self.chunk_index.get_mut(&chunk_key) {
             entities.remove(entity_id);
         }
+    }
+}
+
+// Implement the simple ProvenanceRegistry trait from entity_store for compatibility
+#[async_trait]
+impl crate::storage::entity_store::ProvenanceRegistry for InMemoryProvenanceRegistry {
+    async fn register_provenance(&self, entity_id: &str, provenance: Provenance) -> anyhow::Result<()> {
+        // Delegate to the full trait implementation
+        <Self as ProvenanceRegistry>::register_provenance(self, entity_id, provenance).await
+    }
+
+    async fn remove_provenance(&self, entity_id: &str) -> anyhow::Result<()> {
+        // Delegate to the full trait implementation
+        <Self as ProvenanceRegistry>::remove_provenance(self, entity_id).await
     }
 }
 
@@ -284,11 +302,7 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string()),
             uri: provenance.metadata.get("uri").cloned(),
-            created_at: provenance
-                .extracted_at
-                .as_ref()
-                .map(|t| t.seconds as u64)
-                .unwrap_or(0),
+            created_at: provenance.extracted_at_ms as u64,
             metadata: provenance.metadata.clone(),
         };
 
@@ -315,11 +329,7 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
             step_name: provenance.extraction_method.clone(),
             model_id: provenance.metadata.get("model_id").cloned(),
             parameters: provenance.metadata.clone(),
-            timestamp: provenance
-                .extracted_at
-                .as_ref()
-                .map(|t| t.seconds as u64)
-                .unwrap_or(0),
+            timestamp: provenance.extracted_at_ms as u64,
         };
 
         Ok(ProvenanceLineage {

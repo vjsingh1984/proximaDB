@@ -237,6 +237,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             }
             "bincode" => bincode::deserialize::<Vec<VectorRecord>>(payload)
                 .context("Failed to deserialize Bincode payload")?,
+            "json" => serde_json::from_slice::<Vec<VectorRecord>>(payload)
+                .context("Failed to deserialize JSON payload")?,
             _ => {
                 return Err(anyhow::anyhow!(
                     "Unsupported payload format: {}",

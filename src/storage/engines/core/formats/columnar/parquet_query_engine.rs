@@ -32,7 +32,6 @@ use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -1747,10 +1746,33 @@ impl UnifiedParquetReader {
                 }
             }
 
-            // Extract vector (simplified - actual implementation would handle different types)
-            if let Some(float_array) = vector_array.as_any().downcast_ref::<Float32Array>() {
-                let start = row_idx * self.config.quantization.pq_segments as usize;
-                let end = start + self.config.quantization.pq_segments as usize;
+            // Extract vector - first check for FixedSizeBinary (how vectors are stored)
+            if let Some(binary_array) = vector_array.as_any().downcast_ref::<arrow_array::FixedSizeBinaryArray>() {
+                // Get the binary data for this row
+                let bytes = binary_array.value(row_idx);
+
+                // Convert bytes back to f32 vector
+                record.vector = bytes
+                    .chunks_exact(4)
+                    .map(|chunk| {
+                        let arr: [u8; 4] = chunk.try_into().unwrap();
+                        f32::from_le_bytes(arr)
+                    })
+                    .collect();
+            } else if let Some(list_array) = vector_array.as_any().downcast_ref::<arrow_array::ListArray>() {
+                // Extract vector from list array (alternative format)
+                let values = list_array.values();
+                if let Some(float_values) = values.as_any().downcast_ref::<Float32Array>() {
+                    let offsets = list_array.offsets();
+                    let start = offsets[row_idx] as usize;
+                    let end = offsets[row_idx + 1] as usize;
+                    record.vector = (start..end).map(|i| float_values.value(i)).collect();
+                }
+            } else if let Some(float_array) = vector_array.as_any().downcast_ref::<Float32Array>() {
+                // Fallback for flat arrays (if needed for backward compatibility)
+                let vector_dim = float_array.len() / batch.num_rows();
+                let start = row_idx * vector_dim;
+                let end = start + vector_dim;
                 record.vector = (start..end).map(|i| float_array.value(i)).collect();
             }
 
@@ -2200,8 +2222,8 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemConfig;
     #[tokio::test]
     async fn test_unified_parquet_reader_creation() {
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).unwrap());
-        let reader = UnifiedParquetReader::new(filesystem).await;
+        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+        let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
         assert_eq!(reader.config.enable_predicate_pushdown, true);
         assert_eq!(reader.config.enable_projection, true);
         assert_eq!(reader.config.enable_row_group_pruning, true);
@@ -2209,8 +2231,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_management() {
-        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).unwrap());
-        let reader = UnifiedParquetReader::new(filesystem).await;
+        let filesystem = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await.unwrap());
+        let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
         // Initially empty
         let (metadata_count, row_group_count, cache_size) = reader.get_cache_stats().await;
         assert_eq!(metadata_count, 0);

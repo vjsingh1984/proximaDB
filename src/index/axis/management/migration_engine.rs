@@ -413,7 +413,7 @@ impl IndexMigrationEngine {
             new_strategy: to.clone(),
             duration_ms: total_duration.as_millis() as u64,
             vectors_migrated,
-            performance_improvement: self.calculate_performance_improvement(&from, &to, total_duration).await,
+            performance_improvement: self.calculate_performance_improvement(&from, &to, total_duration).await as f32,
             errors,
         };
 
@@ -653,6 +653,8 @@ impl IndexMigrationEngine {
             IndexAlgorithm::InvertedIndex { .. } => 90.0, // Excellent for full-text search
             IndexAlgorithm::SkipList { .. } => 70.0,      // Good for sorted data
             IndexAlgorithm::BloomFilter { .. } => 50.0,   // Good for membership testing
+            IndexAlgorithm::Annoy { .. } => 80.0,        // Good for approximate nearest neighbor
+            IndexAlgorithm::GlobalId { .. } => 100.0,    // Excellent for O(1) vector ID lookup
         }
     }
 

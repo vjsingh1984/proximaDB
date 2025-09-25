@@ -662,23 +662,15 @@ impl AxisEventLogConsumer {
         );
 
         // Create zero-copy IO system once for all files - this enables cross-file optimization
-        // Note: ZeroCopyIOSystem requires configuration and filesystem factory
-        use crate::storage::engines::core::io::zero_copy::{
-            access_tracker::AccessEvent,
-            config::{WorkloadType, ZeroCopyIOConfig},
-            orchestrator::ZeroCopyIOSystem,
-            traits::QueryType as ZeroCopyQueryType,
-        };
+        // Use UnifiedCachingFilesystem for all engines
+        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
-        let zero_copy_config = ZeroCopyIOConfig::for_workload(WorkloadType::HighPerformance);
-        let zero_copy_system = Arc::new(
-            ZeroCopyIOSystem::new(
-                zero_copy_config,
-                filesystem_factory.clone(),
-                vec![], // No custom serializers needed for now
-            )
-            .await?,
-        );
+        let base_fs = filesystem_factory.get_filesystem("file://")?;
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            collection_id.to_string(),
+            "axis".to_string(),
+        ));
 
         // Note: For AXIS indexing, we need full scan of all records, not selective reads
         // The zero-copy system should prioritize local disk reads for recently flushed/compacted files
@@ -690,16 +682,8 @@ impl AxisEventLogConsumer {
         // Track which files are likely on local disk (recently flushed/compacted)
         // These should be read from local cache to avoid cloud storage costs
         for file_path in files {
-            // Create access event for tracking
-            let _access_event = AccessEvent {
-                file_path: file_path.to_string(),
-                collection_id: collection_id.to_string(),
-                query_type: ZeroCopyQueryType::FullScan,
-                timestamp: std::time::Instant::now(),
-                result_type: "axis_indexing".to_string(),
-            };
-            // Note: ZeroCopyIOSystem tracks access patterns internally
-            // The access tracker is used for pattern learning and optimization
+            // UnifiedCachingFilesystem handles access tracking internally
+            // No need to create access events manually
         }
 
         info!(
@@ -716,13 +700,13 @@ impl AxisEventLogConsumer {
             | StorageEngineType::NOVA
             | StorageEngineType::RAPTOR
             | StorageEngineType::SWIFT
-            | StorageEngineType::PRISM => {
+            | StorageEngineType::HELIX => {
                 debug!(
                     "[AXIS Consumer] Using unified reader for {:?} engine with zero-copy optimization",
                     storage_engine
                 );
 
-                use crate::core::VectorRecord;
+                use crate::proto::proximadb_v1::VectorRecord;
 
                 // Create appropriate reader based on storage engine type
                 // All readers should leverage the zero-copy IO system for optimization
@@ -733,7 +717,7 @@ impl AxisEventLogConsumer {
 
                         let reader = UnifiedSstableReader::new(
                             filesystem_factory.clone(),
-                            zero_copy_system.clone(),
+                            unified_fs.clone(),
                             collection_id.to_string(),
                         );
 
@@ -792,7 +776,7 @@ impl AxisEventLogConsumer {
                             let reader = UnifiedSwiftReader::new(
                                 filesystem_factory.clone(),
                                 file_path.clone(),
-                                zero_copy_system.clone(),
+                                unified_fs.clone(),
                                 collection_id.to_string(),
                                 config,
                             )
@@ -1033,45 +1017,22 @@ impl AxisEventLogConsumer {
                             // Use unified cache orchestrator
                             let cache = self.cache_orchestrator.clone();
 
-                            // Create ZeroCopyFilesystem for RAPTOR
-                            use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
-                            use crate::storage::persistence::filesystem::FilesystemFactory;
-                            use crate::storage::persistence::filesystem::local::{
-                                LocalConfig, LocalFileSystem,
-                            };
-                            use crate::storage::persistence::filesystem::zero_copy_filesystem::ZeroCopyFilesystem;
+                            // Create UnifiedCachingFilesystem for RAPTOR
+                            use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 
-                            // Create basic filesystem
-                            let local_config = LocalConfig::default();
-                            let local_fs =
-                                Arc::new(LocalFileSystem::new(local_config).await.unwrap())
-                                    as Arc<dyn crate::storage::persistence::filesystem::FileSystem>;
-
-                            // Create filesystem factory for zero-copy system
-                            use crate::storage::persistence::filesystem::FilesystemConfig;
+                            // Create filesystem factory
                             let fs_config = FilesystemConfig::default();
                             let fs_factory =
                                 Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
 
-                            // Create zero-copy IO system
-                            use crate::storage::engines::core::io::zero_copy::ZeroCopyIOConfig;
-                            let io_config = ZeroCopyIOConfig::default();
-                            let io_system = Arc::new(
-                                ZeroCopyIOSystem::new(
-                                    io_config,
-                                    fs_factory.clone(),
-                                    vec![], // Empty metadata serializers for now
+                            // Get unified caching filesystem
+                            let unified_fs = fs_factory
+                                .get_unified_caching_filesystem(
+                                    &format!("file://{}", cache_dir),
+                                    collection_id.to_string(),
+                                    "raptor".to_string(),
                                 )
-                                .await?,
-                            );
-
-                            // Create zero-copy filesystem
-                            let zero_copy_fs = Arc::new(ZeroCopyFilesystem::new(
-                                local_fs,
-                                io_system.clone(),
-                                collection_id.to_string(),
-                                "raptor".to_string(),
-                            ));
+                                .unwrap();
 
                             // Create transaction coordinator for RAPTOR
                             let transaction_coordinator = Arc::new(
@@ -1087,8 +1048,7 @@ impl AxisEventLogConsumer {
                                 collection_id.to_string(),
                                 config,
                                 cache,
-                                zero_copy_fs.clone(),
-                                io_system.clone(),
+                                unified_fs.clone(),
                                 transaction_coordinator,
                             );
 
@@ -1132,81 +1092,6 @@ impl AxisEventLogConsumer {
                                 file_duration.as_secs_f64() * 1000.0
                             );
                         }
-                        all_records
-                    }
-                    StorageEngineType::PRISM => {
-                        // PRISM is metadata-first and memory-optimized
-                        // It uses FastLanes serialization with progressive quantization levels
-                        debug!(
-                            "[AXIS Consumer] Using PRISM reader for metadata-first memory format"
-                        );
-
-                        // PRISM stores data in memory with multiple resolution levels
-                        // For AXIS indexing, we need to read the full-precision vectors
-                        use crate::storage::engines::impls::prism::fastlanes_serializer::PrismFastLanesSerializer;
-
-                        let mut all_records = Vec::new();
-
-                        for (idx, file_path) in files.iter().enumerate() {
-                            debug!(
-                                "[AXIS Consumer] Reading PRISM memory-serialized file {}/{}: {}",
-                                idx + 1,
-                                files.len(),
-                                file_path
-                            );
-                            let file_start = std::time::Instant::now();
-
-                            // Read the serialized PRISM data
-                            let fs = filesystem_factory.get_filesystem(file_path)?;
-                            let file_data = fs.read(file_path).await.map_err(|e| {
-                                error!(
-                                    "[AXIS Consumer] Failed to read PRISM file {}: {}",
-                                    file_path, e
-                                );
-                                e
-                            })?;
-
-                            // PRISM uses FastLanes progressive serialization
-                            // The data contains multiple resolution levels (Binary, INT8, FP32)
-                            use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
-                            let serializer =
-                                PrismFastLanesSerializer::new(StorageQuantizationConfig::default());
-
-                            // Deserialize the progressive format
-                            // For AXIS indexing, we typically want the highest resolution (FP32)
-                            let records = match extraction_mode {
-                                ExtractionMode::Fp32Only => {
-                                    // Extract FP32 resolution level
-                                    let (records, _metadata) =
-                                        serializer.deserialize_resolution(&file_data).await?;
-                                    records
-                                }
-                                ExtractionMode::QuantizedOnly => {
-                                    // Extract quantized resolution level
-                                    let (records, _metadata) =
-                                        serializer.deserialize_resolution(&file_data).await?;
-                                    records
-                                }
-                                ExtractionMode::Both | ExtractionMode::Auto => {
-                                    // Extract all available resolution levels
-                                    let (records, _metadata) =
-                                        serializer.deserialize_resolution(&file_data).await?;
-                                    records
-                                }
-                            };
-
-                            let record_count = records.len();
-                            all_records.extend(records);
-
-                            let file_duration = file_start.elapsed();
-                            debug!(
-                                "[AXIS Consumer] Read {} records from PRISM file {} in {:.2}ms",
-                                record_count,
-                                file_path,
-                                file_duration.as_secs_f64() * 1000.0
-                            );
-                        }
-
                         all_records
                     }
                     _ => {

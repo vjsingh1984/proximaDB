@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use super::pca_impl::EnhancedPCAModel;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 /// Configuration for PCA model management

@@ -4,7 +4,6 @@
 use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::Result;
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,7 +15,6 @@ use tracing::info;
 // Block structures handled internally
 // Bloom filter handled internally
 
-use crate::storage::persistence::filesystem::ZeroCopyFilesystem;
 
 /// SWIFT-specific superblock cache optimized for tree navigation and instant traversal
 pub struct SwiftSuperBlockCache {
@@ -43,14 +41,14 @@ pub struct SwiftSuperBlockCache {
     tree_path_cache: Arc<DashMap<String, Arc<OptimalTreePath>>>,
 
     /// Filesystem for loading/storing cache data
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
 
     /// Cache statistics
     cache_stats: Arc<SwiftCacheStatistics>,
 }
 
 /// SWIFT SuperBlock metadata focused on tree navigation and instant traversal
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CachedSuperBlockMetadata {
     /// SuperBlock identification
     pub superblock_id: u32,
@@ -77,6 +75,7 @@ pub struct CachedSuperBlockMetadata {
 
     /// Access patterns for tree optimization
     pub access_frequency: u64,
+    #[serde(skip)]
     pub last_access: Option<Instant>,
     pub hot_datablocks: Vec<u32>,
 
@@ -92,7 +91,7 @@ pub struct CachedSuperBlockMetadata {
 }
 
 /// Tree navigation hints for instant traversal optimization  
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TreeNavigationHints {
     /// Optimal tree traversal paths
     pub frequent_paths: Vec<TreePath>,
@@ -111,7 +110,7 @@ pub struct TreeNavigationHints {
 }
 
 /// Tree path for optimized navigation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TreePath {
     pub path_id: String,
     pub nodes: Vec<String>,
@@ -121,7 +120,7 @@ pub struct TreePath {
 }
 
 /// Locality group for cache optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LocalityGroup {
     pub group_id: String,
     pub related_nodes: Vec<String>,
@@ -130,7 +129,7 @@ pub struct LocalityGroup {
 }
 
 /// Tree optimization hint
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TreeOptimizationHint {
     PreloadSubtree { root_node: String, depth: u8 },
     CacheNodeGroup { nodes: Vec<String> },
@@ -180,7 +179,7 @@ pub struct CachedDataBlockMetadata {
 }
 
 /// Quantization level metadata for progressive search
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct QuantizationLevelMetadata {
     pub level_name: String,
     pub bits_per_dimension: u8,
@@ -202,9 +201,10 @@ pub struct QuantizationSummary {
 }
 
 /// DataBlock access statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DataBlockAccessStats {
     pub access_count: u64,
+    #[serde(skip)]
     pub last_access: Option<Instant>,
     pub avg_response_time_us: u64,
     pub cache_hit_rate: f32,
@@ -212,7 +212,7 @@ pub struct DataBlockAccessStats {
 }
 
 /// Bloom filter metadata for instant filtering
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BloomFilterMetadata {
     pub filter_id: String,
     pub superblock_id: u32,
@@ -225,7 +225,7 @@ pub struct BloomFilterMetadata {
 }
 
 /// Types of bloom filters in SWIFT
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum BloomFilter {
     KeyFilter,       // For ID lookups
     MetadataFilter,  // For metadata filtering
@@ -267,7 +267,7 @@ struct SwiftCacheStatistics {
 
 impl SwiftSuperBlockCache {
     pub fn new(
-        filesystem: Arc<ZeroCopyFilesystem>,
+        filesystem: Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
         datablock_cache_size: usize,
         datablock_ttl_sec: u64,
         progressive_ttl_sec: u64,

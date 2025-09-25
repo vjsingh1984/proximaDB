@@ -123,7 +123,7 @@ def main():
         "/home/vsingh/code/proximaDB/src/storage/engines/sst/mod.rs",
         "/home/vsingh/code/proximaDB/tests/unit/compute/distance_avx512_tests.rs",
         "/home/vsingh/code/proximaDB/tests/unit/compute/distance_tests.rs",
-        "/home/vsingh/code/proximaDB/src/query/sql_engine/comprehensive_sql_tests.rs",
+        
         "/home/vsingh/code/proximaDB/tests/unit/write_buffer_write_optimization_tests.rs",
         "/home/vsingh/code/proximaDB/tests/unit/write_buffer_recovery_optimization_tests.rs",
         "/home/vsingh/code/proximaDB/tests/recovery_test.rs",

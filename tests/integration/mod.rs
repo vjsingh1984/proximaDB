@@ -19,11 +19,15 @@
 //! This module organizes all integration tests that test multiple components
 //! working together and end-to-end functionality.
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 // Integration test modules - these are organized by functional area
 // Each subdirectory contains integration tests for that area
 
-// Test utilities moved to common/unified_test_utils.rs for consolidation
-// pub mod test_utils; // Deprecated - use common::unified_test_utils
+// Test utilities moved to common/integration_test_helpers.rs for consolidation
+// pub mod test_utils; // Deprecated - use common::integration_test_helpers
 
 // Isolated integration tests with individual collections
 // pub mod isolated_storage_assignment_test; // File not found - commented for now
@@ -69,8 +73,9 @@ pub mod viper;
 // Nova engine integration tests
 pub mod nova_engine_test;
 
-// Prism engine integration tests
-pub mod prism_engine_test;
+// Helix engine integration tests
+// Note: Helix tests are in tests/helix_integration_test.rs (standalone file)
+// pub mod helix_engine_test;
 
 // Swift engine integration tests
 pub mod swift_engine_test;
@@ -98,18 +103,17 @@ pub mod sst_compression_integration_test;
 pub mod sst_compression_sparse_dense_test;
 pub mod viper_compression_integration_test;
 
-// Benchmark and comparison tests
-pub mod comprehensive_engine_benchmark_report;
-pub mod engine_compression_comparison_test;
-pub mod engine_sparsity_compression_benchmark;
+// Benchmark and comparison tests - moved to benches/
+// pub mod comprehensive_engine_benchmark_report; // Moved to benches/comprehensive_engine_report.rs
+// pub mod engine_compression_comparison_test; // Removed - duplicate of engine_sparsity_compression_bench.rs
+// pub mod engine_sparsity_compression_benchmark; // Moved to benches/engine_sparsity_compression_bench.rs
 
 // Early termination optimization tests
 pub mod early_termination_test;
 
-// Quantization statistics tests
+// Quantization tests
 pub mod quantization_stats_test;
-
-// Quantization with block sizes test
 pub mod sst_quantization_blocks_test;
+pub mod sst_quantization_comprehensive_test; // Comprehensive quantization coverage
 
 // Middleware integration tests are at this level since they cross-cut concerns

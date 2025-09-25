@@ -22,9 +22,10 @@ use proximadb::graph::PropertyValue;
 use proximadb::graph::engines::pulsar::PulsarConfig;
 use proximadb::graph::engines::quasar::QuasarConfig;
 use proximadb::graph::{
-    Edge, GraphEngine, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node,
+    Edge, GraphEngineConfig, GraphEngineFactory, GraphEngineType, Node,
     PulsarGraphEngine, QuasarGraphEngine,
 };
+use proximadb::graph::engines::GraphEngine;
 use proximadb::proto::proximadb_v1::property_value::Value;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -74,8 +75,8 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
             ),
         ]),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: chrono::Utc::now().timestamp_millis(),
+        updated_at_ms: chrono::Utc::now().timestamp_millis(),
     };
 
     let node2 = Node {
@@ -96,8 +97,8 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
             ),
         ]),
         embedding: None,
-        created_at: None,
-        updated_at: None,
+        created_at_ms: chrono::Utc::now().timestamp_millis(),
+        updated_at_ms: chrono::Utc::now().timestamp_millis(),
     };
 
     // Insert nodes
@@ -118,8 +119,8 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
             },
         )]),
         weight: Some(1.0),
-        created_at: None,
-        updated_at: None,
+        created_at_ms: chrono::Utc::now().timestamp_millis(),
+        updated_at_ms: chrono::Utc::now().timestamp_millis(),
     };
 
     engine.insert_edge(edge)?;
@@ -129,7 +130,7 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
     // Query operations
-    let alice = engine.get_node("alice")?.unwrap();
+    let alice = engine.get_node(&"alice".to_string())?.unwrap();
     println!(
         "✓ Retrieved Alice: {} (age: {})",
         alice.id,
@@ -143,11 +144,11 @@ async fn demo_pulsar_engine() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or("unknown".to_string())
     );
 
-    let neighbors = engine.get_neighbors("alice", None)?;
+    let neighbors = engine.get_neighbors(&"alice".to_string(), None)?;
     println!("✓ Alice's neighbors: {} people", neighbors.len());
 
     // Cross-shard traversal
-    let traversal_result = engine.cross_shard_traversal("alice", 2).await?;
+    let traversal_result = engine.cross_shard_traversal(&"alice".to_string(), 2).await?;
     println!(
         "✓ Cross-shard traversal found {} nodes",
         traversal_result.len()
@@ -199,8 +200,8 @@ async fn demo_quasar_engine() -> Result<(), Box<dyn std::error::Error>> {
                 ),
             ]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
 
         engine.insert_node(node)?;
@@ -230,8 +231,8 @@ async fn demo_quasar_engine() -> Result<(), Box<dyn std::error::Error>> {
             edge_type: "CONNECTED_TO".to_string(),
             properties: HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
         engine.insert_edge(edge)?;
     }

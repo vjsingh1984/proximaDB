@@ -13,14 +13,14 @@ use arrow_array::{Array, Int64Array, RecordBatch, StringArray};
 use parquet::file::reader::{FileReader, SerializedFileReader};
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
 use crate::storage::engines::core::formats::columnar::{
-    ParquetWriterConfig, QuantizationConfig as ColumnarQuantizationConfig, StreamingParquetWriter,
+    ParquetWriterConfig, StreamingParquetWriter,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::mvcc_resolution::MvccResolver;
 
 use crate::storage::common::compaction_utils::StorageEngineType as CompactionEngineType;
@@ -1175,23 +1175,36 @@ impl Compaction {
                     .map(|q| q.enabled)
                     .unwrap_or(false);
 
+                // Extract filterable columns for bloom filter configuration
+                let filterable_columns = collection_config.as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .map(|cfg| cfg.filterable_columns.clone())
+                    .unwrap_or_default();
+
+                // Include both ID and filterable columns in bloom filters
+                let mut bloom_columns = vec!["id".to_string()];
+                for col in &filterable_columns {
+                    bloom_columns.push(col.name.clone());
+                }
+
                 // Configure ParquetWriterConfig for compaction
                 let writer_config = ParquetWriterConfig {
                     row_group_size: 100000,     // Larger row groups for compacted files
-                    enable_bloom_filters: true, // Essential for efficient ID lookups
+                    enable_bloom_filters: true, // Essential for efficient ID and metadata lookups
                     bloom_filter_fpp: 0.01,
                     expected_ndv: Some(file_record_count),
-                    bloom_filter_columns: vec!["id".to_string()],
+                    bloom_filter_columns: bloom_columns,
                     compression: compression_algorithm,
                     enable_column_statistics: true,
                     enable_page_index: true,
                     enable_column_index: true,
                     enable_offset_index: true,
+                    enable_pq_sorting: false,   // Disable PQ sorting during compaction to avoid issues with small datasets
                     page_index_granularity: 10000,
                     enable_dictionary: true,
                     dictionary_threshold: 0.5,
                     enable_delta_encoding: true,
-                    quantization: ColumnarQuantizationConfig {
+                    quantization: crate::proto::proximadb_v1::QuantizationConfig {
                         enabled: has_quantization,
                         strategy: 0, // SMART_DEFAULTS
                         custom_levels: vec![],
@@ -1210,7 +1223,7 @@ impl Compaction {
                         enable_pq: has_quantization,
                         pq_segments: 32,
                         pq_bits: 8,
-                        pq_codebooks: 0,
+                        pq_codebooks: 256,
                         binary_threshold: 0.5,
                         int8_threshold: 0.3,
                         pq_threshold: 0.1,
@@ -1219,7 +1232,6 @@ impl Compaction {
                     write_batch_size: 10000,
                     page_size: 1024 * 1024, // 1MB pages
                     enable_byte_stream_split: !has_quantization,
-                    enable_pq_sorting: true, // Enable sorting for better compression in compaction
                     pq_sorting_segments: 16,
                     pq_sorting_codebook_size: 256,
                     enable_native_metadata: true,
@@ -1252,13 +1264,29 @@ impl Compaction {
                         let vector = record
                             .row_data
                             .get("vector")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_f64().map(|f| f as f32))
-                                    .collect::<Vec<f32>>()
+                            .and_then(|v| {
+                                // Handle both array format and direct number array
+                                if let Some(arr) = v.as_array() {
+                                    Some(
+                                        arr.iter()
+                                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                            .collect::<Vec<f32>>()
+                                    )
+                                } else {
+                                    None
+                                }
                             })
-                            .unwrap_or_default();
+                            .unwrap_or_else(|| {
+                                // Log warning if we fail to extract vector
+                                debug!("Warning: Failed to extract vector for record {:?}, skipping", record.id);
+                                vec![]
+                            });
+
+                        // Skip records with empty vectors
+                        if vector.is_empty() {
+                            debug!("Skipping record with empty vector: {:?}", record.id);
+                            return None;
+                        }
 
                         // Convert metadata to HashMap<String, SqlValue>
                         let metadata: std::collections::HashMap<
@@ -1303,11 +1331,11 @@ impl Compaction {
                     "   ✅ VIPER Compaction: Wrote file {} with StreamingParquetWriter",
                     file_idx
                 );
-                debug!("      Records: {}", stats.total_records);
-                debug!("      Row groups: {}", stats.total_row_groups);
-                debug!("      File size: {} bytes", stats.file_size);
-                debug!("      Compression ratio: {:.2}", stats.compression_ratio);
-                debug!("      Bloom filters: {}", stats.bloom_filter_count);
+                debug!("      Records: {}", stats.0.total_records);
+                debug!("      Row groups: {}", stats.0.total_row_groups);
+                debug!("      File size: {} bytes", stats.0.file_size);
+                debug!("      Compression ratio: {:.2}", stats.0.compression_ratio);
+                debug!("      Bloom filters: {}", stats.0.bloom_filter_count);
             }
 
             // Read the temporary file into a buffer for atomic write
@@ -1547,7 +1575,7 @@ impl Compaction {
         row_idx: usize,
         // data_type removed -  &arrow_schema::DataType,
     ) -> Result<serde_json::Value> {
-        use arrow_array::{BooleanArray, Float32Array, Int8Array, Int64Array, StringArray};
+        use arrow_array::{BooleanArray, Float32Array, Int8Array, Int64Array, StringArray, FixedSizeBinaryArray, ListArray};
         use arrow_schema::DataType;
 
         let column_data_type = column.data_type();
@@ -1589,6 +1617,46 @@ impl Compaction {
                     .downcast_ref::<Float32Array>()
                     .ok_or_else(|| anyhow::anyhow!("Failed to downcast to Float32Array"))?;
                 Ok(serde_json::json!(array.value(row_idx)))
+            }
+            DataType::FixedSizeBinary(_size) => {
+                // This is how vectors are stored - as fixed size binary arrays
+                let array = column
+                    .as_any()
+                    .downcast_ref::<FixedSizeBinaryArray>()
+                    .ok_or_else(|| anyhow::anyhow!("Failed to downcast to FixedSizeBinaryArray"))?;
+
+                // Get the binary data for this row
+                let bytes = array.value(row_idx);
+
+                // Convert bytes back to f32 vector
+                let floats: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|chunk| {
+                        let arr: [u8; 4] = chunk.try_into().unwrap();
+                        f32::from_le_bytes(arr)
+                    })
+                    .collect();
+
+                // Return as JSON array
+                Ok(serde_json::json!(floats))
+            }
+            DataType::List(_) => {
+                // Alternative vector storage format - as List<Float32>
+                let array = column
+                    .as_any()
+                    .downcast_ref::<ListArray>()
+                    .ok_or_else(|| anyhow::anyhow!("Failed to downcast to ListArray"))?;
+
+                let values = array.values();
+                if let Some(float_values) = values.as_any().downcast_ref::<Float32Array>() {
+                    let offsets = array.offsets();
+                    let start = offsets[row_idx] as usize;
+                    let end = offsets[row_idx + 1] as usize;
+                    let vector: Vec<f32> = (start..end).map(|i| float_values.value(i)).collect();
+                    Ok(serde_json::json!(vector))
+                } else {
+                    Ok(serde_json::Value::Null)
+                }
             }
             DataType::Boolean => {
                 let array = column

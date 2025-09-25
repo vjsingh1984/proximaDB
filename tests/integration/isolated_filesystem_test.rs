@@ -3,14 +3,17 @@
 //! Tests filesystem functionality with completely isolated environments
 //! to ensure reliable testing without cross-test contamination.
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-mod common {
-    include!("../common/mod.rs");
-}
-use common::unified_test_utils::UnifiedTestEnvironment as IsolatedTestEnvironment;
+use common::integration_test_helpers::UnifiedTestEnvironment as IsolatedTestEnvironment;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 #[tokio::test]

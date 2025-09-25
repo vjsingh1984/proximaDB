@@ -56,13 +56,13 @@ use std::collections::HashMap;
 pub struct CsrStorage {
     /// Offset array: offsets[i] = start index for node i's edges
     /// Node i's edges are in targets[offsets[i]..offsets[i+1]]
-    offsets: Vec<usize>,
+    pub(super) offsets: Vec<usize>,
 
     /// Target node indices for each edge
-    targets: Vec<usize>,
+    pub(super) targets: Vec<usize>,
 
     /// Edge IDs corresponding to each target (for metadata lookup)
-    edge_ids: Vec<EdgeId>,
+    pub(super) edge_ids: Vec<EdgeId>,
 
     /// Number of nodes in the graph
     node_count: usize,
@@ -407,7 +407,7 @@ mod tests {
         // Rebuild to finalize structure
         csr.rebuild().unwrap();
 
-        assert_eq!(csr.node_count(), 2);
+        assert_eq!(csr.node_count(), 3);
         assert_eq!(csr.edge_count(), 3);
 
         // Check neighbors
@@ -438,7 +438,7 @@ mod tests {
         assert_eq!(csr.get_degree(0).unwrap(), 2);
 
         // Remove one edge
-        csr.remove_edge(0, 1, "e1").unwrap();
+        csr.remove_edge(0, 1, &"e1".to_string()).unwrap();
 
         assert_eq!(csr.get_degree(0).unwrap(), 1);
         let neighbors = csr.get_neighbors(0).unwrap();
@@ -453,7 +453,7 @@ mod tests {
         csr.add_edge(10, 11, "e1".to_string()).unwrap();
         csr.rebuild().unwrap();
 
-        assert_eq!(csr.node_count(), 11);
+        assert_eq!(csr.node_count(), 12);
         assert_eq!(csr.get_degree(10).unwrap(), 1);
 
         let neighbors = csr.get_neighbors(10).unwrap();

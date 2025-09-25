@@ -19,13 +19,12 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
-use crate::proto::proximadb_v1::metadata_item;
-use crate::storage::engines::core::formats::columnar::QuantizationConfig;
 use crate::storage::engines::core::formats::columnar::native_metadata::NativeMetadataHandler;
+use crate::proto::proximadb_v1::QuantizationConfig;
 
 /// Configuration for Parquet writing
 #[derive(Debug, Clone)]
@@ -104,6 +103,42 @@ pub struct ParquetWriterConfig {
     pub metadata_inference_samples: usize,
 }
 
+impl ParquetWriterConfig {
+    /// Configure bloom filters based on filterable columns from collection config
+    /// Always includes "id" column for fast lookups
+    /// Used in both flush and compaction operations
+    pub fn with_filterable_columns(mut self, filterable_columns: &[crate::storage::engines::core::ops::FilterableColumn]) -> Self {
+        // Always include ID column for fast lookups (critical for point queries)
+        let mut bloom_columns = vec!["id".to_string()];
+
+        // Add filterable columns that benefit from bloom filters
+        // Bloom filters are most effective for:
+        // 1. High cardinality columns (many unique values)
+        // 2. Columns used in equality predicates
+        // 3. Columns used in IN predicates
+        for column in filterable_columns {
+            // Skip columns with very low cardinality (< 10 unique values)
+            // as they don't benefit much from bloom filters and add overhead
+            if let Some(cardinality) = column.estimated_cardinality {
+                if cardinality > 10 {
+                    bloom_columns.push(column.name.clone());
+                }
+            } else {
+                // If cardinality unknown, include it (conservative approach)
+                // Parquet writer will optimize based on actual data
+                bloom_columns.push(column.name.clone());
+            }
+        }
+
+        // Remove duplicates while preserving order
+        let mut seen = std::collections::HashSet::new();
+        bloom_columns.retain(|col| seen.insert(col.clone()));
+
+        self.bloom_filter_columns = bloom_columns;
+        self
+    }
+}
+
 impl Default for ParquetWriterConfig {
     fn default() -> Self {
         // All optimizations ENABLED by default for maximum performance
@@ -114,7 +149,7 @@ impl Default for ParquetWriterConfig {
             enable_bloom_filters: true,   // DEFAULT ON: 95% metadata scan reduction
             bloom_filter_fpp: 0.01,       // 1% false positive rate
             expected_ndv: None,           // Auto-detect based on data
-            bloom_filter_columns: vec![], // Auto-detect high-cardinality columns
+            bloom_filter_columns: vec![], // Will be populated from filterable columns
             enable_column_statistics: true, // DEFAULT ON: Query optimization
             enable_page_index: true,      // DEFAULT ON: Faster seeks
             enable_column_index: true,    // DEFAULT ON: 5-20x faster range queries
@@ -124,7 +159,30 @@ impl Default for ParquetWriterConfig {
             enable_dictionary: true,      // DEFAULT ON: String compression
             dictionary_threshold: 0.7,    // Use dictionary if <70% unique values
             enable_delta_encoding: true,  // DEFAULT ON: Integer compression
-            quantization: QuantizationConfig::default(),
+            quantization: QuantizationConfig {
+                enabled: false,
+                strategy: 0, // SMART_DEFAULTS
+                custom_levels: vec![],
+                enable_progressive_search: false,
+                binary_filter_selectivity: 0.3,
+                int8_ranking_selectivity: 0.1,
+                pq_ranking_selectivity: 0.05,
+                training_sample_size: 10000,
+                quality_threshold: 0.95,
+                enable_adaptive_training: false,
+                optimize_for_storage: false,
+                optimize_for_memory: false,
+                enable_simd_acceleration: false,
+                enable_binary: false,
+                enable_int8: false,
+                enable_pq: false,
+                pq_segments: 32,
+                pq_bits: 8,
+                pq_codebooks: 256,
+                binary_threshold: 0.5,
+                int8_threshold: 0.3,
+                pq_threshold: 0.1,
+            },
             id_less_storage: false, // KEEP ID COLUMN FOR CUSTOMER APIs
             write_batch_size: 1000,
             enable_byte_stream_split: true, // DEFAULT ON: Float compression
@@ -158,6 +216,9 @@ pub struct StreamingParquetWriter {
 
     /// Metadata samples for type inference
     metadata_samples: Vec<serde_json::Map<String, serde_json::Value>>,
+
+    /// Optional metadata collector for engine-specific sidecar files
+    metadata_collector: Option<Box<dyn super::metadata_collector::MetadataCollector>>,
 }
 
 impl StreamingParquetWriter {
@@ -198,7 +259,24 @@ impl StreamingParquetWriter {
             file_path: file_path_str,
             native_metadata_handler,
             metadata_samples: Vec::new(),
+            metadata_collector: None,
         })
+    }
+
+    /// Set a metadata collector for engine-specific sidecar files
+    /// Must be called before writing any data
+    pub fn set_metadata_collector(
+        &mut self,
+        collector: Box<dyn super::metadata_collector::MetadataCollector>,
+    ) {
+        self.metadata_collector = Some(collector);
+    }
+
+    /// Get the metadata collector for writing sidecar file after completion
+    pub fn take_metadata_collector(
+        &mut self,
+    ) -> Option<Box<dyn super::metadata_collector::MetadataCollector>> {
+        self.metadata_collector.take()
     }
 
     /// Create optimized Parquet schema
@@ -206,6 +284,7 @@ impl StreamingParquetWriter {
         dimension: usize,
         config: &ParquetWriterConfig,
     ) -> Result<Arc<Schema>> {
+        debug!("PARQUET_DEBUG: Creating schema for dimension={}", dimension);
         let mut fields = Vec::new();
 
         // Core fields - ID column is REQUIRED for customer APIs
@@ -248,6 +327,7 @@ impl StreamingParquetWriter {
         }
 
         if config.quantization.enable_pq {
+            // Cast u32 to i32 for Arrow API compatibility
             fields.push(Field::new(
                 "vector_pq",
                 DataType::FixedSizeBinary(config.quantization.pq_segments as i32),
@@ -300,8 +380,32 @@ impl StreamingParquetWriter {
         }
 
         // Enable bloom filters with enhanced configuration
+        // Used in both flush and compaction for fast lookups
         if config.enable_bloom_filters {
-            builder = builder.set_bloom_filter_enabled(true);
+            // Configure bloom filters for all specified columns
+            // The list should already include "id" and filterable columns from collection config
+            for column in &config.bloom_filter_columns {
+                builder = builder.set_column_bloom_filter_enabled(
+                    parquet::schema::types::ColumnPath::from(column.as_str()),
+                    true,
+                );
+                builder = builder.set_column_bloom_filter_fpp(
+                    parquet::schema::types::ColumnPath::from(column.as_str()),
+                    config.bloom_filter_fpp,
+                );
+            }
+
+            // If no columns specified but bloom filters enabled, at least add ID
+            if config.bloom_filter_columns.is_empty() {
+                builder = builder.set_column_bloom_filter_enabled(
+                    parquet::schema::types::ColumnPath::from("id"),
+                    true,
+                );
+                builder = builder.set_column_bloom_filter_fpp(
+                    parquet::schema::types::ColumnPath::from("id"),
+                    config.bloom_filter_fpp,
+                );
+            }
         }
 
         // Enable column statistics for query optimization
@@ -342,6 +446,30 @@ impl StreamingParquetWriter {
 
     /// Write a batch of records (streaming interface)
     pub async fn write_batch(&mut self, records: &[VectorRecord]) -> Result<()> {
+        debug!(
+            "PARQUET_DEBUG: write_batch called with {} records, dimension={}",
+            records.len(),
+            if !records.is_empty() { records[0].vector.len() } else { 0 }
+        );
+
+        // Calculate estimated uncompressed size
+        if !records.is_empty() {
+            let dimension = records[0].vector.len();
+            let vector_size = dimension * 4; // f32 = 4 bytes
+            let metadata_size: usize = records.iter()
+                .map(|r| r.metadata.iter()
+                    .map(|(k, v)| k.len() + 8) // key + estimate for value
+                    .sum::<usize>())
+                .sum();
+            let estimated_size = records.len() * (vector_size + 100 + metadata_size / records.len());
+            debug!(
+                "PARQUET_DEBUG: Estimated uncompressed size: {} MB (vector: {} bytes, metadata avg: {} bytes)",
+                estimated_size / (1024 * 1024),
+                vector_size,
+                metadata_size / records.len()
+            );
+        }
+
         // Collect metadata samples for type inference
         if self.config.enable_native_metadata
             && self.metadata_samples.len() < self.config.metadata_inference_samples
@@ -484,6 +612,11 @@ impl StreamingParquetWriter {
 
         trace!("Flushing batch of {} records", self.current_batch.len());
 
+        // Notify collector about new row group starting
+        if let Some(ref mut collector) = self.metadata_collector {
+            collector.on_row_group_start(self.current_row_group)?;
+        }
+
         // Apply PQ-based sorting for better compression
         let sorted_records = if self.config.enable_pq_sorting {
             self.sort_records_by_similarity(&self.current_batch)?
@@ -493,6 +626,36 @@ impl StreamingParquetWriter {
 
         // Convert records to Arrow RecordBatch
         let batch = self.create_record_batch(&sorted_records)?;
+
+        // Debug: Track batch size
+        let batch_memory_size: usize = batch.columns().iter()
+            .map(|col| col.get_buffer_memory_size())
+            .sum();
+        debug!(
+            "PARQUET_DEBUG: RecordBatch created - rows: {}, columns: {}, memory size: {} MB",
+            batch.num_rows(),
+            batch.num_columns(),
+            batch_memory_size / (1024 * 1024)
+        );
+
+        // Log column details for large columns
+        for (i, field) in batch.schema().fields().iter().enumerate() {
+            let col = batch.column(i);
+            let col_size = col.get_buffer_memory_size();
+            if col_size > 1024 * 1024 { // Only log columns > 1MB
+                debug!(
+                    "PARQUET_DEBUG: Large column '{}' - type: {:?}, memory: {} MB",
+                    field.name(),
+                    field.data_type(),
+                    col_size / (1024 * 1024)
+                );
+            }
+        }
+
+        // Notify collector about batch being written (for statistics collection)
+        if let Some(ref mut collector) = self.metadata_collector {
+            collector.on_batch_write(&batch, self.current_row_group, 0)?;
+        }
 
         // Update bloom filters (use original order for consistency)
         if self.config.enable_bloom_filters {
@@ -504,6 +667,9 @@ impl StreamingParquetWriter {
         self.writer.write(&batch)?;
 
         self.total_records_written += self.current_batch.len() as u64;
+
+        // Note: We'll notify collector about row group completion in finish()
+        // when we have the actual RowGroupMetaData
 
         // Clear batch
         self.current_batch.clear();
@@ -962,7 +1128,13 @@ impl StreamingParquetWriter {
     }
 
     /// Finalize and close the writer
-    pub async fn finalize(mut self) -> Result<StreamingParquetWriterStats> {
+    /// Returns both writer stats and optional metadata collector for sidecar file
+    pub async fn finalize(
+        mut self,
+    ) -> Result<(
+        StreamingParquetWriterStats,
+        Option<Box<dyn super::metadata_collector::MetadataCollector>>,
+    )> {
         info!("Finalizing Parquet writer: {}", self.file_path);
 
         // Flush remaining records
@@ -971,19 +1143,72 @@ impl StreamingParquetWriter {
         }
 
         // Close writer
-        let metadata = self.writer.finish()?;
+        let file_metadata = self.writer.finish()?;
+
+        // The finish() method returns parquet::format::FileMetaData
+        // We need to read back the file to get proper ParquetMetaData
+        // For now, just notify collector with row group count
+        if let Some(ref mut collector) = self.metadata_collector {
+            // row_groups is a Vec, not an Option
+            collector.finalize(file_metadata.row_groups.len())?;
+        }
+
+        // Get actual file size (use std::fs since writer already wrote locally)
+        // For cloud storage, the file is written locally first then uploaded
+        let file_size = std::fs::metadata(&self.file_path)
+            .map(|m| m.len())
+            .unwrap_or_else(|e| {
+                warn!("Failed to get file size for {}: {}", self.file_path, e);
+                // Try to calculate from row group metadata as fallback
+                file_metadata.row_groups.iter()
+                    .map(|rg| rg.total_byte_size as u64)
+                    .sum()
+            });
+
+        // Debug: Log final file statistics
+        let total_row_groups = file_metadata.row_groups.len();
+        let total_compressed_size: i64 = file_metadata.row_groups.iter()
+            .map(|rg| rg.total_compressed_size.unwrap_or(0))
+            .sum();
+        let total_uncompressed_size: i64 = file_metadata.row_groups.iter()
+            .map(|rg| rg.total_byte_size)
+            .sum();
+
+        debug!(
+            "PARQUET_DEBUG: Finalized file '{}' - {} records, {} row groups",
+            self.file_path, self.total_records_written, total_row_groups
+        );
+        debug!(
+            "PARQUET_DEBUG: File sizes - actual: {} MB, compressed: {} MB, uncompressed: {} MB",
+            file_size / (1024 * 1024),
+            total_compressed_size / (1024 * 1024),
+            total_uncompressed_size / (1024 * 1024)
+        );
+
+        // Calculate actual compression ratio
+        let compression_ratio = if total_uncompressed_size > 0 {
+            total_compressed_size as f64 / total_uncompressed_size as f64
+        } else {
+            1.0
+        };
+        debug!(
+            "PARQUET_DEBUG: Compression ratio: {:.2}% (smaller is better)",
+            compression_ratio * 100.0
+        );
 
         let stats = StreamingParquetWriterStats {
             file_path: self.file_path,
             total_records: self.total_records_written,
-            total_row_groups: metadata.row_groups.len() as i32,
-            file_size: 0,           // Would need to get actual file size from filesystem
-            compression_ratio: 1.0, // Default ratio, would need actual calculation
+            total_row_groups: file_metadata.row_groups.len() as i32,
+            file_size,
+            compression_ratio: compression_ratio as f32,
             bloom_filter_count: self.id_bloom_filters.len() + self.metadata_bloom_filters.len(),
         };
 
         info!("Parquet write complete: {:?}", stats);
-        Ok(stats)
+
+        // Return stats and the collector for sidecar file writing
+        Ok((stats, self.metadata_collector))
     }
 
     // Removed apply_mixed_compression_optimization - functionality moved to writer properties
@@ -1247,7 +1472,8 @@ impl BatchParquetWriter {
             writer.write_batch(chunk).await?;
         }
 
-        writer.finalize().await
+        let (stats, _collector) = writer.finalize().await?;
+        Ok(stats)
     }
 }
 
@@ -1334,19 +1560,21 @@ mod tests {
         // Write some test records
         for i in 0..25 {
             let record = VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
-                metadata: None,
-                timestamp: i as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             };
 
             writer.write_record(record).await.unwrap();
         }
 
-        let stats = writer.finalize().await.unwrap();
+        let (stats, _collector) = writer.finalize().await.unwrap();
 
         assert_eq!(stats.total_records, 25);
         assert!(stats.file_size > 0);
@@ -1363,13 +1591,15 @@ mod tests {
 
         let records: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
-                id: Some(format!("batch_vec_{}", i)),
+                id: format!("batch_vec_{}", i),
                 vector: (0..256).map(|j| (i + j) as f32 * 0.001).collect(),
-                metadata: None,
-                timestamp: i as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             })
             .collect();
 
@@ -1411,13 +1641,15 @@ mod tests {
             let vector = (0..64).map(|j| base_value + (j as f32 * 0.01)).collect();
 
             records.push(VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector,
-                metadata: None,
-                timestamp: i as u32,
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             });
         }
 
@@ -1426,7 +1658,7 @@ mod tests {
             writer.write_record(record).await.unwrap();
         }
 
-        let stats = writer.finalize().await.unwrap();
+        let (stats, _collector) = writer.finalize().await.unwrap();
 
         assert_eq!(stats.total_records, 100);
         assert!(stats.file_size > 0);
@@ -1444,22 +1676,26 @@ mod tests {
     fn test_pq_codebook_generation() {
         let records = vec![
             VectorRecord {
-                id: Some("test1".to_string()),
+                id: "test1".to_string(),
                 vector: vec![1.0, 2.0, 3.0, 4.0],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
-                id: Some("test2".to_string()),
+                id: "test2".to_string(),
                 vector: vec![1.1, 2.1, 3.1, 4.1],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
         ];
 

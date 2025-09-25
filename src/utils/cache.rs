@@ -324,14 +324,19 @@ where
 
     /// Clear all entries from the cache
     pub fn clear(&mut self) {
-        while let Some(&node_ptr) = self.map.values().next() {
+        // Collect all node pointers first to avoid iterator invalidation
+        let node_ptrs: Vec<_> = self.map.values().copied().collect();
+
+        // Clear the map first to prevent double-free
+        self.map.clear();
+
+        // Now safely deallocate all nodes
+        for node_ptr in node_ptrs {
             unsafe {
-                let node = Box::from_raw(node_ptr);
-                drop(node);
+                let _ = Box::from_raw(node_ptr);
             }
         }
 
-        self.map.clear();
         self.head = None;
         self.tail = None;
         self.size = 0;
@@ -409,7 +414,7 @@ where
             unsafe {
                 let node = &*tail_ptr;
                 let key = node.key.clone();
-                let value = node.key.clone();
+                let value = node.value.clone();
                 self.remove(&key);
                 Some((key, value))
             }
@@ -423,7 +428,7 @@ where
         if let Some(&node_ptr) = self.map.get(key) {
             unsafe {
                 let node = &*node_ptr;
-                let value = node.key.clone();
+                let value = node.value.clone();
                 self.remove(key);
                 Some(value)
             }
@@ -545,9 +550,16 @@ where
     unsafe fn remove_node(&mut self, node_ptr: *mut Node<K, V>) {
         unsafe {
             let node = &*node_ptr;
-            self.map.remove(&node.key);
+            let key = node.key.clone();
+
+            // Remove from map first
+            self.map.remove(&key);
+
+            // Remove from linked list
             self.remove_from_list(node_ptr);
-            drop(Box::from_raw(node_ptr));
+
+            // Finally deallocate the node
+            let _ = Box::from_raw(node_ptr);
         }
         self.size -= 1;
         self.stats.size = self.size;
@@ -566,14 +578,22 @@ where
 
 impl<K, V> Drop for LruCache<K, V> {
     fn drop(&mut self) {
-        // Clean up all nodes
-        while let Some(&node_ptr) = self.map.values().next() {
+        // Clean up all nodes - collect pointers first to avoid iterator invalidation
+        let node_ptrs: Vec<_> = self.map.values().copied().collect();
+
+        // Clear the map first to prevent any double-access
+        self.map.clear();
+
+        // Now safely deallocate all nodes
+        for node_ptr in node_ptrs {
             unsafe {
-                let node = Box::from_raw(node_ptr);
-                drop(node);
+                let _ = Box::from_raw(node_ptr);
             }
         }
-        self.map.clear();
+
+        // Clear the head and tail pointers
+        self.head = None;
+        self.tail = None;
     }
 }
 
@@ -839,7 +859,7 @@ mod tests {
         assert_eq!(stats.gets, 3);
         assert_eq!(stats.hits, 2);
         assert_eq!(stats.misses, 1);
-        assert_eq!(stats.hit_ratio(), 200.0 / 3.0);
+        assert!((stats.hit_ratio() - (200.0 / 3.0)).abs() < 1e-10);
     }
 
     #[test]

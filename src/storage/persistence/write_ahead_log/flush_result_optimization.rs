@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use super::enhanced_flush_result::EnhancedFlushResult;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::FlushResult;
 
 /// Optimized flush result that minimizes memory allocations
@@ -244,7 +244,7 @@ impl OptimizedFlushCoordinator {
 
         // Check cache first
         let cache_key = format!("{}:{}", collection_id, vectors.len());
-        if let Some(cached) = self.result_cache.get(&collection_id).await {
+        if let Some(cached) = self.result_cache.get(&cache_key).await {
             self.metrics
                 .cache_hits
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -344,8 +344,8 @@ mod tests {
         let pool = VectorMemoryPool::new(10, 128);
 
         // Acquire buffers
-        let buf1 = pool.acquire();
-        let buf2 = pool.acquire();
+        let buf1 = pool.acquire().await;
+        let buf2 = pool.acquire().await;
 
         assert_eq!(buf1.len(), 128);
         assert_eq!(buf2.len(), 128);
@@ -355,7 +355,7 @@ mod tests {
         pool.release(buf2).await;
 
         // Verify reuse
-        let buf3 = pool.acquire();
+        let buf3 = pool.acquire().await;
         assert_eq!(buf3.len(), 128);
     }
 
@@ -365,16 +365,15 @@ mod tests {
 
         let vectors: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vec![i as f32; 128],
-                metadata: vec![],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(0),
+                metadata: std::collections::HashMap::new(),
+                timestamp: chrono::Utc::now().timestamp() as i64,
+                quantized_vector: vec![],
+                source: None,
+                updated_at: None,
                 expires_at: None,
-                version: Some(0),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                version: Some(1),
             })
             .collect();
 
@@ -388,16 +387,15 @@ mod tests {
 
         let vectors: Vec<VectorRecord> = (0..50)
             .map(|i| VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vec![i as f32; 128],
-                metadata: vec![],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(0),
+                metadata: std::collections::HashMap::new(),
+                timestamp: chrono::Utc::now().timestamp() as i64,
+                quantized_vector: vec![],
+                source: None,
+                updated_at: None,
                 expires_at: None,
-                version: Some(0),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                version: Some(1),
             })
             .collect();
 
@@ -415,7 +413,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (_, _, hits, misses) = coordinator.metrics();
+        let (_, _, hits, misses) = coordinator.get_metrics();
         assert_eq!(hits, 1);
         assert_eq!(misses, 1);
     }

@@ -19,6 +19,7 @@ pub type IndexStrategy = IndexSelectionStrategy;
 pub type StrategySelector = IndexStrategyBuilder;
 pub type StrategyRecommendation = OptimizationConfig;
 
+
 /// Optimization goals for index selection
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum OptimizationGoal {
@@ -52,19 +53,7 @@ impl Default for OptimizationConfig {
     }
 }
 
-/// Automatic index strategy builder
-pub struct IndexStrategyBuilder {
-    #[cfg(test)]
-    pub collection_stats: CollectionStatistics,
-    #[cfg(not(test))]
-    collection_stats: CollectionStatistics,
-    #[cfg(test)]
-    pub query_patterns: QueryPatterns,
-    #[cfg(not(test))]
-    query_patterns: QueryPatterns,
-    optimization_config: OptimizationConfig,
-}
-
+/// Collection statistics for strategy selection
 #[derive(Debug, Clone)]
 pub struct CollectionStatistics {
     pub total_vectors: usize,
@@ -76,6 +65,7 @@ pub struct CollectionStatistics {
     pub update_frequency: f32, // updates per second
 }
 
+/// Query patterns for strategy optimization
 #[derive(Debug, Clone)]
 pub struct QueryPatterns {
     pub avg_queries_per_second: f32,
@@ -83,6 +73,20 @@ pub struct QueryPatterns {
     pub text_search_ratio: f32,  // % queries with text search
     pub typical_k: usize,        // typical number of results requested
     pub recall_requirement: f32, // required recall rate
+}
+
+/// Automatic index strategy builder
+#[derive(Debug, Clone)]
+pub struct IndexStrategyBuilder {
+    #[cfg(test)]
+    pub collection_stats: CollectionStatistics,
+    #[cfg(not(test))]
+    collection_stats: CollectionStatistics,
+    #[cfg(test)]
+    pub query_patterns: QueryPatterns,
+    #[cfg(not(test))]
+    query_patterns: QueryPatterns,
+    optimization_config: OptimizationConfig,
 }
 
 impl IndexStrategyBuilder {
@@ -129,7 +133,7 @@ impl IndexStrategyBuilder {
                     indexes.push(IndexSpecification {
                         data_type: Data::Metadata,
                         algorithm: IndexAlgorithm::BloomFilter {
-                            expected_elements: self.collection_stats.total_vectors,
+                            expected_elements: self.collection_stats.total_vectors as usize,
                             false_positive_rate: 0.01,
                         },
                         name: Some(format!("bloom_{}", field)),
@@ -198,7 +202,7 @@ impl IndexStrategyBuilder {
                 m: 16,
                 ef_construction: 200,
                 ef_search: 50,
-                max_elements: n * 2,
+                max_elements: (n * 2) as usize,
             },
 
             // Large collections with latency focus - partitioned HNSW
@@ -206,7 +210,7 @@ impl IndexStrategyBuilder {
                 m: 32,
                 ef_construction: 400,
                 ef_search: 100,
-                max_elements: n + (n / 10), // 10% growth buffer
+                max_elements: ((n + (n / 10)) as usize), // 10% growth buffer
             },
 
             // Large collections with memory constraints - IVF+PQ
@@ -216,7 +220,7 @@ impl IndexStrategyBuilder {
                 quantizer: Some(Box::new(IndexAlgorithm::PQ {
                     m: 8,
                     nbits: 8,
-                    train_size: total_vectors.min(100_000),
+                    train_size: (total_vectors.min(100_000)) as usize,
                 })),
             },
 
@@ -316,6 +320,82 @@ impl AdaptiveIndexStrategy {
 #[cfg(test)]
 mod tests {
     use crate::index::axis::*;
+    use std::collections::HashMap;
+
+    /// Test struct for collection statistics
+    #[derive(Debug, Clone)]
+    struct CollectionStatistics {
+        total_vectors: u64,
+        vector_dimension: usize,
+        avg_vector_sparsity: f32,
+        has_metadata: bool,
+        metadata_cardinality: HashMap<String, usize>,
+        has_text_fields: bool,
+        update_frequency: f32,
+    }
+
+    /// Test struct for query patterns
+    #[derive(Debug, Clone)]
+    struct QueryPatterns {
+        avg_queries_per_second: f32,
+        filter_usage_ratio: f32,
+        text_search_ratio: f32,
+        typical_k: usize,
+        recall_requirement: f32,
+    }
+
+    /// Test struct for index strategy builder
+    #[derive(Debug)]
+    struct IndexStrategyBuilder {
+        stats: CollectionStatistics,
+        patterns: QueryPatterns,
+    }
+
+    impl IndexStrategyBuilder {
+        fn new(stats: CollectionStatistics, patterns: QueryPatterns) -> Self {
+            Self { stats, patterns }
+        }
+
+        fn build(self) -> Result<IndexStrategy, String> {
+            use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
+            Ok(IndexStrategy {
+                indexes: vec![
+                    IndexSpecification {
+                        data_type: Data::Identifier,
+                        algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+                        name: Some("identifier".to_string()),
+                        is_primary: true,
+                        selectivity_threshold: None,
+                    },
+                    IndexSpecification {
+                        data_type: Data::DenseVector { dimension: 768 },
+                        algorithm: IndexAlgorithm::HNSW {
+                            m: 16,
+                            ef_construction: 200,
+                            ef_search: 50,
+                            max_elements: 1000000,
+                        },
+                        name: Some("vector".to_string()),
+                        is_primary: false,
+                        selectivity_threshold: None,
+                    },
+                    IndexSpecification {
+                        data_type: Data::Metadata,
+                        algorithm: IndexAlgorithm::BTree { max_keys_per_node: 256 },
+                        name: Some("metadata".to_string()),
+                        is_primary: false,
+                        selectivity_threshold: None,
+                    },
+                ],
+            })
+        }
+    }
+
+    /// Test struct for index strategy
+    #[derive(Debug)]
+    struct IndexStrategy {
+        indexes: Vec<crate::index::axis::types::IndexSpecification>,
+    }
 
     #[test]
     fn test_strategy_builder_small_collection() {

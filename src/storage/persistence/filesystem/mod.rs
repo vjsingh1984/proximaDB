@@ -173,18 +173,29 @@ use url::Url;
 
 pub mod atomic_strategy;
 pub mod auth;
-pub mod intelligent_filesystem;
+// intelligent_filesystem removed - using UnifiedCachingFilesystem instead
 pub mod local;
 pub mod manager;
 pub mod write_strategy;
-pub mod zero_copy_filesystem;
+// zero_copy_filesystem removed - functionality integrated into UnifiedCachingFilesystem
+
+// Unified filesystem modules
+pub mod unified;
+pub mod unified_cache;
+pub mod unified_config;
+pub mod disk_cache;
+pub mod range_optimizer;
+pub mod access_tracker;
+pub mod prefetch_engine;
+pub mod cache_metrics;
+pub mod orchestrator_integration;
+pub mod metadata_traits;
 
 #[cfg(test)]
 pub mod tests;
 
-// Zero-copy filesystem with intelligent caching
+// Filesystem implementations
 pub use local::LocalFileSystem;
-pub use zero_copy_filesystem::{ZeroCopyFilesystem, ZeroCopyFilesystemBuilder};
 
 /// Filesystem operation result type
 pub type FsResult<T> = Result<T, FilesystemError>;
@@ -824,6 +835,15 @@ impl std::fmt::Debug for FilesystemFactory {
 }
 
 impl FilesystemFactory {
+    /// Create filesystem factory with default configuration
+    pub fn default() -> Self {
+        Self {
+            config: FilesystemConfig::default(),
+            filesystems: HashMap::new(),
+            tier_mapping: HashMap::new(),
+        }
+    }
+
     /// Create new filesystem factory with configuration
     pub async fn new(config: FilesystemConfig) -> FsResult<Self> {
         let mut factory = Self {
@@ -907,25 +927,78 @@ impl FilesystemFactory {
     ///     engine_type,
     /// )?;
     /// ```
+    #[deprecated(
+        since = "1.0.0",
+        note = "Use get_unified_caching_filesystem instead. This method now redirects to it."
+    )]
     pub fn get_intelligent_filesystem(
         &self,
         url: &str,
         collection_id: String,
         engine_type: String,
-    ) -> FsResult<
-        Arc<crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem>,
-    > {
+    ) -> FsResult<Arc<dyn FileSystem>> {
+        // Redirect to the new unified filesystem
+        self.get_unified_caching_filesystem(url, collection_id, engine_type)
+    }
+
+    /// Create filesystem with unified caching
+    ///
+    /// # Example
+    /// ```
+    /// let cached_fs = factory.get_unified_caching_filesystem(
+    ///     "s3://bucket/collection",
+    ///     "collection_123".to_string(),
+    ///     "sst".to_string(),
+    /// )?;
+    /// ```
+    pub fn get_unified_caching_filesystem(
+        &self,
+        url: &str,
+        collection_id: String,
+        engine_type: String,
+    ) -> FsResult<Arc<dyn FileSystem>> {
         // Get the appropriate filesystem for this URL
         let fs = self.get_filesystem(url)?;
 
-        // Wrap it with IntelligentFilesystem for caching
-        let intelligent_fs = crate::storage::persistence::filesystem::intelligent_filesystem::IntelligentFilesystem::new(
+        // Get the metadata serializer for this engine type
+        let metadata_serializer: Arc<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
+            match engine_type.as_str() {
+                "sst" => Arc::new(crate::storage::engines::impls::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
+                "viper" => Arc::new(crate::storage::engines::impls::viper::unified_metadata_serializer::ViperMetadataSerializer::new()),
+                "raptor" => Arc::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
+                "nova" => Arc::new(crate::storage::engines::impls::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
+                "swift" => Arc::new(crate::storage::engines::impls::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
+                "helix" => Arc::new(crate::storage::engines::impls::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
+                _ => {
+                    // Default serializer for other engines
+                    #[derive(Debug)]
+                    struct DefaultSerializer;
+                    impl crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer for DefaultSerializer {
+                        fn serialize(&self, _metadata: &dyn std::any::Any) -> anyhow::Result<bytes::Bytes> {
+                            Ok(bytes::Bytes::new())
+                        }
+                        fn deserialize(&self, _bytes: &[u8]) -> anyhow::Result<Box<dyn std::any::Any + Send + Sync>> {
+                            Ok(Box::new(()))
+                        }
+                        fn engine_type(&self) -> &str { "default" }
+                        fn extract_cacheable_component(&self, _data: &[u8], _file_path: &str) -> Option<bytes::Bytes> {
+                            None
+                        }
+                        fn should_cache_metadata(&self, _file_path: &str) -> bool { false }
+                    }
+                    Arc::new(DefaultSerializer)
+                }
+            };
+
+        // Wrap it with UnifiedCachingFilesystem for caching
+        let unified_fs = crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
             fs,
-            collection_id,
-            engine_type,
+            collection_id.to_string(),
+            engine_type.to_string(),
+            metadata_serializer,
         );
 
-        Ok(Arc::new(intelligent_fs))
+        Ok(Arc::new(unified_fs))
     }
 
     /// Cross-storage atomic operations - handles full URLs for source and destination
@@ -1408,58 +1481,7 @@ impl FilesystemFactory {
 
     /// Create a zero-copy filesystem wrapper for intelligent caching and optimization
     ///
-    /// This wraps any underlying filesystem (S3, GCS, Azure, Local) with the zero-copy I/O system
-    /// providing transparent cache-first, fallback-to-cloud operations for all read operations.
-    ///
-    /// # Arguments
-    /// * `url` - The base URL to determine which underlying filesystem to wrap
-    /// * `io_system` - The zero-copy I/O system for caching and optimization
-    /// * `collection_id` - Collection context for optimization
-    /// * `engine_type` - Engine type for optimization (SST, VIPER, SWIFT, NOVA, etc.)
-    ///
-    /// # Returns
-    /// A zero-copy filesystem that transparently optimizes all file operations
-    pub async fn create_zero_copy_filesystem(
-        &self,
-        url: &str,
-        io_system: std::sync::Arc<crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem>,
-        collection_id: String,
-        engine_type: String,
-    ) -> FsResult<ZeroCopyFilesystem> {
-        // Get the underlying filesystem for the URL
-        let underlying_fs = self.get_filesystem(url)?;
-
-        // Create an Arc wrapper around the underlying filesystem
-        // We need to clone the filesystem, but since we can't clone trait objects,
-        // we'll need to get it by scheme instead
-        let scheme = if url.contains("://") {
-            url.split("://").next().unwrap_or("file")
-        } else {
-            "file"
-        };
-
-        // For now, we'll create the underlying filesystem using a simplified approach
-        // In production, the FilesystemFactory should be refactored to use Arc<dyn FileSystem>
-        // throughout to support zero-copy filesystem creation more efficiently
-        let underlying_fs_arc = if scheme == "file" {
-            let local_config = self.config.local.clone().unwrap_or_default();
-            let local_fs = LocalFileSystem::new(local_config).await?;
-            std::sync::Arc::new(local_fs) as std::sync::Arc<dyn FileSystem>
-        } else {
-            return Err(FilesystemError::UnsupportedScheme(format!(
-                "Zero-copy filesystem not yet supported for scheme: {}",
-                scheme
-            )));
-        };
-
-        // Build the zero-copy filesystem
-        ZeroCopyFilesystemBuilder::new()
-            .with_collection_id(collection_id)
-            .with_engine_type(engine_type)
-            .with_io_system(io_system)
-            .build(underlying_fs_arc)
-            .map_err(|e| FilesystemError::Config(e.to_string()))
-    }
+    // create_zero_copy_filesystem removed - functionality integrated into get_unified_caching_filesystem
 
     /// Unified filesystem operations - automatically route to correct backend
     pub async fn read(&self, url: &str) -> FsResult<Vec<u8>> {

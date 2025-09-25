@@ -731,6 +731,8 @@ impl Clone for IndexRecoveryManager {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::time::Instant;
     use crate::index::axis::*;
 
     #[tokio::test]

@@ -28,8 +28,90 @@ pub mod quasar; // Hybrid hot/cold tiering
 
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
+use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
+use crate::metrics::collectors::MetricsSample;
+use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
+
+/// Engine performance statistics integrated with unified metrics framework
+#[derive(Debug, Clone, Default)]
+pub struct EngineStats {
+    /// Total number of nodes
+    pub node_count: usize,
+    /// Total number of edges
+    pub edge_count: usize,
+    /// Average degree (edges per node)
+    pub avg_degree: f64,
+    /// Number of connected components
+    pub connected_components: usize,
+    /// Total operations performed
+    pub total_operations: u64,
+    /// Cache hit ratio (if applicable)
+    pub cache_hit_ratio: f64,
+    /// Index efficiency metric
+    pub index_efficiency: f64,
+    /// Time spent in operations (microseconds)
+    pub total_time_us: u64,
+}
+
+impl EngineStats {
+    /// Convert to unified metrics sample for integration with metrics framework
+    pub fn to_metrics_sample(&self, engine_name: &str) -> MetricsSample {
+        let mut values = HashMap::new();
+        values.insert("node_count".to_string(), self.node_count as f64);
+        values.insert("edge_count".to_string(), self.edge_count as f64);
+        values.insert("avg_degree".to_string(), self.avg_degree);
+        values.insert("connected_components".to_string(), self.connected_components as f64);
+        values.insert("total_operations".to_string(), self.total_operations as f64);
+        values.insert("cache_hit_ratio".to_string(), self.cache_hit_ratio);
+        values.insert("index_efficiency".to_string(), self.index_efficiency);
+        values.insert("total_time_us".to_string(), self.total_time_us as f64);
+
+        MetricsSample {
+            timestamp: std::time::Instant::now(),
+            collector: format!("graph_engine_{}", engine_name),
+            values,
+        }
+    }
+}
+
+/// Memory usage metrics integrated with unified metrics framework
+#[derive(Debug, Clone, Default)]
+pub struct MemoryUsage {
+    /// Memory used by nodes (bytes)
+    pub nodes_memory: usize,
+    /// Memory used by edges (bytes)
+    pub edges_memory: usize,
+    /// Memory used by indexes (bytes)
+    pub indexes_memory: usize,
+    /// Memory used by caches (bytes)
+    pub cache_memory: usize,
+    /// Total memory used (bytes)
+    pub total_memory: usize,
+    /// Peak memory usage (bytes)
+    pub peak_memory: usize,
+}
+
+impl MemoryUsage {
+    /// Convert to unified metrics sample for integration with metrics framework
+    pub fn to_metrics_sample(&self, engine_name: &str) -> MetricsSample {
+        let mut values = HashMap::new();
+        values.insert("nodes_memory_bytes".to_string(), self.nodes_memory as f64);
+        values.insert("edges_memory_bytes".to_string(), self.edges_memory as f64);
+        values.insert("indexes_memory_bytes".to_string(), self.indexes_memory as f64);
+        values.insert("cache_memory_bytes".to_string(), self.cache_memory as f64);
+        values.insert("total_memory_bytes".to_string(), self.total_memory as f64);
+        values.insert("peak_memory_bytes".to_string(), self.peak_memory as f64);
+
+        MetricsSample {
+            timestamp: std::time::Instant::now(),
+            collector: format!("graph_memory_{}", engine_name),
+            values,
+        }
+    }
+}
 
 /// Graph engine trait for common operations across all engines
 pub trait GraphEngine: Send + Sync {
@@ -85,6 +167,195 @@ pub trait GraphEngine: Send + Sync {
 
     /// Get all nodes
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>>;
+
+    // ===== Performance & Benchmarking Methods =====
+
+    /// Get engine performance statistics
+    fn get_engine_stats(&self) -> Result<EngineStats> {
+        // Default implementation for backward compatibility
+        Ok(EngineStats::default())
+    }
+
+    /// Get memory usage metrics
+    fn get_memory_usage(&self) -> Result<MemoryUsage> {
+        Ok(MemoryUsage::default())
+    }
+
+    // ===== Bulk Operations for Benchmarking =====
+
+    /// Bulk insert nodes (optimized for batch operations)
+    fn bulk_insert_nodes(&self, nodes: Vec<Node>) -> Result<Vec<Arc<Node>>> {
+        // Default implementation delegates to single insert
+        let mut results = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            results.push(self.insert_node(node)?);
+        }
+        Ok(results)
+    }
+
+    /// Bulk insert edges (optimized for batch operations)
+    fn bulk_insert_edges(&self, edges: Vec<Edge>) -> Result<Vec<Arc<Edge>>> {
+        // Default implementation delegates to single insert
+        let mut results = Vec::with_capacity(edges.len());
+        for edge in edges {
+            results.push(self.insert_edge(edge)?);
+        }
+        Ok(results)
+    }
+
+    /// Bulk delete nodes
+    fn bulk_delete_nodes(&self, node_ids: Vec<NodeId>) -> Result<Vec<Option<Arc<Node>>>> {
+        let mut results = Vec::with_capacity(node_ids.len());
+        for id in node_ids {
+            results.push(self.delete_node(&id)?);
+        }
+        Ok(results)
+    }
+
+    /// Bulk delete edges
+    fn bulk_delete_edges(&self, edge_ids: Vec<EdgeId>) -> Result<Vec<Option<Arc<Edge>>>> {
+        let mut results = Vec::with_capacity(edge_ids.len());
+        for id in edge_ids {
+            results.push(self.delete_edge(&id)?);
+        }
+        Ok(results)
+    }
+
+    // ===== Engine Optimization Methods =====
+
+    /// Optimize internal storage structures
+    fn optimize_storage(&self) -> Result<()> {
+        // Default no-op implementation
+        Ok(())
+    }
+
+    /// Rebuild indexes for better query performance
+    fn rebuild_indexes(&self) -> Result<()> {
+        // Default no-op implementation
+        Ok(())
+    }
+
+    /// Compact storage to reduce memory footprint
+    fn compact_storage(&self) -> Result<()> {
+        // Default no-op implementation
+        Ok(())
+    }
+
+    /// Clear all data (useful for benchmarking)
+    fn clear_all(&self) -> Result<()> {
+        // Default implementation: delete all nodes and edges
+        let all_nodes = self.get_all_nodes()?;
+        for node in all_nodes {
+            self.delete_node(&node.id)?;
+        }
+        Ok(())
+    }
+
+    // ===== Persistence Methods (Critical for Production) =====
+
+    /// Save graph snapshot to persistent storage
+    /// Uses UnifiedCachingFilesystem for cloud-native storage support
+    async fn save_snapshot(&self, path: &Path) -> Result<()> {
+        // Default implementation - engines should override for optimal performance
+        Err(ProximaDBError::NotImplemented(
+            "Graph persistence not implemented for this engine".to_string(),
+        ))
+    }
+
+    /// Load graph from persistent storage
+    /// Restores graph state from a previous snapshot
+    async fn load_snapshot(&self, path: &Path) -> Result<()> {
+        Err(ProximaDBError::NotImplemented(
+            "Graph persistence not implemented for this engine".to_string(),
+        ))
+    }
+
+    /// Create incremental checkpoint (for WAL-style persistence)
+    async fn checkpoint(&self) -> Result<()> {
+        // Default no-op - engines can implement incremental checkpointing
+        Ok(())
+    }
+
+    /// Export graph to standard format (GraphML, GEXF, etc.)
+    async fn export(&self, format: GraphExportFormat, path: &Path) -> Result<()> {
+        Err(ProximaDBError::NotImplemented(
+            "Graph export not implemented for this engine".to_string(),
+        ))
+    }
+
+    /// Import graph from standard format
+    async fn import(&self, format: GraphExportFormat, path: &Path) -> Result<()> {
+        Err(ProximaDBError::NotImplemented(
+            "Graph import not implemented for this engine".to_string(),
+        ))
+    }
+
+    /// Get persistence configuration for this engine
+    fn get_persistence_config(&self) -> PersistenceConfig {
+        PersistenceConfig::default()
+    }
+
+    /// Check if the engine supports persistence
+    fn supports_persistence(&self) -> bool {
+        false // Default: no persistence support
+    }
+}
+
+/// Graph export/import formats for interoperability
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphExportFormat {
+    /// GraphML - XML-based format for graph exchange
+    GraphML,
+    /// GEXF - Graph Exchange XML Format
+    GEXF,
+    /// JSON - Native JSON representation
+    Json,
+    /// Binary - ProximaDB binary format (most efficient)
+    ProximaBinary,
+    /// CSV - Node/Edge lists in CSV format
+    Csv,
+}
+
+/// Persistence configuration for graph engines
+#[derive(Debug, Clone)]
+pub struct PersistenceConfig {
+    /// Enable automatic snapshots
+    pub auto_snapshot: bool,
+    /// Snapshot interval in seconds
+    pub snapshot_interval_secs: u64,
+    /// Enable WAL (Write-Ahead Log) for crash recovery
+    pub enable_wal: bool,
+    /// WAL directory path
+    pub wal_path: Option<String>,
+    /// Compression algorithm for snapshots (using unified compression module)
+    pub compression: CompressionAlgorithm,
+    /// Compression level (algorithm-specific, typically 1-9 or 1-22 for Zstd)
+    pub compression_level: i32,
+    /// Use cloud storage for snapshots (S3, Azure, GCS)
+    pub use_cloud_storage: bool,
+    /// Cloud storage bucket/container
+    pub cloud_storage_path: Option<String>,
+    /// Enable incremental snapshots (only save changes since last snapshot)
+    pub incremental_snapshots: bool,
+    /// Maximum number of snapshots to retain
+    pub max_snapshots: usize,
+}
+
+impl Default for PersistenceConfig {
+    fn default() -> Self {
+        Self {
+            auto_snapshot: false,
+            snapshot_interval_secs: 3600, // 1 hour default
+            enable_wal: false,
+            wal_path: None,
+            compression: CompressionAlgorithm::Zstd, // Best general-purpose compression
+            compression_level: 3, // Balanced speed/ratio for Zstd
+            use_cloud_storage: false,
+            cloud_storage_path: None,
+            incremental_snapshots: true,
+            max_snapshots: 10,
+        }
+    }
 }
 
 /// Engine type enumeration for factory creation
@@ -98,6 +369,187 @@ pub enum GraphEngineType {
     Quasar,
 }
 
+/// Enum wrapper for different graph engine implementations
+/// This avoids the dyn compatibility issues with async trait methods
+#[derive(Debug)]
+pub enum GraphEngineImpl {
+    Orion(orion::OrionGraphEngine),
+    Pulsar(pulsar::PulsarGraphEngine),
+    Quasar(quasar::QuasarGraphEngine),
+}
+
+impl GraphEngineImpl {
+    /// Create a new graph engine based on type and configuration
+    pub fn new(engine_type: GraphEngineType, config: GraphEngineConfig) -> Result<Self> {
+        match engine_type {
+            GraphEngineType::Orion => {
+                let engine = orion::OrionGraphEngine::new();
+                Ok(GraphEngineImpl::Orion(engine))
+            }
+            GraphEngineType::Pulsar => {
+                let pulsar_config = config.pulsar_config.unwrap_or_default();
+                let engine = pulsar::PulsarGraphEngine::new(pulsar_config)?;
+                Ok(GraphEngineImpl::Pulsar(engine))
+            }
+            GraphEngineType::Quasar => {
+                let quasar_config = config.quasar_config.unwrap_or_default();
+                // Note: This needs async, so we'll provide a different factory method
+                Err(ProximaDBError::InvalidInput(
+                    "Use new_quasar_async for QUASAR engine".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Create a Quasar engine asynchronously
+    pub async fn new_quasar_async(config: quasar::QuasarConfig) -> Result<Self> {
+        let engine = quasar::QuasarGraphEngine::new(config).await?;
+        Ok(GraphEngineImpl::Quasar(engine))
+    }
+}
+
+// Implement GraphEngine for GraphEngineImpl by delegating to the underlying engine
+impl GraphEngine for GraphEngineImpl {
+    fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.insert_node(node),
+            GraphEngineImpl::Pulsar(engine) => engine.insert_node(node),
+            GraphEngineImpl::Quasar(engine) => engine.insert_node(node),
+        }
+    }
+
+    fn get_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_node(id),
+            GraphEngineImpl::Pulsar(engine) => engine.get_node(id),
+            GraphEngineImpl::Quasar(engine) => engine.get_node(id),
+        }
+    }
+
+    fn update_node(&self, node: Node) -> Result<Arc<Node>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.update_node(node),
+            GraphEngineImpl::Pulsar(engine) => engine.update_node(node),
+            GraphEngineImpl::Quasar(engine) => engine.update_node(node),
+        }
+    }
+
+    fn delete_node(&self, id: &NodeId) -> Result<Option<Arc<Node>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => GraphEngine::delete_node(engine, id),
+            GraphEngineImpl::Pulsar(engine) => GraphEngine::delete_node(engine, id),
+            GraphEngineImpl::Quasar(engine) => GraphEngine::delete_node(engine, id),
+        }
+    }
+
+    fn insert_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.insert_edge(edge),
+            GraphEngineImpl::Pulsar(engine) => engine.insert_edge(edge),
+            GraphEngineImpl::Quasar(engine) => engine.insert_edge(edge),
+        }
+    }
+
+    fn get_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_edge(id),
+            GraphEngineImpl::Pulsar(engine) => engine.get_edge(id),
+            GraphEngineImpl::Quasar(engine) => engine.get_edge(id),
+        }
+    }
+
+    fn update_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.update_edge(edge),
+            GraphEngineImpl::Pulsar(engine) => engine.update_edge(edge),
+            GraphEngineImpl::Quasar(engine) => engine.update_edge(edge),
+        }
+    }
+
+    fn delete_edge(&self, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => GraphEngine::delete_edge(engine, id),
+            GraphEngineImpl::Pulsar(engine) => GraphEngine::delete_edge(engine, id),
+            GraphEngineImpl::Quasar(engine) => GraphEngine::delete_edge(engine, id),
+        }
+    }
+
+    fn get_outgoing_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_outgoing_edges(node_id, edge_type),
+            GraphEngineImpl::Pulsar(engine) => engine.get_outgoing_edges(node_id, edge_type),
+            GraphEngineImpl::Quasar(engine) => engine.get_outgoing_edges(node_id, edge_type),
+        }
+    }
+
+    fn get_incoming_edges(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Edge>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_incoming_edges(node_id, edge_type),
+            GraphEngineImpl::Pulsar(engine) => engine.get_incoming_edges(node_id, edge_type),
+            GraphEngineImpl::Quasar(engine) => engine.get_incoming_edges(node_id, edge_type),
+        }
+    }
+
+    fn get_neighbors(&self, node_id: &NodeId, edge_type: Option<&str>) -> Result<Vec<Arc<Node>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_neighbors(node_id, edge_type),
+            GraphEngineImpl::Pulsar(engine) => engine.get_neighbors(node_id, edge_type),
+            GraphEngineImpl::Quasar(engine) => engine.get_neighbors(node_id, edge_type),
+        }
+    }
+
+    fn get_nodes_by_label(&self, label: &str) -> Result<Vec<Arc<Node>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_nodes_by_label(label),
+            GraphEngineImpl::Pulsar(engine) => engine.get_nodes_by_label(label),
+            GraphEngineImpl::Quasar(engine) => engine.get_nodes_by_label(label),
+        }
+    }
+
+    fn node_count(&self) -> Result<usize> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.node_count(),
+            GraphEngineImpl::Pulsar(engine) => engine.node_count(),
+            GraphEngineImpl::Quasar(engine) => engine.node_count(),
+        }
+    }
+
+    fn edge_count(&self) -> Result<usize> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.edge_count(),
+            GraphEngineImpl::Pulsar(engine) => engine.edge_count(),
+            GraphEngineImpl::Quasar(engine) => engine.edge_count(),
+        }
+    }
+
+    fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_all_nodes(),
+            GraphEngineImpl::Pulsar(engine) => engine.get_all_nodes(),
+            GraphEngineImpl::Quasar(engine) => engine.get_all_nodes(),
+        }
+    }
+
+    // Delegate other methods with default implementations
+    fn get_engine_stats(&self) -> Result<EngineStats> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_engine_stats(),
+            GraphEngineImpl::Pulsar(engine) => engine.get_engine_stats(),
+            GraphEngineImpl::Quasar(engine) => engine.get_engine_stats(),
+        }
+    }
+
+    fn get_memory_usage(&self) -> Result<MemoryUsage> {
+        match self {
+            GraphEngineImpl::Orion(engine) => engine.get_memory_usage(),
+            GraphEngineImpl::Pulsar(engine) => engine.get_memory_usage(),
+            GraphEngineImpl::Quasar(engine) => engine.get_memory_usage(),
+        }
+    }
+
+    // Note: Async methods can't be delegated in this pattern, but we can provide alternative methods
+}
+
 /// Graph engine factory for creating different engine types
 pub struct GraphEngineFactory;
 
@@ -106,33 +558,15 @@ impl GraphEngineFactory {
     pub fn create_engine(
         engine_type: GraphEngineType,
         config: GraphEngineConfig,
-    ) -> Result<Box<dyn GraphEngine>> {
-        match engine_type {
-            GraphEngineType::Orion => {
-                let engine = orion::OrionGraphEngine::new();
-                Ok(Box::new(engine))
-            }
-            GraphEngineType::Pulsar => {
-                let pulsar_config = config.pulsar_config.unwrap_or_default();
-                let engine = pulsar::PulsarGraphEngine::new(pulsar_config)?;
-                Ok(Box::new(engine))
-            }
-            GraphEngineType::Quasar => {
-                let quasar_config = config.quasar_config.unwrap_or_default();
-                // Note: This needs async, so we'll provide a different factory method
-                Err(ProximaDBError::InvalidInput(
-                    "Use create_quasar_engine_async for QUASAR engine".to_string(),
-                ))
-            }
-        }
+    ) -> Result<GraphEngineImpl> {
+        GraphEngineImpl::new(engine_type, config)
     }
 
     /// Create QUASAR engine asynchronously (required for initialization)
     pub async fn create_quasar_engine_async(
         config: quasar::QuasarConfig,
-    ) -> Result<Box<dyn GraphEngine>> {
-        let engine = quasar::QuasarGraphEngine::new(config).await?;
-        Ok(Box::new(engine))
+    ) -> Result<GraphEngineImpl> {
+        GraphEngineImpl::new_quasar_async(config).await
     }
 
     /// Get available engine types

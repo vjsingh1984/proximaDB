@@ -140,7 +140,7 @@ pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 /// NEON-optimized INT8 dot product for ARM64
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-pub unsafe fn int8_dot_product_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
+pub unsafe fn int8_dot_product_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe {
     use std::arch::aarch64::*;
 
     debug_assert_eq!(vec_a.len(), vec_b.len());
@@ -188,12 +188,12 @@ pub unsafe fn int8_dot_product_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 
     trace!("NEON INT8 dot product computed for {} elements", len);
     result
-}
+}}
 
 /// NEON-optimized INT8 squared difference for ARM64
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
-pub unsafe fn int8_squared_diff_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
+pub unsafe fn int8_squared_diff_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 { unsafe {
     use std::arch::aarch64::*;
 
     debug_assert_eq!(vec_a.len(), vec_b.len());
@@ -242,7 +242,7 @@ pub unsafe fn int8_squared_diff_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 
     trace!("NEON INT8 squared difference computed for {} elements", len);
     result
-}
+}}
 
 #[cfg(test)]
 mod tests {

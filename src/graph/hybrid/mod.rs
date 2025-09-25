@@ -53,7 +53,7 @@
 //! ```
 
 use crate::core::error::{ProximaDBError, VectorDBError, QueryError};
-use crate::core::service_types::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::graph::{
     Edge, EdgeId, GraphMemoryPool, Node, NodeId,
     query::{QueryContext, QueryResult, QueryStats},
@@ -225,7 +225,7 @@ pub struct FusionConfig {
 }
 
 /// Weights for fusion
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FusionWeights {
     /// Weight for vector similarity score
     pub vector_weight: f32,
@@ -1259,44 +1259,19 @@ impl HybridQueryEngine {
                                 .as_ref()
                                 .map(|arc| (**arc).clone())
                                 .unwrap_or_default();
-                            let metadata = rec.metadata.iter().filter_map(|(key, sql_value)| {
-                                use crate::proto::proximadb_v1::sql_value::Value;
-                                let json_value = match &sql_value.value {
-                                    Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                                    Some(Value::NumberValue(n)) => serde_json::Value::Number(
-                                        serde_json::Number::from_f64(*n)
-                                            .unwrap_or_else(|| serde_json::Number::from(0)),
-                                    ),
-                                    Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-                                    Some(Value::Int64Value(i)) => serde_json::Value::Number(
-                                        serde_json::Number::from(*i)
-                                    ),
-                                    Some(Value::BytesValue(bytes)) => serde_json::Value::String(
-                                        format!("bytes[{}]", bytes.len())
-                                    ),
-                                    Some(Value::NullValue(_)) => serde_json::Value::Null,
-                                    Some(Value::ArrayValue(arr)) => serde_json::Value::Array(
-                                        arr.values.iter().map(|v| serde_json::Value::String(format!("{:?}", v))).collect()
-                                    ),
-                                    Some(Value::ObjectValue(obj)) => serde_json::Value::String(
-                                        format!("object[{}]", obj.fields.len())
-                                    ),
-                                    None => return None,
-                                };
-                                Some((key.clone(), json_value))
-                            }).collect::<std::collections::HashMap<String, serde_json::Value>>();
                             candidates.push(VectorCandidate {
                                 node_id: rec.id.clone(),
                                 similarity,
                                 vector_record: VectorRecord {
                                     id: rec.id,
-                                    collection_id: "hybrid_search".to_string(), // TODO: Use actual collection_id
                                     vector,
-                                    metadata,
+                                    metadata: rec.metadata.clone(),
                                     timestamp: rec.timestamp.unwrap_or(0) as i64,
                                     updated_at: Some(rec.updated_at.unwrap_or(0) as i64),
                                     expires_at: None,
                                     version: None,
+                                    quantized_vector: vec![],
+                                    source: None,
                                 },
                             });
                         }
@@ -1346,16 +1321,19 @@ impl HybridQueryEngine {
                         similarity,
                         vector_record: VectorRecord {
                             id: node.id.clone(),
-                            collection_id: "graph_search".to_string(), // TODO: Use actual collection_id
                             vector: embedding.vector.clone(),
                             metadata: self.convert_node_properties_to_metadata(&node.properties)
                                 .into_iter()
-                                .map(|(k, v)| (k, serde_json::Value::String(v)))
+                                .map(|(k, v)| (k, crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v))
+                                }))
                                 .collect(),
                             timestamp: node.created_at_ms,
                             updated_at: Some(node.updated_at_ms),
                             expires_at: None,
                             version: None,
+                            quantized_vector: vec![],
+                            source: None,
                         },
                     });
                 }
@@ -1453,6 +1431,15 @@ impl HybridQueryEngine {
                 Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(_)) => {
                     // Skip binary data in metadata conversion
                     continue;
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => {
+                    "array".to_string()
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
+                    "object".to_string()
+                }
+                Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
+                    "vector".to_string()
                 }
                 None => "null".to_string(),
             };
@@ -1661,7 +1648,7 @@ impl HybridQueryEngine {
         end_node_id: &NodeId,
         parent: &HashMap<NodeId, (NodeId, EdgeId)>,
     ) -> QueryResult<Vec<PathStep>> {
-        let mut path: Vec<PathStep> = Vec::new();
+        let path: Vec<PathStep> = Vec::new();
         let mut current_id = end_node_id.clone();
 
         // Build path backwards

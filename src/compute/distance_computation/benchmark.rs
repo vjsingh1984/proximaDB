@@ -5,7 +5,7 @@ mod tests {
     use super::super::*;
     use crate::core::hardware_capabilities::get_hardware_capabilities;
     use std::time::Instant;
-    use tracing::{debug, error, info};
+    use tracing::debug;
 
     #[test]
     fn benchmark_simd_performance() {
@@ -30,7 +30,7 @@ mod tests {
                 DistanceMetric::Euclidean,
                 DistanceMetric::DotProduct,
             ] {
-                let calc = create_distance_calculator(metric);
+                let calc = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(metric);
 
                 // Warmup
                 for _ in 0..100 {

@@ -16,7 +16,7 @@
 
 //! Unit tests for unified collection index functionality
 
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric, IndexingAlgorithm, StorageEngine,
 };
 use proximadb::storage::metadata::unified_index::UnifiedCollectionIndex;
@@ -29,18 +29,16 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
             dimension: 128,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Viper as i32,
-            primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
-            primary_index: "default".to_string(),
+            primary_index: "HNSW".to_string(),
             auto_index_selection: false,
             description: Some("Test collection".to_string()),
             tags: vec![],
             owner: Some("test_user".to_string()),
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
+            embedding_models: vec![],
+            storage_config: None,
         }),
         stats: Some(CollectionStats {
             vector_count: 100,

@@ -151,6 +151,27 @@ impl TypedMetadata {
         Self::from_map(map)
     }
 
+    /// Convert from HashMap with string interning for deduplication
+    /// This method should be used when loading metadata from storage
+    pub async fn from_json_map_interned(
+        json_map: HashMap<String, serde_json::Value>,
+        interner: &crate::storage::cache::orchestrator::StringInterner,
+    ) -> Self {
+        let mut map = HashMap::with_capacity(json_map.len());
+        for (key, value) in json_map {
+            // Intern string values for deduplication
+            let interned_value = match value {
+                serde_json::Value::String(s) => {
+                    let interned = interner.intern(&s).await;
+                    MetadataValue::String(interned)
+                }
+                other => MetadataValue::from_json(other),
+            };
+            map.insert(key, interned_value);
+        }
+        Self::from_map(map)
+    }
+
     /// Convert to HashMap<String, serde_json::Value> for compatibility
     pub fn to_json_map(&self) -> HashMap<String, serde_json::Value> {
         let mut json_map = HashMap::with_capacity(self.inner.len());

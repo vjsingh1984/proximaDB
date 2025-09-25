@@ -4,7 +4,6 @@
 //! It supports various clustering algorithms and integrates with the adaptive indexing strategy.
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -13,7 +12,7 @@ use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 // Export ClusterManager
 pub use super::cluster_manager::ClusterManager;
@@ -1029,40 +1028,37 @@ mod tests {
         // Create test vectors
         let vectors = vec![
             VectorRecord {
-                id: Some("1".to_string()),
+                id: "1".to_string(),
                 vector: vec![1.0, 0.0],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
-                id: Some("2".to_string()),
+                id: "2".to_string(),
                 vector: vec![0.0, 1.0],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
-                id: Some("3".to_string()),
+                id: "3".to_string(),
                 vector: vec![-1.0, 0.0],
-                metadata: vec![],
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                quantized_vector: vec![],
+                source: None,
             },
         ];
 

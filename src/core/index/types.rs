@@ -1,6 +1,5 @@
 //! Index type definitions
 
-use serde::{Deserialize, Serialize};
 
 /// General index type categories
 #[derive(Debug, Clone)]

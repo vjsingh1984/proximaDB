@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::index::axis::{AxisVectorIndex, IndexAlgorithm, IndexStats};
     use crate::storage::traits::CompactionResult;
     use chrono::Utc;
@@ -30,13 +30,13 @@ mod tests {
         let compaction_result = CompactionResult {
             success: true,
             collections_affected: vec!["test_collection".to_string()],
-            entries_processed: 3,
-            entries_removed: 2,
-            bytes_read: 1000,
-            bytes_written: 500,
-            input_files: 5,
-            output_files: 1,
-            duration_ms: 100,
+            entries_processed: Some(3),
+            entries_removed: Some(2),
+            bytes_read: Some(1000),
+            bytes_written: Some(500),
+            input_files: Some(5),
+            output_files: Some(1),
+            duration_ms: Some(100),
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
         };
@@ -78,20 +78,20 @@ mod tests {
         let compaction_result = CompactionResult {
             success: true,
             collections_affected: vec!["test_collection".to_string()],
-            entries_processed: 100,
-            entries_removed: 25,
-            bytes_read: 10000,
-            bytes_written: 7500,
-            input_files: 5,
-            output_files: 1,
-            duration_ms: 500,
+            entries_processed: Some(100),
+            entries_removed: Some(25),
+            bytes_read: Some(10000),
+            bytes_written: Some(7500),
+            input_files: Some(5),
+            output_files: Some(1),
+            duration_ms: Some(500),
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
         };
 
         assert!(compaction_result.success);
         assert_eq!(compaction_result.collections_affected.len(), 1);
-        assert_eq!(compaction_result.entries_processed, 100);
-        assert_eq!(compaction_result.entries_removed, 25);
+        assert_eq!(compaction_result.entries_processed, Some(100));
+        assert_eq!(compaction_result.entries_removed, Some(25));
     }
 }

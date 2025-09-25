@@ -11,7 +11,7 @@
 mod benchmarks {
     use super::super::*;
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::traits::{FlushParameters, StorageQueryContext, StorageQueryMetadata};
     use crate::core::search::SearchParams;
     use crate::proto::proximadb_v1::{Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine};

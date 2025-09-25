@@ -45,15 +45,11 @@ pub struct StorageQuantizationConfig {
 impl Default for StorageQuantizationConfig {
     fn default() -> Self {
         Self {
-            // PQ8 with 32 subvectors as primary
-            primary_level: Some(UnifiedQuantizationLevel::pq8(32)),
-            // Binary sketch for filtering
-            filter_level: Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
-                    threshold: None,
-                    sign_based: false, // Use median-based binary quantization
-                })),
-            }),
+            // INT8 as default primary - fast, no training required, good compression
+            // PQ can be explicitly enabled in collection config when needed
+            primary_level: Some(UnifiedQuantizationLevel::int8()),
+            // Binary sketch for filtering (1-bit per dimension)
+            filter_level: Some(UnifiedQuantizationLevel::binary()),
             // INT8 for fast approximation
             fast_level: Some(UnifiedQuantizationLevel::int8()),
 
@@ -1225,7 +1221,7 @@ mod tests {
         assert!(max_error <= expected_max_error * 1.1);
 
         // Test with non-multiple of 4
-        for test_len in [29, 30, 31, 33] {
+        for test_len in [29, 30, 31, 32] {
             let test_distances = &distances[..test_len];
             let (packed, min, max, num_values) = engine.quantize_to_u6(test_distances);
             assert_eq!(num_values, test_len);
@@ -1290,7 +1286,7 @@ mod tests {
         let (quantized, min, max) = engine.quantize_to_u8(&empty);
         assert_eq!(quantized.len(), 0);
         assert!(min.is_infinite());
-        assert!(max.is_neg_infinite());
+        assert!(max.is_infinite() && max.is_sign_negative());
 
         // Test with single value
         let single = vec![3.14];

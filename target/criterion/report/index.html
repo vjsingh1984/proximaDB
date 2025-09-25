@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>Index - Criterion.rs</title>
+    <style type="text/css">
+        body {
+            font: 14px Helvetica Neue;
+            text-rendering: optimizelegibility;
+        }
+
+        .body {
+            width: 960px;
+            margin: auto;
+        }
+
+        a:link {
+            color: #1F78B4;
+            text-decoration: none;
+        }
+
+        h2 {
+            font-size: 36px;
+            font-weight: 300;
+        }
+
+        h3 {
+            font-size: 24px;
+            font-weight: 300;
+        }
+
+        #footer {
+            height: 40px;
+            background: #888;
+            color: white;
+            font-size: larger;
+            font-weight: 300;
+        }
+
+        #footer a {
+            color: white;
+            text-decoration: underline;
+        }
+
+        #footer p {
+            text-align: center
+        }
+
+        table {
+            border-collapse: collapse;
+        }
+
+        table,
+        th,
+        td {
+            border: 1px solid #888;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="body">
+        <h2>Criterion.rs Benchmark Index</h2>
+        See individual benchmark pages below for more details.
+        <ul>
+            <li><a href="../batch_operations/report/index.html">batch_operations</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th><a href="../batch_operations/cosine_batch_lazy/report/index.html">cosine_batch_lazy</a></th>
+                            <th><a href="../batch_operations/cosine_batch_old/report/index.html">cosine_batch_old</a></th>
+                            <th><a href="../batch_operations/cosine_batch_optimized/report/index.html">cosine_batch_optimized</a></th>
+                            <th><a href="../batch_operations/cosine_batch_pooled/report/index.html">cosine_batch_pooled</a></th>
+                        </tr>
+                        <tr>
+                            <th><a href="../batch_operations/250/report/index.html">250</a></th>
+                            <td><a href="../batch_operations/cosine_batch_lazy/250/report/index.html">batch_operations/cosine_batch_lazy/250</a></td>
+                            <td><a href="../batch_operations/cosine_batch_old/250/report/index.html">batch_operations/cosine_batch_old/250</a></td>
+                            <td><a href="../batch_operations/cosine_batch_optimized/250/report/index.html">batch_operations/cosine_batch_optimized/250</a></td>
+                            <td><a href="../batch_operations/cosine_batch_pooled/250/report/index.html">batch_operations/cosine_batch_pooled/250</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../batch_operations/1000/report/index.html">1000</a></th>
+                            <td><a href="../batch_operations/cosine_batch_lazy/1000/report/index.html">batch_operations/cosine_batch_lazy/1000</a></td>
+                            <td><a href="../batch_operations/cosine_batch_old/1000/report/index.html">batch_operations/cosine_batch_old/1000</a></td>
+                            <td><a href="../batch_operations/cosine_batch_optimized/1000/report/index.html">batch_operations/cosine_batch_optimized/1000</a></td>
+                            <td><a href="../batch_operations/cosine_batch_pooled/1000/report/index.html">batch_operations/cosine_batch_pooled/1000</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../batch_operations/5000/report/index.html">5000</a></th>
+                            <td><a href="../batch_operations/cosine_batch_lazy/5000/report/index.html">batch_operations/cosine_batch_lazy/5000</a></td>
+                            <td><a href="../batch_operations/cosine_batch_old/5000/report/index.html">batch_operations/cosine_batch_old/5000</a></td>
+                            <td><a href="../batch_operations/cosine_batch_optimized/5000/report/index.html">batch_operations/cosine_batch_optimized/5000</a></td>
+                            <td><a href="../batch_operations/cosine_batch_pooled/5000/report/index.html">batch_operations/cosine_batch_pooled/5000</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../batch_processing/report/index.html">batch_processing</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th><a href="../batch_processing/optimized/report/index.html">optimized</a></th>
+                            <th><a href="../batch_processing/original/report/index.html">original</a></th>
+                        </tr>
+                        <tr>
+                            <th><a href="../batch_processing/250/report/index.html">250</a></th>
+                            <td><a href="../batch_processing/optimized/250/report/index.html">batch_processing/optimized/250</a></td>
+                            <td><a href="../batch_processing/original/250/report/index.html">batch_processing/original/250</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../batch_processing/1000/report/index.html">1000</a></th>
+                            <td><a href="../batch_processing/optimized/1000/report/index.html">batch_processing/optimized/1000</a></td>
+                            <td><a href="../batch_processing/original/1000/report/index.html">batch_processing/original/1000</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../batch_processing/5000/report/index.html">5000</a></th>
+                            <td><a href="../batch_processing/optimized/5000/report/index.html">batch_processing/optimized/5000</a></td>
+                            <td><a href="../batch_processing/original/5000/report/index.html">batch_processing/original/5000</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../distance_dim_1024/report/index.html">distance_dim_1024</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th>Cosine</th>
+                            <th>DotProduct</th>
+                            <th>Euclidean</th>
+                        </tr>
+                        <tr>
+                            <th><a href="../distance_dim_1024/1024/report/index.html">1024</a></th>
+                            <td><a href="../distance_dim_1024/Cosine/1024/report/index.html">distance_dim_1024/Cosine/1024</a></td>
+                            <td><a href="../distance_dim_1024/DotProduct/1024/report/index.html">distance_dim_1024/DotProduct/1024</a></td>
+                            <td><a href="../distance_dim_1024/Euclidean/1024/report/index.html">distance_dim_1024/Euclidean/1024</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../distance_dim_1536/report/index.html">distance_dim_1536</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th>Cosine</th>
+                            <th>DotProduct</th>
+                            <th>Euclidean</th>
+                        </tr>
+                        <tr>
+                            <th><a href="../distance_dim_1536/1536/report/index.html">1536</a></th>
+                            <td><a href="../distance_dim_1536/Cosine/1536/report/index.html">distance_dim_1536/Cosine/1536</a></td>
+                            <td><a href="../distance_dim_1536/DotProduct/1536/report/index.html">distance_dim_1536/DotProduct/1536</a></td>
+                            <td><a href="../distance_dim_1536/Euclidean/1536/report/index.html">distance_dim_1536/Euclidean/1536</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../distance_dim_3072/report/index.html">distance_dim_3072</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th>Cosine</th>
+                            <th>DotProduct</th>
+                            <th>Euclidean</th>
+                        </tr>
+                        <tr>
+                            <th><a href="../distance_dim_3072/3072/report/index.html">3072</a></th>
+                            <td><a href="../distance_dim_3072/Cosine/3072/report/index.html">distance_dim_3072/Cosine/3072</a></td>
+                            <td><a href="../distance_dim_3072/DotProduct/3072/report/index.html">distance_dim_3072/DotProduct/3072</a></td>
+                            <td><a href="../distance_dim_3072/Euclidean/3072/report/index.html">distance_dim_3072/Euclidean/3072</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../distance_dim_384/report/index.html">distance_dim_384</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th>Cosine</th>
+                            <th>DotProduct</th>
+                            <th>Euclidean</th>
+                        </tr>
+                        <tr>
+                            <th><a href="../distance_dim_384/384/report/index.html">384</a></th>
+                            <td><a href="../distance_dim_384/Cosine/384/report/index.html">distance_dim_384/Cosine/384</a></td>
+                            <td><a href="../distance_dim_384/DotProduct/384/report/index.html">distance_dim_384/DotProduct/384</a></td>
+                            <td><a href="../distance_dim_384/Euclidean/384/report/index.html">distance_dim_384/Euclidean/384</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../distance_dim_768/report/index.html">distance_dim_768</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th>Cosine</th>
+                            <th>DotProduct</th>
+                            <th>Euclidean</th>
+                        </tr>
+                        <tr>
+                            <th><a href="../distance_dim_768/768/report/index.html">768</a></th>
+                            <td><a href="../distance_dim_768/Cosine/768/report/index.html">distance_dim_768/Cosine/768</a></td>
+                            <td><a href="../distance_dim_768/DotProduct/768/report/index.html">distance_dim_768/DotProduct/768</a></td>
+                            <td><a href="../distance_dim_768/Euclidean/768/report/index.html">distance_dim_768/Euclidean/768</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../engine_lifecycle/report/index.html">engine_lifecycle</a></li>
+            
+            <ul>
+                <li><a href="../engine_lifecycle/helix_create/report/index.html">helix_create</a></li>
+                <li><a href="../engine_lifecycle/nova_create/report/index.html">nova_create</a></li>
+                <li><a href="../engine_lifecycle/raptor_create/report/index.html">raptor_create</a></li>
+                <li><a href="../engine_lifecycle/sst_create/report/index.html">sst_create</a></li>
+                <li><a href="../engine_lifecycle/swift_create/report/index.html">swift_create</a></li>
+                <li><a href="../engine_lifecycle/viper_create/report/index.html">viper_create</a></li>
+            </ul>
+            <li>filter_helix_lz4</li>
+            
+            <ul>
+                <li><a href="../filter_helix_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_helix_none</li>
+            
+            <ul>
+                <li><a href="../filter_helix_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_helix_snappy</li>
+            
+            <ul>
+                <li><a href="../filter_helix_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_helix_zstd</li>
+            
+            <ul>
+                <li><a href="../filter_helix_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_nova_lz4</li>
+            
+            <ul>
+                <li><a href="../filter_nova_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_nova_none</li>
+            
+            <ul>
+                <li><a href="../filter_nova_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_nova_snappy</li>
+            
+            <ul>
+                <li><a href="../filter_nova_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_nova_zstd</li>
+            
+            <ul>
+                <li><a href="../filter_nova_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_raptor_lz4</li>
+            
+            <ul>
+                <li><a href="../filter_raptor_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_raptor_none</li>
+            
+            <ul>
+                <li><a href="../filter_raptor_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_raptor_snappy</li>
+            
+            <ul>
+                <li><a href="../filter_raptor_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_raptor_zstd</li>
+            
+            <ul>
+                <li><a href="../filter_raptor_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_sst_lz4</li>
+            
+            <ul>
+                <li><a href="../filter_sst_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_sst_none</li>
+            
+            <ul>
+                <li><a href="../filter_sst_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_sst_snappy</li>
+            
+            <ul>
+                <li><a href="../filter_sst_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_sst_zstd</li>
+            
+            <ul>
+                <li><a href="../filter_sst_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_swift_lz4</li>
+            
+            <ul>
+                <li><a href="../filter_swift_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_swift_none</li>
+            
+            <ul>
+                <li><a href="../filter_swift_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_swift_snappy</li>
+            
+            <ul>
+                <li><a href="../filter_swift_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_swift_zstd</li>
+            
+            <ul>
+                <li><a href="../filter_swift_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_viper_lz4</li>
+            
+            <ul>
+                <li><a href="../filter_viper_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_viper_none</li>
+            
+            <ul>
+                <li><a href="../filter_viper_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_viper_snappy</li>
+            
+            <ul>
+                <li><a href="../filter_viper_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>filter_viper_zstd</li>
+            
+            <ul>
+                <li><a href="../filter_viper_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li><a href="../hardware_backends/report/index.html">hardware_backends</a></li>
+            
+            <ul>
+                <li><a href="../hardware_backends/cpu/report/index.html">cpu</a></li>
+                <li><a href="../hardware_backends/gpu/report/index.html">gpu</a></li>
+            </ul>
+            <li><a href="../insertion_performance/report/index.html">insertion_performance</a></li>
+            
+            <ul>
+                <li><a href="../insertion_performance/nova/report/index.html">nova</a></li>
+                <li><a href="../insertion_performance/sst/report/index.html">sst</a></li>
+                <li><a href="../insertion_performance/swift/report/index.html">swift</a></li>
+                <li><a href="../insertion_performance/viper/report/index.html">viper</a></li>
+            </ul>
+            <li><a href="../memory_pool_effectiveness/report/index.html">memory_pool_effectiveness</a></li>
+            
+            <ul>
+                <li><a href="../memory_pool_effectiveness/batch_with_pool/report/index.html">batch_with_pool</a></li>
+                <li><a href="../memory_pool_effectiveness/batch_without_pool/report/index.html">batch_without_pool</a></li>
+            </ul>
+            <li><a href="../memory_pressure/report/index.html">memory_pressure</a></li>
+            
+            <ul>
+                <li><a href="../memory_pressure/optimized_memory/report/index.html">optimized_memory</a></li>
+                <li><a href="../memory_pressure/original_memory/report/index.html">original_memory</a></li>
+            </ul>
+            <li>pure_helix_lz4</li>
+            
+            <ul>
+                <li><a href="../pure_helix_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_helix_none</li>
+            
+            <ul>
+                <li><a href="../pure_helix_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_helix_snappy</li>
+            
+            <ul>
+                <li><a href="../pure_helix_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_helix_zstd</li>
+            
+            <ul>
+                <li><a href="../pure_helix_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_nova_lz4</li>
+            
+            <ul>
+                <li><a href="../pure_nova_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_nova_none</li>
+            
+            <ul>
+                <li><a href="../pure_nova_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_nova_snappy</li>
+            
+            <ul>
+                <li><a href="../pure_nova_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_nova_zstd</li>
+            
+            <ul>
+                <li><a href="../pure_nova_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_raptor_lz4</li>
+            
+            <ul>
+                <li><a href="../pure_raptor_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_raptor_none</li>
+            
+            <ul>
+                <li><a href="../pure_raptor_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_raptor_snappy</li>
+            
+            <ul>
+                <li><a href="../pure_raptor_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_raptor_zstd</li>
+            
+            <ul>
+                <li><a href="../pure_raptor_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_sst_lz4</li>
+            
+            <ul>
+                <li><a href="../pure_sst_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_sst_none</li>
+            
+            <ul>
+                <li><a href="../pure_sst_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_sst_snappy</li>
+            
+            <ul>
+                <li><a href="../pure_sst_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_sst_zstd</li>
+            
+            <ul>
+                <li><a href="../pure_sst_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_swift_lz4</li>
+            
+            <ul>
+                <li><a href="../pure_swift_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_swift_none</li>
+            
+            <ul>
+                <li><a href="../pure_swift_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_swift_snappy</li>
+            
+            <ul>
+                <li><a href="../pure_swift_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_swift_zstd</li>
+            
+            <ul>
+                <li><a href="../pure_swift_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_viper_lz4</li>
+            
+            <ul>
+                <li><a href="../pure_viper_lz4/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_viper_none</li>
+            
+            <ul>
+                <li><a href="../pure_viper_none/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_viper_snappy</li>
+            
+            <ul>
+                <li><a href="../pure_viper_snappy/search/report/index.html">search</a></li>
+            </ul>
+            <li>pure_viper_zstd</li>
+            
+            <ul>
+                <li><a href="../pure_viper_zstd/search/report/index.html">search</a></li>
+            </ul>
+            <li><a href="../result_creation/report/index.html">result_creation</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th><a href="../result_creation/optimized/report/index.html">optimized</a></th>
+                            <th><a href="../result_creation/original/report/index.html">original</a></th>
+                        </tr>
+                        <tr>
+                            <th><a href="../result_creation/384/report/index.html">384</a></th>
+                            <td><a href="../result_creation/optimized/384/report/index.html">result_creation/optimized/384</a></td>
+                            <td><a href="../result_creation/original/384/report/index.html">result_creation/original/384</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../result_creation/768/report/index.html">768</a></th>
+                            <td><a href="../result_creation/optimized/768/report/index.html">result_creation/optimized/768</a></td>
+                            <td><a href="../result_creation/original/768/report/index.html">result_creation/original/768</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../result_creation/1536/report/index.html">1536</a></th>
+                            <td><a href="../result_creation/optimized/1536/report/index.html">result_creation/optimized/1536</a></td>
+                            <td><a href="../result_creation/original/1536/report/index.html">result_creation/original/1536</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../result_sharing/report/index.html">result_sharing</a></li>
+            
+            <ul>
+                <li><a href="../result_sharing/optimized_10_clones/report/index.html">optimized_10_clones</a></li>
+                <li><a href="../result_sharing/original_10_clones/report/index.html">original_10_clones</a></li>
+            </ul>
+            <li>search_helix_gzip_1000</li>
+            
+            <ul>
+                <li><a href="../search_helix_gzip_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_gzip_250</li>
+            
+            <ul>
+                <li><a href="../search_helix_gzip_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_gzip_5000</li>
+            
+            <ul>
+                <li><a href="../search_helix_gzip_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_lz4_1000</li>
+            
+            <ul>
+                <li><a href="../search_helix_lz4_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_lz4_250</li>
+            
+            <ul>
+                <li><a href="../search_helix_lz4_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_lz4_5000</li>
+            
+            <ul>
+                <li><a href="../search_helix_lz4_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_none_1000</li>
+            
+            <ul>
+                <li><a href="../search_helix_none_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_none_250</li>
+            
+            <ul>
+                <li><a href="../search_helix_none_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_none_5000</li>
+            
+            <ul>
+                <li><a href="../search_helix_none_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_snappy_1000</li>
+            
+            <ul>
+                <li><a href="../search_helix_snappy_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_snappy_250</li>
+            
+            <ul>
+                <li><a href="../search_helix_snappy_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_snappy_5000</li>
+            
+            <ul>
+                <li><a href="../search_helix_snappy_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_zstd_1000</li>
+            
+            <ul>
+                <li><a href="../search_helix_zstd_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_zstd_250</li>
+            
+            <ul>
+                <li><a href="../search_helix_zstd_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_helix_zstd_5000</li>
+            
+            <ul>
+                <li><a href="../search_helix_zstd_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_gzip_1000</li>
+            
+            <ul>
+                <li><a href="../search_nova_gzip_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_gzip_250</li>
+            
+            <ul>
+                <li><a href="../search_nova_gzip_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_gzip_5000</li>
+            
+            <ul>
+                <li><a href="../search_nova_gzip_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_lz4_1000</li>
+            
+            <ul>
+                <li><a href="../search_nova_lz4_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_lz4_250</li>
+            
+            <ul>
+                <li><a href="../search_nova_lz4_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_lz4_5000</li>
+            
+            <ul>
+                <li><a href="../search_nova_lz4_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_none_1000</li>
+            
+            <ul>
+                <li><a href="../search_nova_none_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_none_250</li>
+            
+            <ul>
+                <li><a href="../search_nova_none_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_none_5000</li>
+            
+            <ul>
+                <li><a href="../search_nova_none_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_snappy_1000</li>
+            
+            <ul>
+                <li><a href="../search_nova_snappy_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_snappy_250</li>
+            
+            <ul>
+                <li><a href="../search_nova_snappy_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_snappy_5000</li>
+            
+            <ul>
+                <li><a href="../search_nova_snappy_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_zstd_1000</li>
+            
+            <ul>
+                <li><a href="../search_nova_zstd_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_zstd_250</li>
+            
+            <ul>
+                <li><a href="../search_nova_zstd_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_nova_zstd_5000</li>
+            
+            <ul>
+                <li><a href="../search_nova_zstd_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_gzip_1000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_gzip_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_gzip_250</li>
+            
+            <ul>
+                <li><a href="../search_raptor_gzip_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_gzip_5000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_gzip_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_lz4_1000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_lz4_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_lz4_250</li>
+            
+            <ul>
+                <li><a href="../search_raptor_lz4_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_lz4_5000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_lz4_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_none_1000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_none_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_none_250</li>
+            
+            <ul>
+                <li><a href="../search_raptor_none_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_none_5000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_none_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_snappy_1000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_snappy_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_snappy_250</li>
+            
+            <ul>
+                <li><a href="../search_raptor_snappy_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_snappy_5000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_snappy_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_zstd_1000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_zstd_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_zstd_250</li>
+            
+            <ul>
+                <li><a href="../search_raptor_zstd_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_raptor_zstd_5000</li>
+            
+            <ul>
+                <li><a href="../search_raptor_zstd_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_gzip_1000</li>
+            
+            <ul>
+                <li><a href="../search_sst_gzip_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_gzip_250</li>
+            
+            <ul>
+                <li><a href="../search_sst_gzip_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_gzip_5000</li>
+            
+            <ul>
+                <li><a href="../search_sst_gzip_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_lz4_1000</li>
+            
+            <ul>
+                <li><a href="../search_sst_lz4_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_lz4_250</li>
+            
+            <ul>
+                <li><a href="../search_sst_lz4_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_lz4_5000</li>
+            
+            <ul>
+                <li><a href="../search_sst_lz4_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_none_1000</li>
+            
+            <ul>
+                <li><a href="../search_sst_none_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_none_250</li>
+            
+            <ul>
+                <li><a href="../search_sst_none_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_none_5000</li>
+            
+            <ul>
+                <li><a href="../search_sst_none_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_snappy_1000</li>
+            
+            <ul>
+                <li><a href="../search_sst_snappy_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_snappy_250</li>
+            
+            <ul>
+                <li><a href="../search_sst_snappy_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_snappy_5000</li>
+            
+            <ul>
+                <li><a href="../search_sst_snappy_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_zstd_1000</li>
+            
+            <ul>
+                <li><a href="../search_sst_zstd_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_zstd_250</li>
+            
+            <ul>
+                <li><a href="../search_sst_zstd_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_sst_zstd_5000</li>
+            
+            <ul>
+                <li><a href="../search_sst_zstd_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_gzip_1000</li>
+            
+            <ul>
+                <li><a href="../search_swift_gzip_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_gzip_250</li>
+            
+            <ul>
+                <li><a href="../search_swift_gzip_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_gzip_5000</li>
+            
+            <ul>
+                <li><a href="../search_swift_gzip_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_lz4_1000</li>
+            
+            <ul>
+                <li><a href="../search_swift_lz4_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_lz4_250</li>
+            
+            <ul>
+                <li><a href="../search_swift_lz4_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_lz4_5000</li>
+            
+            <ul>
+                <li><a href="../search_swift_lz4_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_none_1000</li>
+            
+            <ul>
+                <li><a href="../search_swift_none_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_none_250</li>
+            
+            <ul>
+                <li><a href="../search_swift_none_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_none_5000</li>
+            
+            <ul>
+                <li><a href="../search_swift_none_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_snappy_1000</li>
+            
+            <ul>
+                <li><a href="../search_swift_snappy_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_snappy_250</li>
+            
+            <ul>
+                <li><a href="../search_swift_snappy_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_snappy_5000</li>
+            
+            <ul>
+                <li><a href="../search_swift_snappy_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_zstd_1000</li>
+            
+            <ul>
+                <li><a href="../search_swift_zstd_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_zstd_250</li>
+            
+            <ul>
+                <li><a href="../search_swift_zstd_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_swift_zstd_5000</li>
+            
+            <ul>
+                <li><a href="../search_swift_zstd_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_gzip_1000</li>
+            
+            <ul>
+                <li><a href="../search_viper_gzip_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_gzip_250</li>
+            
+            <ul>
+                <li><a href="../search_viper_gzip_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_gzip_5000</li>
+            
+            <ul>
+                <li><a href="../search_viper_gzip_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_lz4_1000</li>
+            
+            <ul>
+                <li><a href="../search_viper_lz4_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_lz4_250</li>
+            
+            <ul>
+                <li><a href="../search_viper_lz4_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_lz4_5000</li>
+            
+            <ul>
+                <li><a href="../search_viper_lz4_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_none_1000</li>
+            
+            <ul>
+                <li><a href="../search_viper_none_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_none_250</li>
+            
+            <ul>
+                <li><a href="../search_viper_none_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_none_5000</li>
+            
+            <ul>
+                <li><a href="../search_viper_none_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_snappy_1000</li>
+            
+            <ul>
+                <li><a href="../search_viper_snappy_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_snappy_250</li>
+            
+            <ul>
+                <li><a href="../search_viper_snappy_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_snappy_5000</li>
+            
+            <ul>
+                <li><a href="../search_viper_snappy_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_zstd_1000</li>
+            
+            <ul>
+                <li><a href="../search_viper_zstd_1000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_zstd_250</li>
+            
+            <ul>
+                <li><a href="../search_viper_zstd_250/top10/report/index.html">top10</a></li>
+            </ul>
+            <li>search_viper_zstd_5000</li>
+            
+            <ul>
+                <li><a href="../search_viper_zstd_5000/top10/report/index.html">top10</a></li>
+            </ul>
+            <li><a href="../simd_distance_batch/report/index.html">simd_distance_batch</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th><a href="../simd_distance_batch/simd_pooled/report/index.html">simd_pooled</a></th>
+                            <th><a href="../simd_distance_batch/standard/report/index.html">standard</a></th>
+                        </tr>
+                        <tr>
+                            <th><a href="../simd_distance_batch/250/report/index.html">250</a></th>
+                            <td><a href="../simd_distance_batch/simd_pooled/250/report/index.html">simd_distance_batch/simd_pooled/250</a></td>
+                            <td><a href="../simd_distance_batch/standard/250/report/index.html">simd_distance_batch/standard/250</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../simd_distance_batch/1000/report/index.html">1000</a></th>
+                            <td><a href="../simd_distance_batch/simd_pooled/1000/report/index.html">simd_distance_batch/simd_pooled/1000</a></td>
+                            <td><a href="../simd_distance_batch/standard/1000/report/index.html">simd_distance_batch/standard/1000</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../simd_distance_batch/5000/report/index.html">5000</a></th>
+                            <td><a href="../simd_distance_batch/simd_pooled/5000/report/index.html">simd_distance_batch/simd_pooled/5000</a></td>
+                            <td><a href="../simd_distance_batch/standard/5000/report/index.html">simd_distance_batch/standard/5000</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+            <li><a href="../simd_distance_dimensions/report/index.html">simd_distance_dimensions</a></li>
+            
+            <ul>
+                <li>
+                    <table>
+                        <tr>
+                            <th></th>
+                            <th><a href="../simd_distance_dimensions/cosine/report/index.html">cosine</a></th>
+                            <th><a href="../simd_distance_dimensions/dot_product/report/index.html">dot_product</a></th>
+                            <th><a href="../simd_distance_dimensions/euclidean/report/index.html">euclidean</a></th>
+                        </tr>
+                        <tr>
+                            <th><a href="../simd_distance_dimensions/384/report/index.html">384</a></th>
+                            <td><a href="../simd_distance_dimensions/cosine/384/report/index.html">simd_distance_dimensions/cosine/384</a></td>
+                            <td><a href="../simd_distance_dimensions/dot_product/384/report/index.html">simd_distance_dimensions/dot_product/384</a></td>
+                            <td><a href="../simd_distance_dimensions/euclidean/384/report/index.html">simd_distance_dimensions/euclidean/384</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../simd_distance_dimensions/768/report/index.html">768</a></th>
+                            <td><a href="../simd_distance_dimensions/cosine/768/report/index.html">simd_distance_dimensions/cosine/768</a></td>
+                            <td><a href="../simd_distance_dimensions/dot_product/768/report/index.html">simd_distance_dimensions/dot_product/768</a></td>
+                            <td><a href="../simd_distance_dimensions/euclidean/768/report/index.html">simd_distance_dimensions/euclidean/768</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../simd_distance_dimensions/1024/report/index.html">1024</a></th>
+                            <td><a href="../simd_distance_dimensions/cosine/1024/report/index.html">simd_distance_dimensions/cosine/1024</a></td>
+                            <td><a href="../simd_distance_dimensions/dot_product/1024/report/index.html">simd_distance_dimensions/dot_product/1024</a></td>
+                            <td><a href="../simd_distance_dimensions/euclidean/1024/report/index.html">simd_distance_dimensions/euclidean/1024</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../simd_distance_dimensions/1536/report/index.html">1536</a></th>
+                            <td><a href="../simd_distance_dimensions/cosine/1536/report/index.html">simd_distance_dimensions/cosine/1536</a></td>
+                            <td><a href="../simd_distance_dimensions/dot_product/1536/report/index.html">simd_distance_dimensions/dot_product/1536</a></td>
+                            <td><a href="../simd_distance_dimensions/euclidean/1536/report/index.html">simd_distance_dimensions/euclidean/1536</a></td>
+                        </tr>
+                        <tr>
+                            <th><a href="../simd_distance_dimensions/3072/report/index.html">3072</a></th>
+                            <td><a href="../simd_distance_dimensions/cosine/3072/report/index.html">simd_distance_dimensions/cosine/3072</a></td>
+                            <td><a href="../simd_distance_dimensions/dot_product/3072/report/index.html">simd_distance_dimensions/dot_product/3072</a></td>
+                            <td><a href="../simd_distance_dimensions/euclidean/3072/report/index.html">simd_distance_dimensions/euclidean/3072</a></td>
+                        </tr>
+                    </table>
+                </li>
+            </ul>
+        </ul>
+    </div>
+    <div id="footer">
+        <p>This report was generated by
+            <a href="https://github.com/bheisler/criterion.rs">Criterion.rs</a>, a statistics-driven benchmarking
+            library in Rust.</p>
+    </div>
+</body>
+</html>

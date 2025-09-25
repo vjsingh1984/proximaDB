@@ -3,10 +3,10 @@
 //! These tests verify that the protobuf-first approach works correctly
 //! and that both APIs provide identical functionality.
 
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CollectionConfig, CollectionOperation, CollectionRequest, CollectionResponse, DistanceMetric,
-    IncludeFields, MetadataItem, SearchQuery, StorageEngine, VectorBatchRequest,
-    VectorOperationResponse, VectorRecord, VectorSearchRequest,
+    StorageEngine, VectorBatchRequest, VectorOperationResponse, VectorRecord, VectorSearchRequest,
+    SqlValue, sql_value, SearchQuery, MetadataFilter, LogicalOp,
 };
 use proximadb::utils::uuid::Uuid;
 use std::time::Duration;
@@ -22,16 +22,16 @@ mod comprehensive_api_tests {
             dimension: 128,
             distance_metric: DistanceMetric::Cosine as i32,
             storage_engine: StorageEngine::Sst as i32,
-            storage_config: None,
-            index_configs: vec![],
-            primary_index: None,
-            auto_index_selection: Some(true),
-            filterable_columns: vec![],
-            quantization: None,
-            embedding_models: None,
-            description: Some("Test collection for API consistency".to_string()),
             tags: vec!["test".to_string()],
-            owner: Some("test_user".to_string()),
+            auto_index_selection: false,
+            embedding_models: vec![],
+            owner: Some("test_owner".to_string()),
+            description: None,
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization: None,
+            storage_config: None,
+            primary_index: String::new(),
         }
     }
 
@@ -41,29 +41,23 @@ mod comprehensive_api_tests {
             .map(|i| VectorRecord {
                 id: format!("vec_{}", i),
                 vector: (0..dim).map(|j| (i as f32 + j as f32) / 100.0).collect(),
-                metadata: vec![
-                    MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                                i as f64,
-                            ),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                                if i % 2 == 0 { "even" } else { "odd" }.to_string(),
-                            ),
-                        ),
-                    },
-                ],
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("index".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(i as f64)),
+                    });
+                    metadata.insert("category".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(
+                            if i % 2 == 0 { "even" } else { "odd" }.to_string()
+                        )),
+                    });
+                    metadata
+                },
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: None,
+                quantized_vector: vec![],
                 source: None,
             })
             .collect()
@@ -117,8 +111,6 @@ mod comprehensive_api_tests {
         let batch_request = VectorBatchRequest {
             collection_id: collection_id.clone(),
             vectors: create_test_vectors(100, 128),
-            batch_timeout_ms: None,
-            request_id: None,
         };
 
         let batch_response: VectorOperationResponse = client
@@ -148,20 +140,13 @@ mod comprehensive_api_tests {
             collection_id: collection_id.clone(),
             queries: vec![SearchQuery {
                 vector: vec![0.5; 128],
-                metadata_filter: None,
-                id: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,
             search_params: None,
-            include_fields: Some(IncludeFields {
-                vector: false,
-                metadata: true,
-                score: true,
-                rank: false,
-                source: false,
-                source_options: None,
-            }),
+            include_fields: None,
             search_optimization: None,
         };
 
@@ -250,8 +235,8 @@ mod comprehensive_api_tests {
             collection_id: "".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1; 128],
-                metadata_filter: None,
-                id: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,
@@ -302,8 +287,8 @@ mod comprehensive_api_tests {
             collection_id: "non_existent_collection_xyz".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1; 128],
-                metadata_filter: None,
-                id: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,

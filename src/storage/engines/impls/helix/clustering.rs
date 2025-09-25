@@ -9,7 +9,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Hilbert key type
 pub type HilbertKey = u64;
@@ -297,7 +297,7 @@ pub fn sort_by_hilbert(records: &mut [VectorRecord], hilbert_keys: &[HilbertKey]
 
 #[cfg(test)]
 mod tests {
-    use super::hilbert_curve::HilbertCurve;
+    use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
     use super::*;
 
     #[test]
@@ -314,16 +314,24 @@ mod tests {
             VectorRecord {
                 id: "1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
+                updated_at: None,
                 expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
             VectorRecord {
                 id: "2".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
+                updated_at: None,
                 expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
             },
         ];
 

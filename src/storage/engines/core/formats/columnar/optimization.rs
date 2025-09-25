@@ -7,7 +7,7 @@
 //! - Cost-based query optimization
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     ColumnarConfig, MetadataFilter, RowGroupStats, SearchCandidate,
 };
@@ -743,9 +743,10 @@ mod tests {
     async fn test_columnar_optimizer_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new().unwrap());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(crate::proto::proximadb_v1::DistanceMetric::Cosine));
         let config = ColumnarConfig::default();
-        let optimizer = ColumnarOptimizer::new(distance_compute, config);
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(Default::default()).await.unwrap());
+        let optimizer = ColumnarOptimizer::new(distance_compute, config, filesystem_factory, "test_base_path".to_string(), "test_collection".to_string()).await.unwrap();
         let stats = optimizer.get_optimization_stats();
         assert!(stats.contains_key("bloom_filter_cache_size"));
         assert!(stats.contains_key("stats_cache_size"));

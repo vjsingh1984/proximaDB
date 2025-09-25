@@ -284,6 +284,16 @@ impl CompactVectorCollection {
     pub fn memory_usage(&self) -> usize {
         self.vectors.iter().map(|v| v.size_bytes()).sum()
     }
+
+    /// Get vector ID by index (alias for vector_id)
+    pub fn get_vector_id(&self, index: usize) -> Option<&str> {
+        self.vector_id(index)
+    }
+
+    /// Get vector as f32 by ID (alias for vector_f32)
+    pub fn get_vector_f32(&self, id: &str) -> Option<Result<&[f32]>> {
+        self.vector_f32(id)
+    }
 }
 
 #[cfg(test)]

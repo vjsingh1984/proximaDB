@@ -29,9 +29,7 @@
 use crate::core::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Edge, EdgeId, Node, NodeId, PropertyValue};
-use dashmap::DashMap;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 
 /// Property index for efficient property-based queries
 #[derive(Debug)]
@@ -537,6 +535,9 @@ fn property_value_to_string(value: &PropertyValue) -> String {
         Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
             "object".to_string()
         }
+        Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
+            "vector".to_string()
+        }
         None => "null".to_string(),
     }
 }
@@ -551,7 +552,7 @@ mod tests {
         let mut index = PropertyIndex::new("name".to_string());
 
         let value = PropertyValue {
-            value: Some(Value::StringValue("Alice".to_string())),
+            value: Some(crate::proto::proximadb_v1::property_value::Value::StringValue("Alice".to_string())),
         };
 
         // Add entry

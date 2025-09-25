@@ -2,7 +2,6 @@
 // Optimizes row group size based on vector dimensions, metadata cost, and cloud I/O characteristics
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 // use std::collections::HashMap; // Unused import
 
 /// Cloud storage I/O characteristics for optimal row group sizing

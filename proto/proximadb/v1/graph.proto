@@ -82,32 +82,34 @@ message PropertyObject {
 
 // Graph traversal request
 message TraversalRequest {
+  // Graph ID
+  string graph_id = 1;
   // Starting node ID
-  string start_node_id = 1;
+  string start_node_id = 2;
   
   // Maximum depth to traverse
-  uint32 max_depth = 2;
-  
+  uint32 max_depth = 3;
+
   // Edge types to follow (empty = all types)
-  repeated string edge_types = 3;
-  
+  repeated string edge_types = 4;
+
   // Node label filter
-  repeated string node_labels = 4;
-  
+  repeated string node_labels = 5;
+
   // Property filters
-  repeated PropertyFilter filters = 5;
-  
+  repeated PropertyFilter filters = 6;
+
   // Traversal algorithm
-  TraversalAlgorithm algorithm = 6;
-  
+  TraversalAlgorithm algorithm = 7;
+
   // Maximum number of results
-  optional uint32 limit = 7;
+  optional uint32 limit = 8;
 
   // Optional timeout in milliseconds for traversal
-  optional uint32 timeout_ms = 8;
+  optional uint32 timeout_ms = 9;
 
   // Optional cap on frontier size to control memory usage
-  optional uint32 max_frontier = 9;
+  optional uint32 max_frontier = 10;
 }
 
 // Property filter for graph queries
@@ -166,51 +168,57 @@ message TraversalStats {
 
 // Node query request
 message NodeQuery {
+  // Graph ID
+  string graph_id = 1;
   // Node labels to match
-  repeated string labels = 1;
+  repeated string labels = 2;
   
   // Property filters
-  repeated PropertyFilter filters = 2;
-  
+  repeated PropertyFilter filters = 3;
+
   // Limit results
-  optional uint32 limit = 3;
-  
+  optional uint32 limit = 4;
+
   // Skip/offset for pagination
-  optional uint32 offset = 4;
+  optional uint32 offset = 5;
   // Continuation token for pagination
-  optional string continuation_token = 5;
+  optional string continuation_token = 6;
 }
 
-// Edge query request  
+// Edge query request
 message EdgeQuery {
+  // Graph ID
+  string graph_id = 1;
   // Source node ID filter
-  optional string from_node_id = 1;
+  optional string from_node_id = 2;
   
   // Target node ID filter
-  optional string to_node_id = 2;
-  
+  optional string to_node_id = 3;
+
   // Edge types to match
-  repeated string edge_types = 3;
-  
+  repeated string edge_types = 4;
+
   // Property filters
-  repeated PropertyFilter filters = 4;
-  
+  repeated PropertyFilter filters = 5;
+
   // Limit results
-  optional uint32 limit = 5;
-  
+  optional uint32 limit = 6;
+
   // Skip/offset for pagination
-  optional uint32 offset = 6;
+  optional uint32 offset = 7;
   // Continuation token for pagination
-  optional string continuation_token = 7;
+  optional string continuation_token = 8;
 }
 
 // Batch operations for high-performance ingestion
 message BatchNodeRequest {
-  repeated Node nodes = 1;
+  string graph_id = 1;
+  repeated Node nodes = 2;
 }
 
 message BatchEdgeRequest {
-  repeated Edge edges = 1;
+  string graph_id = 1;
+  repeated Edge edges = 2;
 }
 
 message BatchResponse {
@@ -305,44 +313,53 @@ message EdgeTypeStats {
 // Additional request messages for gRPC service
 
 message CreateNodeRequest {
-  Node node = 1;
+  string graph_id = 1;
+  Node node = 2;
 }
 
 message GetNodeRequest {
-  string node_id = 1;
+  string graph_id = 1;
+  string node_id = 2;
 }
 
 message UpdateNodeRequest {
-  Node node = 1;
+  string graph_id = 1;
+  Node node = 2;
 }
 
 message DeleteNodeRequest {
-  string node_id = 1;
+  string graph_id = 1;
+  string node_id = 2;
 }
 
 message CreateEdgeRequest {
-  Edge edge = 1;
+  string graph_id = 1;
+  Edge edge = 2;
 }
 
 message GetEdgeRequest {
-  string edge_id = 1;
+  string graph_id = 1;
+  string edge_id = 2;
 }
 
 message UpdateEdgeRequest {
-  Edge edge = 1;
+  string graph_id = 1;
+  Edge edge = 2;
 }
 
 message DeleteEdgeRequest {
-  string edge_id = 1;
+  string graph_id = 1;
+  string edge_id = 2;
 }
 
 message GetNeighborsRequest {
-  string node_id = 1;
-  optional string edge_type = 2;
+  string graph_id = 1;
+  string node_id = 2;
+  optional string edge_type = 3;
 }
 
 message GetStatsRequest {
-  // Empty request for getting graph statistics
+  string graph_id = 1;
 }
 
 // Service definition for graph operations
@@ -388,14 +405,15 @@ service GraphService {
 
 // Shortest path request/response
 message ShortestPathRequest {
-  string start_node_id = 1;
-  string target_node_id = 2;
-  optional uint32 max_depth = 3;
-  repeated string edge_types = 4;
+  string graph_id = 1;
+  string start_node_id = 2;
+  string target_node_id = 3;
+  optional uint32 max_depth = 4;
+  repeated string edge_types = 5;
   // Algorithm selection
-  optional ShortestPathAlgorithm algorithm = 5; // default DIJKSTRA
+  optional ShortestPathAlgorithm algorithm = 6; // default DIJKSTRA
   // Number of paths for k-shortest (if > 1, Yen's algorithm is used)
-  optional uint32 k = 6;
+  optional uint32 k = 7;
 }
 
 message ShortestPathResponse {
@@ -420,8 +438,9 @@ enum ShortestPathAlgorithm {
 
 // Unique constraint DDL
 message UniqueConstraintRequest {
-  string label = 1;
-  string property = 2;
+  string graph_id = 1;
+  string label = 2;
+  string property = 3;
 }
 
 message UniqueConstraintResponse {

@@ -219,9 +219,13 @@ use num_cpus;
 use std::sync::{Arc, OnceLock};
 use tracing::info;
 
+// Import feature detection macros - these are macros, not functions
+#[allow(unused_imports)]
+use crate::compute::distance_computation::platform::distance_arm64_patch;
+
 // No longer importing duplicate CpuFeatures from compute module
 use crate::core::config::HardwareConfig;
-use crate::query::sql_engine::vector_array_parser::SimdCapabilities;
+
 // No longer importing PlatformCapability from compute - using our own HardwareBackend
 
 // GPU types with feature gating
@@ -349,6 +353,86 @@ impl Default for CacheSizes {
     }
 }
 
+/// SIMD capabilities available on the system
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct SimdCapabilities {
+    /// SSE support
+    pub has_sse: bool,
+    /// SSE4.1 support
+    pub has_sse41: bool,
+    /// AVX support
+    pub has_avx: bool,
+    /// AVX2 support
+    pub has_avx2: bool,
+    /// AVX-512 support
+    pub has_avx512: bool,
+    /// ARM NEON support
+    pub has_neon: bool,
+    /// FMA support
+    pub has_fma: bool,
+}
+
+impl SimdCapabilities {
+    /// Detect SIMD capabilities of the CPU
+    pub fn detect() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        {
+            Self {
+                has_sse: is_x86_feature_detected!("sse"),
+                has_sse41: is_x86_feature_detected!("sse4.1"),
+                has_avx: is_x86_feature_detected!("avx"),
+                has_avx2: is_x86_feature_detected!("avx2"),
+                has_avx512: is_x86_feature_detected!("avx512f"),
+                has_neon: false,
+                has_fma: is_x86_feature_detected!("fma"),
+            }
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            Self {
+                has_sse: false,
+                has_sse41: false,
+                has_avx: false,
+                has_avx2: false,
+                has_avx512: false,
+                has_neon: cfg!(target_feature = "neon"),
+                has_fma: cfg!(target_feature = "fma"),
+            }
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            Self::default()
+        }
+    }
+
+    /// Get a string representation of the available SIMD capabilities
+    pub fn to_string(&self) -> String {
+        let mut features = Vec::new();
+        if self.has_avx512 {
+            features.push("AVX-512");
+        }
+        if self.has_avx2 {
+            features.push("AVX2");
+        }
+        if self.has_avx {
+            features.push("AVX");
+        }
+        if self.has_sse41 {
+            features.push("SSE4.1");
+        }
+        if self.has_sse {
+            features.push("SSE");
+        }
+        if self.has_neon {
+            features.push("NEON");
+        }
+        if self.has_fma {
+            features.push("FMA");
+        }
+        features.join(", ")
+    }
+}
+
 /// CPU capabilities including SIMD support
 #[derive(Debug, Clone)]
 pub struct CpuCapabilities {
@@ -452,15 +536,7 @@ impl HardwareCapabilities {
                 logical_cores: num_cpus::get(),
                 vendor: "Unknown".to_string(),
                 model_name: "Unknown".to_string(),
-                simd: SimdCapabilities {
-                    has_sse: false,
-                    has_sse41: false,
-                    has_avx: false,
-                    has_avx2: false,
-                    has_avx512: false,
-                    has_neon: false,
-                    has_fma: false,
-                },
+                simd: SimdCapabilities::default(),
                 features: CpuFeatures::default(),
             },
             gpu: GpuCapabilities {
@@ -492,7 +568,7 @@ impl HardwareCapabilities {
         let features = CpuFeatures {
             avx512_support: simd.has_avx512,
             avx2_support: simd.has_avx2,
-            sse42_support: simd.has_sse,
+            sse42_support: simd.has_sse41,
             neon_support: simd.has_neon,
             core_count: physical_cores,
             thread_count: logical_cores,
@@ -1320,7 +1396,7 @@ mod tests {
         // CPU should always be detected
         assert!(caps.cpu.physical_cores > 0);
         assert!(caps.cpu.logical_cores >= caps.cpu.physical_cores);
-        assert!(!caps.cpu.vendor.is_none());
+        assert!(!caps.cpu.vendor.is_empty());
 
         // Memory should always be detected
         assert!(caps.memory.total_memory > 0);

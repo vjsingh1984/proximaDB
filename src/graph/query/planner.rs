@@ -30,7 +30,6 @@ use super::QueryResult;
 use crate::core::error::VectorDBError;
 use crate::graph::GraphMemoryPool;
 use crate::utils::Uuid;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;

@@ -30,15 +30,15 @@ fn create_test_vectors(count: usize, dimension: usize, collection_id: &str) -> V
         }
 
         let metadata = vec![
-            proximadb::proto::proximadb::MetadataItem {
+            proximadb::proto::proximadb_v1::MetadataItem {
                 key: "category".to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                     format!("cat_{}", i % 5)
                 )),
             },
-            proximadb::proto::proximadb::MetadataItem {
+            proximadb::proto::proximadb_v1::MetadataItem {
                 key: "priority".to_string(),
-                value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(
+                value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(
                     (i % 10).to_string()
                 )),
             },
@@ -155,9 +155,9 @@ async fn test_axis_adaptive_optimization() {
     // Sparse collection (simulated high sparsity via metadata)
     let mut sparse_vectors = create_test_vectors(500, 256, sparse_collection);
     for vector in &mut sparse_vectors {
-        vector.metadata.push(proximadb::proto::proximadb::MetadataItem {
+        vector.metadata.push(proximadb::proto::proximadb_v1::MetadataItem {
             key: "sparse_type".to_string(),
-            value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue("true".to_string())),
+            value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue("true".to_string())),
         });
     }
     for vector in sparse_vectors {
@@ -193,17 +193,17 @@ async fn test_axis_complex_hybrid_queries() {
     // Insert test data with rich metadata
     let mut test_vectors = create_test_vectors(100, 128, collection_id);
     for (i, vector) in test_vectors.iter_mut().enumerate() {
-        vector.metadata.push(proximadb::proto::proximadb::MetadataItem {
+        vector.metadata.push(proximadb::proto::proximadb_v1::MetadataItem {
             key: "region".to_string(),
-            value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(format!("region_{}", i % 3))),
+            value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(format!("region_{}", i % 3))),
         });
-        vector.metadata.push(proximadb::proto::proximadb::MetadataItem {
+        vector.metadata.push(proximadb::proto::proximadb_v1::MetadataItem {
             key: "score".to_string(),
-            value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i as f64 / 10.0).to_string())),
+            value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue((i as f64 / 10.0).to_string())),
         });
-        vector.metadata.push(proximadb::proto::proximadb::MetadataItem {
+        vector.metadata.push(proximadb::proto::proximadb_v1::MetadataItem {
             key: "active".to_string(),
-            value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 2 == 0).to_string())),
+            value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue((i % 2 == 0).to_string())),
         });
     }
 

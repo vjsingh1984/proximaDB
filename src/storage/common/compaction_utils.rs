@@ -25,7 +25,7 @@ pub enum StorageEngineType {
     VIPER,
     NOVA,
     SWIFT,
-    PRISM,
+    HELIX,
     RAPTOR,
 }
 
@@ -36,7 +36,7 @@ impl std::fmt::Display for StorageEngineType {
             StorageEngineType::VIPER => write!(f, "VIPER"),
             StorageEngineType::NOVA => write!(f, "NOVA"),
             StorageEngineType::SWIFT => write!(f, "SWIFT"),
-            StorageEngineType::PRISM => write!(f, "PRISM"),
+            StorageEngineType::HELIX => write!(f, "HELIX"),
             StorageEngineType::RAPTOR => write!(f, "RAPTOR"),
         }
     }
@@ -62,7 +62,7 @@ impl StorageEngineType {
             "VIPER" => StorageEngineType::VIPER,
             "NOVA" => StorageEngineType::NOVA,
             "SWIFT" => StorageEngineType::SWIFT,
-            "PRISM" => StorageEngineType::PRISM,
+            "HELIX" => StorageEngineType::HELIX,
             "RAPTOR" => StorageEngineType::RAPTOR,
             _ => StorageEngineType::VIPER, // Default to VIPER
         }
@@ -75,7 +75,7 @@ impl StorageEngineType {
             StorageEngineType::VIPER => ".parquet",
             StorageEngineType::NOVA => ".nova",
             StorageEngineType::SWIFT => ".swift",
-            StorageEngineType::PRISM => ".prism",
+            StorageEngineType::HELIX => ".helix",
             StorageEngineType::RAPTOR => ".raptor",
         }
     }
@@ -487,7 +487,7 @@ impl StorageEngineType {
             StorageEngineType::VIPER => "VIPER",
             StorageEngineType::NOVA => "NOVA",
             StorageEngineType::SWIFT => "SWIFT",
-            StorageEngineType::PRISM => "PRISM",
+            StorageEngineType::HELIX => "HELIX",
             StorageEngineType::RAPTOR => "RAPTOR",
         }
     }

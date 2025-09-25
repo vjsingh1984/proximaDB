@@ -7,7 +7,7 @@ use axum::{
     extract::{Path, State},
     response::Json,
 };
-use tracing::{error, info};
+use tracing::error;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::v1::handlers::AppState;
@@ -22,8 +22,12 @@ use crate::proto::proximadb_v1 as v1;
 pub async fn progressive_search_handler(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
-    Json(mut request): Json<v1::VectorSearchRequest>,
+    Json(value): Json<serde_json::Value>,
 ) -> ApiResult<Json<v1::VectorOperationResponse>> {
+    // Parse the JSON value into VectorSearchRequest
+    let mut request: v1::VectorSearchRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+
     // Bind path collection to request
     request.collection_id = collection_id.clone();
 

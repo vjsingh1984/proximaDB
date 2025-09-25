@@ -20,7 +20,6 @@
 //! but compute needs fast in-memory lookups for metadata queries.
 
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use tokio::sync::RwLock;

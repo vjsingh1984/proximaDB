@@ -555,17 +555,18 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_swift_metadata_serialization() {
+    #[tokio::test]
+    async fn test_swift_metadata_serialization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
-        let serializer = SwiftMetadataSerializer::new(filesystem);
+        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         // Test serialization
         let serialized = serializer
             .serialize_metadata("/test/file.swift", "test_collection")
             .unwrap();
-        assert!(!serialized.is_none());
+        assert!(!serialized.is_empty());
 
         // Test deserialization
         let metadata = serializer.deserialize_metadata(&serialized).unwrap();
@@ -573,11 +574,12 @@ mod tests {
         assert!(metadata.memory_footprint() > 0);
     }
 
-    #[test]
-    fn test_swift_id_lookup_optimization() {
+    #[tokio::test]
+    async fn test_swift_id_lookup_optimization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
-        let serializer = SwiftMetadataSerializer::new(filesystem);
+        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
             .serialize_metadata("/test/file.swift", "test_collection")
@@ -599,11 +601,12 @@ mod tests {
         // Depending on hash, might not be able to skip
     }
 
-    #[test]
-    fn test_swift_segment_optimization() {
+    #[tokio::test]
+    async fn test_swift_segment_optimization() {
         let temp_dir = TempDir::new().unwrap();
-        let filesystem = Arc::new(FilesystemFactory::new(temp_dir.path().to_path_buf()));
-        let serializer = SwiftMetadataSerializer::new(filesystem);
+        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
+        let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
             .serialize_metadata("/test/file.swift", "test_collection")
@@ -617,7 +620,7 @@ mod tests {
         let ranges = serializer.get_required_ranges(metadata.as_ref(), &query_context);
         // Should get specific ranges for ID lookup, not full file
         if let Some(ranges) = ranges {
-            assert!(!ranges.is_none());
+            assert!(!ranges.is_empty());
             assert!(ranges.len() <= 10); // Shouldn't need all segments
         }
     }

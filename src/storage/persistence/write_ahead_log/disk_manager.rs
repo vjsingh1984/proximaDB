@@ -4,7 +4,6 @@
 //! It handles writing WAL data to disk, reading it back, and managing WAL files.
 
 use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -442,7 +441,7 @@ mod tests {
                 .expect("Failed to create filesystem factory"),
         );
 
-        let manager = WriteBufferDiskManager::new(filesystem_factory, temp_dir.path());
+        let manager = WriteBufferDiskManager::new(filesystem_factory, temp_dir.path().to_str().unwrap());
 
         (manager, temp_dir)
     }
@@ -475,7 +474,7 @@ mod tests {
         assert_eq!(read_data, data);
 
         // Check stats
-        let stats = manager.stats().await.expect("Failed to get stats");
+        let stats = manager.get_stats().await.expect("Failed to get stats");
         assert_eq!(stats.total_bytes_written, data.len() as u64);
         assert_eq!(stats.total_bytes_read, data.len() as u64);
         assert_eq!(stats.total_files_written, 1);

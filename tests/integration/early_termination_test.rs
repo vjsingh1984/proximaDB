@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use proximadb::core::VectorRecord;
 use proximadb::core::search::multi_tier_deduplication::{
-    DeduplicationStorageEngine, MultiTierDeduplicator, StorageTier, TieredSearchCandidate,
+    DataFreshnessTier, DeduplicationStorageEngine, MultiTierDeduplicator, TieredSearchCandidate,
 };
 
 #[test]
@@ -19,19 +19,18 @@ fn test_early_termination_logic() -> Result<()> {
         for i in 0..5 {
             candidates.push(TieredSearchCandidate {
                 vector_record: VectorRecord {
-                    id: Some(format!("vec_{}", i)),
+                    id: format!("vec_{}", i),
                     vector: vec![i as f32],
-                    metadata: vec![],
-                    timestamp: now.timestamp() as u32,
-                    updated_at: Some(now.timestamp() as u32),
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: now.timestamp_millis(),
+                    updated_at: Some(now.timestamp_millis()),
                     expires_at: None,
                     version: Some(1),
-                    rank: None,
-                    score: None,
-                    distance: None,
+                    quantized_vector: Vec::new(),
+                    source: None,
                 },
-                score: (5 - i) as f32, // Best scores come last
-                tier: StorageTier::Unflushed,
+                similarity: (5 - i) as f32, // Best scores come last
+                tier: DataFreshnessTier::Unflushed,
                 engine: DeduplicationStorageEngine::WAL,
                 timestamp: now,
                 sequence: i as u64,
@@ -44,8 +43,8 @@ fn test_early_termination_logic() -> Result<()> {
 
         let results = dedup.get_final_results(2);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[0].score, 5.0); // Best score (highest)
-        assert_eq!(results[1].score, 4.0); // Second best
+        assert_eq!(results[0].similarity, 5.0); // Best score (highest)
+        assert_eq!(results[1].similarity, 4.0); // Second best
     }
 
     // Test 2: Without ordering (SQL without ORDER BY) - early termination enabled
@@ -60,19 +59,18 @@ fn test_early_termination_logic() -> Result<()> {
         for i in 0..5 {
             candidates.push(TieredSearchCandidate {
                 vector_record: VectorRecord {
-                    id: Some(format!("vec_{}", i)),
+                    id: format!("vec_{}", i),
                     vector: vec![i as f32],
-                    metadata: vec![],
-                    timestamp: now.timestamp() as u32,
-                    updated_at: Some(now.timestamp() as u32),
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: now.timestamp_millis(),
+                    updated_at: Some(now.timestamp_millis()),
                     expires_at: None,
                     version: Some(1),
-                    rank: None,
-                    score: None,
-                    distance: None,
+                    quantized_vector: Vec::new(),
+                    source: None,
                 },
-                score: i as f32,
-                tier: StorageTier::Unflushed,
+                similarity: i as f32,
+                tier: DataFreshnessTier::Unflushed,
                 engine: DeduplicationStorageEngine::WAL,
                 timestamp: now,
                 sequence: i as u64,

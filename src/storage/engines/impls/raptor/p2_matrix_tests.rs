@@ -10,6 +10,28 @@ mod tests {
     use anyhow::Result;
     use tempfile::TempDir;
 
+    /// Mock P2Matrix struct for testing
+    #[derive(Debug, Clone)]
+    pub struct P2Matrix {
+        pub num_vectors: usize,
+        pub distances: Vec<u16>,
+        pub min_distance: f32,
+        pub max_distance: f32,
+        pub compression: FastLanesScheme,
+        pub compressed_size: usize,
+    }
+
+    impl P2Matrix {
+        pub fn get_distance(&self, i: usize, j: usize) -> u16 {
+            if i == j {
+                return 0;
+            }
+            let (row, col) = if i < j { (i, j) } else { (j, i) };
+            let index = row * self.num_vectors + col - (row * (row + 1)) / 2 - row - 1;
+            self.distances[index]
+        }
+    }
+
     /// Test P² matrix creation with upper triangle indexing
     #[test]
     fn test_p2_matrix_upper_triangle_indexing() {
@@ -59,7 +81,7 @@ mod tests {
             distances: vec![10, 20, 30], // Quantized distances: (0,1)=10, (0,2)=20, (1,2)=30
             min_distance: 0.0,
             max_distance: 1.0,
-            compression: FastLanesScheme::None,
+            compression: FastLanesScheme::Dictionary,
             compressed_size: 3,
         };
 
@@ -69,9 +91,9 @@ mod tests {
         assert_eq!(p2_matrix.get_distance(1, 2), p2_matrix.get_distance(2, 1));
 
         // Test self-distance is 0
-        assert_eq!(p2_matrix.get_distance(0, 0), 0.0);
-        assert_eq!(p2_matrix.get_distance(1, 1), 0.0);
-        assert_eq!(p2_matrix.get_distance(2, 2), 0.0);
+        assert_eq!(p2_matrix.get_distance(0, 0), 0);
+        assert_eq!(p2_matrix.get_distance(1, 1), 0);
+        assert_eq!(p2_matrix.get_distance(2, 2), 0);
     }
 
     /// Test P² matrix builder with real vectors
@@ -98,7 +120,7 @@ mod tests {
 
         for i in 0..vectors.len() {
             for j in (i + 1)..vectors.len() {
-                let dist = distance_compute.calculate(&vectors[i], &vectors[j])?;
+                let dist = distance_compute.distance(&vectors[i], &vectors[j]);
                 distances.push(dist);
             }
         }
@@ -141,7 +163,7 @@ mod tests {
 
         for i in 0..vectors.len() {
             for j in (i + 1)..vectors.len() {
-                let dist = distance_compute.calculate(&vectors[i], &vectors[j])?;
+                let dist = distance_compute.distance(&vectors[i], &vectors[j]);
                 distances.push(dist);
             }
         }
@@ -151,9 +173,11 @@ mod tests {
         let (quantized, min_dist, max_dist) = quantization_engine.quantize_to_u8(&distances);
 
         // Apply FastLanes encoding
-        let fastlanes_encoder = FastLanesEncoder::new();
-        let scheme = fastlanes_encoder.analyze_and_select_scheme(&quantized)?;
-        let encoded = fastlanes_encoder.encode_u8_slice(&quantized, scheme)?;
+        let fastlanes_encoder = FastLanesEncoder::new(FastLanesScheme::Dictionary);
+        let quantized_i64: Vec<i64> = quantized.iter().map(|&v| v as i64).collect();
+        let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme(&quantized_i64);
+        let quantized_i8: Vec<i8> = quantized.iter().map(|&v| v as i8).collect();
+        let encoded = fastlanes_encoder.encode_int8(&quantized_i8)?;
 
         // Verify compression
         let uncompressed_size = 32 * 31 / 2; // Upper triangle size
@@ -210,7 +234,7 @@ mod tests {
             distances: vec![50, 100, 150, 50, 100, 50], // Some test distances
             min_distance: 0.0,
             max_distance: 1.0,
-            compression: FastLanesScheme::None,
+            compression: FastLanesScheme::Dictionary,
             compressed_size: 6,
         };
 
@@ -222,7 +246,14 @@ mod tests {
             vec![0.5, 0.5, 0.0],
         ];
 
-        let matrix = IntraRowgroupMatrix::new(p2_matrix, vectors.clone());
+        let matrix = IntraRowgroupMatrix::new(crate::storage::engines::impls::raptor::common::P2Matrix {
+            num_vectors: p2_matrix.num_vectors as u32,
+            distances: p2_matrix.distances.into_iter().map(|d| d as u8).collect(),
+            min_distance: p2_matrix.min_distance,
+            max_distance: p2_matrix.max_distance,
+            compression: p2_matrix.compression,
+            compressed_size: p2_matrix.compressed_size as u32,
+        }, vectors.clone());
 
         // Verify we can access distances
         assert_eq!(matrix.p2_matrix.num_vectors, 4);

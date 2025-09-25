@@ -10,23 +10,22 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::index::axis::index_factory::IndexFactory;
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
     use tracing::{debug, error, info};
 
     fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![0.1; dimension],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: Some("test".to_string()),
         }
     }
 
@@ -55,7 +54,7 @@ mod tests {
         // For now, we expect an error until PQ is implemented
         assert!(result.is_err());
         if let Err(e) = result {
-            assert!(e.to_string().contains_hash("Product Quantization"));
+            assert!(e.to_string().contains("Product Quantization"));
         }
     }
 

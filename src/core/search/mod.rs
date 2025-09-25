@@ -7,6 +7,7 @@ pub mod metadata_filter_pushdown;
 pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;
 pub mod progressive_quantization;
+pub mod queries;
 pub mod query_preprocessing;
 pub mod results;
 pub mod smart_execution_strategy;
@@ -19,7 +20,6 @@ mod early_termination_tests;
 #[cfg(test)]
 mod optimization_tests;
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Custom recall rates for progressive search stages
@@ -183,7 +183,7 @@ impl SearchParams {
 }
 
 /// Complex filter expression for advanced metadata filtering
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum FilterExpression {
     /// Single comparison operation
     Comparison {
@@ -200,7 +200,7 @@ pub enum FilterExpression {
 }
 
 /// Comparison operators for metadata filtering
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ComparisonOperator {
     Equals,
     NotEquals,
@@ -574,7 +574,15 @@ pub mod protocol_conversions {
             .map(|condition| {
                 let field = condition.field.clone();
                 let value = match &condition.value {
-                    Some(v) => serde_json::to_value(v).map_err(|e| e.to_string())?,
+                    Some(v) => {
+                        // Create parent FilterClause to use custom serde implementation
+                        let filter_clause = crate::proto::proximadb_v1::FilterClause {
+                            field: condition.field.clone(),
+                            op: condition.op,
+                            value: Some(v.clone()),
+                        };
+                        serde_json::to_value(&filter_clause).map_err(|e| e.to_string())?
+                    }
                     None => return Err("Missing value in filter condition".to_string()),
                 };
 
@@ -717,93 +725,7 @@ pub mod protocol_conversions {
         }
     }
 
-    /// Convert SQL Condition (from parser) to unified FilterExpression
-    /// Used by SQL engine to convert parsed WHERE conditions
-    pub fn from_sql_condition(
-        condition: &crate::query::sql_engine::parser::Condition,
-    ) -> Result<FilterExpression, String> {
-        use crate::query::sql_engine::parser::{ComparisonOp, Condition};
-
-        match condition {
-            Condition::Comparison {
-                field,
-                operator,
-                value,
-            } => {
-                let json_value = sql_value_to_json(value)?;
-                let comp_op = match operator {
-                    ComparisonOp::Eq => ComparisonOperator::Equals,
-                    ComparisonOp::Ne => ComparisonOperator::NotEquals,
-                    ComparisonOp::Lt => ComparisonOperator::LessThan,
-                    ComparisonOp::Le => ComparisonOperator::LessThanOrEqual,
-                    ComparisonOp::Gt => ComparisonOperator::GreaterThan,
-                    ComparisonOp::Ge => ComparisonOperator::GreaterThanOrEqual,
-                    ComparisonOp::Like => ComparisonOperator::Like,
-                    ComparisonOp::In => ComparisonOperator::In,
-                };
-
-                Ok(FilterExpression::Comparison {
-                    field: field.clone(),
-                    operator: comp_op,
-                    value: json_value,
-                })
-            }
-            Condition::And(left, right) => {
-                let left_expr = from_sql_condition(left)?;
-                let right_expr = from_sql_condition(right)?;
-                Ok(FilterExpression::And(vec![left_expr, right_expr]))
-            }
-            Condition::Or(left, right) => {
-                let left_expr = from_sql_condition(left)?;
-                let right_expr = from_sql_condition(right)?;
-                Ok(FilterExpression::Or(vec![left_expr, right_expr]))
-            }
-            Condition::Not(inner) => {
-                let inner_expr = from_sql_condition(inner)?;
-                Ok(FilterExpression::Not(Box::new(inner_expr)))
-            }
-            Condition::In { field, values } => {
-                let json_values: Result<Vec<serde_json::Value>, String> =
-                    values.iter().map(sql_value_to_json).collect();
-
-                Ok(FilterExpression::Comparison {
-                    field: field.clone(),
-                    operator: ComparisonOperator::In,
-                    value: serde_json::Value::Array(json_values?),
-                })
-            }
-            Condition::Between { field, low, high } => {
-                let low_json = sql_value_to_json(low)?;
-                let high_json = sql_value_to_json(high)?;
-
-                Ok(FilterExpression::Comparison {
-                    field: field.clone(),
-                    operator: ComparisonOperator::Between,
-                    value: serde_json::Value::Array(vec![low_json, high_json]),
-                })
-            }
-        }
-    }
-
-    /// Convert SQL Value to JSON Value
-    fn sql_value_to_json(
-        value: &crate::query::sql_engine::parser::Value,
-    ) -> Result<serde_json::Value, String> {
-        use crate::query::sql_engine::parser::Value;
-
-        match value {
-            Value::String(s) => Ok(serde_json::Value::String(s.clone())),
-            Value::Number(n) => Ok(serde_json::json!(*n)),
-            Value::Bool(b) => Ok(serde_json::Value::Bool(*b)),
-            Value::Null => Ok(serde_json::Value::Null),
-            Value::Vector(v) => Ok(serde_json::json!(v)),
-            Value::List(list) => {
-                let json_list: Result<Vec<serde_json::Value>, String> =
-                    list.iter().map(sql_value_to_json).collect();
-                Ok(serde_json::Value::Array(json_list?))
-            }
-        }
-    }
+    
 
     /// Convert legacy HashMap filters to unified FilterExpression
     /// Used for backward compatibility with existing filter formats

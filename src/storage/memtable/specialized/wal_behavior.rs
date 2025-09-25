@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::strategies::composite::CompositeBloomFilter;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
 use crate::storage::memtable::core::MemtableConfig;
@@ -303,7 +303,7 @@ impl WALBehaviorWrapper {
             }
             "bincode" => {
                 // Use Bincode deserializer
-                bincode::deserialize::<Vec<crate::core::VectorRecord>>(&operation.payload_data)
+                bincode::deserialize::<Vec<crate::proto::proximadb_v1::VectorRecord>>(&operation.payload_data)
                     .map_err(|e| anyhow::anyhow!("Failed to deserialize Bincode payload: {}", e))?
             }
             format => {
@@ -1098,30 +1098,28 @@ mod tests {
 
         // Create test vector records using the new unified API
         let now = chrono::Utc::now().timestamp_millis();
-        let vector_record1 = crate::core::VectorRecord {
-            id: Some("test_vector_1".to_string()),
+        let vector_record1 = crate::proto::proximadb_v1::VectorRecord {
+            id: "test_vector_1".to_string(),
             vector: vec![0.1, 0.2, 0.3],
-            metadata: vec![],
-            timestamp: now as u32,
-            updated_at: Some(now as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: now,
+            updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: Some("test".to_string()),
         };
 
-        let vector_record2 = crate::core::VectorRecord {
-            id: Some("test_vector_2".to_string()),
+        let vector_record2 = crate::proto::proximadb_v1::VectorRecord {
+            id: "test_vector_2".to_string(),
             vector: vec![0.4, 0.5, 0.6],
-            metadata: vec![],
-            timestamp: (now + 1) as u32,
-            updated_at: Some((now + 1) as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: now + 1,
+            updated_at: Some(now + 1),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: Some("test".to_string()),
         };
 
         // Test first batch insertion using unified add_vector_batch API
@@ -1195,24 +1193,21 @@ mod tests {
         // Insert multiple versions of the same vector using unified API
         for i in 0..3 {
             let now = chrono::Utc::now().timestamp_millis();
-            let vector_record = crate::core::VectorRecord {
-                id: Some(vector_id.to_string()),
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("version".to_string(), crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
+            });
+
+            let vector_record = crate::proto::proximadb_v1::VectorRecord {
+                id: vector_id.to_string(),
                 vector: vec![i as f32, (i + 1) as f32],
-                metadata: vec![crate::proto::proximadb_v1::MetadataItem {
-                    key: "version".to_string(),
-                    value: Some(
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            i.to_string(),
-                        ),
-                    ),
-                }],
-                timestamp: (now + i as i64) as u32,
-                updated_at: Some((now + i as i64) as u32),
+                metadata,
+                timestamp: now + i as i64,
+                updated_at: Some(now + i as i64),
                 expires_at: None,
-                version: Some((i + 1) as u32),
-                // rank removed -  None,
-                similarity: None,
-                similarity: None,
+                version: Some(i + 1),
+                quantized_vector: vec![],
+                source: Some("test".to_string()),
             };
 
             let batch = WALVectorBatch {
@@ -1241,8 +1236,8 @@ mod tests {
         // Verify vector data integrity
         let found_vectors: Vec<_> = all_vectors
             .iter()
-            .filter(|(_, record)| record.id.as_deref() == vector_id)
+            .filter(|(_, record)| record.id == vector_id)
             .collect();
-        assert!(!found_vectors.is_none());
+        assert!(!found_vectors.is_empty());
     }
 }

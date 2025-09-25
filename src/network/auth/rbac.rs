@@ -37,7 +37,7 @@ impl RbacService {
     /// Create a new RBAC service with default configuration
     pub fn new() -> Self {
         let config = RbacConfig::default();
-        let mut service = Self {
+        let service = Self {
             user_roles: RwLock::new(HashMap::new()),
             role_permissions: RwLock::new(HashMap::new()),
             config,
@@ -50,7 +50,7 @@ impl RbacService {
     
     /// Create RBAC service with custom configuration
     pub fn with_config(config: RbacConfig) -> Self {
-        let mut service = Self {
+        let service = Self {
             user_roles: RwLock::new(HashMap::new()),
             role_permissions: RwLock::new(HashMap::new()),
             config,

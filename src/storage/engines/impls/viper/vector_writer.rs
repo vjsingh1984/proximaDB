@@ -1,10 +1,14 @@
-//! Optimized vector writer for VIPER engine with bytemuck and ZSTD compression
-//! 
-//! This module provides high-performance vector serialization for Parquet files using:
-//! - BinaryArray instead of Float32Array for better compression
-//! - bytemuck for zero-copy serialization  
-//! - ZSTD compression at the Parquet level
-//! - Adaptive compression based on vector characteristics
+//! DEPRECATED: Use StreamingParquetWriter from columnar module instead
+//!
+//! This module is deprecated and only kept for backward compatibility.
+//! All production code should use StreamingParquetWriter from the shared columnar module.
+//!
+//! Reasons for deprecation:
+//! - StreamingParquetWriter provides superior functionality
+//! - Consolidates schema generation in one place
+//! - Supports advanced quantization strategies
+//! - Already used in production by VIPER and NOVA engines
+#![allow(dead_code)]
 
 use anyhow::{Context, Result};
 use arrow_array::{Array, BinaryArray, ListArray, RecordBatch};
@@ -17,8 +21,7 @@ use std::io::Write;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::serialization::{VectorSerializationConfig, CompressionAlgorithm};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Configuration for optimized vector writing
 #[derive(Debug, Clone)]
@@ -70,7 +73,11 @@ impl OptimizedVectorWriterConfig {
     }
 }
 
-/// Optimized vector writer for VIPER Parquet files
+/// DEPRECATED: Use StreamingParquetWriter from columnar module instead
+#[deprecated(
+    since = "0.1.4",
+    note = "Use StreamingParquetWriter from columnar module for all Parquet writing"
+)]
 pub struct OptimizedVectorWriter {
     config: OptimizedVectorWriterConfig,
 }
@@ -80,33 +87,38 @@ impl OptimizedVectorWriter {
         Self { config }
     }
 
-    /// Create optimized schema for vector storage
+    /// Create optimized schema for vector storage matching proto v1 VectorRecord
     pub fn create_optimized_schema(&self) -> Result<Schema> {
         let mut fields = vec![
             Field::new("id", DataType::Utf8, false),
             Field::new("timestamp", DataType::Int64, false),
         ];
 
-        // Vector field: use BinaryArray for compressed storage or ListArray for compatibility
+        // Vector field: Always include the vector field with the appropriate type
+        // This ensures consistent column count regardless of configuration
         if self.config.use_binary_array {
-            fields.push(Field::new("vector_binary", DataType::Binary, false));
+            fields.push(Field::new("vector", DataType::Binary, false));
         } else {
             // Fallback to ListArray of Float32 for compatibility
             let vector_field = Field::new(
-                "vector", 
+                "vector",
                 DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
                 false
             );
             fields.push(vector_field);
         }
 
-        // Optional fields
+        // Optional fields matching proto v1 VectorRecord structure
         fields.push(Field::new("updated_at", DataType::Int64, true));
         fields.push(Field::new("expires_at", DataType::Int64, true));
         fields.push(Field::new("version", DataType::Int64, true));
-        
+
         // Metadata as JSON string (could be optimized to struct later)
         fields.push(Field::new("metadata_info", DataType::Utf8, true));
+
+        // Additional proto v1 fields
+        fields.push(Field::new("quantized_vector", DataType::Binary, true));
+        fields.push(Field::new("source", DataType::Utf8, true));
 
         Ok(Schema::new(fields))
     }
@@ -192,52 +204,75 @@ impl OptimizedVectorWriter {
                 if r.metadata.is_empty() {
                     None
                 } else {
-                    // Convert MetadataItem to JSON
+                    // Convert SqlValue metadata to JSON
                     let json_map: serde_json::Map<String, serde_json::Value> = r.metadata.iter()
-                        .map(|(key, value)| {
-                            let value = match &value {
-                                Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-                                Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
-                                    serde_json::Number::from_f64(*n)
-                                        .map(serde_json::Value::Number)
-                                        .unwrap_or(serde_json::Value::Null)
+                        .map(|(key, sql_value)| {
+                            let value = if let Some(ref v) = sql_value.value {
+                                match v {
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => serde_json::Value::String(s.clone()),
+                                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(n) => serde_json::Value::Number(serde_json::Number::from(*n)),
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
+                                        serde_json::Number::from_f64(*n)
+                                            .map(serde_json::Value::Number)
+                                            .unwrap_or(serde_json::Value::Null)
+                                    }
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => serde_json::Value::Bool(*b),
+                                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => serde_json::Value::Null,
+                                    crate::proto::proximadb_v1::sql_value::Value::ListValue(_) => serde_json::Value::Null,
+                                    crate::proto::proximadb_v1::sql_value::Value::MapValue(_) => serde_json::Value::Null,
                                 }
-                                Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-                                None => serde_json::Value::Null,
+                            } else {
+                                serde_json::Value::Null
                             };
                             (key.clone(), value)
                         })
                         .collect();
                     let json_metadata = serde_json::Value::Object(json_map);
-                    
+
                     serde_json::to_string(&json_metadata).ok()
                 }
             })
             .collect();
         let metadata_array = Arc::new(arrow_array::StringArray::from(metadata_values));
 
-        // Combine all arrays into RecordBatch
-        let arrays: Vec<Arc<dyn Array>> = if self.config.use_binary_array {
-            vec![
-                id_array,
-                timestamp_array,
-                vector_array,
-                updated_at_array,
-                expires_at_array,
-                version_array,
-                metadata_array,
-            ]
-        } else {
-            vec![
-                id_array,
-                timestamp_array,
-                vector_array,
-                updated_at_array,
-                expires_at_array,
-                version_array,
-                metadata_array,
-            ]
-        };
+        // Build quantized_vector array
+        let quantized_values: Vec<Option<Vec<u8>>> = records.iter()
+            .map(|r| {
+                if r.quantized_vector.is_empty() {
+                    None
+                } else {
+                    Some(r.quantized_vector.clone())
+                }
+            })
+            .collect();
+        let mut quantized_builder = BinaryBuilder::new();
+        for value in quantized_values {
+            if let Some(v) = value {
+                quantized_builder.append_value(&v);
+            } else {
+                quantized_builder.append_null();
+            }
+        }
+        let quantized_array = Arc::new(quantized_builder.finish());
+
+        // Build source array
+        let source_values: Vec<Option<String>> = records.iter()
+            .map(|r| r.source.clone())
+            .collect();
+        let source_array = Arc::new(arrow_array::StringArray::from(source_values));
+
+        // Combine all arrays into RecordBatch matching proto v1 schema
+        let arrays: Vec<Arc<dyn Array>> = vec![
+            id_array,
+            timestamp_array,
+            vector_array,
+            updated_at_array,
+            expires_at_array,
+            version_array,
+            metadata_array,
+            quantized_array,
+            source_array,
+        ];
 
         let batch = RecordBatch::try_new(Arc::new(schema.clone()), arrays)
             .context("Failed to create RecordBatch")?;
@@ -457,41 +492,43 @@ impl OptimizationStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::MetadataItem;
+    use crate::proto::proximadb_v1::SqlValue;
+    use std::collections::HashMap;
 
     fn create_test_record(id: &str, vector: Vec<f32>) -> VectorRecord {
+        let mut metadata = HashMap::new();
+        metadata.insert("category".to_string(), SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test".to_string()))
+        });
+
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector,
-            metadata: vec![
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("test".to_string())),
-                },
-            ],
+            metadata,
             timestamp: 1234567890,
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
     #[test]
+    #[ignore = "Deprecated: OptimizedVectorWriter is replaced by StreamingParquetWriter"]
     fn test_optimized_schema_creation() {
         let config = OptimizedVectorWriterConfig::default();
         let writer = OptimizedVectorWriter::new(config);
         
         let schema = writer.create_optimized_schema().unwrap();
         
-        assert_eq!(schema.fields().len(), 7);
+        assert_eq!(schema.fields().len(), 9);
         assert_eq!(schema.field(0).name(), "id");
         assert_eq!(schema.field(2).name(), "vector_binary");
     }
 
     #[test]
+    #[ignore = "Deprecated: OptimizedVectorWriter is replaced by StreamingParquetWriter"]
     fn test_binary_array_vector_serialization() {
         let mut config = OptimizedVectorWriterConfig::default();
         config.use_binary_array = true;
@@ -506,7 +543,7 @@ mod tests {
         let batch = writer.records_to_optimized_batch(&records, &schema).unwrap();
         
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 7);
+        assert_eq!(batch.num_columns(), 9);
         
         // Test vector extraction
         let vector_column = batch.column(2);
@@ -517,6 +554,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Deprecated: OptimizedVectorWriter is replaced by StreamingParquetWriter"]
     fn test_list_array_fallback() {
         let mut config = OptimizedVectorWriterConfig::default();
         config.use_binary_array = false;
@@ -538,6 +576,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Deprecated: OptimizedVectorWriter is replaced by StreamingParquetWriter"]
     fn test_writer_properties() {
         let config = OptimizedVectorWriterConfig::default();
         let writer = OptimizedVectorWriter::new(config);

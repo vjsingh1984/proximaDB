@@ -8,7 +8,7 @@
 //! 5. Versions start from 1; None/null/empty version is treated as version 1
 //! 6. For same version, earliest timestamp wins
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -85,8 +85,8 @@ impl MvccResolver {
 
             // Sort by version, then timestamp
             versions.sort_by(|a, b| {
-                let ver_a = a.version;
-                let ver_b = b.version;
+                let ver_a = a.version.unwrap_or(1);
+                let ver_b = b.version.unwrap_or(1);
 
                 ver_a.cmp(&ver_b).then_with(|| {
                     // For same version, earliest timestamp wins
@@ -95,11 +95,27 @@ impl MvccResolver {
             });
 
             // Validate version continuity and find the latest valid version
-            let mut expected_version = 1;
+            // Version sequences must start at 0 or 1, otherwise it's a gap from start
+            let starting_version = if let Some(first_record) = versions.first() {
+                first_record.version.unwrap_or(1)
+            } else {
+                1
+            };
+
+            // Check if there's a gap from the beginning (must start with 0 or 1)
+            if starting_version > 1 {
+                debug!(
+                    "MVCC: Version gap from start for ID '{}': starts with version {} instead of 0 or 1",
+                    id, starting_version
+                );
+                continue; // Skip this ID entirely
+            }
+
+            let mut expected_version = starting_version;
             let mut last_valid: Option<VectorRecord> = None;
 
             for record in versions {
-                let version = record.version.unwrap_or(0);
+                let version = record.version.unwrap_or(1);
 
                 if version == expected_version {
                     // This version is continuous
@@ -167,9 +183,9 @@ impl MvccResolver {
             return false; // Both expired, doesn't matter
         }
 
-        // Compare versions
-        let v1 = record1.version;
-        let v2 = record2.version;
+        // Compare versions - treat None as version 1
+        let v1 = record1.version.unwrap_or(1);
+        let v2 = record2.version.unwrap_or(1);
 
         if v1 > v2 {
             true
@@ -196,12 +212,12 @@ mod tests {
         crate::proto::proximadb_v1::VectorRecord {
             id: id.unwrap_or_default(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![],
-            timestamp,
-            updated_at: Some(timestamp),
-            expires_at,
-            version,
-            quantized_vector: None,
+            metadata: std::collections::HashMap::new(),
+            timestamp: timestamp as i64,
+            updated_at: Some(timestamp as i64),
+            expires_at: expires_at.map(|t| t as i64),
+            version: version.map(|v| v as i64),
+            quantized_vector: vec![],
             source: None,
         }
     }
@@ -396,7 +412,7 @@ mod tests {
         // Find the versioned record
         let versioned_record = resolved
             .iter()
-            .find(|r| r.id.as_deref() == Some("real_id"))
+            .find(|r| r.id.as_str() == "real_id")
             .unwrap();
         assert_eq!(versioned_record.version, Some(2)); // Should get highest version
     }

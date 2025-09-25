@@ -1,18 +1,12 @@
 //! Memtable Implementation Modules
 //!
-//! Pure data structure implementations without specialized behaviors.
-//! Each implementation is optimized for specific workload characteristics.
+//! Production data structure implementations optimized for specific workload characteristics.
 
-// 🔴 UNUSED MEMTABLE IMPLEMENTATIONS - COMMENTED OUT FOR REMOVAL
-// Only global_partitioned is actually used in production
-// ~1,200 lines of unused implementations - Safe to remove
-// pub mod bplustree;  // UNUSED - Complex B+ tree never used
-pub mod btree; // Needed for tests  
-// pub mod dashmap;    // UNUSED - Concurrent HashMap wrapper never used
-pub mod global_partitioned; // ✅ ACTIVE - Used in write buffer
-// pub mod hashmap;    // UNUSED - HashMap wrapper never used
-pub mod skiplist; // Needed for tests
-// pub mod artmap;     // Already commented out due to type inference issues
+// Production implementations
+pub mod btree;                // B-tree implementation for ordered data
+pub mod global_partitioned;   // ✅ ACTIVE - Primary write buffer implementation
+pub mod skiplist;            // Skip list implementation for concurrent access
+pub mod graph_memtable;      // Graph-specific memtable with CSR optimization
 
 // Unit tests
 #[cfg(test)]

@@ -35,7 +35,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::unified_scan_strategy::{ScanIterator, ScanStrategy};
 
 /// Unified columnar I/O configuration
@@ -538,11 +538,32 @@ impl UnifiedColumnarWriter {
             .set_max_row_group_size(self.config.row_group_size)
             .set_data_page_size_limit(self.config.page_size);
 
-        // Configure bloom filters
+        // Configure bloom filters for specific columns
+        // These are used in both flush and compaction to enable fast lookups
         if self.config.enable_bloom_filters {
+            // Configure bloom filters for all specified columns
+            // The list should already include "id" and filterable columns
             for column in &self.config.bloom_filter_columns {
-                builder = builder.set_bloom_filter_enabled(true);
-                builder = builder.set_bloom_filter_fpp(self.config.bloom_filter_fpp);
+                builder = builder.set_column_bloom_filter_enabled(
+                    parquet::schema::types::ColumnPath::from(column.as_str()),
+                    true,
+                );
+                builder = builder.set_column_bloom_filter_fpp(
+                    parquet::schema::types::ColumnPath::from(column.as_str()),
+                    self.config.bloom_filter_fpp,
+                );
+            }
+
+            // If no columns specified but bloom filters enabled, at least add ID
+            if self.config.bloom_filter_columns.is_empty() {
+                builder = builder.set_column_bloom_filter_enabled(
+                    parquet::schema::types::ColumnPath::from("id"),
+                    true,
+                );
+                builder = builder.set_column_bloom_filter_fpp(
+                    parquet::schema::types::ColumnPath::from("id"),
+                    self.config.bloom_filter_fpp,
+                );
             }
         }
 

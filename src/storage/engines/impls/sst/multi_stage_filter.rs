@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
@@ -577,76 +577,116 @@ mod tests {
 
         debug!("Filter result: {}", result.stats.efficiency_report());
         assert!(
-            !result.qualifying_indices.is_none(),
+            !result.qualifying_indices.is_empty(),
             "Should find some matches"
         );
     }
 
     fn create_test_data_blocks() -> Vec<FastLanesDataBlock> {
         vec![FastLanesDataBlock {
+            encoding_marker: 0,
+            encoding_metadata: None,
             block_id: 0,
             records: vec![
-                crate::storage::engines::impls::sst::SstRecord {
-                    id: Some("vec1".to_string()),
+                crate::proto::proximadb_v1::VectorRecord {
+                    id: "vec1".to_string(),
                     vector: vec![0.1; 128],
-                    metadata: vec![crate::proto::proximadb_v1::MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            "electronics".to_string(),
-                        )),
-                    }],
+                    metadata: {
+                        let mut metadata = HashMap::new();
+                        metadata.insert(
+                            "category".to_string(),
+                            crate::proto::proximadb_v1::SqlValue {
+                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    "electronics".to_string(),
+                                )),
+                            },
+                        );
+                        metadata
+                    },
                     timestamp: 1000,
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    is_tombstone: false,
-                    sequence_number: 1,
-                    level: 0,
+                    quantized_vector: vec![],
+                    source: None,
                 },
-                crate::storage::engines::impls::sst::SstRecord {
-                    id: Some("vec2".to_string()),
+                crate::proto::proximadb_v1::VectorRecord {
+                    id: "vec2".to_string(),
                     vector: vec![0.2; 128],
-                    metadata: vec![crate::proto::proximadb_v1::MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            "books".to_string(),
-                        )),
-                    }],
+                    metadata: {
+                        let mut metadata = HashMap::new();
+                        metadata.insert(
+                            "category".to_string(),
+                            crate::proto::proximadb_v1::SqlValue {
+                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    "books".to_string(),
+                                )),
+                            },
+                        );
+                        metadata
+                    },
                     timestamp: 1001,
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    is_tombstone: false,
-                    sequence_number: 2,
-                    level: 0,
+                    quantized_vector: vec![],
+                    source: None,
                 },
-                crate::storage::engines::impls::sst::SstRecord {
-                    id: Some("vec3".to_string()),
+                crate::proto::proximadb_v1::VectorRecord {
+                    id: "vec3".to_string(),
                     vector: vec![0.3; 128],
-                    metadata: vec![crate::proto::proximadb_v1::MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            "electronics".to_string(),
-                        )),
-                    }],
+                    metadata: {
+                        let mut metadata = HashMap::new();
+                        metadata.insert(
+                            "category".to_string(),
+                            crate::proto::proximadb_v1::SqlValue {
+                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                    "electronics".to_string(),
+                                )),
+                            },
+                        );
+                        metadata
+                    },
                     timestamp: 1002,
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    is_tombstone: false,
-                    sequence_number: 3,
-                    level: 0,
+                    quantized_vector: vec![],
+                    source: None,
                 },
             ],
-            uncompressed_size: 1024,
-            compression_algorithm: crate::core::serialization::CompressionAlgorithm::None,
-            // REMOVED: compression_ratio
-            metadata_stats:
-                crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata::default(),
-            block_bloom_filter: None,
-            has_deletes: false,
             quantized_vectors: None,
             quantization_level: None,
+            quantized_section: None,
+            metadata: crate::storage::engines::core::formats::fastlanes_blocks::FastLanesBlockMetadata {
+                record_count: 3,
+                size_bytes: 1024,
+                compressed_size: 1024,
+                timestamp: 1000,
+                compaction_level: 0,
+                has_deletes: false,
+                has_updates: false,
+                version_range: (1, 1),
+                column_stats: HashMap::new(),
+                quantization_stats: crate::storage::engines::core::formats::fastlanes_blocks::QuantizationStatistics::default(),
+                data_checksum: 0,
+                metadata_checksum: 0,
+            },
+            compression_config: Default::default(),
+            compression_algorithm: crate::core::compression::CompressionAlgorithm::None,
+            uncompressed_size: 1024,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: ("vec1".to_string(), "vec3".to_string()),
+            timestamp_range: (1000, 1002),
+            statistics: Default::default(),
+            metadata_stats: Some(crate::storage::engines::core::formats::fastlanes_blocks::BlockMetadataStats {
+                unique_keys: 1,
+                null_values: 0,
+                avg_value_size: 10.0,
+                compression_ratio: 1.0,
+            }),
+            has_deletes: false,
         }]
     }
 
@@ -667,12 +707,11 @@ mod tests {
                 serde_json::json!("electronics"),
             )]),
             metadata_null_counts: HashMap::new(),
-            // NEW: Hierarchical bloom filter support
+            // Hierarchical bloom filter support
             block_key_bloom: None,
             block_metadata_bloom: None,
-            // NEW: Vector format optimization
-            vector_format: VectorFormatType::Variable,
-            // REMOVED: compression_ratio
+            // Vector format optimization
+            vector_format: crate::storage::engines::impls::sst::VectorFormat::Variable,
         }]
     }
 }

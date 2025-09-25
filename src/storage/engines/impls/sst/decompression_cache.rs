@@ -413,7 +413,7 @@ impl DecompressionCache {
             .records
             .iter()
             .map(|r| {
-                std::mem::size_of::<crate::core::VectorRecord>()
+                std::mem::size_of::<crate::proto::proximadb_v1::VectorRecord>()
                     + r.id.len()
                     + r.vector.len() * std::mem::size_of::<f32>()
                     + r.metadata.iter().map(|(k, _)| k.len() + 8).sum::<usize>() // Rough metadata size
@@ -616,11 +616,11 @@ mod tests {
             block_offset: 0,
         };
 
-        // Test miss
-        assert!(cache.get(&key).await.is_some());
+        // Test miss - should return None for empty cache
+        assert!(cache.get(&key).await.is_none());
 
         // Test put and hit
-        let block = DataBlock::new(1, vec![]);
+        let block = FastLanesDataBlock::new(vec![], crate::storage::engines::core::formats::fastlanes_blocks::BlockCompressionConfig::default());
         cache
             .put(
                 key.clone(),
@@ -633,7 +633,7 @@ mod tests {
         assert!(cache.get(&key).await.is_some());
 
         // Check stats
-        let stats = cache.stats().await;
+        let stats = cache.get_stats().await;
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 1);
     }
@@ -657,24 +657,31 @@ mod tests {
             // This should be approximately 500 * (256 * 4 + overhead) = ~512KB per block
             let mut records = vec![];
             for j in 0..500 {
-                records.push(crate::core::VectorRecord {
-                    id: Some(format!("id_long_name_for_testing_{}", j)),
+                records.push(crate::proto::proximadb_v1::VectorRecord {
+                    id: format!("id_long_name_for_testing_{}", j),
                     vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
-                    metadata: vec![],
-                    timestamp: 0,
+                    metadata: {
+                        let mut metadata = std::collections::HashMap::new();
+                        metadata.insert("test_key".to_string(), crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("test_value".to_string()))
+                        });
+                        metadata
+                    },
+                    timestamp: 0i64,
                     updated_at: None,
                     expires_at: None,
-                    version: Some(1),
-                    quantized_vector: None,
+                    version: None,
+                    quantized_vector: vec![],
+                    source: None,
                 });
             }
 
-            let block = DataBlock::new(i, records);
+            let block = FastLanesDataBlock::new(records, crate::storage::engines::core::formats::fastlanes_blocks::BlockCompressionConfig::default());
             cache.put(key, block, None).await.unwrap();
         }
 
         // Check that evictions happened
-        let stats = cache.stats().await;
+        let stats = cache.get_stats().await;
         assert!(
             stats.evictions > 0,
             "Expected evictions but got none. Cache stats: hits={}, misses={}, evictions={}, peak_size={}",

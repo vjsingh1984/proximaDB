@@ -7,8 +7,7 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::SimilarityResult;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-    use crate::core::{String, VectorRecord};
-    use crate::proto::proximadb_v1::MetadataItem;
+    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
     use crate::storage::engines::core::formats::columnar::{
         CollectionContext, UnifiedParquetReader,
     };
@@ -27,7 +26,7 @@ mod tests {
     async fn create_test_reader() -> UnifiedParquetReader {
         let config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-        UnifiedParquetReader::new(filesystem)
+        UnifiedParquetReader::new(filesystem).await.unwrap()
     }
 
     fn create_test_context() -> CollectionContext {
@@ -106,7 +105,7 @@ mod tests {
         };
 
         // With quantized columns, should use two-stage strategy
-        assert!(!context.quantization_columns.is_none());
+        assert!(!context.quantization_columns.is_empty());
     }
 
     // Filter Expression Tests
@@ -159,8 +158,8 @@ mod tests {
         // Extract fields from filter
         let fields = extract_filter_fields(&filter);
         assert_eq!(fields.len(), 2);
-        assert!(fields.contains_hash(&"status".to_string()));
-        assert!(fields.contains_hash(&"priority".to_string()));
+        assert!(fields.contains(&"status".to_string()));
+        assert!(fields.contains(&"priority".to_string()));
     }
 
     // Helper function to extract fields from filter
@@ -227,7 +226,7 @@ mod tests {
     }
 
     fn coalesce_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
-        if ranges.is_none() {
+        if ranges.is_empty() {
             return ranges;
         }
 
@@ -315,11 +314,11 @@ mod tests {
         ));
 
         for record in &vectors {
-            ids.push(record.id.clone().clone());
+            ids.push(record.id.clone());
             collection_ids.push("test_collection".to_string());
             versions.push(record.version.map(|v| v as i8));
             updated_at_values.push(record.updated_at.map(|v| v as i64));
-            expires_at_values.push(record.expires_at as i64);
+            expires_at_values.push(record.expires_at.unwrap_or(0) as i64);
 
             // Add vector data
             let values = vector_builder.values();
@@ -329,24 +328,34 @@ mod tests {
             vector_builder.append(true);
 
             // Add metadata
-            if !record.metadata.is_none() {
+            if !record.metadata.is_empty() {
                 let struct_builder = extra_meta_builder.values();
-                for meta_item in &record.metadata {
+                for (key, sql_value) in &record.metadata {
                     struct_builder
                         .field_builder::<StringBuilder>(0)
                         .unwrap()
-                        .append_value(&meta_item.key);
+                        .append_value(key);
                     // Convert metadata value to string
-                    let value_str = match &meta_item.value {
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) => {
+                    let value_str = match &sql_value.value {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
                             s.clone()
                         }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::NumberValue(n)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                             n.to_string()
                         }
-                        Some(crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b)) => {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                             b.to_string()
                         }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                            i.to_string()
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(bytes)) => {
+                            format!("{:?}", bytes)
+                        }
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
+                            "null".to_string()
+                        }
+                        _ => "unknown".to_string(),
                         None => String::new(),
                     };
                     struct_builder
@@ -402,36 +411,24 @@ mod tests {
         let mut vectors = Vec::new();
 
         for i in 0..count {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert("category".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 3))),
+            });
+            metadata.insert("score".to_string(), SqlValue {
+                value: Some(sql_value::Value::StringValue((i as f32 * 0.5).to_string())),
+            });
+
             let vector = VectorRecord {
-                id: Some(format!("vec_{}", i)),
+                id: format!("vec_{}", i),
                 vector: vec![i as f32 * 0.1; dim],
-                metadata: vec![
-                    MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
-                                "cat_{}",
-                                i % 3
-                            )),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "score".to_string(),
-                        value: Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                (i as f32 * 0.5).to_string(),
-                            ),
-                        ),
-                    },
-                ],
-                timestamp: chrono::Utc::now().timestamp() as u32,
-                updated_at: Some(chrono::Utc::now().timestamp() as u32),
+                metadata,
+                timestamp: chrono::Utc::now().timestamp(),
+                updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: Some(i as f32),
-                similarity: None,
-                ..Default::default()
+                quantized_vector: vec![],
+                source: Some("test".to_string()),
             };
             vectors.push(vector);
         }
@@ -492,7 +489,7 @@ mod tests {
         let mut test_vectors = Vec::new();
         for i in 0..5 {
             let mut vec = create_test_vectors(1, 3)[0].clone();
-            vec.id = Some(format!("vec_{}", i));
+            vec.id = format!("vec_{}", i);
             vec.vector = match i {
                 0 => vec![1.0, 0.0, 0.0],
                 1 => vec![0.0, 1.0, 0.0],
@@ -516,6 +513,7 @@ mod tests {
         // Create search params
         let search_params = SearchParams {
             query_vectors: Some(vec![vec![1.0, 0.0, 0.0]]),
+            vector: Some(vec![1.0, 0.0, 0.0]), // Add missing vector field
             top_k: Some(3),
             distance_metric: Some(DistanceMetric::Cosine),
             requires_ordering: None,
@@ -525,8 +523,14 @@ mod tests {
             include_expired: None,
             quantization_hint: None,
             enable_two_stage: None,
+            progressive_recalls: None,
+            progressive_scenario: None,
+            runtime_hints: None,
+            optimization_hint: None,
             enable_clustering_hint: None,
             enable_metadata_filtering_hint: None,
+            enable_progressive_search: None,
+            filters: None,
             timeout_ms: None,
         };
 
@@ -552,15 +556,15 @@ mod tests {
         // Debug output
         for (i, result) in results.iter().enumerate() {
             debug!(
-                "Result {}: id={}, similarity={:?}, score={:?}, semantic_distance={:?}",
-                i, result.id, result.similarity, result.score, result.semantic_distance
+                "Result {}: id={}, similarity={:?}, score={:?}, semantic_similarity={:?}",
+                i, result.id, result.similarity, result.score, result.semantic_similarity
             );
         }
 
         // Also print the actual vectors to verify they were correctly written
         debug!("Test vectors created:");
         for vec in test_vectors_debug.iter() {
-            debug!("  {} -> {:?}", vec.id.as_ref(), vec.vector);
+            debug!("  {} -> {:?}", vec.id, vec.vector);
         }
 
         assert_eq!(results[0].id, "vec_0", "First result should be exact match");
@@ -645,16 +649,15 @@ mod tests {
 
         // Create simple test vector
         let test_vector = VectorRecord {
-            id: Some("debug_vec".to_string()),
+            id: "debug_vec".to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: Some("test".to_string()),
         };
 
         // Write to parquet file
@@ -688,18 +691,18 @@ mod tests {
         if !results.is_empty() {
             debug!(
                 "First result: id={:?}, distance={:?}",
-                results[0].id, results[0].semantic_distance
+                results[0].id, results[0].semantic_similarity
             );
         }
 
         // Verify
         assert_eq!(results.len(), 1, "Should find 1 result");
         assert_eq!(results[0].id, "debug_vec", "Should find debug_vec");
-        if let Some(distance) = &results[0].semantic_distance {
+        if let Some(distance) = results[0].semantic_similarity {
             assert!(
-                distance.raw_value < 0.01,
+                distance < 0.01,
                 "Should have near-zero distance for exact match, got {}",
-                distance.raw_value
+                distance
             );
         }
 

@@ -12,10 +12,10 @@ use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::memory::{PoolConfig, VectorMemoryPool};
 use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
-use proximadb::core::{SstConfig, VectorRecord};
-use proximadb::proto::proximadb::{Collection, MetadataItem};
-use proximadb::storage::engines::sst::SstStorage;
-use proximadb::storage::engines::viper::ViperEngine;
+use proximadb::core::SstConfig;
+use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, StorageEngine, DistanceMetric, SqlValue, sql_value};
+use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::impls::viper::ViperEngine;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::UnifiedStorageEngine;
@@ -111,41 +111,33 @@ fn create_optimization_test_vectors(count: usize) -> Vec<VectorRecord> {
             }
 
             VectorRecord {
-                id: Some(format!("vec_{}_{}", pattern, i)),
+                id: format!("vec_{}_{}", pattern, i),
                 vector,
-                metadata: vec![
-                    MetadataItem {
-                        key: "pattern".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::StringValue(
-                                pattern.to_string(),
-                            ),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "dimension".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                                dimension as f64,
-                            ),
-                        ),
-                    },
-                    MetadataItem {
-                        key: "index".to_string(),
-                        value: Some(
-                            proximadb::proto::proximadb::metadata_item::Value::NumberValue(
-                                i as f64,
-                            ),
-                        ),
-                    },
-                ],
-                timestamp: (1000 + i) as u32,
-                updated_at: Some((1000 + i) as u32),
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("pattern".to_string(), SqlValue {
+                        value: Some(sql_value::Value::StringValue(
+                            pattern.to_string()
+                        ))
+                    });
+                    metadata.insert("dimension".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(
+                            dimension as f64
+                        ))
+                    });
+                    metadata.insert("index".to_string(), SqlValue {
+                        value: Some(sql_value::Value::NumberValue(
+                            i as f64
+                        ))
+                    });
+                    metadata
+                },
+                timestamp: (1000 + i) as i64,
+                updated_at: Some((1000 + i) as i64),
                 expires_at: None,
                 version: Some(1),
-                rank: None,
-                score: None,
-                distance: None,
+                quantized_vector: vec![],
+                source: None,
             }
         })
         .collect()
@@ -165,6 +157,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let sst_config = Arc::new(SstConfig {
         level_count: 3,
         compaction_threshold: 3,
+        compaction_config: None,
         block_size_kb: 8192, // 8MB optimized for ZSTD
         compaction_strategy: "leveled".to_string(),
         compression: "zstd".to_string(),
@@ -189,6 +182,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         enable_statistics: true,
         data_directory: format!("{}/viper_data", temp_dir.path().display()),
         cache_size_mb: 256,
+        compaction_config: None,
     };
 
     // Setup infrastructure
@@ -223,8 +217,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Cosine,
     ));
-    let sst_engine =
-        SstStorage::new((*sst_config).clone(), filesystem.clone(), distance_compute).await?;
+    let sst_engine = SstEngine::new().await?;
 
     // Create VIPER engine
     let viper_engine = ViperEngine::from_core_config(viper_config, filesystem.clone()).await?;
@@ -234,35 +227,18 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let collection_storage_path = format!("{}/optimization_test", temp_dir.path().display());
     let collection = Collection {
         id: "optimization_test".to_string(),
-        config: Some(proximadb::proto::proximadb::CollectionConfig {
+        config: Some(CollectionConfig {
+            name: "optimization_test".to_string(),
             dimension: 2048, // Max dimension in test
-            filterable_columns: vec![
-                proximadb::proto::proximadb::FilterableColumnSpec {
-                    name: "pattern".to_string(),
-                    data_type: proximadb::proto::proximadb::FilterableDataType::FilterableString
-                        as i32,
-                    indexed: true,
-                    supports_range: false,
-                    estimated_cardinality: Some(5),
-                    encoding_hint: None,
-                },
-                proximadb::proto::proximadb::FilterableColumnSpec {
-                    name: "dimension".to_string(),
-                    data_type: proximadb::proto::proximadb::FilterableDataType::FilterableFloat
-                        as i32,
-                    indexed: true,
-                    supports_range: true,
-                    estimated_cardinality: Some(4),
-                    encoding_hint: None,
-                },
-            ],
+            distance_metric: DistanceMetric::Cosine as i32,
+            storage_engine: StorageEngine::Sst as i32,
+            tags: vec![],
             ..Default::default()
         }),
-        storage_assignment: Some(proximadb::proto::proximadb::StorageAssignment {
-            base_location: collection_storage_path.clone(),
-            assigned_at: chrono::Utc::now().timestamp(),
-        }),
-        ..Default::default()
+        stats: None,
+        created_at: chrono::Utc::now().timestamp(),
+        updated_at: chrono::Utc::now().timestamp(),
+        storage_assignment: None,
     };
 
     // Create test vectors
@@ -299,7 +275,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
 
     // Split vectors for both engines
     let (sst_vectors, viper_vectors): (Vec<_>, Vec<_>) = vectors.into_iter().partition(|v| {
-        v.id.as_ref().unwrap().contains("sparse") || v.id.as_ref().unwrap().contains("sequential")
+        v.id.contains("sparse") || v.id.contains("sequential")
     });
 
     // Flush to SST with compression - pass collection config through flush params
@@ -320,7 +296,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
 
     info!(
         "SST flush: {} records in {:?}",
-        sst_flush_result.entries_flushed, sst_flush_time
+        sst_flush_result.entries_flushed.unwrap_or(0), sst_flush_time
     );
 
     // Flush to VIPER with compression - pass collection config through flush params
@@ -337,7 +313,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
 
     info!(
         "VIPER flush: {} records in {:?}",
-        viper_flush_result.entries_flushed, viper_flush_time
+        viper_flush_result.entries_flushed.unwrap_or(0), viper_flush_time
     );
 
     // Test search on compressed SST data
@@ -365,17 +341,48 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     info!("Searching SST with filter: pattern='sparse'");
     let start = Instant::now();
     // Use standard path: {baseurl}/{collectionid}/data
+    // Create search context for SST engine
+    let sst_search_context_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+        vector: Some(sst_search_params.query_vectors.as_ref().unwrap()[0].clone()),
+        query_vectors: None,
+        top_k: Some(sst_search_params.top_k.unwrap_or(20)),
+        distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+        filter_expression: sst_search_params.filter_expression.clone(),
+        timeout_ms: None,
+        accuracy_threshold: None,
+        ..Default::default()
+    });
+
+    let sst_collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
+        name: "optimization_test".to_string(),
+        dimension: sst_search_params.query_vectors.as_ref().unwrap()[0].len() as u32,
+        distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+        storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+        tags: vec![],
+        ..Default::default()
+    };
+
+    let sst_collection = std::sync::Arc::new(proximadb::proto::proximadb_v1::Collection {
+        id: "optimization_test".to_string(),
+        config: Some(sst_collection_config),
+        stats: None,
+        created_at: 0,
+        updated_at: 0,
+        storage_assignment: None,
+    });
+
+    let sst_query_context = proximadb::storage::traits::StorageQueryContext {
+        search_params: sst_search_context_params,
+        collection: sst_collection.clone(),
+        metadata: proximadb::storage::traits::StorageQueryMetadata {
+            collection_id: "optimization_test".to_string(),
+            use_axis_indexes: false,
+            ..Default::default()
+        },
+    };
+
     let sst_results = sst_engine
-        .search_vectors_unified(
-            "optimization_test",
-            &format!("file://{}/optimization_test/data", collection_storage_path), // Standard SST path
-            &sst_search_params.query_vectors.as_ref().unwrap()[0],
-            sst_search_params.top_k.unwrap_or(20),
-            &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-            sst_search_params.filter_expression.as_ref(),
-            false,
-            true,
-        )
+        .search_vectors_unified(&sst_query_context)
         .await?;
     let sst_search_time = start.elapsed();
 
@@ -388,17 +395,30 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     // If no results, try searching without filter to debug
     if sst_results.is_empty() {
         info!("No results with filter, trying without filter...");
+        // Create context for search without filter
+        let no_filter_search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+            vector: Some(sst_search_params.query_vectors.as_ref().unwrap()[0].clone()),
+            query_vectors: None,
+            top_k: Some(sst_search_params.top_k.unwrap_or(20)),
+            distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+            filter_expression: None,
+            timeout_ms: None,
+            accuracy_threshold: None,
+            ..Default::default()
+        });
+
+        let no_filter_query_context = proximadb::storage::traits::StorageQueryContext {
+            search_params: no_filter_search_params,
+            collection: sst_collection.clone(),
+            metadata: proximadb::storage::traits::StorageQueryMetadata {
+                collection_id: "optimization_test".to_string(),
+                use_axis_indexes: false,
+                    ..Default::default()
+            },
+        };
+
         let no_filter_results = sst_engine
-            .search_vectors_unified(
-                "optimization_test",
-                &format!("file://{}/optimization_test/data", collection_storage_path), // Standard SST path
-                &sst_search_params.query_vectors.as_ref().unwrap()[0],
-                sst_search_params.top_k.unwrap_or(20),
-                &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-                None,
-                false,
-                true,
-            )
+            .search_vectors_unified(&no_filter_query_context)
             .await?;
         info!("Without filter: found {} results", no_filter_results.len());
     }
@@ -423,17 +443,51 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     };
 
     let start = Instant::now();
+    // Create search context for VIPER engine
+    let viper_search_context_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+        vector: Some(viper_search_params.query_vectors.as_ref().unwrap()[0].clone()),
+        query_vectors: None,
+        top_k: Some(viper_search_params.top_k.unwrap_or(20)),
+        distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+        filter_expression: viper_search_params.filter_expression.clone(),
+        timeout_ms: None,
+        accuracy_threshold: None,
+        ..Default::default()
+    });
+
+    let viper_collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
+        name: "optimization_test".to_string(),
+        dimension: viper_search_params.query_vectors.as_ref().unwrap()[0].len() as u32,
+        distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+        storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+        tags: vec![],
+        auto_index_selection: false,
+        embedding_models: vec![],
+        owner: None,
+        ..Default::default()
+    };
+
+    let viper_collection = std::sync::Arc::new(proximadb::proto::proximadb_v1::Collection {
+        id: "optimization_test".to_string(),
+        config: Some(viper_collection_config),
+        stats: None,
+        created_at: 0,
+        updated_at: 0,
+        storage_assignment: None,
+    });
+
+    let viper_query_context = proximadb::storage::traits::StorageQueryContext {
+        search_params: viper_search_context_params,
+        collection: viper_collection,
+        metadata: proximadb::storage::traits::StorageQueryMetadata {
+            collection_id: "optimization_test".to_string(),
+            use_axis_indexes: false,
+            ..Default::default()
+        },
+    };
+
     let viper_results = viper_engine
-        .search_vectors_unified(
-            "optimization_test",
-            &format!("file://{}/optimization_test/data", collection_storage_path), // Standard path
-            &viper_search_params.query_vectors.as_ref().unwrap()[0],
-            viper_search_params.top_k.unwrap_or(20),
-            &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-            viper_search_params.filter_expression.as_ref(),
-            false,
-            true,
-        )
+        .search_vectors_unified(&viper_query_context)
         .await?;
     let viper_search_time = start.elapsed();
 
@@ -457,7 +511,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let sst_size = calculate_directory_size(&format!("{}/sst", temp_dir.path().display()));
     let viper_size = calculate_directory_size(&format!("{}/viper", temp_dir.path().display()));
 
-    let total_vectors = sst_vectors.len() + viper_flush_result.entries_flushed as usize;
+    let total_vectors = sst_vectors.len() + viper_flush_result.entries_flushed.unwrap_or(0) as usize;
     let avg_vector_size = 512; // Average dimension
     let uncompressed_estimate = total_vectors * avg_vector_size * 4; // 4 bytes per f32
 
@@ -469,7 +523,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     );
     info!(
         "  VIPER: {} bytes for {} vectors",
-        viper_size, viper_flush_result.entries_flushed
+        viper_size, viper_flush_result.entries_flushed.unwrap_or(0)
     );
     info!("  Estimated uncompressed: {} bytes", uncompressed_estimate);
     info!(
@@ -484,18 +538,6 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         "Found {} search results, skipping metadata validation for now",
         sst_results.len()
     );
-
-    // for result in &sst_results {
-    //     if let Some(pattern_value) = result.metadata.get(key) {
-    //         if let Some(pattern) = pattern_value.as_str() {
-    //             assert_eq!(pattern, "sparse");
-    //         } else {
-    //             panic!("Pattern metadata is not a string: {:?}", pattern_value);
-    //         }
-    //     } else {
-    //         panic!("Pattern metadata not found in search result");
-    //     }
-    // }
 
     // Performance assertions
     assert!(

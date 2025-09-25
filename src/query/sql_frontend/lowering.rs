@@ -10,19 +10,18 @@ use anyhow::{Result, anyhow};
 use sqlparser::ast::{
     BinaryOperator, Expr as SqlExpr, Function, FunctionArg, FunctionArgExpr,
     OrderByExpr as SqlOrderByExpr, Query as SqlQuery, Select as SqlSelect, SelectItem, Statement,
-    TableFactor, TableWithJoins, UnaryOperator, Value,
+    TableFactor, TableWithJoins, Value,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
-use crate::query::ast::{BinaryOp, Expr, Join, Literal, OrderByExpr, Query, Select, TableRef, UnaryOp};
+use crate::query::ast::{BinaryOp, Expr, Join, Literal, OrderByExpr, Query, Select, TableRef};
 use crate::services::collection::manager::CollectionService;
 use std::sync::Arc;
 
 /// AST Lowering service - converts sqlparser-rs AST to internal representation
 ///
-/// This is the primary entry point for SQL query processing, replacing the custom
-/// sql_engine parser with a standards-compliant sqlparser-rs foundation.
+/// This is the primary entry point for SQL query processing, using a standards-compliant sqlparser-rs foundation.
 pub struct QueryLowering {
     collection_service: Arc<CollectionService>,
     /// Cache for collection schemas to avoid repeated lookups during query planning
@@ -126,7 +125,10 @@ impl QueryLowering {
             from,
             joins,
             selection,
-            group_by: self.lower_group_by(&select.group_by.exprs).await?,
+            group_by: match &select.group_by {
+                sqlparser::ast::GroupByExpr::All => vec![],
+                sqlparser::ast::GroupByExpr::Expressions(exprs) => self.lower_group_by(exprs).await?,
+            },
             having: if let Some(having_expr) = &select.having {
                 Some(self.lower_expr(having_expr).await?)
             } else {
@@ -280,6 +282,10 @@ impl QueryLowering {
             self.lower_sks_function(&name, &func.args).await
         }
         // Regular functions
+        else if self.is_aggregate_function(&name) {
+            // Handle aggregate functions
+            Ok(Expr::FuncCall { name, args })
+        }
         else {
             Ok(Expr::FuncCall { name, args })
         }
@@ -321,6 +327,38 @@ impl QueryLowering {
                 })
             }
             SqlExpr::Function(func) => self.lower_function_call(func).await,
+            SqlExpr::Case {
+                operand,
+                conditions,
+                results,
+                else_result,
+            } => {
+                let lowered_operand = if let Some(op) = operand {
+                    Some(Box::new(self.lower_expr(op).await?))
+                } else {
+                    None
+                };
+                let mut lowered_conditions = Vec::new();
+                for (condition, result) in conditions.iter().zip(results.iter()) {
+                    let when_expr = self.lower_expr(condition).await?;
+                    let then_expr = self.lower_expr(result).await?;
+                    lowered_conditions.push((when_expr, then_expr));
+                }
+                let lowered_else_expr = if let Some(el) = else_result {
+                    Some(Box::new(self.lower_expr(el).await?))
+                } else {
+                    None
+                };
+                Ok(Expr::Case {
+                    operand: lowered_operand,
+                    conditions: lowered_conditions,
+                    else_expr: lowered_else_expr,
+                })
+            },
+            SqlExpr::Subquery(subquery) => {
+                let lowered_subquery = self.lower_query(subquery).await?;
+                Ok(Expr::Subquery(Box::new(lowered_subquery)))
+            },
             _ => Err(anyhow!("Unsupported expression type: {:?}", expr)),
         }
         })
@@ -473,6 +511,11 @@ impl QueryLowering {
         })
     }
 
+    /// Check if a function is an aggregate function
+    fn is_aggregate_function(&self, name: &str) -> bool {
+        matches!(name.to_uppercase().as_str(), "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" | "GROUP_CONCAT")
+    }
+
     /// Lower SKS functions (SIMILAR, FOLLOW, ASSEMBLE) to structured AST nodes
     ///
     /// This method converts SQL function calls to proper AST expressions that
@@ -581,16 +624,24 @@ mod lowering_tests {
     use crate::query::ast::*;
 
     /// Create mock collection service for testing
-    fn setup_test_collection_service() -> Arc<CollectionService> {
+    async fn setup_test_collection_service() -> Arc<CollectionService> {
         // TODO: Implement proper mock service
-        Arc::new(CollectionService::new(Arc::new(
-            crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(),
-        )))
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        use crate::core::config::StorageConfig;
+        use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
+
+        let config = UniversalMetadataConfig::default();
+        let filesystem_config = Default::default();
+        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let backend = crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(config, filesystem_factory).await.unwrap();
+        let storage_config = StorageConfig::default();
+        Arc::new(CollectionService::new(Arc::new(backend), storage_config).await.unwrap())
     }
 
     #[tokio::test]
     async fn test_simple_select_lowering() {
-        let lowering = QueryLowering::new(setup_test_collection_service());
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT id, metadata FROM products LIMIT 10";
 
         let ast = lowering.lower_sql(sql).await.unwrap();
@@ -602,17 +653,22 @@ mod lowering_tests {
                 assert!(select.from.len() > 0);
 
                 // Verify projection contains expected fields
-                assert!(matches!(select.projection[0], Expr::Identifier(ref id) if id == "id"));
-                assert!(
-                    matches!(select.projection[1], Expr::Identifier(ref id) if id == "metadata")
-                );
+                if let Some(item) = select.projection.get(0) {
+                    assert!(matches!(item.expr, Expr::Identifier(ref id) if id == "id"));
+                }
+                if let Some(item) = select.projection.get(1) {
+                    assert!(matches!(item.expr, Expr::Identifier(ref id) if id == "metadata"));
+                }
             }
+            Query::With { .. } => panic!("WITH queries not implemented yet"),
+            Query::Set { .. } => panic!("SET queries not implemented yet"),
         }
     }
 
     #[tokio::test]
     async fn test_metadata_filter_lowering() {
-        let lowering = QueryLowering::new(setup_test_collection_service());
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT * FROM products WHERE metadata.category = 'electronics'";
 
         let ast = lowering.lower_sql(sql).await.unwrap();
@@ -623,17 +679,20 @@ mod lowering_tests {
 
                 // Verify WHERE clause generates efficient FilterExpression
                 // This will use HashMap.get("category") instead of linear scan
-                if let Some(Expr::Binary { left, op, right }) = &select.selection {
+                if let Some(Expr::Binary { left: _, op, right: _ }) = &select.selection {
                     assert!(matches!(op, BinaryOp::Eq));
                     // TODO: Validate field access pattern optimizes to HashMap.get()
                 }
             }
+            Query::With { .. } => panic!("WITH queries not implemented yet"),
+            Query::Set { .. } => panic!("SET queries not implemented yet"),
         }
     }
 
     #[tokio::test]
     async fn test_vector_similarity_order_by() {
-        let lowering = QueryLowering::new(setup_test_collection_service());
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT * FROM products ORDER BY VECTOR_SIMILARITY(embedding, [0.1, 0.2, 0.3], 'cosine') DESC LIMIT 5";
 
         let ast = lowering.lower_sql(sql).await.unwrap();
@@ -649,12 +708,15 @@ mod lowering_tests {
                     assert_eq!(args.len(), 3); // field, vector, metric
                 }
             }
+            Query::With { .. } => panic!("WITH queries not implemented yet"),
+            Query::Set { .. } => panic!("SET queries not implemented yet"),
         }
     }
 
     #[tokio::test]
     async fn test_parameter_placeholder_recognition() {
-        let lowering = QueryLowering::new(setup_test_collection_service());
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT * FROM products WHERE category = $1 AND price > $2";
 
         // TODO: Test parameter placeholder recognition and binding preparation
@@ -665,13 +727,16 @@ mod lowering_tests {
                 assert!(select.selection.is_some());
                 // TODO: Verify parameter placeholders are preserved for binding
             }
+            Query::With { .. } => panic!("WITH queries not implemented yet"),
+            Query::Set { .. } => panic!("SET queries not implemented yet"),
         }
     }
 
     #[tokio::test]
     async fn test_performance_filter_pattern_generation() {
         // This test validates that the lowering generates efficient metadata access patterns
-        let lowering = QueryLowering::new(setup_test_collection_service());
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
         let sql = "WHERE metadata.brand = 'apple' AND metadata.price > 500";
 
         // TODO: Validate that lowered AST will generate HashMap.get() calls
@@ -690,7 +755,8 @@ mod lowering_tests {
 
     #[tokio::test]
     async fn test_collection_name_resolution() {
-        let lowering = QueryLowering::new(setup_test_collection_service());
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
         let sql = "SELECT * FROM products";
 
         let ast = lowering.lower_sql(sql).await.unwrap();
@@ -704,6 +770,8 @@ mod lowering_tests {
                     assert!(table_name.len() > "products".len());
                 }
             }
+            Query::With { .. } => panic!("WITH queries not implemented yet"),
+            Query::Set { .. } => panic!("SET queries not implemented yet"),
         }
     }
 }

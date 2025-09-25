@@ -34,10 +34,10 @@ pub mod file_format {
 pub mod clustering {
     /// Default row group size optimized for k<10 queries
     /// Balances I/O efficiency vs wasted reads
-    pub const DEFAULT_ROWGROUP_SIZE: usize = 1000;
+    pub const DEFAULT_ROWGROUP_SIZE: usize = 1024;
 
     /// Minimum row group size for meaningful clustering benefit
-    pub const MIN_ROWGROUP_SIZE: usize = 1024;
+    pub const MIN_ROWGROUP_SIZE: usize = 512;
 
     /// Minimum dataset size before applying optimization (vectors)
     pub const MIN_OPTIMIZATION_DATASET_SIZE: usize = 10_000;

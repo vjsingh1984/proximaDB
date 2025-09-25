@@ -8,8 +8,9 @@
 //! 5. Customer APIs (get_by_id, delete_by_id) work correctly
 
 use super::*;
-use crate::core::VectorRecord;
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue};
+use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
 use tokio;
@@ -33,7 +34,7 @@ async fn test_id_column_always_preserved() {
     // Write test records with IDs
     let test_records = create_test_records(100);
     writer.write_batch(&test_records).await.unwrap();
-    let stats = writer.finalize().await.unwrap();
+    let (stats, _collector) = writer.finalize().await.unwrap();
 
     assert_eq!(stats.total_records, 100);
     assert!(stats.file_size > 0);
@@ -71,7 +72,7 @@ async fn test_id_less_storage_warning() {
 
     let test_records = create_test_records(50);
     writer.write_batch(&test_records).await.unwrap();
-    let _stats = writer.finalize().await.unwrap();
+    let (_stats, _collector) = writer.finalize().await.unwrap();
 
     // Even with id_less_storage = true, ID column should still be present
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
@@ -100,13 +101,15 @@ async fn test_id_bloom_filters() {
     // Create records with predictable IDs
     let test_records: Vec<VectorRecord> = (0..2500)
         .map(|i| VectorRecord {
-            id: Some(format!("customer_id_{:06}", i)),
+            id: format!("customer_id_{:06}", i),
             vector: (0..256).map(|j| (i + j) as f32 * 0.001).collect(),
-            metadata: None,
-            timestamp: i as u32,
+            metadata: HashMap::new(),
+            timestamp: i as i64,
             updated_at: None,
             expires_at: None,
             version: Some(1),
+            quantized_vector: Vec::new(),
+            source: None,
         })
         .collect();
 
@@ -115,7 +118,7 @@ async fn test_id_bloom_filters() {
         writer.write_batch(chunk).await.unwrap();
     }
 
-    let stats = writer.finalize().await.unwrap();
+    let (stats, _collector) = writer.finalize().await.unwrap();
     assert_eq!(stats.total_records, 2500);
     assert!(
         stats.bloom_filter_count > 0,
@@ -123,8 +126,9 @@ async fn test_id_bloom_filters() {
     );
 
     // Test reading with ID bloom filter optimization
-    let filesystem = Arc::new(FilesystemFactory::new());
-    let reader = UnifiedParquetReader::new(filesystem);
+    let filesystem_config = FilesystemConfig::default();
+    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
 
     // Test batch ID lookup
     let lookup_ids = vec![
@@ -143,12 +147,12 @@ async fn test_id_bloom_filters() {
     assert_eq!(results.len(), 3);
 
     // Verify returned records have correct IDs
-    let returned_ids: Vec<String> = results.iter().filter_map(|r| r.id.clone()).collect();
+    let returned_ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
 
-    assert!(returned_ids.contains_hash(&"customer_id_000100".to_string()));
-    assert!(returned_ids.contains_hash(&"customer_id_001000".to_string()));
-    assert!(returned_ids.contains_hash(&"customer_id_002000".to_string()));
-    assert!(!returned_ids.contains_hash(&"customer_id_999999".to_string()));
+    assert!(returned_ids.contains(&"customer_id_000100".to_string()));
+    assert!(returned_ids.contains(&"customer_id_001000".to_string()));
+    assert!(returned_ids.contains(&"customer_id_002000".to_string()));
+    assert!(!returned_ids.contains(&"customer_id_999999".to_string()));
 }
 
 #[tokio::test]
@@ -169,25 +173,34 @@ async fn test_fast_id_lookup_performance() {
 
     // Generate 50,000 records
     let test_records: Vec<VectorRecord> = (0..50000)
-        .map(|i| VectorRecord {
-            id: Some(format!("perf_test_id_{:08}", i)),
-            vector: (0..512)
-                .map(|j| ((i * 17 + j * 13) % 1000) as f32 * 0.001)
-                .collect(),
-            metadata: Some(serde_json::json!({
-                "category": format!("cat_{}", i % 10),
-                "priority": i % 5,
-            })),
-            timestamp: i as u32,
-            updated_at: None,
-            expires_at: None,
-            version: Some((i % 3 + 1) as u64),
+        .map(|i| {
+            let mut metadata = HashMap::new();
+            metadata.insert("category".to_string(), SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("cat_{}", i % 10))),
+            });
+            metadata.insert("priority".to_string(), SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i % 5)),
+            });
+
+            VectorRecord {
+                id: format!("perf_test_id_{:08}", i),
+                vector: (0..512)
+                    .map(|j| ((i * 17 + j * 13) % 1000) as f32 * 0.001)
+                    .collect(),
+                metadata,
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some((i % 3 + 1) as i64),
+                quantized_vector: Vec::new(),
+                source: None,
+            }
         })
         .collect();
 
     let start_write = std::time::Instant::now();
     writer.write_batch(&test_records).await.unwrap();
-    let stats = writer.finalize().await.unwrap();
+    let (stats, _collector) = writer.finalize().await.unwrap();
     let write_duration = start_write.elapsed();
 
     println!(
@@ -197,8 +210,9 @@ async fn test_fast_id_lookup_performance() {
     assert_eq!(stats.total_records, 50000);
 
     // Test ID lookup performance
-    let filesystem = Arc::new(FilesystemFactory::new());
-    let reader = UnifiedParquetReader::new(filesystem);
+    let filesystem_config = FilesystemConfig::default();
+    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
 
     // Lookup random subset of IDs
     let lookup_ids: Vec<String> = (0..1000)
@@ -222,7 +236,7 @@ async fn test_fast_id_lookup_performance() {
 
     // Verify correctness of lookup results
     for (expected_id, result) in lookup_ids.iter().zip(results.iter()) {
-        assert_eq!(result.id.as_ref().unwrap(), expected_id);
+        assert_eq!(&result.id, expected_id);
         assert_eq!(result.vector.len(), 512);
     }
 }
@@ -244,22 +258,31 @@ async fn test_dictionary_encoding_optimization() {
 
     // Create records with repeated ID patterns (good for dictionary encoding)
     let test_records: Vec<VectorRecord> = (0..1000)
-        .map(|i| VectorRecord {
-            id: Some(format!("user_group_{:02}", i % 20)), // Only 20 unique IDs, repeated
-            vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
-            metadata: Some(serde_json::json!({
-                "group": format!("group_{}", i % 20),
-                "member_id": i,
-            })),
-            timestamp: i as u32,
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
+        .map(|i| {
+            let mut metadata = HashMap::new();
+            metadata.insert("group".to_string(), SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("group_{}", i % 20))),
+            });
+            metadata.insert("member_id".to_string(), SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
+            });
+
+            VectorRecord {
+                id: format!("user_group_{:02}", i % 20), // Only 20 unique IDs, repeated
+                vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
+                metadata,
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: Vec::new(),
+                source: None,
+            }
         })
         .collect();
 
     writer.write_batch(&test_records).await.unwrap();
-    let stats = writer.finalize().await.unwrap();
+    let (stats, _collector) = writer.finalize().await.unwrap();
 
     assert_eq!(stats.total_records, 1000);
 
@@ -271,8 +294,9 @@ async fn test_dictionary_encoding_optimization() {
     );
 
     // Verify ID lookups still work correctly
-    let filesystem = Arc::new(FilesystemFactory::new());
-    let reader = UnifiedParquetReader::new(filesystem);
+    let filesystem_config = FilesystemConfig::default();
+    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
 
     let lookup_results = reader
         .optimized_batch_id_lookup(
@@ -287,7 +311,7 @@ async fn test_dictionary_encoding_optimization() {
 
     // All results should have the requested IDs
     for result in &lookup_results {
-        let id = result.id.as_ref().unwrap();
+        let id = &result.id;
         assert!(id == "user_group_05" || id == "user_group_15");
     }
 }
@@ -304,41 +328,66 @@ async fn test_customer_api_compatibility() {
     let mut writer = StreamingParquetWriter::new(&file_path, 384, config).unwrap();
 
     let test_records = vec![
-        VectorRecord {
-            id: Some("cust_001".to_string()),
-            vector: (0..384).map(|i| i as f32 * 0.01).collect(),
-            metadata: Some(serde_json::json!({"name": "Customer 1"})),
-            timestamp: 1000,
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
+        {
+            let mut metadata = HashMap::new();
+            metadata.insert("name".to_string(), SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("Customer 1".to_string())),
+            });
+            VectorRecord {
+                id: "cust_001".to_string(),
+                vector: (0..384).map(|i| i as f32 * 0.01).collect(),
+                metadata,
+                timestamp: 1000,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: Vec::new(),
+                source: None,
+            }
         },
-        VectorRecord {
-            id: Some("cust_002".to_string()),
-            vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
-            metadata: Some(serde_json::json!({"name": "Customer 2"})),
-            timestamp: 2000,
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
+        {
+            let mut metadata = HashMap::new();
+            metadata.insert("name".to_string(), SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("Customer 2".to_string())),
+            });
+            VectorRecord {
+                id: "cust_002".to_string(),
+                vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
+                metadata,
+                timestamp: 2000,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: Vec::new(),
+                source: None,
+            }
         },
-        VectorRecord {
-            id: Some("cust_003".to_string()),
-            vector: (0..384).map(|i| (i + 200) as f32 * 0.01).collect(),
-            metadata: Some(serde_json::json!({"name": "Customer 3"})),
-            timestamp: 3000,
-            updated_at: None,
-            expires_at: None,
-            version: Some(2),
+        {
+            let mut metadata = HashMap::new();
+            metadata.insert("name".to_string(), SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("Customer 3".to_string())),
+            });
+            VectorRecord {
+                id: "cust_003".to_string(),
+                vector: (0..384).map(|i| (i + 200) as f32 * 0.01).collect(),
+                metadata,
+                timestamp: 3000,
+                updated_at: None,
+                expires_at: None,
+                version: Some(2),
+                quantized_vector: Vec::new(),
+                source: None,
+            }
         },
     ];
 
     writer.write_batch(&test_records).await.unwrap();
-    let _stats = writer.finalize().await.unwrap();
+    let (_stats, _collector) = writer.finalize().await.unwrap();
 
     // Test get_by_id equivalent
-    let filesystem = Arc::new(FilesystemFactory::new());
-    let reader = UnifiedParquetReader::new(filesystem);
+    let filesystem_config = FilesystemConfig::default();
+    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
 
     // Single ID lookup
     let single_result = reader
@@ -350,7 +399,7 @@ async fn test_customer_api_compatibility() {
         .unwrap();
 
     assert_eq!(single_result.len(), 1);
-    assert_eq!(single_result[0].id.as_ref().unwrap(), "cust_002");
+    assert_eq!(&single_result[0].id, "cust_002");
     assert_eq!(single_result[0].timestamp, 2000);
     assert_eq!(single_result[0].vector.len(), 384);
 
@@ -364,9 +413,9 @@ async fn test_customer_api_compatibility() {
         .unwrap();
 
     assert_eq!(batch_result.len(), 2);
-    let ids: Vec<String> = batch_result.iter().filter_map(|r| r.id.clone()).collect();
-    assert!(ids.contains_hash(&"cust_001".to_string()));
-    assert!(ids.contains_hash(&"cust_003".to_string()));
+    let ids: Vec<String> = batch_result.iter().map(|r| r.id.clone()).collect();
+    assert!(ids.contains(&"cust_001".to_string()));
+    assert!(ids.contains(&"cust_003".to_string()));
 
     // Non-existent ID
     let empty_result = reader
@@ -400,7 +449,7 @@ async fn test_row_group_offset_optimization() {
 
     let test_records = create_test_records(250); // Multiple row groups
     writer.write_batch(&test_records).await.unwrap();
-    let _stats = writer.finalize().await.unwrap();
+    let (_stats, _collector) = writer.finalize().await.unwrap();
 
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
 
@@ -412,8 +461,9 @@ async fn test_row_group_offset_optimization() {
     assert!(parquet_schema.field_with_name("row_index").is_ok());
 
     // Verify ID-based lookup still works
-    let filesystem = Arc::new(FilesystemFactory::new());
-    let reader = UnifiedParquetReader::new(filesystem);
+    let filesystem_config = FilesystemConfig::default();
+    let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+    let reader = UnifiedParquetReader::new(filesystem).await.unwrap();
 
     let lookup_result = reader
         .optimized_batch_id_lookup(
@@ -424,25 +474,35 @@ async fn test_row_group_offset_optimization() {
         .unwrap();
 
     assert_eq!(lookup_result.len(), 1);
-    assert_eq!(lookup_result[0].id.as_ref().unwrap(), "test_id_050");
+    assert_eq!(&lookup_result[0].id, "test_id_050");
 }
 
 // Helper functions
 
 fn create_test_records(count: usize) -> Vec<VectorRecord> {
     (0..count)
-        .map(|i| VectorRecord {
-            id: Some(format!("test_id_{:03}", i)),
-            vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
-            metadata: if i % 3 == 0 {
-                Some(serde_json::json!({"tag": format!("tag_{}", i % 10)}))
+        .map(|i| {
+            let metadata = if i % 3 == 0 {
+                let mut map = HashMap::new();
+                map.insert("tag".to_string(), SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("tag_{}", i % 10))),
+                });
+                map
             } else {
-                None
-            },
-            timestamp: (1000 + i) as u32,
-            updated_at: None,
-            expires_at: None,
-            version: Some(((i % 5) + 1) as u64),
+                HashMap::new()
+            };
+
+            VectorRecord {
+                id: format!("test_id_{:03}", i),
+                vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
+                metadata,
+                timestamp: (1000 + i) as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(((i % 5) + 1) as i64),
+                quantized_vector: Vec::new(),
+                source: None,
+            }
         })
         .collect()
 }

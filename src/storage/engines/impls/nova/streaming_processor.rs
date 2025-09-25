@@ -2,7 +2,7 @@
 // Implements async streaming with bounded memory and backpressure control
 
 use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::{Result, anyhow};
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::sync::Arc;
@@ -326,7 +326,7 @@ impl StreamingRowGroupProcessor {
                     if let Some(stats) = enhanced_stats {
                         let intersects = stats.vector_zone_map.intersects_query(
                             &context.query_vector,
-                            crate::compute::distance_computation::DistanceMetric::Euclidean,
+                            "euclidean".to_string(),
                             context.distance_threshold.unwrap_or(f32::MAX),
                         );
                         if !intersects {

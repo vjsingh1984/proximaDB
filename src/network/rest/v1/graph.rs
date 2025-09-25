@@ -72,11 +72,97 @@ use tracing::{debug, error, info, warn};
 // use base64;
 
 // Use proto types directly with custom serde implementations
-use crate::graph::{
-    Edge, EdgeQuery, Node, NodeQuery, TraversalRequest,
+use crate::proto::proximadb_v1::{
+    Edge, Node,
 };
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{PropertyValue, EmbeddingVersion};
+
+/// REST-compatible TraversalRequest wrapper for JSON deserialization
+#[derive(Debug, serde::Deserialize)]
+struct RestTraversalRequest {
+    start_node_id: String,
+    max_depth: u32,
+    edge_types: Vec<String>,
+    node_labels: Vec<String>,
+    return_path: bool,
+    algorithm: String,
+}
+
+/// REST-compatible NodeQuery wrapper for JSON deserialization
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RestNodeQuery {
+    labels: Vec<String>,
+    properties: HashMap<String, serde_json::Value>,
+    limit: u32,
+    offset: Option<u32>,
+    continuation_token: Option<String>,
+}
+
+/// REST-compatible EdgeQuery wrapper for JSON deserialization
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RestEdgeQuery {
+    edge_type: String,
+    from_node_id: Option<String>,
+    to_node_id: Option<String>,
+    properties: HashMap<String, serde_json::Value>,
+    limit: u32,
+    offset: Option<u32>,
+    continuation_token: Option<String>,
+}
+
+// Conversion implementations for REST types to Proto types
+impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest {
+    fn from(rest: RestTraversalRequest) -> Self {
+        // Convert algorithm string to enum value (simplified)
+        let algorithm = match rest.algorithm.as_str() {
+            "dfs" => 1, // TraversalAlgorithm::Dfs
+            "bfs" => 2, // TraversalAlgorithm::Bfs
+            _ => 0, // TraversalAlgorithm::Unspecified
+        };
+
+        crate::proto::proximadb_v1::TraversalRequest {
+            graph_id: "default".to_string(), // TODO: Extract from REST API path
+            start_node_id: rest.start_node_id,
+            max_depth: rest.max_depth,
+            edge_types: rest.edge_types,
+            node_labels: rest.node_labels,
+            filters: vec![], // REST doesn't have filters yet
+            algorithm,
+            limit: None,
+            timeout_ms: None,
+            max_frontier: None,
+        }
+    }
+}
+
+impl From<RestNodeQuery> for crate::proto::proximadb_v1::NodeQuery {
+    fn from(rest: RestNodeQuery) -> Self {
+        crate::proto::proximadb_v1::NodeQuery {
+            graph_id: "default".to_string(), // TODO: Extract from REST API path
+            labels: rest.labels,
+            filters: vec![], // Convert properties to filters if needed
+            limit: Some(rest.limit),
+            offset: rest.offset,
+            continuation_token: rest.continuation_token,
+        }
+    }
+}
+
+impl From<RestEdgeQuery> for crate::proto::proximadb_v1::EdgeQuery {
+    fn from(rest: RestEdgeQuery) -> Self {
+        crate::proto::proximadb_v1::EdgeQuery {
+            graph_id: "default".to_string(), // TODO: Extract from REST API path
+            from_node_id: rest.from_node_id,
+            to_node_id: rest.to_node_id,
+            edge_types: vec![rest.edge_type], // Convert single edge_type to vector
+            filters: vec![], // Convert properties to filters if needed
+            limit: Some(rest.limit),
+            offset: rest.offset,
+            continuation_token: rest.continuation_token,
+        }
+    }
+}
 
 /// REST-compatible Node wrapper for JSON serialization
 #[derive(Debug, Serialize, Clone)]
@@ -480,52 +566,65 @@ fn format_timestamp(ts_ms: &i64) -> String {
         .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string())
 }
 
-/// Create the graph REST router
+/// Create the graph REST router with multi-graph support
 pub fn create_graph_router() -> Router<AppState> {
     Router::new()
-        // Node operations
-        .route("/nodes", post(create_node))
-        .route("/nodes/:id", get(get_node))
-        .route("/nodes/:id", put(update_node))
-        .route("/nodes/:id", delete(delete_node))
-        .route("/nodes/:id/neighbors", get(get_node_neighbors))
-        // Edge operations
-        .route("/edges", post(create_edge))
-        .route("/edges/:id", get(get_edge))
-        .route("/edges/:id", put(update_edge))
-        .route("/edges/:id", delete(delete_edge))
-        // Traversal and querying
-        .route("/traverse", post(traverse_graph))
-        .route("/shortest_path", post(shortest_path))
-        .route("/query/nodes", post(query_nodes))
-        .route("/query/edges", post(query_edges))
-        // Batch operations
-        .route("/nodes/batch", post(batch_create_nodes))
-        .route("/edges/batch", post(batch_create_edges))
-        // Statistics
-        .route("/stats", get(get_graph_stats))
-        // Constraints DDL
-        .route("/constraints/unique", post(add_unique_constraint))
-        .route("/constraints/unique", delete(remove_unique_constraint))
-        // Graph analysis
-        .route("/components", get(get_connected_components))
-        .route("/cycles", get(check_cycles))
+        // Graph collection management endpoints
+        .route("/graphs", post(create_graph_collection))
+        .route("/graphs", get(list_graph_collections))
+        .route("/graphs/:graph_id", get(get_graph_collection))
+        .route("/graphs/:graph_id", delete(delete_graph_collection))
+        .route("/graphs/:graph_id/schema", put(update_graph_schema))
+        // Multi-graph node operations
+        .route("/graphs/:graph_id/nodes", post(create_node))
+        .route("/graphs/:graph_id/nodes/:id", get(get_node))
+        .route("/graphs/:graph_id/nodes/:id", put(update_node))
+        .route("/graphs/:graph_id/nodes/:id", delete(delete_node))
+        .route("/graphs/:graph_id/nodes/:id/neighbors", get(get_node_neighbors))
+        // Multi-graph edge operations
+        .route("/graphs/:graph_id/edges", post(create_edge))
+        .route("/graphs/:graph_id/edges/:id", get(get_edge))
+        .route("/graphs/:graph_id/edges/:id", put(update_edge))
+        .route("/graphs/:graph_id/edges/:id", delete(delete_edge))
+        // Multi-graph traversal and querying
+        .route("/graphs/:graph_id/traverse", post(traverse_graph))
+        .route("/graphs/:graph_id/shortest_path", post(shortest_path))
+        .route("/graphs/:graph_id/query/nodes", post(query_nodes))
+        .route("/graphs/:graph_id/query/edges", post(query_edges))
+        // Multi-graph batch operations
+        .route("/graphs/:graph_id/nodes/batch", post(batch_create_nodes))
+        .route("/graphs/:graph_id/edges/batch", post(batch_create_edges))
+        // Multi-graph statistics
+        .route("/graphs/:graph_id/stats", get(get_graph_stats))
+        // Multi-graph constraints DDL
+        .route("/graphs/:graph_id/constraints/unique", post(add_unique_constraint))
+        .route("/graphs/:graph_id/constraints/unique", delete(remove_unique_constraint))
+        // Multi-graph analysis
+        .route("/graphs/:graph_id/components", get(get_connected_components))
+        .route("/graphs/:graph_id/cycles", get(check_cycles))
+        // Legacy compatibility endpoints (using default graph)
+        .route("/nodes", post(create_node_legacy))
+        .route("/nodes/:id", get(get_node_legacy))
+        .route("/edges", post(create_edge_legacy))
+        .route("/stats", get(get_graph_stats_legacy))
 }
 
 /// Create a new node
 pub async fn create_node(
     State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
     Json(request): Json<CreateNodeRequest>,
 ) -> impl IntoResponse {
-    debug!("Creating node: {:?}", request.node.id);
+    debug!("Creating node: {:?} in graph: {}", request.node.id, graph_id);
 
     // Convert REST input to proto Node
     let proto_node: Node = request.node.into();
 
     match app_state
         .unified_handlers
-        .graph_service
-        .create_node(proto_node)
+        .graph_operations_service
+        .create_node(&graph_id, proto_node)
+        .await
     {
         Ok(node) => {
             info!("Successfully created node: {}", node.id);
@@ -554,11 +653,11 @@ pub async fn create_node(
 /// Get a node by ID
 pub async fn get_node(
     State(app_state): State<AppState>,
-    Path(node_id): Path<String>,
+    Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    debug!("Getting node: {}", node_id);
+    debug!("Getting node: {} from graph: {}", node_id, graph_id);
 
-    match app_state.unified_handlers.graph_service.get_node(&node_id) {
+    match app_state.unified_handlers.graph_operations_service.get_node(&graph_id, &node_id).await {
         Ok(Some(node)) => {
             info!("Successfully retrieved node: {}", node_id);
             let rest_node = RestNode::from(&*node);
@@ -598,18 +697,18 @@ pub async fn get_node(
 /// Update a node
 pub async fn update_node(
     State(app_state): State<AppState>,
-    Path(node_id): Path<String>,
+    Path((graph_id, node_id)): Path<(String, String)>,
     Json(mut node_input): Json<RestNodeInput>,
 ) -> impl IntoResponse {
-    debug!("Updating node: {}", node_id);
+    debug!("Updating node: {} in graph: {}", node_id, graph_id);
 
     // Ensure the node ID matches the path parameter
     node_input.id = node_id.clone();
-    
+
     // Convert REST input to proto Node
     let proto_node: Node = node_input.into();
 
-    match app_state.unified_handlers.graph_service.update_node(proto_node) {
+    match app_state.unified_handlers.graph_operations_service.update_node(&graph_id, proto_node).await {
         Ok(updated_node) => {
             info!("Successfully updated node: {}", node_id);
             let rest_node = RestNode::from(&*updated_node);
@@ -637,14 +736,15 @@ pub async fn update_node(
 /// Delete a node
 pub async fn delete_node(
     State(app_state): State<AppState>,
-    Path(node_id): Path<String>,
+    Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    debug!("Deleting node: {}", node_id);
+    debug!("Deleting node: {} from graph: {}", node_id, graph_id);
 
     match app_state
         .unified_handlers
-        .graph_service
-        .delete_node(&node_id)
+        .graph_operations_service
+        .delete_node(&graph_id, &node_id)
+        .await
     {
         Ok(Some(deleted_node)) => {
             info!("Successfully deleted node: {}", node_id);
@@ -685,14 +785,15 @@ pub async fn delete_node(
 /// Get neighbors of a node
 pub async fn get_node_neighbors(
     State(app_state): State<AppState>,
-    Path(node_id): Path<String>,
+    Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    debug!("Getting neighbors for node: {}", node_id);
+    debug!("Getting neighbors for node: {} in graph: {}", node_id, graph_id);
 
     match app_state
         .unified_handlers
-        .graph_service
-        .get_neighbors(&node_id)
+        .graph_operations_service
+        .get_neighbors(&graph_id, &node_id)
+        .await
     {
         Ok(neighbors) => {
             info!(
@@ -728,17 +829,19 @@ pub async fn get_node_neighbors(
 /// Create a new edge
 pub async fn create_edge(
     State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
     Json(request): Json<CreateEdgeRequest>,
 ) -> impl IntoResponse {
-    debug!("Creating edge: {:?}", request.edge.id);
+    debug!("Creating edge: {:?} in graph: {}", request.edge.id, graph_id);
 
     // Convert REST input to proto Edge
     let proto_edge: Edge = request.edge.into();
 
     match app_state
         .unified_handlers
-        .graph_service
-        .create_edge(proto_edge)
+        .graph_operations_service
+        .create_edge(&graph_id, proto_edge)
+        .await
     {
         Ok(edge) => {
             info!("Successfully created edge: {}", edge.id);
@@ -797,6 +900,7 @@ struct DdlResponse {
 /// Compute shortest path using Dijkstra algorithm
 pub async fn shortest_path(
     State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
     headers: HeaderMap,
     Json(mut req): Json<ShortestPathRequest>,
 ) -> impl IntoResponse {
@@ -815,8 +919,9 @@ pub async fn shortest_path(
     }
     match app_state
         .unified_handlers
-        .graph_service
+        .graph_operations_service
         .shortest_path(
+            &graph_id,
             &req.start_node_id,
             &req.target_node_id,
             req.max_depth,
@@ -872,12 +977,14 @@ fn parse_sp_algorithm(
 /// Add unique constraint (label, property)
 pub async fn add_unique_constraint(
     State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
     Json(req): Json<UniqueConstraintRequest>,
 ) -> impl IntoResponse {
     match app_state
         .unified_handlers
-        .graph_service
-        .add_unique_constraint(&req.label, &req.property)
+        .graph_operations_service
+        .add_unique_constraint(&graph_id, &req.label, &req.property)
+        .await
     {
         Ok(()) => Json(DdlResponse { success: true }).into_response(),
         Err(e) => (
@@ -895,21 +1002,38 @@ pub async fn add_unique_constraint(
 /// Remove unique constraint (label, property)
 pub async fn remove_unique_constraint(
     State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
     Json(req): Json<UniqueConstraintRequest>,
 ) -> impl IntoResponse {
-    app_state
+    // remove_unique_constraint now returns Result and is async
+    match app_state
         .unified_handlers
-        .graph_service
-        .remove_unique_constraint(&req.label, &req.property);
-    Json(DdlResponse { success: true }).into_response()
+        .graph_operations_service
+        .remove_unique_constraint(&graph_id, &req.label, &req.property)
+        .await
+    {
+        Ok(()) => Json(DdlResponse { success: true }).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(GraphErrorResponse {
+                error: "remove_unique_failed".into(),
+                message: e.to_string(),
+                code: "GRAPH_REMOVE_UNIQUE_ERROR".into(),
+            }),
+        )
+            .into_response(),
+    }
 }
 
 /// Get connected components (weakly connected)
-pub async fn get_connected_components(State(app_state): State<AppState>) -> impl IntoResponse {
+pub async fn get_connected_components(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
     match app_state
         .unified_handlers
-        .graph_service
-        .connected_components()
+        .graph_operations_service
+        .connected_components(&graph_id)
         .await
     {
         Ok(components) => Json(ComponentsResponse {
@@ -930,8 +1054,11 @@ pub async fn get_connected_components(State(app_state): State<AppState>) -> impl
 }
 
 /// Detect directed cycles
-pub async fn check_cycles(State(app_state): State<AppState>) -> impl IntoResponse {
-    match app_state.unified_handlers.graph_service.has_cycle().await {
+pub async fn check_cycles(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    match app_state.unified_handlers.graph_operations_service.has_cycle(&graph_id).await {
         Ok(has) => Json(CycleResponse {
             success: true,
             has_cycle: has,
@@ -952,11 +1079,11 @@ pub async fn check_cycles(State(app_state): State<AppState>) -> impl IntoRespons
 /// Get an edge by ID
 pub async fn get_edge(
     State(app_state): State<AppState>,
-    Path(edge_id): Path<String>,
+    Path((graph_id, edge_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    debug!("Getting edge: {}", edge_id);
+    debug!("Getting edge: {} from graph: {}", edge_id, graph_id);
 
-    match app_state.unified_handlers.graph_service.get_edge(&edge_id) {
+    match app_state.unified_handlers.graph_operations_service.get_edge(&graph_id, &edge_id).await {
         Ok(Some(edge)) => {
             info!("Successfully retrieved edge: {}", edge_id);
             let rest_edge = RestEdge::from(&*edge);
@@ -996,18 +1123,18 @@ pub async fn get_edge(
 /// Update an edge
 pub async fn update_edge(
     State(app_state): State<AppState>,
-    Path(edge_id): Path<String>,
+    Path((graph_id, edge_id)): Path<(String, String)>,
     Json(mut edge_input): Json<RestEdgeInput>,
 ) -> impl IntoResponse {
-    debug!("Updating edge: {}", edge_id);
+    debug!("Updating edge: {} in graph: {}", edge_id, graph_id);
 
     // Ensure the edge ID matches the path parameter
     edge_input.id = edge_id.clone();
-    
+
     // Convert REST input to proto Edge
     let proto_edge: Edge = edge_input.into();
 
-    match app_state.unified_handlers.graph_service.update_edge(proto_edge) {
+    match app_state.unified_handlers.graph_operations_service.update_edge(&graph_id, proto_edge).await {
         Ok(updated_edge) => {
             info!("Successfully updated edge: {}", edge_id);
             let rest_edge = RestEdge::from(&*updated_edge);
@@ -1035,14 +1162,15 @@ pub async fn update_edge(
 /// Delete an edge
 pub async fn delete_edge(
     State(app_state): State<AppState>,
-    Path(edge_id): Path<String>,
+    Path((graph_id, edge_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    debug!("Deleting edge: {}", edge_id);
+    debug!("Deleting edge: {} from graph: {}", edge_id, graph_id);
 
     match app_state
         .unified_handlers
-        .graph_service
-        .delete_edge(&edge_id)
+        .graph_operations_service
+        .delete_edge(&graph_id, &edge_id)
+        .await
     {
         Ok(Some(deleted_edge)) => {
             info!("Successfully deleted edge: {}", edge_id);
@@ -1083,11 +1211,12 @@ pub async fn delete_edge(
 /// Perform graph traversal
 pub async fn traverse_graph(
     State(app_state): State<AppState>,
-    Json(request): Json<TraversalRequest>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<RestTraversalRequest>,
 ) -> impl IntoResponse {
     debug!(
-        "Starting graph traversal from node: {}",
-        request.start_node_id
+        "Starting graph traversal from node: {} in graph: {}",
+        request.start_node_id, graph_id
     );
 
     // TODO: Read per-call overrides from headers (temporarily disabled)
@@ -1096,8 +1225,8 @@ pub async fn traverse_graph(
 
     match app_state
         .unified_handlers
-        .graph_service
-        .traverse_with_overrides(request, override_enable_prefetch, override_prefetch_budget)
+        .graph_operations_service
+        .traverse_with_overrides(&graph_id, request.into(), override_enable_prefetch, override_prefetch_budget)
         .await
     {
         Ok(response) => {
@@ -1127,9 +1256,10 @@ pub async fn traverse_graph(
 /// Query nodes by labels and properties
 pub async fn query_nodes(
     State(app_state): State<AppState>,
-    Json(query): Json<NodeQuery>,
+    Path(graph_id): Path<String>,
+    Json(query): Json<RestNodeQuery>,
 ) -> impl IntoResponse {
-    debug!("Querying nodes with labels: {:?}", query.labels);
+    debug!("Querying nodes with labels: {:?} in graph: {}", query.labels, graph_id);
     let mut q = query;
     // Continuation token support: format "offset:<n>"
     if q.offset.is_none() {
@@ -1144,17 +1274,17 @@ pub async fn query_nodes(
 
     match app_state
         .unified_handlers
-        .graph_service
-        .query_nodes(q.clone())
+        .graph_operations_service
+        .query_nodes(&graph_id, q.clone().into())
+        .await
     {
         Ok(nodes) => {
             info!("Successfully queried {} nodes", nodes.len());
             let mut next_token = None;
-            if let Some(lim) = q.limit {
-                if (nodes.len() as u32) == lim {
-                    let next_off = q.offset.unwrap_or(0).saturating_add(lim);
-                    next_token = Some(format!("offset:{}", next_off));
-                }
+            let lim = q.limit;
+            if (nodes.len() as u32) == lim {
+                let next_off = q.offset.unwrap_or(0).saturating_add(lim);
+                next_token = Some(format!("offset:{}", next_off));
             }
             let rest_nodes: Vec<RestNode> = nodes.into_iter().map(|n| RestNode::from(&*n)).collect();
             Json(GraphQueryResponse {
@@ -1182,9 +1312,10 @@ pub async fn query_nodes(
 /// Query edges by types and properties
 pub async fn query_edges(
     State(app_state): State<AppState>,
-    Json(query): Json<EdgeQuery>,
+    Path(graph_id): Path<String>,
+    Json(query): Json<RestEdgeQuery>,
 ) -> impl IntoResponse {
-    debug!("Querying edges");
+    debug!("Querying edges in graph: {}", graph_id);
     let mut q = query;
     if q.offset.is_none() {
         if let Some(token) = &q.continuation_token {
@@ -1197,17 +1328,17 @@ pub async fn query_edges(
     }
     match app_state
         .unified_handlers
-        .graph_service
-        .query_edges(q.clone())
+        .graph_operations_service
+        .query_edges(&graph_id, q.clone().into())
+        .await
     {
         Ok(edges) => {
             info!("Successfully queried {} edges", edges.len());
             let mut next_token = None;
-            if let Some(lim) = q.limit {
-                if (edges.len() as u32) == lim {
-                    let next_off = q.offset.unwrap_or(0).saturating_add(lim);
-                    next_token = Some(format!("offset:{}", next_off));
-                }
+            let lim = q.limit;
+            if (edges.len() as u32) == lim {
+                let next_off = q.offset.unwrap_or(0).saturating_add(lim);
+                next_token = Some(format!("offset:{}", next_off));
             }
             let rest_edges: Vec<RestEdge> = edges.into_iter().map(|e| RestEdge::from(&*e)).collect();
             Json(GraphQueryResponse {
@@ -1235,18 +1366,20 @@ pub async fn query_edges(
 /// Batch create nodes
 pub async fn batch_create_nodes(
     State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
     Json(request): Json<BatchCreateNodesRequest>,
 ) -> impl IntoResponse {
-    debug!("Batch creating {} nodes", request.nodes.len());
+    debug!("Batch creating {} nodes in graph: {}", request.nodes.len(), graph_id);
     let strategy = request.if_exists.unwrap_or_else(|| "error".into());
-    
+
     // Convert REST inputs to proto Nodes
     let proto_nodes: Vec<Node> = request.nodes.into_iter().map(|n| n.into()).collect();
-    
+
     match app_state
         .unified_handlers
-        .graph_service
-        .batch_create_nodes_with_strategy(proto_nodes, strategy.as_str())
+        .graph_operations_service
+        .batch_create_nodes_with_strategy(&graph_id, proto_nodes, strategy.as_str())
+        .await
     {
         Ok(nodes) => {
             info!("Successfully batch created {} nodes", nodes.len());
@@ -1278,18 +1411,20 @@ pub async fn batch_create_nodes(
 /// Batch create edges
 pub async fn batch_create_edges(
     State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
     Json(request): Json<BatchCreateEdgesRequest>,
 ) -> impl IntoResponse {
-    debug!("Batch creating {} edges", request.edges.len());
+    debug!("Batch creating {} edges in graph: {}", request.edges.len(), graph_id);
     let _strategy = request.if_exists.clone().unwrap_or_else(|| "error".into());
-    
+
     // Convert REST inputs to proto Edges
     let proto_edges: Vec<Edge> = request.edges.into_iter().map(|e| e.into()).collect();
-    
+
     match app_state
         .unified_handlers
-        .graph_service
-        .batch_create_edges(proto_edges)
+        .graph_operations_service
+        .batch_create_edges(&graph_id, proto_edges)
+        .await
     {
         Ok(edges) => {
             info!("Successfully batch created {} edges", edges.len());
@@ -1331,10 +1466,13 @@ struct CycleResponse {
     has_cycle: bool,
 }
 
-pub async fn get_graph_stats(State(app_state): State<AppState>) -> impl IntoResponse {
-    debug!("Getting graph statistics");
+pub async fn get_graph_stats(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    debug!("Getting graph statistics for graph: {}", graph_id);
 
-    match app_state.unified_handlers.graph_service.get_stats() {
+    match app_state.unified_handlers.graph_operations_service.get_stats(&graph_id).await {
         Ok(stats) => {
             info!("Successfully retrieved graph statistics");
             let rest_stats = RestGraphStats::from(&stats);
@@ -1358,3 +1496,250 @@ pub async fn get_graph_stats(State(app_state): State<AppState>) -> impl IntoResp
         }
     }
 }
+
+// ====================================================================
+// Legacy Compatibility Handlers (using default graph)
+// ====================================================================
+
+const DEFAULT_GRAPH_ID: &str = "default";
+
+/// Legacy create node handler (uses default graph)
+pub async fn create_node_legacy(
+    State(app_state): State<AppState>,
+    Json(request): Json<CreateNodeRequest>,
+) -> impl IntoResponse {
+    create_node(State(app_state), Path(DEFAULT_GRAPH_ID.to_string()), Json(request)).await
+}
+
+/// Legacy get node handler (uses default graph)
+pub async fn get_node_legacy(
+    State(app_state): State<AppState>,
+    Path(node_id): Path<String>,
+) -> impl IntoResponse {
+    get_node(State(app_state), Path((DEFAULT_GRAPH_ID.to_string(), node_id))).await
+}
+
+/// Legacy create edge handler (uses default graph)
+pub async fn create_edge_legacy(
+    State(app_state): State<AppState>,
+    Json(request): Json<CreateEdgeRequest>,
+) -> impl IntoResponse {
+    create_edge(State(app_state), Path(DEFAULT_GRAPH_ID.to_string()), Json(request)).await
+}
+
+/// Legacy get graph stats handler (uses default graph)
+pub async fn get_graph_stats_legacy(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    get_graph_stats(State(app_state), Path(DEFAULT_GRAPH_ID.to_string())).await
+}
+
+// ============================================================================
+// Graph Collection Management Handlers
+// ============================================================================
+
+/// Input for creating a graph collection
+#[derive(Debug, Deserialize)]
+struct CreateGraphCollectionRequest {
+    graph_id: String,
+    name: Option<String>,
+    description: Option<String>,
+    // Schema and configuration can be added later
+}
+
+/// Response for graph collection operations
+#[derive(Debug, Serialize)]
+struct GraphCollectionResponse {
+    success: bool,
+    graph_id: String,
+    name: String,
+    description: String,
+    created_at: String,
+    updated_at: String,
+}
+
+/// Create a new graph collection
+pub async fn create_graph_collection(
+    State(app_state): State<AppState>,
+    Json(request): Json<CreateGraphCollectionRequest>,
+) -> impl IntoResponse {
+    let create_request = crate::proto::proximadb_v1::CreateGraphRequest {
+        graph_id: request.graph_id.clone(),
+        name: request.name,
+        description: request.description,
+        schema: None,
+        storage_config: None,
+        engine_config: None,
+        access_control: None,
+    };
+
+    match app_state
+        .unified_handlers
+        .graph_collection_service
+        .create_graph(create_request)
+        .await
+    {
+        Ok(collection) => {
+            info!("Successfully created graph collection: {}", collection.graph_id);
+            Json(GraphCollectionResponse {
+                success: true,
+                graph_id: collection.graph_id.clone(),
+                name: collection.name.clone(),
+                description: collection.description.clone(),
+                created_at: format_timestamp(&collection.created_at),
+                updated_at: format_timestamp(&collection.updated_at),
+            })
+            .into_response()
+        }
+        Err(err) => {
+            error!("Failed to create graph collection: {}", err);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphErrorResponse {
+                    error: err.to_string(),
+                    message: err.to_string(),
+                    code: "CREATE_FAILED".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// List all graph collections
+pub async fn list_graph_collections(
+    State(app_state): State<AppState>,
+) -> impl IntoResponse {
+    match app_state
+        .unified_handlers
+        .graph_collection_service
+        .list_graphs()
+        .await
+    {
+        Ok(collections) => {
+            let response: Vec<GraphCollectionResponse> = collections
+                .iter()
+                .map(|c| GraphCollectionResponse {
+                    success: true,
+                    graph_id: c.graph_id.clone(),
+                    name: c.name.clone(),
+                    description: c.description.clone(),
+                    created_at: format_timestamp(&c.created_at),
+                    updated_at: format_timestamp(&c.updated_at),
+                })
+                .collect();
+            Json(response).into_response()
+        }
+        Err(err) => {
+            error!("Failed to list graph collections: {}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphErrorResponse {
+                    error: err.to_string(),
+                    message: err.to_string(),
+                    code: "CREATE_FAILED".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Get a specific graph collection
+pub async fn get_graph_collection(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    match app_state
+        .unified_handlers
+        .graph_collection_service
+        .get_graph(&graph_id)
+        .await
+    {
+        Ok(Some(collection)) => {
+            Json(GraphCollectionResponse {
+                success: true,
+                graph_id: collection.graph_id.clone(),
+                name: collection.name.clone(),
+                description: collection.description.clone(),
+                created_at: format_timestamp(&collection.created_at),
+                updated_at: format_timestamp(&collection.updated_at),
+            })
+            .into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(GraphErrorResponse {
+                error: format!("Graph collection '{}' not found", graph_id),
+                message: format!("Graph collection '{}' not found", graph_id),
+                code: "NOT_FOUND".to_string(),
+            }),
+        )
+            .into_response(),
+        Err(err) => {
+            error!("Failed to get graph collection: {}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphErrorResponse {
+                    error: err.to_string(),
+                    message: err.to_string(),
+                    code: "CREATE_FAILED".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Delete a graph collection
+pub async fn delete_graph_collection(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    match app_state
+        .unified_handlers
+        .graph_collection_service
+        .delete_graph(&graph_id)
+        .await
+    {
+        Ok(()) => {
+            info!("Successfully deleted graph collection: {}", graph_id);
+            Json(serde_json::json!({
+                "success": true,
+                "message": format!("Graph collection '{}' deleted", graph_id)
+            }))
+            .into_response()
+        }
+        Err(err) => {
+            error!("Failed to delete graph collection: {}", err);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphErrorResponse {
+                    error: err.to_string(),
+                    message: err.to_string(),
+                    code: "CREATE_FAILED".to_string(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Update graph schema
+pub async fn update_graph_schema(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(schema): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    // TODO: Implement schema update once GraphSchema is properly defined
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(GraphErrorResponse {
+            error: "Schema update not yet implemented".to_string(),
+            message: "Schema update not yet implemented".to_string(),
+            code: "NOT_IMPLEMENTED".to_string(),
+        }),
+    )
+        .into_response()
+}
+

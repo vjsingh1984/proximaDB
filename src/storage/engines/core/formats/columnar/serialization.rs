@@ -5,11 +5,10 @@
 //! universal quantization adapters and optimizes for zero-copy operations.
 
 use anyhow::{Context, Result};
-use arrow_array::builder::{FixedSizeBinaryBuilder, Float32Builder, Int8Builder};
-use arrow_array::{Array, ArrayRef, FixedSizeBinaryArray, Float32Array, Int8Array};
+use arrow_array::builder::{FixedSizeBinaryBuilder, Float32Builder, Int8Builder, BinaryBuilder};
+use arrow_array::{Array, ArrayRef, FixedSizeBinaryArray, Float32Array, Int8Array, BinaryArray};
 use arrow_schema::{DataType, Schema};
 use bytemuck::{cast_slice, try_cast_slice};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, trace, warn};
@@ -19,7 +18,7 @@ use crate::compute::distance_computation::SelectedFormat;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 

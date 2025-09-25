@@ -1,3 +1,7 @@
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 //! Unified Search Performance Benchmarks
 //!
 //! This module benchmarks the unified search implementation across:
@@ -10,15 +14,15 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     VectorRecord, MetadataItem, StorageEngine,
 };
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::results::InternalSearchResult;
 use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
-use proximadb::storage::engines::viper::ViperEngine;
-use proximadb::storage::engines::sst::LsmTree;
+use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::impls::sst::LsmTree;
 use proximadb::storage::memtable::implementations::GlobalPartitionedMemtable;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
@@ -80,7 +84,7 @@ impl UnifiedSearchBenchmark {
         
         // Create VectorOperationsService using test utilities
         let direct_service = Arc::new(
-            proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+            tests::common::integration_test_helpers::create_test_vector_operations_service()
                 .await
                 .expect("Failed to create VectorOperationsService")
         );
@@ -197,11 +201,11 @@ impl UnifiedSearchBenchmark {
                 metadata: vec![
                     MetadataItem {
                         key: "category".to_string(),
-                        value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue(format!("cat_{}", i % 10))),
+                        value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue(format!("cat_{}", i % 10))),
                     },
                     MetadataItem {
                         key: "score".to_string(),
-                        value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 100).to_string())),
+                        value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue((i % 100).to_string())),
                     },
                 ],
                 timestamp: chrono::Utc::now().timestamp() as u32,

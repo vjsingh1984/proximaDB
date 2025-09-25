@@ -453,7 +453,7 @@ impl RecoveryManager {
     /// Flush recovered vectors to storage engine
     async fn flush_recovered_vectors(
         file_info: &WriteBufferFileInfo,
-        vectors: Vec<crate::core::VectorRecord>,
+        vectors: Vec<crate::proto::proximadb_v1::VectorRecord>,
         _disk_manager: &Arc<WriteBufferDiskManager>,
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
         _recovery_mode: RecoveryMode,
@@ -713,7 +713,7 @@ impl ParallelRecoveryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::persistence::write_ahead_log::{BatchId, SerializationFormat};
@@ -737,32 +737,33 @@ mod tests {
 
         // Create disk manager
         let disk_manager = Arc::new(WriteBufferDiskManager::new(
-            filesystem_factory,
-            temp_dir.path(),
+            filesystem_factory.clone(),
+            temp_dir.path().to_str().unwrap(),
         ));
 
         // Create flush coordinator
         let flush_coordinator = Arc::new(WALFlushCoordinator::new());
 
         // Create recovery manager
+        let config = crate::storage::persistence::write_ahead_log::config::WALConfig::default();
+        let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default()));
         let recovery_manager =
-            RecoveryManager::new(disk_manager.clone(), flush_coordinator.clone());
+            RecoveryManager::new(config, wal_behavior, filesystem_factory.clone());
 
         (disk_manager, flush_coordinator, recovery_manager, temp_dir)
     }
 
     fn create_test_vector(id: &str) -> VectorRecord {
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: vec![],
+            metadata: std::collections::HashMap::new(),
             timestamp: 1234567890,
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -772,11 +773,13 @@ mod tests {
             create_test_managers().await;
         let collection_id = "test_collection";
 
-        // Create WriteBuffer directory for collection (simulating collection creation)
-        let write_buffer_dir = temp_dir.path().join(collection_id).join("write_buffer");
-        tokio::fs::create_dir_all(&write_buffer_dir)
+        // Create WAL directory structure for collection
+        // Use slug_for to match the actual directory structure used by disk_manager
+        let slug = crate::storage::persistence::write_ahead_log::collection_path::slug_for(collection_id);
+        let wal_dir = temp_dir.path().join(&slug).join("wal");
+        tokio::fs::create_dir_all(&wal_dir)
             .await
-            .expect("Failed to create WriteBuffer directory");
+            .expect("Failed to create WAL directory");
 
         // Create a mock storage engine
         let storage_engine = create_mock_storage_engine();
@@ -840,7 +843,7 @@ mod tests {
         );
 
         // Check stats
-        let stats = recovery_manager.stats().await.expect("Failed to get stats");
+        let stats = recovery_manager.get_stats().await.expect("Failed to get stats");
         assert_eq!(stats.total_vectors_recovered, 3);
         assert_eq!(stats.total_files_recovered, 3);
     }
@@ -872,7 +875,7 @@ mod tests {
             }
 
             fn strategy(&self) -> StorageEngineStrategy {
-                StorageEngineStrategy::Lsm
+                StorageEngineStrategy::Sst
             }
 
             async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
@@ -882,11 +885,11 @@ mod tests {
 
                 Ok(FlushResult {
                     success: true,
-                    collections_affected: vec![params.collection_id.clone().clone()],
-                    entries_flushed: params.vector_records.len() as u64,
-                    bytes_written: params.vector_records.len() as u64 * 256,
-                    files_created: 1,
-                    duration_ms: 10,
+                    collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                    entries_flushed: Some(params.vector_records.len() as u64),
+                    bytes_written: Some(params.vector_records.len() as u64 * 256),
+                    files_created: Some(1),
+                    duration_ms: Some(10),
                     completed_at: chrono::Utc::now(),
                     engine_metrics: HashMap::new(),
                     compaction_triggered: false,
@@ -897,14 +900,14 @@ mod tests {
             async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
                 Ok(CompactionResult {
                     success: true,
-                    collections_affected: vec![params.collection_id.clone().clone()],
-                    entries_processed: 0,
-                    entries_removed: 0,
-                    bytes_read: 0,
-                    bytes_written: 0,
-                    input_files: 0,
-                    output_files: 0,
-                    duration_ms: 10,
+                    collections_affected: vec![params.collection_id.clone().unwrap_or_default()],
+                    entries_processed: Some(0),
+                    entries_removed: Some(0),
+                    bytes_read: Some(0),
+                    bytes_written: Some(0),
+                    input_files: Some(0),
+                    output_files: Some(0),
+                    duration_ms: Some(10),
                     completed_at: chrono::Utc::now(),
                     engine_metrics: HashMap::new(),
                 })
@@ -917,6 +920,7 @@ mod tests {
             async fn vector_by_id(
                 &self,
                 _collection_id: &str,
+                _base_path: &str,
                 _vector_id: &str,
             ) -> Result<Option<VectorRecord>> {
                 Ok(None)
@@ -924,15 +928,8 @@ mod tests {
 
             async fn search_vectors_unified(
                 &self,
-                _collection_id: &str,
-                _storage_url: &str,
-                _query_vector: &[f32],
-                _k: usize,
-                _distance_metric: &crate::compute::distance_computation::DistanceMetric,
-                _metadata_filters: Option<&crate::core::search::FilterExpression>,
-                _include_vectors: bool,
-                _include_metadata: bool,
-            ) -> Result<Vec<crate::core::search::SearchResult>> {
+                _query_context: &crate::storage::traits::StorageQueryContext,
+            ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
                 Ok(Vec::new())
             }
 

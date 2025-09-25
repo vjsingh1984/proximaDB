@@ -6,8 +6,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::{debug, error, info};
 
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
@@ -110,24 +109,26 @@ fn create_test_collection(
             name: collection_id.to_string(),
             dimension: 128,
             distance_metric: 0,            // Cosine
-            storage_engine: 0,             // VIPER
-            primary_indexing_algorithm: 0, // HNSW
+            storage_engine: 1,             // VIPER
             filterable_columns: vec![],
             index_configs: vec![],
             quantization: None,
+            storage_config: None,
             primary_index: String::new(),
             auto_index_selection: false,
             description: None,
             tags: vec![],
             owner: None,
-            compression: None,
-            storage_location: None,
-            optimization_hints: None,
+            embedding_models: vec![],
         }),
         stats: None,
-        timestamp: chrono::Utc::now().timestamp(),
+        created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
         storage_assignment: Some(StorageAssignment {
+            primary_path: format!("file://{}", base_path),
+            backup_paths: vec![],
+            engine: 1,
+            engine_config: std::collections::HashMap::new(),
             base_location: format!("file://{}", base_path),
             assigned_at: chrono::Utc::now().timestamp(),
         }),
@@ -136,26 +137,23 @@ fn create_test_collection(
 
 /// Create test vector
 fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("test_key".to_string(), SqlValue {
+        value: Some(sql_value::Value::StringValue("test_value".to_string())),
+    });
+
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: (0..dimension)
             .map(|i| (i as f32) / (dimension as f32))
             .collect(),
-        metadata: vec![MetadataItem {
-            key: "test_key".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "test_value".to_string(),
-                ),
-            ),
-        }],
-        timestamp: chrono::Utc::now().timestamp() as u32,
-        updated_at: Some(chrono::Utc::now().timestamp() as u32),
+        metadata,
+        timestamp: chrono::Utc::now().timestamp(),
+        updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: Some("test".to_string()),
     }
 }
 
@@ -219,14 +217,14 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-
         collection_config: Some(create_test_collection(collection_id, base_path)),
+        estimated_size: 1024, // Estimated size for 10 vectors
     };
 
     let flush_result = engine.do_flush(&flush_params).await?;
     info!(
         "✅ Flush complete: {} files created, {} entries flushed",
-        flush_result.files_created, flush_result.entries_flushed
+        flush_result.files_created.unwrap_or(0), flush_result.entries_flushed.unwrap_or(0)
     );
 
     // Step 2: List and inspect flushed files
@@ -272,14 +270,14 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
-
         collection_config: Some(create_test_collection(collection_id, base_path)),
+        estimated_input_size: 10240, // Estimated size for the data being compacted
     };
 
     let compact_result = engine.do_compact(&compact_params).await?;
     info!(
         "✅ Compaction complete: {} input files, {} output files, {} entries processed",
-        compact_result.input_files, compact_result.output_files, compact_result.entries_processed
+        compact_result.input_files.unwrap_or(0), compact_result.output_files.unwrap_or(0), compact_result.entries_processed.unwrap_or(0)
     );
 
     // Step 5: List files after compaction
@@ -291,7 +289,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     for entry in entries_after {
         if entry.name.ends_with(".parquet") && !entry.metadata.is_directory {
             debug!("  📄 Found: {}", entry.name);
-            if entry.name.contains_hash("compacted") {
+            if entry.name.contains("compacted") {
                 compacted_files.push(entry.url.clone());
             }
         }
@@ -312,8 +310,10 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         .await?;
 
     debug!("🔍 Search returned {} results", search_results.len());
-    for (i, result) in search_results.iter().enumerate() {
-        debug!("  [{}] ID: {}, Score: {:?}", i, result.id, result.score);
+    for (i, search_result) in search_results.iter().enumerate() {
+        for result in &search_result.results {
+            debug!("  [{}] ID: {}, Score: {:?}", i, result.id, result.score);
+        }
     }
 
     Ok(())

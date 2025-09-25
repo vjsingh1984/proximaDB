@@ -14,8 +14,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::FilterableColumnSpec;
+use crate::proto::proximadb_v1::{VectorRecord, FilterableColumnSpec, SqlValue};
 
 /// Configuration for metadata-based sorting
 #[derive(Debug, Clone)]
@@ -335,37 +334,27 @@ impl SortConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::MetadataItem;
+    // Import removed - using HashMap metadata now
 
     fn create_test_record(id: &str, category: &str, priority: &str) -> VectorRecord {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("category".to_string(), SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(category.to_string())),
+        });
+        metadata.insert("priority".to_string(), SqlValue {
+            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(priority.to_string())),
+        });
+
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![
-                MetadataItem {
-                    key: "category".to_string(),
-                    value: Some(
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            category.to_string(),
-                        ),
-                    ),
-                },
-                MetadataItem {
-                    key: "priority".to_string(),
-                    value: Some(
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            priority.to_string(),
-                        ),
-                    ),
-                },
-            ],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata,
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -388,10 +377,10 @@ mod tests {
         let (sorted_records, stats) = sorter.sort_for_encoding(records).unwrap();
 
         // Should be sorted by category first, then priority, then ID
-        assert_eq!(sorted_records[0].id.as_ref().unwrap(), "2"); // A, high
-        assert_eq!(sorted_records[1].id.as_ref().unwrap(), "1"); // A, low
-        assert_eq!(sorted_records[2].id.as_ref().unwrap(), "3"); // B, high
-        assert_eq!(sorted_records[3].id.as_ref().unwrap(), "4"); // B, low
+        assert_eq!(sorted_records[0].id, "2"); // A, high
+        assert_eq!(sorted_records[1].id, "1"); // A, low
+        assert_eq!(sorted_records[2].id, "3"); // B, high
+        assert_eq!(sorted_records[3].id, "4"); // B, low
 
         assert_eq!(stats.records_sorted, 4);
         assert_eq!(stats.sort_keys_used, vec!["category", "priority"]);

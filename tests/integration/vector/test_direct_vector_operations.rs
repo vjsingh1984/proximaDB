@@ -6,13 +6,21 @@
 //! - Collection management
 //! - Performance metrics
 
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+#[path = "../common/mod.rs"]
+mod common;
+
+
+
 use std::sync::Arc;
 use std::collections::HashMap;
 use tempfile::TempDir;
 use proximadb::utils::uuid::Uuid;
 
 use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm, MetadataItem
 };
 use proximadb::services::VectorOperationsService;
@@ -37,7 +45,7 @@ async fn create_test_services() -> (VectorOperationsService, CollectionService, 
     ));
     
     // Create VectorOperationsService using test utilities
-    let direct_vector_service = proximadb::tests::common::unified_test_utils::create_test_vector_operations_service()
+    let direct_vector_service = tests::common::integration_test_helpers::create_test_vector_operations_service()
         .await
         .expect("Failed to create VectorOperationsService");
     
@@ -65,11 +73,11 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
                 },
                 MetadataItem {
                     key: "score".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i as f64 / count as f64).to_string())),
+                    value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue((i as f64 / count as f64).to_string())),
                 },
                 MetadataItem {
                     key: "is_active".to_string(),
-                    value: Some(proximadb::proto::proximadb::metadata_item::Value::StringValue((i % 2 == 0).to_string())),
+                    value: Some(proximadb::proto::proximadb_v1::metadata_item::Value::StringValue((i % 2 == 0).to_string())),
                 },
             ];
             
@@ -504,10 +512,10 @@ async fn test_metrics_and_health() {
     assert!(metrics.contains_key("memtable_size"));
     
     // Verify metrics have reasonable values
-    let insert_count = metrics.get(key).unwrap();
+    let insert_count = metrics.get("enable_two_stage_search").unwrap();
     assert!(*insert_count >= 50.0);
     
-    let search_count = metrics.get(key).unwrap();
+    let search_count = metrics.get("enable_two_stage_search").unwrap();
     assert!(*search_count >= 1.0);
 }
 

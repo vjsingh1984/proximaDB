@@ -7,7 +7,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::specialized::wal_behavior::{WALBehaviorWrapper, WALVectorBatch};
 
@@ -139,6 +139,11 @@ impl MemtableManager {
         Ok(())
     }
 
+    /// Get memtable statistics
+    pub async fn stats(&self) -> Result<MemtableStats> {
+        Ok(self.stats.read().await.clone())
+    }
+
     /// Remove flushed batches from memory
     pub async fn remove_flushed_batches(
         &self,
@@ -217,23 +222,15 @@ mod tests {
 
     fn create_test_vector(id: &str) -> VectorRecord {
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: vec![MetadataItem {
-                key: "type".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "test".to_string(),
-                    ),
-                ),
-            }],
+            metadata: std::collections::HashMap::new(),
             timestamp: 1234567890,
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: Some("test".to_string()),
         }
     }
 

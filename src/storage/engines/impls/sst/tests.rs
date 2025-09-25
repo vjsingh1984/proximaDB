@@ -6,7 +6,7 @@
 //! Tests for the SST storage engine.
 
 use super::*;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -15,11 +15,16 @@ use tempfile::tempdir;
 async fn test_sst_storage_new() {
     let dir = tempdir().unwrap();
     let path = dir.path().to_str().unwrap().to_string();
-    let filesystem = Arc::new(FilesystemFactory::new_local(&path));
+
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem = factory.get_filesystem(&format!("file://{}", path)).unwrap();
     let distance_compute =
         Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
     let config = SstConfig::default();
-    let sst = SstStorage::new(config, filesystem, distance_compute)
+    let sst = SstEngine::new()
         .await
         .unwrap();
     assert_eq!(sst.engine_name(), "sst");
@@ -29,11 +34,16 @@ async fn test_sst_storage_new() {
 async fn test_sst_storage_flush_and_search() {
     let dir = tempdir().unwrap();
     let path = dir.path().to_str().unwrap().to_string();
-    let filesystem = Arc::new(FilesystemFactory::new_local(&path));
+
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
+    let filesystem = factory.get_filesystem(&format!("file://{}", path)).unwrap();
     let distance_compute =
         Arc::new(crate::compute::distance_computation::engine::UnifiedDistanceCompute::default());
     let config = SstConfig::default();
-    let sst = SstStorage::new(config, filesystem, distance_compute)
+    let sst = SstEngine::new()
         .await
         .unwrap();
 

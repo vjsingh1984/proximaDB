@@ -68,14 +68,16 @@ pub use engines::{EngineCapabilities, GraphEngineConfig, GraphEngineFactory, Gra
 pub use hybrid::HybridQueryEngine;
 pub use monitoring::GraphMonitor;
 pub use query::{PatternMatcher, QueryPlanner};
-pub use service::GraphService;
+pub use service::GraphOperationsService;
+// Backward compatibility alias
+pub use service::GraphOperationsService as GraphService;
 
 // Export proto types for convenience
 pub use crate::proto::proximadb_v1::{
     BatchEdgeRequest, BatchNodeRequest, BatchResponse, Edge, EdgeQuery, EdgeTypeStats, GraphPath,
     GraphStats, LabelStats, Node, NodeQuery, PropertyArray, PropertyFilter, PropertyFilterOperator,
     PropertyObject, PropertyValue, TraversalAlgorithm, TraversalRequest, TraversalResponse,
-    TraversalStats,
+    TraversalStats, property_value::Value,
 };
 
 use crate::core::error::ProximaDBError;
@@ -475,6 +477,9 @@ fn property_value_to_string(value: &PropertyValue) -> String {
         Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
             "object".to_string()
         }
+        Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
+            "vector".to_string()
+        }
         None => "null".to_string(),
     }
 }
@@ -506,8 +511,8 @@ mod tests {
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_ms: chrono::Utc::now().timestamp_millis(),
         };
 
         // Insert node
@@ -515,7 +520,7 @@ mod tests {
         assert_eq!(pool.node_count(), 1);
 
         // Get node
-        let retrieved = pool.get_node("node1").unwrap();
+        let retrieved = pool.get_node(&"node1".to_string()).unwrap();
         assert_eq!(retrieved.id, "node1");
         assert_eq!(retrieved.labels[0], "Person");
 
@@ -523,7 +528,7 @@ mod tests {
         assert!(Arc::ptr_eq(&node_arc, &retrieved));
 
         // Remove node
-        let removed = pool.remove_node("node1").unwrap();
+        let removed = pool.remove_node(&"node1".to_string()).unwrap();
         assert_eq!(removed.id, "node1");
         assert_eq!(pool.node_count(), 0);
     }

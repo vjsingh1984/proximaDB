@@ -1,13 +1,15 @@
 // Shared Utilities for SST and SWIFT engines
 // Common utility functions and helpers
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{FastLanesDataBlock, RowBasedConfig};
-use crate::core::VectorRecord;
+use super::{FastLanesDataBlock, RowBasedConfig, FastLanesBlockMetadata, BlockCompressionConfig};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::core::compression::CompressionAlgorithm;
+use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use super::block_structures::BlockStatistics;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -586,18 +588,18 @@ pub struct PerformanceProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::VectorRecord;
+    use crate::proto::proximadb_v1::VectorRecord;
 
     #[test]
     fn test_memory_usage_calculation() {
         let records = vec![
             VectorRecord {
-                id: Some("test1".to_string()),
+                id: "test1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 ..Default::default()
             },
             VectorRecord {
-                id: Some("test2".to_string()),
+                id: "test2".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
                 ..Default::default()
             },
@@ -605,7 +607,35 @@ mod tests {
 
         // TODO: Update to use proper data structure
         // Temporarily using FastLanesDataBlock
-        let blocks = vec![super::block_structures::FastLanesDataBlock::default()];
+        let blocks = vec![FastLanesDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 0,
+            records: vec![],
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: FastLanesBlockMetadata::default(),
+            compression_config: BlockCompressionConfig::default(),
+            compression_algorithm: CompressionAlgorithm::None,
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: (String::new(), String::new()),
+            timestamp_range: (0, 0),
+            statistics: BlockStatistics {
+                read_count: 0,
+                write_count: 0,
+                search_count: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+                avg_read_time_ms: 0.0,
+                avg_search_time_ms: 0.0,
+                last_accessed_at: 0,
+            },
+            metadata_stats: None,
+            has_deletes: false,
+        }];
 
         let report = RowBasedUtilities::calculate_memory_usage(&blocks);
 
@@ -618,19 +648,19 @@ mod tests {
     fn test_record_validation() {
         let records = vec![
             VectorRecord {
-                id: Some("valid".to_string()),
+                id: "valid".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 timestamp: 1000,
                 ..Default::default()
             },
             VectorRecord {
-                id: None, // Invalid - no ID
+                id: "".to_string(), // Invalid - no ID
                 vector: vec![4.0, 5.0, 6.0],
                 timestamp: 2000,
                 ..Default::default()
             },
             VectorRecord {
-                id: Some("invalid_vector".to_string()),
+                id: "invalid_vector".to_string(),
                 vector: vec![f32::NAN, 2.0, f32::INFINITY], // Invalid - NaN and Infinity
                 timestamp: 3000,
                 ..Default::default()
@@ -647,16 +677,17 @@ mod tests {
 
     #[test]
     fn test_filename_generation() {
-        let sst_filename = FilenameCodec::new().generate(3, "sst");
+        let codec = FilenameCodec::new();
+        let sst_filename = codec.generate(3, "sst");
         assert!(sst_filename.contains("L3_"));
         assert!(sst_filename.ends_with(".sstable"));
 
-        let swift_filename = FilenameCodec::new().generate(2, "swift");
+        let swift_filename = codec.generate(2, "swift");
         assert!(swift_filename.contains("L2_"));
         assert!(swift_filename.ends_with(".swift"));
 
-        let level = FilenameCodec::new().parse_level(&sst_filename) as u8;
-        assert_eq!(level, Some(3));
+        let level = codec.parse_level(&sst_filename);
+        assert_eq!(level, 3);
     }
 
     #[test]

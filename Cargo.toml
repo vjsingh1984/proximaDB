@@ -76,22 +76,23 @@ rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
 # # glob = "0.3"  # Replaced with internal glob implementation - replaced with internal implementation
-# Parquet and Arrow dependencies - using v53+ for bloom filter support
-parquet = { version = "53.0", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2"] }
-# Arrow dependencies matching parquet v53
-arrow-array = { version = "53.0", default-features = false }
-arrow-schema = { version = "53.0", default-features = false }
-arrow-data = { version = "53.0", default-features = false }
-arrow-ipc = { version = "53.0", default-features = false }
+# Parquet and Arrow dependencies - using v56+ for improved performance
+parquet = { version = "56.1", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
+# Arrow dependencies matching parquet v56
+arrow-array = { version = "56.1", default-features = false }
+arrow-schema = { version = "56.1", default-features = false }
+arrow-data = { version = "56.1", default-features = false }
+arrow-ipc = { version = "56.1", default-features = false }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
 snap = "1.1"             # Snappy compression
 zstd = "0.13"            # Zstandard compression
-flate2 = "1.0"           # Gzip/Deflate/Zlib compression
-brotli = "3.5"           # Brotli compression
-bzip2 = "0.4"            # Bzip2 compression
+flate2 = { version = "1.0", default-features = true }  # Gzip/Deflate/Zlib compression
+brotli = "6.0"           # Brotli compression - Updated from 3.5
+bzip2 = "0.5"            # Bzip2 compression - Updated from 0.4
 xz2 = "0.1"              # XZ/LZMA2 compression
+fastlanes = "0.2"        # FastLanes compression for columnar data
 
 # System monitoring
 sysinfo = "0.30"
@@ -152,6 +153,8 @@ config = "0.13"
 clap = { version = "4.0", features = ["derive"] }
 toml = "0.8"
 
+# Benchmarking (HTML reports available via `cargo bench`)
+
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
@@ -163,6 +166,7 @@ jsonwebtoken = "9.2"  # JWT token creation and validation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
 # base64 = "0.21"  # Using internal implementation in utils::encoding
 crossbeam = "0.8"
+crossbeam-epoch = "0.9"
 parking_lot = "0.12"
 async-trait = "0.1"
 futures = "0.3"
@@ -204,7 +208,7 @@ reqwest = { version = "0.11", features = ["json"] }
 env_logger = "0.10"
 
 [features]
-default = ["sql_frontend"]  # Use sql_frontend path by default; fallback to legacy sql_engine when disabled
+default = ["sql_frontend"]
 distributed = []
 standalone = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
@@ -271,28 +275,67 @@ opt-level = 1
 debug = true
 incremental = true
 
-# Benchmark configuration
-[[bench]]
-name = "simd_distance_bench"
-harness = false
-path = "benches/simd_distance_bench.rs"
+# Benchmark configuration - Organized by functional categories
 
-# Arrow dependencies downgraded to avoid compilation conflicts
+# 1. COMPUTE & DISTANCE BENCHMARKS (01-03)
+# Migrated to proximadb-bench binary
+# [[bench]]
+# name = "bench_01_core_distance"
+# harness = false
+# path = "benches/bench_01_core_distance.rs"
+
+# Migrated to proximadb-bench binary
+# [[bench]]
+# name = "bench_02_hardware_simd"
+# harness = false
+# path = "benches/bench_02_hardware_simd.rs"
+
+# Migrated to proximadb-bench binary (Arc optimizations already implemented)
+# [[bench]]
+# name = "bench_03_memory_vector"
+# harness = false
+# path = "benches/bench_03_memory_vector.rs"
+
+# 2. STORAGE ENGINE BENCHMARKS (04 - Unified)
+# Consolidated storage benchmark combining all storage tests:
+# - Compression efficiency with immediate search testing
+# - Engine lifecycle and creation overhead
+# - Large-scale search performance
+# - Insertion performance
+[[bench]]
+name = "bench_04_storage_unified"
+harness = false
+path = "benches/bench_04_storage_unified.rs"
 
 [[bench]]
-name = "flush_optimization_bench"
+name = "bench_08_quantization_sst"
 harness = false
-path = "benches/flush_optimization_bench.rs"
+path = "benches/bench_08_quantization_sst.rs"
 
 [[bench]]
-name = "vector_optimization_bench"
+name = "bench_09_columnar_viper"
 harness = false
-path = "benches/vector_optimization_bench.rs"
+path = "benches/bench_09_columnar_viper.rs"
+
+# 3. SEARCH & QUERY BENCHMARKS (10)
+[[bench]]
+name = "bench_10_query_progressive"
+harness = false
+path = "benches/bench_10_query_progressive.rs"
+
+# 4. UNIFIED & CROSS-ENGINE BENCHMARKS
+# Note: Cross-engine comparisons now included in bench_storage_engines
+
+# 5. SYSTEM & COMPREHENSIVE BENCHMARKS (12-13)
+[[bench]]
+name = "bench_12_system_optimization"
+harness = false
+path = "benches/bench_12_system_optimization.rs"
 
 [[bench]]
-name = "engine_comparison_bench"
+name = "bench_13_complete_suite"
 harness = false
-path = "benches/engine_comparison_bench.rs"
+path = "benches/bench_13_complete_suite.rs"
 
 # Temporarily disabled benchmarks
 # [[bench]]
@@ -301,6 +344,13 @@ path = "benches/engine_comparison_bench.rs"
 # path = "benches/vector_operations.rs"
 
 # [[bench]]
-# name = "metadata_lifecycle"  
+# name = "metadata_lifecycle"
 # harness = false
 # path = "benches/metadata_lifecycle.rs"
+
+# 6. GRAPH OPERATIONS BENCHMARKS (14 - Last)
+[[bench]]
+name = "bench_14_graph_operations"
+harness = false
+path = "benches/bench_14_graph_operations.rs"
+

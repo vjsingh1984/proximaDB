@@ -7,8 +7,9 @@
 //! - Network-optimized serialization
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::VectorRecord;
+use crate::proto::proximadb_v1::{sql_value, SqlValue};
+use std::collections::HashMap;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -44,33 +45,32 @@ fn create_test_config() -> WALConfig {
 /// Create test vector with proto-specific fields
 fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: (0..dimension)
             .map(|i| (i as f32) / (dimension as f32))
             .collect(),
-        metadata: vec![
-            MetadataItem {
-                key: "proto_version".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue("3".to_string()),
-                ),
-            },
-            MetadataItem {
-                key: "encoding".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "protobuf".to_string(),
-                    ),
-                ),
-            },
-        ],
+        metadata: {
+            let mut map = HashMap::new();
+            map.insert(
+                "proto_version".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue("3".to_string())),
+                },
+            );
+            map.insert(
+                "encoding".to_string(),
+                SqlValue {
+                    value: Some(sql_value::Value::StringValue("protobuf".to_string())),
+                },
+            );
+            map
+        },
         timestamp: 1234567890,
         updated_at: Some(1234567890),
         expires_at: Some(1234567890 + 86400), // 24 hours later
         version: Some(1),
-        // rank removed -  Some(1),
-        similarity: Some(0.95),
-        similarity: None,
+        source: None,
+        quantized_vector: vec![],
     }
 }
 
@@ -123,7 +123,7 @@ async fn test_proto_batch_creation() {
     let batch = create_test_batch(vec![vector.clone()]);
 
     assert_eq!(batch.vector_records.len(), 1);
-    assert_eq!(batch.vector_records[0].id, Some("test".to_string()));
+    assert_eq!(batch.vector_records[0].id, "test".to_string());
 }
 
 // The remaining tests would require mocking the memtable behavior
@@ -131,36 +131,35 @@ async fn test_proto_batch_creation() {
 #[tokio::test]
 async fn test_proto_metadata_encoding() {
     let mut vector = create_proto_test_vector("meta_test", 64);
-    vector.metadata = vec![
-        MetadataItem {
-            key: "unicode".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "Hello 世界 🌍".to_string(),
-                ),
-            ),
+    vector.metadata.insert(
+        "unicode".to_string(),
+        SqlValue {
+            value: Some(sql_value::Value::StringValue("Hello 世界 🌍".to_string())),
         },
-        MetadataItem {
-            key: "special_chars".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                    "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
-                ),
-            ),
+    );
+    vector.metadata.insert(
+        "special_chars".to_string(),
+        SqlValue {
+            value: Some(sql_value::Value::StringValue(
+                "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
+            )),
         },
-        MetadataItem {
-            key: "empty".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue("".to_string()),
-            ),
+    );
+    vector.metadata.insert(
+        "empty".to_string(),
+        SqlValue {
+            value: Some(sql_value::Value::StringValue("".to_string())),
         },
-    ];
+    );
 
     // Verify metadata is properly set
-    assert_eq!(vector.metadata.len(), 3);
-    assert!(
-        matches!(&vector.metadata[0].value, Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(s)) if s == "Hello 世界 🌍")
-    );
+    assert_eq!(vector.metadata.len(), 5); // Original 2 + added 3
+    assert!(vector.metadata.contains_key("unicode"));
+    if let Some(sql_value) = vector.metadata.get("unicode") {
+        if let Some(sql_value::Value::StringValue(s)) = &sql_value.value {
+            assert_eq!(s, "Hello 世界 🌍");
+        }
+    }
 }
 
 #[tokio::test]

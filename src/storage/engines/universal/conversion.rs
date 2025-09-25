@@ -6,7 +6,9 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, trace, warn};
+use crate::core::memory::pool::VectorMemoryPool;
 
 /// Storage formats supported by the universal adapter
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -80,13 +82,25 @@ pub enum CompressionFormat {
 }
 
 /// Format converter for storage and quantization formats
-#[derive(Debug)]
 pub struct FormatConverter {
     /// Conversion cache for frequently used conversions
     conversion_cache: HashMap<String, Vec<u8>>,
 
     /// Conversion statistics
     conversion_stats: ConversionStatistics,
+
+    /// Memory pool for compression buffers
+    memory_pool: Arc<VectorMemoryPool>,
+}
+
+impl std::fmt::Debug for FormatConverter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FormatConverter")
+            .field("conversion_cache_size", &self.conversion_cache.len())
+            .field("conversion_stats", &self.conversion_stats)
+            .field("memory_pool", &"<VectorMemoryPool>")
+            .finish()
+    }
 }
 
 /// Statistics for format conversions
@@ -139,6 +153,16 @@ impl FormatConverter {
         Ok(Self {
             conversion_cache: HashMap::new(),
             conversion_stats: ConversionStatistics::default(),
+            memory_pool: Arc::new(VectorMemoryPool::new()),
+        })
+    }
+
+    /// Create format converter with shared memory pool
+    pub async fn with_memory_pool(memory_pool: Arc<VectorMemoryPool>) -> ConversionResult<Self> {
+        Ok(Self {
+            conversion_cache: HashMap::new(),
+            conversion_stats: ConversionStatistics::default(),
+            memory_pool,
         })
     }
 
@@ -289,11 +313,11 @@ impl FormatConverter {
         let result = match format {
             CompressionFormat::None => data.to_vec(),
 
-            CompressionFormat::ZSTD { level } => self.compress_zstd(data, *level).await?,
+            CompressionFormat::ZSTD { level } => self.compress_zstd_pooled(data, *level).await?,
 
-            CompressionFormat::LZ4 => self.compress_lz4(data).await?,
+            CompressionFormat::LZ4 => self.compress_lz4_pooled(data).await?,
 
-            CompressionFormat::Snappy => self.compress_snappy(data).await?,
+            CompressionFormat::Snappy => self.compress_snappy_pooled(data).await?,
 
             CompressionFormat::Custom {
                 algorithm,
@@ -317,6 +341,29 @@ impl FormatConverter {
         Ok(result)
     }
 
+    /// Compress data into existing buffer to avoid allocation
+    pub async fn compress_data_into(
+        &self,
+        data: &[u8],
+        format: &CompressionFormat,
+        output: &mut Vec<u8>,
+    ) -> ConversionResult<usize> {
+        output.clear();
+
+        match format {
+            CompressionFormat::None => {
+                output.extend_from_slice(data);
+                Ok(data.len())
+            }
+            _ => {
+                let compressed = self.compress_data(data, format).await?;
+                let size = compressed.len();
+                output.extend_from_slice(&compressed);
+                Ok(size)
+            }
+        }
+    }
+
     /// Decompress data using specified format
     pub async fn decompress_data(
         &self,
@@ -330,11 +377,11 @@ impl FormatConverter {
         let result = match format {
             CompressionFormat::None => data.to_vec(),
 
-            CompressionFormat::ZSTD { level: _ } => self.decompress_zstd(data).await?,
+            CompressionFormat::ZSTD { level: _ } => self.decompress_zstd_pooled(data).await?,
 
-            CompressionFormat::LZ4 => self.decompress_lz4(data).await?,
+            CompressionFormat::LZ4 => self.decompress_lz4_pooled(data).await?,
 
-            CompressionFormat::Snappy => self.decompress_snappy(data).await?,
+            CompressionFormat::Snappy => self.decompress_snappy_pooled(data).await?,
 
             CompressionFormat::Custom {
                 algorithm,
@@ -486,35 +533,136 @@ impl FormatConverter {
 
     // Compression implementations (simplified - in practice would use proper libraries)
 
-    async fn compress_zstd(&self, data: &[u8], _level: i32) -> ConversionResult<Vec<u8>> {
+    async fn compress_zstd_pooled(&self, data: &[u8], _level: i32) -> ConversionResult<Vec<u8>> {
+        // Get pooled buffer for compression work
+        let mut pooled_buffer = self.memory_pool.compression_buffers.acquire();
+        let buffer = &mut *pooled_buffer;
+
+        // Clear and reserve capacity
+        buffer.clear();
+        buffer.reserve(data.len());
+
         // Simplified ZSTD compression simulation
-        // In practice, would use zstd crate
-        Ok(data.to_vec()) // Placeholder
+        // In practice, would use zstd crate with buffer reuse
+        buffer.extend_from_slice(data);
+
+        // Return owned copy (buffer returns to pool on drop)
+        Ok(buffer.clone())
+    }
+
+    async fn compress_zstd(&self, data: &[u8], level: i32) -> ConversionResult<Vec<u8>> {
+        // Legacy method for compatibility
+        self.compress_zstd_pooled(data, level).await
+    }
+
+    async fn decompress_zstd_pooled(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Get pooled buffer for decompression work
+        let mut pooled_buffer = self.memory_pool.compression_buffers.acquire();
+        let buffer = &mut *pooled_buffer;
+
+        // Clear and reserve capacity (decompressed is usually larger)
+        buffer.clear();
+        buffer.reserve(data.len() * 2); // Estimate 2x expansion
+
+        // Simplified ZSTD decompression simulation
+        // In practice, would use zstd crate with buffer reuse
+        buffer.extend_from_slice(data);
+
+        // Return owned copy (buffer returns to pool on drop)
+        Ok(buffer.clone())
     }
 
     async fn decompress_zstd(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
-        // Simplified ZSTD decompression simulation
-        Ok(data.to_vec()) // Placeholder
+        // Legacy method for compatibility
+        self.decompress_zstd_pooled(data).await
+    }
+
+    async fn compress_lz4_pooled(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Get pooled buffer for compression work
+        let mut pooled_buffer = self.memory_pool.compression_buffers.acquire();
+        let buffer = &mut *pooled_buffer;
+
+        // Clear and reserve capacity
+        buffer.clear();
+        buffer.reserve(data.len());
+
+        // Simplified LZ4 compression simulation
+        // In practice, would use lz4 crate with buffer reuse
+        buffer.extend_from_slice(data);
+
+        // Return owned copy (buffer returns to pool on drop)
+        Ok(buffer.clone())
     }
 
     async fn compress_lz4(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
-        // Simplified LZ4 compression simulation
-        Ok(data.to_vec()) // Placeholder
+        // Legacy method for compatibility
+        self.compress_lz4_pooled(data).await
+    }
+
+    async fn decompress_lz4_pooled(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Get pooled buffer for decompression work
+        let mut pooled_buffer = self.memory_pool.compression_buffers.acquire();
+        let buffer = &mut *pooled_buffer;
+
+        // Clear and reserve capacity
+        buffer.clear();
+        buffer.reserve(data.len() * 2);
+
+        // Simplified LZ4 decompression simulation
+        // In practice, would use lz4 crate with buffer reuse
+        buffer.extend_from_slice(data);
+
+        // Return owned copy (buffer returns to pool on drop)
+        Ok(buffer.clone())
     }
 
     async fn decompress_lz4(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
-        // Simplified LZ4 decompression simulation
-        Ok(data.to_vec()) // Placeholder
+        // Legacy method for compatibility
+        self.decompress_lz4_pooled(data).await
+    }
+
+    async fn compress_snappy_pooled(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Get pooled buffer for compression work
+        let mut pooled_buffer = self.memory_pool.compression_buffers.acquire();
+        let buffer = &mut *pooled_buffer;
+
+        // Clear and reserve capacity
+        buffer.clear();
+        buffer.reserve(data.len());
+
+        // Simplified Snappy compression simulation
+        // In practice, would use snap crate with buffer reuse
+        buffer.extend_from_slice(data);
+
+        // Return owned copy (buffer returns to pool on drop)
+        Ok(buffer.clone())
     }
 
     async fn compress_snappy(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
-        // Simplified Snappy compression simulation
-        Ok(data.to_vec()) // Placeholder
+        // Legacy method for compatibility
+        self.compress_snappy_pooled(data).await
+    }
+
+    async fn decompress_snappy_pooled(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
+        // Get pooled buffer for decompression work
+        let mut pooled_buffer = self.memory_pool.compression_buffers.acquire();
+        let buffer = &mut *pooled_buffer;
+
+        // Clear and reserve capacity
+        buffer.clear();
+        buffer.reserve(data.len() * 2);
+
+        // Simplified Snappy decompression simulation
+        // In practice, would use snap crate with buffer reuse
+        buffer.extend_from_slice(data);
+
+        // Return owned copy (buffer returns to pool on drop)
+        Ok(buffer.clone())
     }
 
     async fn decompress_snappy(&self, data: &[u8]) -> ConversionResult<Vec<u8>> {
-        // Simplified Snappy decompression simulation
-        Ok(data.to_vec()) // Placeholder
+        // Legacy method for compatibility
+        self.decompress_snappy_pooled(data).await
     }
 }
 

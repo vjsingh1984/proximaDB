@@ -54,15 +54,15 @@ mod tests {
         debug!("📊 Simulating OLD approach - multiple service calls:");
 
         // Simulate VectorOperationsService call
-        let _result1 = mock_service.collection("test_collection").await;
+        let _result1 = mock_service.get_collection("test_collection").await;
         debug!("   VectorOperationsService → Collection Service Call #1");
 
         // Simulate BackgroundManager call
-        let _result2 = mock_service.collection("test_collection").await;
+        let _result2 = mock_service.get_collection("test_collection").await;
         debug!("   BackgroundManager → Collection Service Call #2");
 
         // Simulate FlushCoordinator call
-        let _result3 = mock_service.collection("test_collection").await;
+        let _result3 = mock_service.get_collection("test_collection").await;
         debug!("   FlushCoordinator → Collection Service Call #3");
 
         let old_call_count = mock_service.get_call_count();
@@ -79,7 +79,7 @@ mod tests {
         debug!("🚀 Testing NEW approach - context-based optimization:");
 
         // Single service call to create context (simulates VectorOperationsService)
-        let _result = mock_service.collection("test_collection").await;
+        let _result = mock_service.get_collection("test_collection").await;
         debug!("   VectorOperationsService → Collection Service Call #1 (creates context)");
 
         // Create context with pre-computed metadata
@@ -196,7 +196,7 @@ mod tests {
 
         // Verify extra metadata
         assert_eq!(
-            context.extra_metadata.get(key),
+            context.extra_metadata.get("test_key"),
             Some(&"test_value".to_string())
         );
 

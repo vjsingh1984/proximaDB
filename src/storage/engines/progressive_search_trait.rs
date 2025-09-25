@@ -97,7 +97,7 @@ pub enum QuantizedVectorData {
 
 /// Implementation for SST storage engine
 #[async_trait]
-impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstStorage {
+impl ProgressiveSearchEngine for crate::storage::engines::impls::sst::SstEngine {
     async fn search_binary(
         &self,
         collection_id: &str,

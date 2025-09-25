@@ -1,0 +1,37 @@
+--- a/src/query/sql_frontend/lowering.rs
++++ b/src/query/sql_frontend/lowering.rs
+@@ -366,6 +366,39 @@
+                 })
+             }
+             SqlExpr::Function(func) => self.lower_function_call(func).await,
++            SqlExpr::Case { 
++                operand, 
++                when_then_expr: conditions, 
++                else_expr, 
++            } => {
++                let lowered_operand = if let Some(op) = operand {
++                    Some(Box::new(self.lower_expr(op).await?))
++                } else {
++                    None
++                };
++                let lowered_conditions = futures::future::try_join_all(conditions.into_iter().map(|(w, t)| async move {
++                    Ok((self.lower_expr(w).await?, self.lower_expr(t).await?))
++                })).await?;
++                let lowered_else_expr = if let Some(el) = else_expr {
++                    Some(Box::new(self.lower_expr(el).await?))
++                } else {
++                    None
++                };
++                Ok(Expr::Case {
++                    operand: lowered_operand,
++                    conditions: lowered_conditions,
++                    else_expr: lowered_else_expr,
++                })
++            },
++            SqlExpr::Subquery(subquery) => {
++                let lowered_subquery = self.lower_query(subquery).await?;
++                Ok(Expr::Subquery(Box::new(lowered_subquery)))
++            },
+             _ => Err(anyhow!("Unsupported expression type: {:?}", expr)),
+         }
+         })

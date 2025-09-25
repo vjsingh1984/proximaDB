@@ -2,38 +2,55 @@
 //!
 //! This test verifies that MVCC logic is correctly applied in search results
 
-use proximadb::core::search::results::InternalSearchResult;
+use proximadb::core::search::results::OptimizedSearchRecord;
+use proximadb::proto::proximadb_v1::{SqlValue, sql_value::Value};
 use serde_json::json;
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
 
-/// Test helper to create a SearchResult with specific ID, version, and timestamp
-fn create_search_result(id: &str, version: u32, timestamp: u32, score: f32) -> SearchResult {
-    SearchResult {
+/// Helper to create SqlValue from JSON
+fn json_to_sql_value(value: serde_json::Value) -> SqlValue {
+    let val = match value {
+        serde_json::Value::Bool(b) => Value::BoolValue(b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int64Value(i)
+            } else {
+                Value::NumberValue(n.as_f64().unwrap_or(0.0))
+            }
+        },
+        serde_json::Value::String(s) => Value::StringValue(s),
+        _ => Value::StringValue(value.to_string()),
+    };
+    SqlValue { value: Some(val) }
+}
+
+/// Test helper to create a OptimizedSearchRecord with specific ID, version, and timestamp
+fn create_search_result(id: &str, version: u32, timestamp: u32, score: f32) -> OptimizedSearchRecord {
+    use std::sync::Arc;
+    OptimizedSearchRecord {
         id: id.to_string(),
         vector_id: Some(format!("vec_{}", id)),
         score,
-        distance: Some(1.0 - score),
-        rank: None,
-        vector: Some(vec![0.1; 128]),
+        similarity: Some(1.0 - score),
+        vector: Some(Arc::new(vec![0.1; 128])),
         metadata: HashMap::new(),
         debug_info: None,
-        semantic_distance: None,
         quantization_info: None,
         engine_stats: None,
         index_path: None,
-        version: Some(version),
-        timestamp: Some(timestamp),
-        created_at: Some(chrono::Utc::now()),
+        version: Some(version as i64),
+        timestamp: Some(timestamp as i64),
+        ..Default::default()
     }
 }
 
 /// Test the MVCC logic implementation
-fn apply_mvcc_logic(results: Vec<SearchResult>) -> Vec<SearchResult> {
+fn apply_mvcc_logic(results: Vec<OptimizedSearchRecord>) -> Vec<OptimizedSearchRecord> {
     use std::collections::HashMap;
 
     // Group results by ID
-    let mut id_groups: HashMap<String, Vec<SearchResult>> = HashMap::new();
+    let mut id_groups: HashMap<String, Vec<OptimizedSearchRecord>> = HashMap::new();
     let mut results_without_id = Vec::new();
 
     for result in results {
@@ -59,15 +76,15 @@ fn apply_mvcc_logic(results: Vec<SearchResult>) -> Vec<SearchResult> {
 
             version_a.cmp(&version_b).then_with(|| {
                 // For same version, earliest timestamp wins
-                let ts_a = a.timestamp.unwrap_or(u32::MAX);
-                let ts_b = b.timestamp.unwrap_or(u32::MAX);
+                let ts_a = a.timestamp.unwrap_or(i64::MAX);
+                let ts_b = b.timestamp.unwrap_or(i64::MAX);
                 ts_a.cmp(&ts_b)
             })
         });
 
         // Validate version continuity
         let mut expected_version = 1;
-        let mut last_valid: Option<SearchResult> = None;
+        let mut last_valid: Option<OptimizedSearchRecord> = None;
 
         for result in versions {
             let version = result.version.unwrap_or(1);
@@ -76,8 +93,8 @@ fn apply_mvcc_logic(results: Vec<SearchResult>) -> Vec<SearchResult> {
                 // Check for duplicate version - keep earliest timestamp
                 if let Some(ref existing) = last_valid {
                     if existing.version == result.version {
-                        let existing_ts = existing.timestamp.unwrap_or(u32::MAX);
-                        let current_ts = result.timestamp.unwrap_or(u32::MAX);
+                        let existing_ts = existing.timestamp.unwrap_or(i64::MAX);
+                        let current_ts = result.timestamp.unwrap_or(i64::MAX);
                         if current_ts < existing_ts {
                             last_valid = Some(result);
                         }
@@ -217,12 +234,12 @@ fn test_mvcc_integration_complex_scenario() {
 fn test_mvcc_integration_tombstone_handling() {
     // Create results where doc4 has a tombstone marker
     let mut doc4_v1 = create_search_result("doc4", 1, 100, 0.9);
-    doc4_v1.metadata.insert("active".to_string(), json!(true));
+    doc4_v1.metadata.insert("active".to_string(), json_to_sql_value(json!(true)));
 
     let mut doc4_v2 = create_search_result("doc4", 2, 200, 0.8);
     doc4_v2
         .metadata
-        .insert("is_deleted".to_string(), json!(true)); // Tombstone
+        .insert("is_deleted".to_string(), json_to_sql_value(json!(true))); // Tombstone
 
     let results = vec![doc4_v1, doc4_v2];
 
@@ -233,7 +250,7 @@ fn test_mvcc_integration_tombstone_handling() {
     assert_eq!(deduplicated.len(), 1);
     assert_eq!(deduplicated[0].id, "doc4");
     assert_eq!(deduplicated[0].version, Some(2));
-    assert_eq!(deduplicated[0].metadata.get(key), Some(&json!(true)));
+    assert_eq!(deduplicated[0].metadata.get("active"), Some(&json_to_sql_value(json!(true))));
 
     debug!("✅ MVCC tombstone handling test passed");
 }

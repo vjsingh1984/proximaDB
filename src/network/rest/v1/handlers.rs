@@ -12,19 +12,18 @@ use axum::{
 };
 use std::sync::Arc;
 use tracing::{error, info};
-use serde_json::json;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
-use crate::network::rest::{health, proto_json::ProtoApiResponse};
+use crate::network::rest::health;
+use crate::network::rest::proto_json::ProtoApiResponse;
 use crate::proto::proximadb_v1;
-use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest, CollectionResponse};
+use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{
-    VectorBatchRequest as V1VectorBatchRequest,
-    VectorOperationResponse as V1VectorOperationResponse,
-    VectorSearchRequest as V1VectorSearchRequest,
+    VectorBatchRequest,
+    VectorSearchRequest,
 };
-use crate::query::QueryEngine;
+use crate::query::execution::QueryEngine;
 use crate::query::explain::ExplainPlan;
 use crate::utils::uuid::Uuid;
 use serde::{Deserialize, Serialize};
@@ -36,53 +35,37 @@ pub struct AppState {
 }
 
 /// Aligned vector search handler
-///
-/// This handler demonstrates the protobuf-first approach:
-/// - Accepts VectorSearchRequest directly as JSON
-/// - Returns VectorOperationResponse directly as JSON
-/// - Uses ApiError for consistent error handling
 pub async fn vector_search(
     State(state): State<AppState>,
-    Json(request): Json<V1VectorSearchRequest>,
-) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
-    info!(
-        "Vector search request for collection: {}, top_k: {}",
-        request.collection_id, request.top_k
-    );
+    Json(value): Json<serde_json::Value>,
+) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
+    // Parse the JSON value into VectorSearchRequest
+    let request: VectorSearchRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
-    // Validate request
     if request.collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "Collection ID is required".to_string(),
-        ));
+        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
     }
 
-    if request.queries.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "At least one query is required".to_string(),
-        ));
-    }
-
-    // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
-    let v1_resp = state
+    match state
         .unified_handlers
         .handle_vector_search_v1(request)
         .await
-        .map_err(|e| {
-            error!("Vector search failed: {}", e);
-            ApiError::Internal(e.to_string())
-        })?;
-
-    // Convert proto response to JSON wrapper
-    let json_response = v1_resp;
-    Ok(JsonResponse(json_response))
+    {
+        Ok(response) => Ok(JsonResponse(response)),
+        Err(e) => Err(ApiError::Internal(e.to_string())),
+    }
 }
 
 /// Aligned vector batch operation handler
 pub async fn vector_batch(
     State(state): State<AppState>,
-    Json(request): Json<V1VectorBatchRequest>,
-) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
+    Json(value): Json<serde_json::Value>,
+) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
+    // Parse the JSON value into VectorBatchRequest
+    let request: VectorBatchRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+
     info!(
         "Vector batch operation for collection: {}, {} records",
         request.collection_id,
@@ -91,39 +74,40 @@ pub async fn vector_batch(
 
     // Validate request
     if request.collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "Collection ID is required".to_string(),
-        ));
+        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
     }
 
     if request.vectors.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "At least one record is required".to_string(),
-        ));
+        return Err(ApiError::InvalidArgument("At least one record is required".to_string()));
     }
 
     // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
-    let v1_resp = state
+    match state
         .unified_handlers
         .handle_vector_batch_v1(request)
         .await
-        .map_err(|e| {
+    {
+        Ok(v1_resp) => Ok(JsonResponse(v1_resp)),
+        Err(e) => {
             error!("Vector batch operation failed: {}", e);
-            ApiError::Internal(e.to_string())
-        })?;
-
-    // Convert proto response to JSON wrapper
-    let json_response = v1_resp;
-    Ok(JsonResponse(json_response))
+            Err(ApiError::Internal(e.to_string()))
+        }
+    }
 }
 
 /// Aligned collection operation handler
 pub async fn collection_operation(
     State(state): State<AppState>,
-    Json(request): Json<CollectionRequest>,
-) -> ApiResult<JsonResponse<CollectionResponse>> {
-    let operation = CollectionOperation::try_from(request.operation)
-        .map_err(|_| ApiError::InvalidArgument("Invalid collection operation".to_string()))?;
+    Json(value): Json<serde_json::Value>,
+) -> ApiResult<JsonResponse<proximadb_v1::CollectionResponse>> {
+    // Parse the JSON value into CollectionRequest
+    let request: CollectionRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+
+    let operation = match CollectionOperation::try_from(request.operation) {
+        Ok(op) => op,
+        Err(_) => return Err(ApiError::InvalidArgument("Invalid collection operation".to_string())),
+    };
 
     info!(
         "Collection operation: {:?} for collection: {:?}",
@@ -131,16 +115,17 @@ pub async fn collection_operation(
     );
 
     // Direct delegation to UnifiedHandlers
-    let response = state
+    match state
         .unified_handlers
         .handle_collection_operation(request)
         .await
-        .map_err(|e| {
+    {
+        Ok(response) => Ok(JsonResponse(response)),
+        Err(e) => {
             error!("Collection operation failed: {}", e);
-            ApiError::Internal(e.to_string())
-        })?;
-
-    Ok(JsonResponse(response))
+            Err(ApiError::Internal(e.to_string()))
+        }
+    }
 }
 
 /// Health check endpoint with proper error handling
@@ -166,11 +151,9 @@ pub async fn health_check(
 pub async fn get_collection(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<JsonResponse<CollectionResponse>> {
+) -> impl IntoResponse {
     if collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "Collection ID is required".to_string(),
-        ));
+        return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
     }
 
     let request = CollectionRequest {
@@ -182,19 +165,20 @@ pub async fn get_collection(
         migration_config: Default::default(),
     };
 
-    let response = state
+    match state
         .unified_handlers
         .handle_collection_operation(request)
         .await
-        .map_err(|e| {
+    {
+        Ok(response) => JsonResponse(response).into_response(),
+        Err(e) => {
             if e.to_string().contains("not found") {
-                ApiError::CollectionNotFound(collection_id)
+                (StatusCode::NOT_FOUND, format!("Collection not found: {}", collection_id)).into_response()
             } else {
-                ApiError::Internal(e.to_string())
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
             }
-        })?;
-
-    Ok(JsonResponse(response))
+        }
+    }
 }
 
 /// List collections with pagination
@@ -208,7 +192,7 @@ pub struct ListCollectionsQuery {
 pub async fn list_collections(
     State(state): State<AppState>,
     Query(params): Query<ListCollectionsQuery>,
-) -> ApiResult<JsonResponse<CollectionResponse>> {
+) -> impl IntoResponse {
     let mut query_params = std::collections::HashMap::new();
 
     if let Some(limit) = params.limit {
@@ -232,24 +216,23 @@ pub async fn list_collections(
         migration_config: Default::default(),
     };
 
-    let response = state
+    match state
         .unified_handlers
         .handle_collection_operation(request)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    Ok(JsonResponse(response))
+    {
+        Ok(response) => JsonResponse(response).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 /// Delete collection with proper error handling
 pub async fn delete_collection(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
-) -> ApiResult<JsonResponse<CollectionResponse>> {
+) -> impl IntoResponse {
     if collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "Collection ID is required".to_string(),
-        ));
+        return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
     }
 
     let request = CollectionRequest {
@@ -261,26 +244,31 @@ pub async fn delete_collection(
         migration_config: Default::default(),
     };
 
-    let response = state
+    match state
         .unified_handlers
         .handle_collection_operation(request)
         .await
-        .map_err(|e| {
+    {
+        Ok(response) => JsonResponse(response).into_response(),
+        Err(e) => {
             if e.to_string().contains("not found") {
-                ApiError::CollectionNotFound(collection_id)
+                (StatusCode::NOT_FOUND, format!("Collection not found: {}", collection_id)).into_response()
             } else {
-                ApiError::Internal(e.to_string())
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
             }
-        })?;
-
-    Ok(JsonResponse(response))
+        }
+    }
 }
 
 /// Example using JSON wrapper types for consistent structure
 pub async fn vector_search_with_metadata(
     State(state): State<AppState>,
-    Json(request): Json<V1VectorSearchRequest>,
-) -> ApiResult<JsonResponse<crate::proto::proximadb_v1::VectorOperationResponse>> {
+    Json(value): Json<serde_json::Value>,
+) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
+    // Parse the JSON value into VectorSearchRequest
+    let request: VectorSearchRequest = serde_json::from_value(value)
+        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+
     let start_time = std::time::Instant::now();
     let request_id = Uuid::new_v4().to_string();
 
@@ -302,7 +290,6 @@ pub async fn vector_search_with_metadata(
                 request_id, elapsed.as_millis()
             );
 
-            // Return the proto response directly
             Ok(JsonResponse(response))
         }
         Err(e) => {
@@ -496,14 +483,32 @@ pub async fn explain_sql(
         ));
     }
 
-    // Build a lightweight QueryEngine with vector service and generate a real plan with hints
-    let qe = QueryEngine::new_with_vector_service(
+    // Build a lightweight QueryEngine with vector and graph services
+    let qe = QueryEngine::new(
         state.unified_handlers.vector_operations_service.clone(),
+        state.unified_handlers.graph_operations_service.clone(),
     );
-    let plan = qe
-        .explain_sql(&request.query)
+    // Parse SQL and explain using frontend
+    use crate::query::sql_frontend::parser::SqlFrontendParser;
+    let parser = SqlFrontendParser::new();
+    let parsed = parser.parse(&request.query)
+        .map_err(|e| ApiError::Internal(format!("Failed to parse SQL: {}", e)))?;
+
+    let explain_result = qe
+        .explain_frontend(parsed)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to explain SQL: {}", e)))?;
+
+    // Convert ExplainResult to ExplainPlan
+    let plan = ExplainPlan {
+        orchestration_steps: explain_result.operations,
+        vector_hints: None, // TODO: Extract from explain_result if needed
+        graph_hints: None,  // TODO: Extract from explain_result if needed
+        join_costs: None,
+        query_stats: None,
+        execution_strategy: Some(format!("{:?}", explain_result.query_type)),
+        estimated_total_cost: Some(explain_result.estimated_cost),
+    };
 
     let response = ExplainQueryResponse {
         plan,

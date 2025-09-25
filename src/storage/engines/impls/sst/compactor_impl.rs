@@ -11,7 +11,7 @@
 
 use super::SstableWriter; // OPTIMIZED: Removed SstRecord import
 use super::readers::sst_query_engine::{BlockIterator, SstDirectReader};
-use crate::core::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
+use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::search::mvcc_resolution::MvccResolver;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module
@@ -310,7 +310,9 @@ impl SstCompactor {
 
         // Send AXIS update notifications if there are changes
         if !stats.deleted_vector_ids.is_empty() || !stats.updated_vector_ids.is_empty() {
-            self.notify_axis_of_changes(&stats).await;
+            // Extract collection_id from output file path or use placeholder
+            let collection_id = output_file.split('/').nth(1).unwrap_or("unknown");
+            self.notify_axis_of_changes(&stats, collection_id, &output_file).await;
         }
 
         Ok(stats)
@@ -1017,13 +1019,13 @@ mod tests {
         ));
 
         let base_config = StorageQuantizationConfig::default();
-        let base_engine = Arc::new(StorageQuantizationEngine::new(
+        let _base_engine = Arc::new(StorageQuantizationEngine::new(
             unified_engine,
             distance_compute,
             base_config,
         ));
 
-        let sst_config = SstQuantizationConfig::default();
+        // Note: Using StorageQuantizationConfig instead of undefined SstQuantizationConfig
         // Create storage quantization engine
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
@@ -1052,11 +1054,22 @@ mod tests {
                     crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                 enable_progressive: true,
                 filter_threshold: 100.0,
+                candidate_multiplier: 4,
+                training_sample_size: 10000,
+                memory_budget_mb: 512,
+                enable_hardware_acceleration: true,
             };
+
+        let distance_compute = Arc::new(
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+            ),
+        );
 
         let quantization_engine = Arc::new(
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new(
                 unified_engine,
+                distance_compute,
                 storage_config,
             ),
         );
@@ -1071,7 +1084,7 @@ mod tests {
         );
 
         // Create compactor with PQ sorting
-        let compactor = SstCompactor::new(filesystem_factory, None).with_pq_sorting(adapter);
+        let compactor = SstCompactor::new(filesystem_factory, None).with_pq_sorting(quantization_engine);
 
         // Verify that the sorting strategy is set correctly
         assert!(matches!(

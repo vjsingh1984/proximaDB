@@ -348,7 +348,7 @@ mod tests {
         let ops = OptimizedSwiftOperations::new().unwrap();
 
         // Verify hardware detection
-        assert!(ops.hardware.cpu.core_count() > 0);
+        assert!(ops.hardware.cpu.physical_cores > 0);
 
         // Verify distance compute is initialized
         let query = vec![1.0; 128];

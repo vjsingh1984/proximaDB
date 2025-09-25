@@ -27,6 +27,7 @@
 
 use std::fmt;
 use std::sync::{Arc, RwLock};
+use serde::{Deserialize, Serialize};
 
 /// Information about a node stored on disk
 #[derive(Debug, Clone)]
@@ -66,7 +67,7 @@ impl fmt::Display for BTreeError {
 impl std::error::Error for BTreeError {}
 
 /// B+ tree node types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum Node {
     /// Internal node containing keys and child pointers
     Internal(InternalNode),
@@ -116,11 +117,12 @@ impl Node {
 }
 
 /// Internal node structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct InternalNode {
     /// Keys for navigation (one less than children)
     keys: Vec<Vec<u8>>,
     /// Child node pointers
+    #[serde(skip)]
     children: Vec<NodeRef>,
 }
 
@@ -139,7 +141,9 @@ impl InternalNode {
                 return i;
             }
         }
-        self.children.len() - 1
+        // In a B+ tree, there's one more child than keys
+        // After the last key, use the last child
+        self.keys.len()
     }
 
     /// Insert a key and child pointer at a specific position
@@ -181,11 +185,12 @@ impl InternalNode {
 }
 
 /// Leaf node structure
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct LeafNode {
     /// Key-value pairs stored in sorted order
     entries: Vec<(Vec<u8>, Vec<u8>)>,
     /// Pointer to next leaf node (for range queries)
+    #[serde(skip)]
     next: Option<NodeRef>,
 }
 
@@ -289,13 +294,16 @@ impl LeafNode {
 }
 
 /// Node reference type for managing nodes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum NodeRef {
     /// In-memory node reference
+    #[serde(skip)]
     InMemory(Arc<RwLock<Node>>),
     /// Disk-based node reference (for future disk storage)
     OnDisk(u64), // Page ID
 }
+
+// NodeRef serde handled by derive macro
 
 impl NodeRef {
     fn new_internal(node: InternalNode) -> Self {
@@ -310,14 +318,15 @@ impl NodeRef {
     fn read(&self) -> Result<std::sync::RwLockReadGuard<Node>, BTreeError> {
         match self {
             NodeRef::InMemory(node) => node.read().map_err(|_| BTreeError::LockError),
-            NodeRef::OnDisk(disk_info) => {
+            NodeRef::OnDisk(page_id) => {
                 // Implement disk-based node loading using filesystem infrastructure
-                match self.load_disk_node(disk_info) {
-                    Ok(node) => node.read().map_err(|_| BTreeError::LockError),
-                    Err(e) => Err(BTreeError::TreeCorrupted(
-                        format!("Failed to load disk node: {}", e)
-                    ))
-                }
+                let disk_info = DiskNodeInfo {
+                    file_path: format!("btree_page_{}.node", page_id),
+                    offset: 0,
+                    size: 4096, // Default page size
+                };
+                // For now, return an error for disk-based nodes since we can't return references to temporaries
+                Err(BTreeError::TreeCorrupted("Disk-based nodes not fully implemented".to_string()))
             }
         }
     }
@@ -326,14 +335,15 @@ impl NodeRef {
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<Node>, BTreeError> {
         match self {
             NodeRef::InMemory(node) => node.write().map_err(|_| BTreeError::LockError),
-            NodeRef::OnDisk(disk_info) => {
+            NodeRef::OnDisk(page_id) => {
                 // Implement disk-based node loading using filesystem infrastructure
-                match self.load_disk_node(disk_info) {
-                    Ok(node) => node.read().map_err(|_| BTreeError::LockError),
-                    Err(e) => Err(BTreeError::TreeCorrupted(
-                        format!("Failed to load disk node: {}", e)
-                    ))
-                }
+                let disk_info = DiskNodeInfo {
+                    file_path: format!("btree_page_{}.node", page_id),
+                    offset: 0,
+                    size: 4096, // Default page size
+                };
+                // For now, return an error for disk-based nodes since we can't return references to temporaries
+                Err(BTreeError::TreeCorrupted("Disk-based nodes not fully implemented".to_string()))
             }
         }
     }
@@ -396,6 +406,36 @@ impl BTreeIterator {
             end_key,
             forward,
         }
+    }
+
+    fn new_with_start(leaf: Option<NodeRef>, start_key: Option<Vec<u8>>, end_key: Option<Vec<u8>>, forward: bool) -> Self {
+        let mut iterator = BTreeIterator {
+            current_leaf: leaf,
+            current_index: 0,
+            end_key,
+            forward,
+        };
+
+        // Position the iterator at the first key >= start_key
+        if let (Some(leaf_ref), Some(start)) = (&iterator.current_leaf, &start_key) {
+            if let Ok(leaf_guard) = leaf_ref.read() {
+                if let Node::Leaf(leaf) = &*leaf_guard {
+                    // Find the first entry >= start_key
+                    for (i, (key, _)) in leaf.entries.iter().enumerate() {
+                        if key.as_slice() >= start.as_slice() {
+                            iterator.current_index = i;
+                            break;
+                        }
+                    }
+                    // If no entry >= start_key in this leaf, we'll move to next leaf in next()
+                    if iterator.current_index >= leaf.entries.len() {
+                        iterator.current_index = leaf.entries.len(); // This will trigger next leaf lookup
+                    }
+                }
+            }
+        }
+
+        iterator
     }
 }
 
@@ -684,7 +724,12 @@ impl BPlusTree {
             self.find_first_leaf()
         };
 
-        BTreeIterator::new(start_leaf, end.map(|k| k.to_vec()), true)
+        BTreeIterator::new_with_start(
+            start_leaf,
+            start.map(|k| k.to_vec()),
+            end.map(|k| k.to_vec()),
+            true
+        )
     }
 
     /// Get all keys with a common prefix
@@ -725,7 +770,7 @@ impl BPlusTree {
                 current_leaf = LeafNode::new();
                 self.stats.leaf_nodes += 1;
             }
-            current_leaf.entries.push((key.clone(), key.clone()));
+            current_leaf.entries.push((key.clone(), value.clone()));
             self.stats.entries += 1;
         }
 
@@ -749,30 +794,28 @@ impl BPlusTree {
 
         while current_level.len() > 1 {
             let mut next_level = Vec::new();
-            let mut current_internal = InternalNode::new();
+            let mut i = 0;
 
-            for (i, node_ref) in current_level.into_iter().enumerate() {
-                if i == 0 {
-                    current_internal.children.push(node_ref);
-                } else {
+            while i < current_level.len() {
+                let mut internal_node = InternalNode::new();
+
+                // Add first child
+                internal_node.children.push(current_level[i].clone());
+                i += 1;
+
+                // Add up to max_keys additional children (with their separator keys)
+                while i < current_level.len() && internal_node.children.len() < self.max_keys + 1 {
                     // Get the first key of this node as the separator
-                    if let Ok(node_guard) = node_ref.read() {
+                    if let Ok(node_guard) = current_level[i].read() {
                         if let Some(first_key) = node_guard.first_key() {
-                            current_internal.keys.push(first_key.clone());
+                            internal_node.keys.push(first_key.clone());
                         }
                     }
-                    current_internal.children.push(node_ref);
-
-                    if current_internal.children.len() > self.max_keys {
-                        next_level.push(NodeRef::new_internal(current_internal));
-                        current_internal = InternalNode::new();
-                        self.stats.internal_nodes += 1;
-                    }
+                    internal_node.children.push(current_level[i].clone());
+                    i += 1;
                 }
-            }
 
-            if !current_internal.children.is_empty() {
-                next_level.push(NodeRef::new_internal(current_internal));
+                next_level.push(NodeRef::new_internal(internal_node));
                 self.stats.internal_nodes += 1;
             }
 

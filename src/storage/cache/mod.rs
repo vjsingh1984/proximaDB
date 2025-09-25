@@ -193,6 +193,8 @@ pub mod orchestrator;
 pub mod performance_optimizer;
 pub mod specialized;
 pub mod traits;
+pub mod warming;
+pub mod metrics_integration;
 
 #[cfg(test)]
 mod tests;
@@ -200,8 +202,8 @@ mod tests;
 // Re-export main types
 pub use backend::{CacheTier, StorageBackend};
 pub use base::BaseCacheImpl;
-pub use config::{CacheConfig, EvictionPolicy, GlobalCacheConfig};
-pub use eviction::{ARCStrategy, EvictionStrategy, LFUStrategy, LRUStrategy};
+pub use config::{CacheConfig, GlobalCacheConfig};
+pub use eviction::{CacheEvictor, EvictionPolicy, AccessTracker, CacheEvictionConfig};
 pub use health_monitor::{CacheMonitoringDashboard, DashboardState};
 pub use metrics::CacheMetrics;
 pub use orchestrator::{
@@ -211,4 +213,37 @@ pub use performance_optimizer::{CacheOptimizer, OptimizationReport};
 pub use traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
 
 // Re-export specialized caches
-pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache};
+pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache};
+
+// Re-export new cache modules
+pub use warming::{CacheWarmer, WarmingStrategy, CacheWarmingConfig};
+pub use metrics_integration::{CacheMetricsCollector, CachePerformanceMetrics, CacheMetricsConfig};
+
+// Implement CacheValue for VectorRecord to enable caching
+impl CacheValue for crate::proto::proximadb_v1::VectorRecord {
+    fn size_bytes(&self) -> usize {
+        // Calculate approximate size in bytes
+        let mut size = std::mem::size_of::<Self>();
+
+        // Add size of string fields
+        size += self.id.len();
+        if let Some(ref source) = self.source {
+            size += source.len();
+        }
+
+        // Add size of vector data (f32 = 4 bytes each)
+        size += self.vector.len() * 4;
+
+        // Add size of quantized vector data
+        size += self.quantized_vector.len();
+
+        // Add size of metadata (approximate)
+        for (key, value) in &self.metadata {
+            size += key.len();
+            // Approximate size of SqlValue
+            size += 64; // Conservative estimate for SqlValue
+        }
+
+        size
+    }
+}

@@ -26,7 +26,7 @@
 //! RENAME SUGGESTION: This file should be renamed to `sst_query_engine.rs`
 //! to match the suggested parquet naming convention
 
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
+use crate::core::metadata_types::MetadataValue;
 use crate::core::search::OptimizedSearchRecord;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -34,9 +34,7 @@ use std::io::Read;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::storage::engines::core::io::zero_copy::traits::{
-    CacheTemperature, QueryType, RequestPriority,
-};
+// Removed zero_copy traits - these concepts are now handled by UnifiedCachingFilesystem
 use futures::TryStreamExt;
 use futures::stream::{Stream, StreamExt};
 use tracing::{debug, error, info, warn};
@@ -47,11 +45,11 @@ use std::ptr;
 
 use super::block_filter::{BlockFilter, IntelligentBlockFilter};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::search::{FilterExpression, SearchParams};
+use crate::core::search::{FilterExpression, SearchParams, ComparisonOperator};
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
@@ -59,9 +57,9 @@ use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{
 use crate::storage::engines::impls::sst::{IndexEntry, SstableHeader}; // OPTIMIZED: Removed SstRecord import
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
-// ZERO-COPY CACHE INTEGRATION
-// use crate::storage::cache::specialized::vector_store::SstBlockKey;
-use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+// Using UnifiedCachingFilesystem instead of ZeroCopyIOSystem
+use crate::storage::persistence::filesystem::FileSystem;
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;
@@ -109,10 +107,8 @@ pub struct UnifiedSstableReader {
     // CORE READER: Delegates low-level file operations to shared infrastructure
     shared_reader: Arc<SharedSstFormatReader>,
     strategy_selector: Arc<ReadingStrategySelector>,
-    // UNIFIED CACHE: Only zero-copy system for all caching needs (data blocks, indexes, bloom filters)
-    // Uses metadata cache for efficient storage without storing all vectors
-    // Keeps files on disk cache for local access
-    zero_copy_system: Arc<ZeroCopyIOSystem>,
+    // UNIFIED CACHE: Using UnifiedCachingFilesystem for all caching needs
+    unified_filesystem: Arc<UnifiedCachingFilesystem>,
     collection_id: String,
 
     // Filesystem factory for direct file access when needed
@@ -195,16 +191,6 @@ pub enum ReadStrategy {
 }
 
 impl ReadStrategy {
-    /// Convert ReadStrategy to QueryType for intelligent block filtering
-    fn to_query_type(&self) -> QueryType {
-        match self {
-            ReadStrategy::CompactionDirect => QueryType::FullScan,
-            ReadStrategy::FilteredScan(_) => QueryType::MetadataFilter,
-            ReadStrategy::SearchOptimized => QueryType::VectorSearch,
-            ReadStrategy::FullScan => QueryType::FullScan,
-        }
-    }
-
     /// Check if this strategy should use block filtering
     fn should_filter_blocks(&self) -> bool {
         !matches!(self, ReadStrategy::CompactionDirect)
@@ -544,7 +530,9 @@ impl ModularBlockReader {
         );
 
         // Stage 3: Load full vectors for top candidates and compute exact distances
-        let mut results = Vec::new();
+        // First, collect all vectors for batch processing
+        let mut loaded_vectors = Vec::new();
+        let mut indices_map = Vec::new();
 
         for (idx, _candidate) in final_candidates.iter().enumerate().take(k) {
             if let Some((block_idx, record_idx)) = block_indices.get(idx) {
@@ -553,16 +541,35 @@ impl ModularBlockReader {
                     .load_full_vector(*block_idx, *record_idx, &index_entries)
                     .await
                 {
-                    let distance = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-                        .calculate_distance(query_vector, &full_vector, distance_metric);
+                    loaded_vectors.push(full_vector);
+                    indices_map.push((block_idx, record_idx));
+                }
+            }
+        }
 
+        // Batch compute distances using optimized method
+        let mut results = Vec::new();
+        if !loaded_vectors.is_empty() {
+            let vector_refs: Vec<&[f32]> = loaded_vectors.iter().map(|v| v.as_slice()).collect();
+            let compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+
+            // Use optimized batch distance computation
+            let distances = compute.batch_distance_pooled_simd(
+                query_vector,
+                &vector_refs,
+                distance_metric,
+            );
+
+            // Create results from batch distances
+            for (i, distance) in distances.into_iter().enumerate() {
+                if let Some((block_idx, record_idx)) = indices_map.get(i) {
                     results.push(
                         OptimizedSearchRecord::new(
                             format!("block_{}_record_{}", block_idx, record_idx),
-                            distance.rank_value,
+                            distance.distance,
                         )
                         .with_similarity(distance.normalized_score)
-                        .add_vector(full_vector)
+                        .add_vector(loaded_vectors[i].clone())
                         .with_metadata(HashMap::new()),
                     );
                 }
@@ -1469,6 +1476,97 @@ impl SstDirectReader {
 }
 
 impl UnifiedSstableReader {
+    /// Search SSTable using SharedSstFormatReader for optimized I/O
+    /// Delegates to shared infrastructure like SWIFT does
+    pub async fn search_with_filter(
+        &self,
+        file_path: &str,
+        query_vector: &[f32],
+        filter: Option<FilterExpression>,
+        k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        // REFACTORED: Use SharedSstFormatReader like SWIFT does
+        // No more duplicate I/O logic!
+
+        // Step 1: Determine strategy
+        let strategy = if filter.is_some() {
+            SstableReadingStrategy::SelectiveWithCache {
+                use_range_reads: true,
+                enable_bloom_filters: true,
+                enable_cache_lookup: true,
+                enable_metadata_cache: true,
+            }
+        } else {
+            SstableReadingStrategy::FullScan {
+                use_block_cache: true
+            }
+        };
+
+        // Step 2: Create search context with correct fields
+        let context = CollectionContext {
+            file_path: file_path.to_string(),
+            sstable_files: vec![file_path.to_string()],
+            total_vectors: 0, // Will be determined during search
+            metadata_columns: Vec::new(),
+            level: 0,
+            creation_time: chrono::Utc::now(),
+            io_optimization_hints: None,
+        };
+
+        let params = SearchParams {
+            vector: Some(query_vector.to_vec()),
+            filter_expression: filter,
+            top_k: Some(k),
+            ..Default::default()
+        };
+
+        // Step 3: Use apply_strategy to leverage SharedSstFormatReader
+        // This delegates all I/O to the shared infrastructure
+        let blocks = self.apply_strategy(&strategy, &params, &context).await?;
+
+        // Step 4: Process blocks and compute distances
+        let mut results = Vec::new();
+        let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+            distance_metric
+        );
+
+        for block in blocks {
+            for record in block.records {
+                // SharedSstFormatReader already handles filtering at block level
+                // No need for record-level filtering here
+
+                // Compute distance
+                let distance = distance_compute.calculate_distance(
+                    query_vector,
+                    &record.vector,
+                    &distance_metric,
+                );
+
+                // Create result
+                let result = crate::core::search::results::OptimizedSearchRecord::new(
+                    record.id.clone(),
+                    distance.rank_value,
+                )
+                .with_similarity(distance.normalized_score)
+                .add_vector(record.vector.clone())
+                .with_metadata(record.metadata.clone());
+
+                results.push(result);
+            }
+        }
+
+        // Step 5: Sort and return top-k
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(k);
+
+        debug!("✅ SST: Search complete, found {} results", results.len());
+        Ok(results)
+    }
+
+
+
+
     /// Ultra-fast metadata comparison using optimized string comparison
     #[inline(always)]
     fn fast_metadata_match(
@@ -1603,7 +1701,7 @@ impl UnifiedSstableReader {
     /// - Code Reuse: Delegates file operations to SharedSstFormatReader (eliminates duplication)
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
-        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        unified_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
     ) -> Self {
         let config = ReaderConfig::default();
@@ -1623,17 +1721,18 @@ impl UnifiedSstableReader {
         };
 
         // Create shared reader for actual file operations
+        // SharedSstFormatReader needs to be updated to use UnifiedCachingFilesystem
         let shared_reader = Arc::new(SharedSstFormatReader::new(
             filesystem.clone(),
             mmap_strategy,
-            zero_copy_system.clone(),
+            unified_filesystem.clone(),
             collection_id.clone(),
         ));
 
         Self {
             shared_reader,
             strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
-            zero_copy_system,
+            unified_filesystem,
             collection_id,
             filesystem,
         }
@@ -1654,7 +1753,7 @@ impl UnifiedSstableReader {
     /// This constructor enables dual strategy support for different operation types
     pub fn new_with_bandwidth_optimizer(
         filesystem: Arc<FilesystemFactory>,
-        zero_copy_system: Arc<ZeroCopyIOSystem>,
+        unified_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
         _bandwidth_optimizer: Option<
             Arc<crate::storage::engines::core::io::zero_copy::BandwidthOptimizer>,
@@ -1680,14 +1779,14 @@ impl UnifiedSstableReader {
         let shared_reader = Arc::new(SharedSstFormatReader::new(
             filesystem.clone(),
             mmap_strategy,
-            zero_copy_system.clone(),
+            unified_filesystem.clone(),
             collection_id.clone(),
         ));
 
         Self {
             shared_reader,
             strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
-            zero_copy_system,
+            unified_filesystem,
             collection_id,
             filesystem,
         }
@@ -1723,24 +1822,14 @@ impl UnifiedSstableReader {
         // Apply bandwidth optimizer decisions if available
         if let Some(optimizer) = bandwidth_optimizer {
             // Create query context for bandwidth decisions
-            use crate::storage::engines::core::io::zero_copy::traits::QueryContext;
+            // TODO: Replace with UnifiedCachingFilesystem query context
             use std::collections::HashMap;
 
-            let query_context = QueryContext {
-                query_vector: None,
-                metadata_filters: HashMap::new(),
-                id_lookups: vec![],
-                top_k: params.top_k,
-                distance_threshold: None,
-                query_type: QueryType::SimilaritySearch,
-                collection_context: None,
-                priority: RequestPriority::Normal,
-                estimated_result_size: params.top_k,
-                selectivity_hint: None,
-                collection_id: self.collection_id.clone(),
-                concurrent_queries: None,
-                cache_temperature: CacheTemperature::Warm,
-            };
+            let query_context = (
+                params.top_k,
+                HashMap::<String, String>::new(), // metadata_filters
+                self.collection_id.clone(),
+            );
 
             // Bandwidth optimization decisions handled internally
             for _file_path in &collection_context.sstable_files {
@@ -1788,24 +1877,14 @@ impl UnifiedSstableReader {
         // Apply bandwidth optimizer decisions if available
         if let Some(optimizer) = bandwidth_optimizer {
             // Create compaction query context
-            use crate::storage::engines::core::io::zero_copy::traits::QueryContext;
             use std::collections::HashMap;
 
-            let query_context = QueryContext {
-                query_vector: None,
-                metadata_filters: HashMap::new(),
-                id_lookups: vec![],
-                top_k: None, // Full scan for compaction
-                distance_threshold: None,
-                query_type: QueryType::Batch,
-                collection_context: None,
-                priority: RequestPriority::Background,
-                estimated_result_size: None,
-                selectivity_hint: Some(1.0), // Full scan
-                collection_id: self.collection_id.clone(),
-                concurrent_queries: None,
-                cache_temperature: CacheTemperature::Cold,
-            };
+            // TODO: Replace with UnifiedCachingFilesystem context
+            let query_context = (
+                self.collection_id.clone(),
+                HashMap::<String, String>::new(), // metadata_filters
+                1.0, // selectivity_hint for full scan
+            );
 
             // Bandwidth optimization for compaction handled internally
             for _file_path in sstable_files {
@@ -1879,27 +1958,24 @@ impl UnifiedSstableReader {
 
         // CACHE-FIRST PATTERN: Check zero-copy metadata cache for each file
         // Cache key format: filename:collection_id:engine (filename-first for optimal sequential matching)
-        let mut cached_metadata = Vec::new();
+        let cached_metadata = Vec::<String>::new();
         let mut files_needing_load = Vec::new();
 
         for file_path in &collection_context.sstable_files {
             debug!("📁 Checking cache for SSTable file: {}", file_path);
 
-            // Filename-first key format optimizes sequential matching due to higher cardinality
-            let cache_key = format!("{}:{}:sst", file_path, self.collection_id);
-
-            match self.zero_copy_system.get_cached_metadata(&cache_key).await {
-                Ok(Some(metadata)) => {
-                    debug!("✅ Cache HIT for file: {}", file_path);
-                    cached_metadata.push((file_path.clone(), metadata));
-                }
-                Ok(None) => {
-                    debug!("❌ Cache MISS for file: {}", file_path);
+            // UnifiedCachingFilesystem handles caching internally
+            // Try to get metadata (will use cache if available)
+            match self.unified_filesystem.metadata(file_path).await {
+                Ok(metadata) => {
+                    debug!("✅ Got metadata for file: {}", file_path);
+                    // Convert FileMetadata to the format needed here
+                    // For now, we'll need to load the file to get SSTable metadata
                     files_needing_load.push(file_path.clone());
                 }
                 Err(e) => {
                     warn!(
-                        "⚠️ Cache error for file {}: {}, falling back to load",
+                        "⚠️ Error getting metadata for file {}: {}, will try to load",
                         file_path, e
                     );
                     files_needing_load.push(file_path.clone());
@@ -2364,7 +2440,7 @@ impl UnifiedSstableReader {
                 let mut metadata_map = std::collections::HashMap::new();
                 for (key, item) in &record.metadata {
                     if let Some(value) = &item.value {
-                        use crate::proto::proximadb_v1::sql_value;
+                        
                         let typed_value = match value {
                             crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
                                 MetadataValue::String(std::sync::Arc::from(s.as_str()))
@@ -2426,7 +2502,7 @@ impl UnifiedSstableReader {
         Ok(scored_results)
     }
 
-    /// Full scan strategy implementation with parallel file processing
+    /// Full scan strategy implementation with disk cache optimization
     async fn full_scan_strategy(
         &self,
         context: &CollectionContext,
@@ -2451,6 +2527,19 @@ impl UnifiedSstableReader {
                 context.sstable_files.len(),
                 file_path
             );
+
+            // For remote files, check if already in disk cache
+            let is_remote = !file_path.starts_with("file://") &&
+                           !file_path.starts_with("/") &&
+                           file_path.contains("://");
+            if is_remote {
+                let cache_status = self.unified_filesystem.metadata(file_path).await;
+                if cache_status.is_ok() {
+                    debug!("💾 SST: File {} found in disk cache, using cached copy", file_path);
+                } else {
+                    debug!("☁️ SST: File {} will be downloaded to disk cache", file_path);
+                }
+            }
 
             // Validate SST1 magic marker before attempting to read the file
             match self.validate_sst_file(file_path).await {
@@ -3897,21 +3986,12 @@ impl UnifiedSstableReader {
         ]) as usize;
         offset += 4 + index_len;
 
-        // Convert zero_copy QueryType to block_filter QueryType
-        let zero_copy_query_type = search_strategy.to_query_type();
-        let block_query_type = match zero_copy_query_type {
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::IdLookup =>
+        // Convert ReadStrategy to block_filter QueryType
+        let block_query_type = match search_strategy {
+            ReadStrategy::FullScan | ReadStrategy::CompactionDirect | ReadStrategy::SearchOptimized =>
+                crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
+            ReadStrategy::FilteredScan(_) =>
                 crate::storage::engines::impls::sst::readers::block_filter::QueryType::PointQuery,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::SimilaritySearch =>
-                crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::MetadataFilter =>
-                crate::storage::engines::impls::sst::readers::block_filter::QueryType::MetadataFilter,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::VectorSearch =>
-                crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::Batch =>
-                crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
-            crate::storage::engines::core::io::zero_copy::traits::QueryType::FullScan =>
-                crate::storage::engines::impls::sst::readers::block_filter::QueryType::FullScan,
         };
 
         // Create intelligent block filter based on strategy
@@ -4343,6 +4423,8 @@ impl UnifiedSstableReader {
                     enable_metadata_compression: false,
                     compression_threshold_bytes: 0,
                     dictionary_compression: false,
+                    vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+                    metadata_algorithm: None,
                 },
                 compression_algorithm: CompressionAlgorithm::None,
                 uncompressed_size: 0,
@@ -4654,5 +4736,16 @@ impl Default for ReaderConfig {
             enable_read_ahead: true,
             read_ahead_blocks: 5,
         }
+    }
+}
+
+// Helper function to convert JSON value to string for comparison
+fn json_value_to_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        _ => value.to_string(),
     }
 }

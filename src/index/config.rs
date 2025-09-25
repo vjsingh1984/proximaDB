@@ -1018,12 +1018,12 @@ mod tests {
         let mut config = IndexConfig::default();
         config.hnsw_config = Some(HnswConfig::default());
 
-        let hnsw_config = config.get_algorithm_config("HNSW");
+        let hnsw_config = config.algorithm_config("HNSW");
         assert!(hnsw_config.contains_key("m"));
         assert!(hnsw_config.contains_key("ef_construction"));
         assert!(hnsw_config.contains_key("update_mode"));
 
-        let empty_config = config.get_algorithm_config("UNKNOWN");
+        let empty_config = config.algorithm_config("UNKNOWN");
         assert!(empty_config.contains_key("update_mode")); // Should contain general config
         assert!(!empty_config.contains_key("m")); // Should not contain HNSW-specific config
     }

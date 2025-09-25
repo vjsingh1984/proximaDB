@@ -41,7 +41,7 @@ mod tests {
             tags: vec!["ssd".to_string()],
         }];
 
-        config.sst_config = SstConfig {
+        config.sst_config = Some(SstConfig {
             level_count: 3,
             compaction_threshold: 2,
             block_size_kb: 4096,
@@ -59,7 +59,8 @@ mod tests {
             prefetch_enabled: false,
             prefetch_size_kb: 64,
             decompression_cache_config: None,
-        };
+            compaction_config: Default::default(),
+        });
 
         // Configure write buffer separately
         config.wal_config = WriteBufferUserConfig {
@@ -88,16 +89,15 @@ mod tests {
             .as_millis() as i64;
 
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: vec![0.1; 128],
-            metadata: vec![],
-            timestamp: now as u32,
-            updated_at: Some(now as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: now,
+            updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: None,
         }
     }
 
@@ -224,7 +224,7 @@ mod tests {
                         .await
                         .map(|_| "write")
                         .map_err(|_| {
-                            crate::core::StorageError::SstStorage("write failed".to_string())
+                            crate::core::StorageError::SstEngine("write failed".to_string())
                         })
                 });
             } else {
@@ -310,9 +310,9 @@ mod tests {
         }
 
         // Verify operations completed
-        assert!(results.get(key) > &0);
-        assert!(results.get(key) > &0);
-        assert!(results.get(key) > &0);
+        assert!(results.get("create").unwrap_or(&0) > &0);
+        assert!(results.get("write").unwrap_or(&0) > &0);
+        assert!(results.get("delete").unwrap_or(&0) > &0);
 
         // Cleanup
         let _ = std::fs::remove_dir_all(test_dir);

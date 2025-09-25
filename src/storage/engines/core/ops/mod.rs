@@ -11,7 +11,6 @@ pub mod performance_optimization;
 
 // Import common types used across the module
 use crate::core::search::FilterExpression;
-use serde::{Deserialize, Serialize};
 
 /// Filterable metadata column configuration
 #[derive(Debug, Clone)]
@@ -895,7 +894,7 @@ mod tests {
         assert_eq!(config.engine_name, "universal");
         assert_eq!(config.dimension, 768);
         assert!(matches!(config.engine_type, EngineType::RowBased));
-        assert!(config.storage_config.block_config.enable_compression);
+        assert!(config.storage_config.block_config.compression);
     }
 
     #[test]

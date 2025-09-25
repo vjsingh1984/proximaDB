@@ -4,7 +4,6 @@ pub mod json;
 pub mod prometheus;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use json::JsonExporter;

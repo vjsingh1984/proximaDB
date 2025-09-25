@@ -1,209 +1,62 @@
-= ProximaDB Enterprise Documentation
-:toc: macro
-:toclevels: 4
+= ProximaDB Documentation
 :icons: font
-:source-highlighter: highlight.js
 
 [.lead]
-**Complete enterprise documentation for ProximaDB v1.0.4** - 100% production ready with comprehensive monitoring and enterprise capabilities.
+**Welcome to ProximaDB Documentation**
 
-image:https://img.shields.io/badge/Production-Ready-brightgreen[Production Ready]
-image:https://img.shields.io/badge/Documentation-Complete-blue[Documentation Complete]
-image:https://img.shields.io/badge/Version-1.0.4-success[Version]
+→ **link:README.adoc[Go to Documentation Hub]**
 
-toc::[]
+This is the entry point for ProximaDB documentation. The main documentation hub provides:
 
-== 🚀 Production Status Overview
+* Complete documentation index organized by topic
+* Quick navigation for common tasks
+* Role-based documentation paths
+* Technical and business documentation
 
-[source,mermaid]
-----
-graph TB
-    subgraph "📊 Production Certification"
-        A[ProximaDB Enterprise v1.0.4<br/>✅ 100% Production Ready<br/>✅ 2,847+ QPS<br/>✅ 94.2% Cache Efficiency]
-    end
-    
-    subgraph "📚 Documentation Suite"
-        B[Business Overview<br/>📋 Value Proposition]
-        C[Technical Architecture<br/>🏗️ System Design]
-        D[Operations Guide<br/>🔧 Production Ops]
-        E[Production Runbook<br/>📋 Daily Operations]
-    end
-    
-    subgraph "🔍 Reference Materials"
-        F[Architecture Diagram<br/>🎨 Visual Reference]
-        G[Roadmap Status<br/>📈 Implementation Status]
-        H[API Documentation<br/>🔗 Developer Guide]
-    end
-    
-    A --> B
-    A --> C
-    A --> D
-    A --> E
-    
-    B --> F
-    C --> F
-    D --> G
-    E --> H
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#F44336
-----
+== Quick Links
 
-== 📋 Documentation Structure
+* **link:../README.adoc[Project README]** - Installation and overview
+* **link:quickstart/getting_started.adoc[Getting Started]** - 5-minute setup
+* **link:benchmarks/README.adoc[Benchmarks]** - Performance analysis
+* **link:enterprise/production_deployment_guide.adoc[Production Guide]** - Enterprise deployment
 
-=== Core Documentation
+== Legacy Navigation (Use Main Hub Above)
 
-[cols="3,2,4,2", options="header"]
-|===
-| Document | Purpose | Description | Status
+=== Getting Started
+* link:quickstart/getting_started.adoc[Quick Start Guide] - Production deployment in 5 minutes
+* link:PERFORMANCE.adoc[Performance Benchmarks] - Validated performance specifications
 
-| **Business Overview**
-| link:business_overview.adoc[business_overview.adoc]
-| Value proposition and business benefits
-| ✅ **Complete**
+== Technical Documentation
 
-| **Technical Architecture**
-| link:technical_architecture.adoc[technical_architecture.adoc]
-| System design and component overview
-| ✅ **Complete**
+=== Architecture
+* link:technical/platform_architecture.adoc[Platform Architecture] - Overall system architecture
+* link:technical/storage_engine_layouts.adoc[Storage Engine Layouts] - Detailed storage engine specifications
+* link:technical/ai_intelligence_platform.adoc[AI Intelligence Platform] - AI and LLM integration
 
-| **Operations Guide**
-| link:operations_guide.adoc[operations_guide.adoc]
-| Deployment and monitoring procedures
-| ✅ **Complete**
+=== API Reference
+* link:reference/graph_api_reference.adoc[Graph API Reference] - Graph database API documentation
+* link:reference/sks_technical_reference.adoc[Technical Reference] - Advanced technical specifications
 
-| **Production Runbook**
-| link:operations/production_runbook.adoc[operations/production_runbook.adoc]
-| Daily operations and troubleshooting
-| ✅ **Complete**
-|===
+== Operations
 
-=== Reference Documentation
+=== Production Deployment
+* link:operations/PRODUCTION_RUNBOOK.adoc[Production Runbook] - Production operations guide
+* link:enterprise/production_deployment_guide.adoc[Production Deployment] - Enterprise deployment guide
 
-[cols="3,2,4,2", options="header"]
-|===
-| Document | Purpose | Description | Status
+=== Performance and Monitoring
+* link:PERFORMANCE.adoc[Performance Guide] - Complete performance analysis
 
-| **Architecture Diagram**
-| link:09-roadmap/analysis/class_diagram.mmd[09-roadmap/analysis/class_diagram.mmd]
-| Complete system class diagram
-| ✅ **Complete**
+== Enterprise Features
 
-| **Production Status**
-| link:comprehensive_production_status.adoc[comprehensive_production_status.adoc]
-| Detailed production certification
-| ✅ **Complete**
+=== Enterprise Platform
+* link:enterprise/enterprise_platform_overview.adoc[Enterprise Platform] - Enterprise features overview
+* link:enterprise/enterprise_deployment.adoc[Enterprise Deployment] - Automated deployment and scaling
+* link:enterprise/production_deployment_guide.adoc[Production Guide] - Production deployment best practices
 
-| **Enterprise Guide**
-| link:proximadb_enterprise_guide.adoc[proximadb_enterprise_guide.adoc]
-| Comprehensive enterprise documentation
-| ✅ **Complete**
+== Development and Roadmap
 
-| **Roadmap Overview**
-| link:09-roadmap/README.md[09-roadmap/README.md]
-| Implementation roadmap status
-| ✅ **Complete**
-|===
+=== Current Status
+* link:unified_strategy_usage_guide.adoc[Implementation Guide] - Current implementation strategy
 
-=== Configuration and Examples
-
-[cols="3,2,4,2", options="header"]
-|===
-| Document | Purpose | Description | Status
-
-| **Example Configuration**
-| link:config/example_config.toml[config/example_config.toml]
-| Production configuration examples
-| ✅ **Complete**
-
-| **Deployment Scripts**
-| link:../scripts/enterprise_deploy.sh[../scripts/enterprise_deploy.sh]
-| Automated deployment procedures
-| ✅ **Complete**
-|===
-
-== 🎯 Quick Navigation
-
-=== For Business Stakeholders
-1. **Start Here**: link:business_overview.adoc[Business Overview] - Value proposition and benefits
-2. **Production Status**: link:comprehensive_production_status.adoc[Production Certification] - Complete readiness verification
-
-=== For Technical Teams
-1. **Architecture**: link:technical_architecture.adoc[Technical Architecture] - System design overview
-2. **Class Diagram**: link:09-roadmap/analysis/class_diagram.mmd[Architecture Diagram] - Complete component relationships
-3. **Operations**: link:operations_guide.adoc[Operations Guide] - Deployment procedures
-
-=== For DevOps/SRE Teams
-1. **Production Runbook**: link:operations/production_runbook.adoc[Production Runbook] - Daily operations
-2. **Monitoring**: Dashboard at http://localhost:5678/dashboard - Real-time monitoring
-3. **Deployment**: link:../scripts/enterprise_deploy.sh[Deployment Scripts] - Automated deployment
-
-== 🏗️ Documentation Architecture Philosophy
-
-=== Hierarchical Abstraction Model
-
-[source,mermaid]
-----
-graph TD
-    subgraph "📊 Level 1: Executive Overview"
-        A[Business Value<br/>High-level Benefits<br/>ROI and Competitive Advantage]
-    end
-    
-    subgraph "🏗️ Level 2: Technical Architecture"
-        B[System Components<br/>Storage Engines, APIs, Cache<br/>Component Relationships]
-        C[Performance Metrics<br/>Throughput, Latency, Efficiency<br/>Production Benchmarks]
-    end
-    
-    subgraph "🔧 Level 3: Implementation Details"
-        D[Code Architecture<br/>Classes, Traits, Methods<br/>Implementation Patterns]
-        E[Operations Procedures<br/>Deployment, Monitoring, Debug<br/>Step-by-step Guides]
-    end
-    
-    subgraph "📋 Level 4: Reference Materials"
-        F[API Documentation<br/>Endpoint Details<br/>Request/Response Schemas]
-        G[Configuration Reference<br/>Parameter Details<br/>Tuning Guidelines]
-    end
-    
-    A --> B
-    A --> C
-    B --> D
-    C --> E
-    D --> F
-    E --> G
-    
-    style A fill:#4CAF50
-    style B fill:#2196F3
-    style C fill:#FF9800
-    style D fill:#9C27B0
-    style E fill:#F44336
-    style F fill:#795548
-    style G fill:#607D8B
-----
-
-=== Mermaid Diagram Progression
-
-**High Abstraction (Level 1)**: Simple block diagrams showing business value and system purpose
-
-**Medium Abstraction (Level 2)**: Component architecture diagrams showing major systems and data flow
-
-**Low Abstraction (Level 3)**: Detailed class diagrams showing implementation relationships
-
-**Reference Level (Level 4)**: Sequence diagrams showing operational procedures and API interactions
-
-== 🔗 External References
-
-=== Production Systems
-- **Enterprise Dashboard**: http://localhost:5678/dashboard
-- **API Documentation**: http://localhost:5678/docs
-- **Health Endpoints**: http://localhost:5678/health
-
-=== Development Resources
-- **GitHub Repository**: https://github.com/proximadb/proximadb
-- **Issue Tracker**: https://github.com/proximadb/proximadb/issues
-- **Discussions**: https://github.com/proximadb/proximadb/discussions
-
-_Last Updated: September 12, 2025_ +
-_ProximaDB Enterprise v1.0.4 - Production Documentation Suite_
+=== Documentation and Resources
+* link:business/competitive_advantages.adoc[Competitive Analysis] - Market positioning and advantages

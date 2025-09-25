@@ -1,13 +1,17 @@
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
+
 use anyhow::Result;
 use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb::compute::quantization::{
     BinaryQuantization, InMemoryCodebookStore, ProductQuantization as PqConfig,
-    QuantizationLevelType, SearchStage, StorageQuantizationConfig, StorageQuantizationEngine,
+    QuantizationLevel, StorageQuantizationConfig, StorageQuantizationEngine,
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb::VectorRecord;
-use proximadb::storage::engines::sst::SstStorage;
+use proximadb::proto::proximadb_v1::VectorRecord;
+use proximadb::storage::engines::impls::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::local::LocalConfig;
 use proximadb::storage::persistence::filesystem::{FileOptions, FilesystemPerformanceConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -46,7 +50,7 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
         (
             "Binary Quantization",
             Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
                     threshold: None,
                     sign_based: false,
                 })),
@@ -61,7 +65,7 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
         (
             "PQ8 Quantization",
             Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Pq(PqConfig {
+                level_type: Some(QuantizationLevel::Pq(PqConfig {
                     num_subvectors: 8,
                     bits_per_code: 8,
                     codebook_id: None,
@@ -73,7 +77,7 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
         (
             "PQ4 Quantization",
             Some(UnifiedQuantizationLevel {
-                level_type: Some(QuantizationLevelType::Pq(PqConfig {
+                level_type: Some(QuantizationLevel::Pq(PqConfig {
                     num_subvectors: 16,
                     bits_per_code: 4,
                     codebook_id: None,
@@ -146,7 +150,7 @@ async fn run_quantization_test(
     let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
 
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
-    let mut sst_storage = SstStorage::new(sst_config.clone(), filesystem, distance_compute).await?;
+    let mut sst_storage = SstEngine::new().await?;
 
     // Calculate baseline (uncompressed) size
     let baseline_size = vectors.len() * dimension * 4; // FP32 = 4 bytes per float
@@ -163,7 +167,7 @@ async fn run_quantization_test(
             distance_compute.clone(),
             codebook_store,
         ));
-        let quantization_engine =
+        let mut quantization_engine =
             StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
         // Train quantization model
@@ -177,7 +181,7 @@ async fn run_quantization_test(
                 Some(
                     &vectors
                         .iter()
-                        .map(|v| v.id.clone().unwrap_or_default())
+                        .map(|v| v.id.clone())
                         .collect::<Vec<_>>(),
                 ),
             )
@@ -205,21 +209,41 @@ async fn run_quantization_test(
     // Flush vectors to SST
     let flush_start = Instant::now();
     let flush_params = FlushParameters {
-        force: false,
         collection_id: Some("test_collection".to_string()),
+        force: false,
+        synchronous: true,
+        hints: std::collections::HashMap::new(),
+        timeout_ms: None,
+        vector_records: vectors.to_vec(),
+        trigger_compaction: false,
+        batch_ids: vec![],
         collection_config: None,
+        estimated_size: 0,
     };
 
-    sst_storage.insert_batch(vectors.to_vec()).await?;
-    let flush_result = sst_storage.do_flush(flush_params).await?;
+    // Vectors are already in flush_params, no need for insert_batch
+    let flush_result = sst_storage.do_flush(&flush_params).await?;
     let flush_time = flush_start.elapsed();
 
     // Perform search test
-    let query = &vectors[0].vector;
+    let query = vectors[0].vector.clone();
+    let search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+        vector: Some(query),
+        top_k: Some(10),
+        distance_metric: Some(DistanceMetric::Cosine),
+        ..Default::default()
+    });
+
+    let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;
+    let collection = std::sync::Arc::new(test_env.create_test_collection());
+    let query_context = proximadb::storage::traits::StorageQueryContext {
+        search_params,
+        collection,
+        metadata: proximadb::storage::traits::StorageQueryMetadata::default(),
+    };
+
     let search_start = Instant::now();
-    let search_results = sst_storage
-        .search_vectors(query, 10, None, &DistanceMetric::Cosine)
-        .await?;
+    let search_results = sst_storage.search_vectors_unified(&query_context).await?;
     let search_time = search_start.elapsed();
 
     // Calculate compression ratio
@@ -257,7 +281,7 @@ async fn run_quantization_test(
         search_time.as_micros() as f64 / 1000.0
     );
     println!("    • Search results: {} found", search_results.len());
-    println!("    • Entries flushed: {}", flush_result.entries_flushed);
+    println!("    • Entries flushed: {:?}", flush_result.entries_flushed);
 
     Ok(TestResult {
         config_name: config_name.to_string(),
@@ -296,16 +320,15 @@ fn generate_sparse_vectors(count: usize, dim: usize, sparsity_percent: usize) ->
         }
 
         vectors.push(VectorRecord {
-            id: Some(format!("vec_{}", i)),
+            id: format!("vec_{}", i),
             vector,
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now().timestamp(),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            rank: None,
-            score: None,
-            distance: None,
+            quantized_vector: vec![],
+            source: None,
         });
     }
 

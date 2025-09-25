@@ -6,8 +6,8 @@ use tracing::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tonic::transport::Channel;
-use proximadb::proto::proximadb::proxima_db_client::ProximaDbClient;
-use proximadb::proto::proximadb::{
+use proximadb::proto::proximadb_v1::proxima_db_client::ProximaDbClient;
+use proximadb::proto::proximadb_v1::{
     CollectionRequest, CollectionOperation, VectorBatchRequest, VectorOperation,
     VectorSearchRequest, SearchQuery, SearchParameters, MetadataFilter, MetadataValue,
     metadata_value, FilterableColumnSpec, FilterableDataType, IncludeFields,
@@ -244,13 +244,13 @@ mod performance_tests {
         
         let create_request = Request::new(CollectionRequest {
             operation: Some(CollectionOperation::Create(
-                proximadb::proto::proximadb::CreateCollectionRequest {
-                    config: Some(proximadb::proto::proximadb::CollectionConfig {
+                proximadb::proto::proximadb_v1::CreateCollectionRequest {
+                    config: Some(proximadb::proto::proximadb_v1::CollectionConfig {
                         name: collection_name.clone(),
                         dimension,
-                        distance_metric: proximadb::proto::proximadb::DistanceMetric::Cosine as i32,
-                        storage_engine: proximadb::proto::proximadb::StorageEngine::Viper as i32,
-                        primary_indexing_algorithm: proximadb::proto::proximadb::IndexingAlgorithm::Hnsw as i32,
+                        distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                        storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Viper as i32,
+                        primary_indexing_algorithm: proximadb::proto::proximadb_v1::IndexingAlgorithm::Hnsw as i32,
                         filterable_columns: vec![
                             FilterableColumnSpec {
                                 name: "category".to_string(),
@@ -310,7 +310,7 @@ mod performance_tests {
                     );
                     
                     vector_ops.push(VectorOperation::Insert(
-                        proximadb::proto::proximadb::VectorInsert {
+                        proximadb::proto::proximadb_v1::VectorInsert {
                             id: Some(format!("vec_{:06}", i)),
                             vector: vector_data,
                             metadata,
@@ -348,7 +348,7 @@ mod performance_tests {
                     namespace: None,
                 }],
                 top_k: 10,
-                distance_metric_override: Some(proximadb::proto::proximadb::DistanceMetric::Cosine as i32),
+                distance_metric_override: Some(proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32),
                 search_params: Some(SearchParameters {
                     ef_search: Some(50),
                     max_connections: None,
@@ -381,7 +381,7 @@ mod performance_tests {
                     vector: query_vector.clone(),
                     metadata_filter: Some(MetadataFilter {
                         field: "category".to_string(),
-                        operator: proximadb::proto::proximadb::FilterOperator::Eq as i32,
+                        operator: proximadb::proto::proximadb_v1::FilterOperator::Eq as i32,
                         value: Some(MetadataValue {
                             value: Some(metadata_value::Value::StringValue(
                                 "cat_1".to_string()
@@ -391,7 +391,7 @@ mod performance_tests {
                     namespace: None,
                 }],
                 top_k: 10,
-                distance_metric_override: Some(proximadb::proto::proximadb::DistanceMetric::Cosine as i32),
+                distance_metric_override: Some(proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32),
                 search_params: Some(SearchParameters {
                     ef_search: Some(50),
                     max_connections: None,
@@ -434,7 +434,7 @@ mod performance_tests {
         // Clean up - delete collection
         let delete_request = Request::new(CollectionRequest {
             operation: Some(CollectionOperation::Delete(
-                proximadb::proto::proximadb::DeleteCollectionRequest {
+                proximadb::proto::proximadb_v1::DeleteCollectionRequest {
                     name: collection_name.clone(),
                 },
             )),

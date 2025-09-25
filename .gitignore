@@ -1,5 +1,7 @@
 # Rust build artifacts and binaries
-/target/
+/target/*
+# Allow Criterion HTML reports to be tracked
+!/target/criterion/
 **/*.rs.bk
 *.pdb
 
@@ -205,7 +207,12 @@ flamegraph.svg
 
 # Benchmark results
 benches/target/
-criterion/
+# criterion/ - commented out to allow target/criterion/ tracking
+
+# Benchmark output files
+benchmark_*.txt
+*_benchmark_*.txt
+system_monitor.txt
 
 # Serverless/Cloud function packages
 *.zip
@@ -302,6 +309,7 @@ WAL_*.md
 reports/
 *.html
 !docs/**/*.html
+!target/criterion/**/*.html
 
 # Generated configuration files (but keep examples)
 #*_config.toml
@@ -320,7 +328,9 @@ clean_*.sh
 !setup.sh
 
 # Build artifacts
-target/
+target/*
+# Allow Criterion HTML reports to be tracked
+!target/criterion/
 build_rs_cov.profraw
 
 # Large binary tools
@@ -330,3 +340,4 @@ newcategory.txt
 ml_prompt.txt
 GEMINI.md
 AGENTS.md
+footer_cache.bin

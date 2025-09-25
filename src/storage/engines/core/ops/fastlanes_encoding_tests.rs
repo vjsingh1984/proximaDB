@@ -20,7 +20,7 @@ mod tests {
         
         // Decode
         let decoder = FastLanesDecoder::new(FastLanesScheme::BitPacked { bits: 16 });
-        let decoded = decoder.decode_f32(&encoded).expect("Decoding should succeed");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         // Verify
         assert_eq!(data.len(), decoded.len());
@@ -43,7 +43,7 @@ mod tests {
         let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { 
             base: data[0] as i64 
         });
-        let decoded = decoder.decode_f32(&encoded).expect("Decoding should succeed");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(data.len(), decoded.len());
         for (original, decoded) in data.iter().zip(decoded.iter()) {
@@ -69,7 +69,7 @@ mod tests {
             reference: min_val as i64,
             bits: 8,
         });
-        let decoded = decoder.decode_f32(&encoded).expect("Decoding should succeed");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(data.len(), decoded.len());
         for (original, decoded) in data.iter().zip(decoded.iter()) {
@@ -91,7 +91,7 @@ mod tests {
         assert!(encoded.len() < 100, "RunLength should compress repeated values");
         
         let decoder = FastLanesDecoder::new(FastLanesScheme::RunLength);
-        let decoded = decoder.decode_f32(&encoded).expect("Decoding should succeed");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(data, decoded, "RunLength encoding should preserve values exactly");
     }
@@ -114,7 +114,7 @@ mod tests {
         assert!(encoded.len() < data.len() * 2, "Dictionary should compress");
         
         let decoder = FastLanesDecoder::new(FastLanesScheme::Dictionary);
-        let decoded = decoder.decode_f32(&encoded).expect("Decoding should succeed");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(data, decoded, "Dictionary encoding should preserve values");
     }
@@ -140,7 +140,7 @@ mod tests {
             base: 100,
             patch_bits: 16,
         });
-        let decoded = decoder.decode_f32(&encoded).expect("Decoding should succeed");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(data.len(), decoded.len());
         for (i, (original, decoded)) in data.iter().zip(decoded.iter()).enumerate() {
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn test_sst_datablock_encoding() {
         use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
-        use crate::core::VectorRecord;
+        use crate::proto::proximadb_v1::VectorRecord;
         
         // Create sample vectors
         let mut records = Vec::new();
@@ -213,7 +213,7 @@ mod tests {
         
         // Decode and verify
         let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
-        let decoded = decoder.decode_f32(&encoded).expect("Decoding should succeed");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(superblock_data.len(), decoded.len());
     }
@@ -318,7 +318,7 @@ mod tests {
         assert!(encoded.len() < quantized_f32.len() * 2, "Should compress quantized data");
         
         let decoder = FastLanesDecoder::new(FastLanesScheme::Dictionary);
-        let decoded = decoder.decode_f32(&encoded).expect("Should decode");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Should decode");
         
         // Convert back to INT8 and verify
         let decoded_int8: Vec<i8> = decoded.iter()
@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(encoded.len(), 0, "Empty data should produce empty encoding");
         
         let decoder = FastLanesDecoder::new(FastLanesScheme::BitPacked { bits: 16 });
-        let decoded = decoder.decode_f32(&encoded).expect("Should decode empty data");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Should decode empty data");
         assert_eq!(decoded.len(), 0, "Should decode to empty");
     }
     
@@ -386,7 +386,7 @@ mod tests {
             let encoded = encoder.encode_f32(&data).expect("Should encode single value");
             
             let decoder = FastLanesDecoder::new(scheme);
-            let decoded = decoder.decode_f32(&encoded).expect("Should decode single value");
+            let decoded = decoder.decode_f32(&encoded, None).expect("Should decode single value");
             
             assert_eq!(decoded, data, "Single value should match");
         }
@@ -420,7 +420,7 @@ mod tests {
             reference: -1,
             bits: 16,
         });
-        let decoded = decoder.decode_f32(&encoded).expect("Should decode large data");
+        let decoded = decoder.decode_f32(&encoded, None).expect("Should decode large data");
         let decode_time = start.elapsed();
         
         println!("Large vector encoding: {} vectors, {} dimensions", num_vectors, dimension);
@@ -548,7 +548,7 @@ mod tests {
             
             // Verify decoding
             let decoder = FastLanesDecoder::new(test.scheme);
-            let decoded = decoder.decode_f32(&encoded).expect("Decoding should work");
+            let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should work");
             assert_eq!(test.data.len(), decoded.len());
         }
     }
@@ -594,7 +594,7 @@ mod tests {
             let encoded = encoder.encode_f32(&vectors).expect("Should encode embeddings");
             
             let decoder = FastLanesDecoder::new(scheme);
-            let decoded = decoder.decode_f32(&encoded).expect("Should decode embeddings");
+            let decoded = decoder.decode_f32(&encoded, None).expect("Should decode embeddings");
             
             // Calculate cosine similarity preservation
             let original_sim = cosine_similarity(&vectors[0..dimension], &vectors[dimension..dimension*2]);

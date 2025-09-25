@@ -4,7 +4,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tracing::{debug, trace};
 
 use super::traits::QueryType;
@@ -19,6 +19,7 @@ pub struct AccessEvent {
     /// Type of query that triggered the access
     pub query_type: QueryType,
     /// When the access occurred
+    #[serde(skip)]
     pub timestamp: Instant,
     /// Result of the access optimization
     pub result_type: String,
@@ -30,8 +31,10 @@ pub struct AccessStats {
     /// Total number of accesses
     pub total_accesses: u64,
     /// Last access time
+    #[serde(skip)]
     pub last_accessed: Instant,
     /// First access time
+    #[serde(skip)]
     pub first_accessed: Instant,
     /// Access frequency (accesses per hour)
     pub access_frequency: f64,
@@ -46,7 +49,7 @@ pub struct AccessStats {
 }
 
 /// Timing pattern classification
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum TimingPattern {
     /// Random access times
     Random,
@@ -647,6 +650,52 @@ impl AccessPatternTracker {
                 }
             })
             .collect()
+    }
+
+    /// Detect periodicity in access intervals
+    pub fn detect_periodicity(&self, intervals: &[Duration]) -> Option<Duration> {
+        if intervals.len() < 3 {
+            return None;
+        }
+
+        // Calculate mean and standard deviation
+        let sum: u64 = intervals.iter().map(|d| d.as_secs()).sum();
+        let mean = sum as f64 / intervals.len() as f64;
+
+        let variance: f64 = intervals
+            .iter()
+            .map(|d| {
+                let diff = d.as_secs() as f64 - mean;
+                diff * diff
+            })
+            .sum::<f64>() / intervals.len() as f64;
+
+        let std_dev = variance.sqrt();
+
+        // If standard deviation is low relative to mean, we have periodicity
+        let coefficient_of_variation = std_dev / mean;
+
+        if coefficient_of_variation < self.learning_params.periodicity_threshold {
+            Some(Duration::from_secs(mean as u64))
+        } else {
+            None
+        }
+    }
+
+    /// Check if intervals represent a burst pattern
+    pub fn is_burst_pattern(&self, intervals: &[Duration]) -> bool {
+        if intervals.is_empty() {
+            return false;
+        }
+
+        // Most intervals should be shorter than the burst threshold
+        let burst_count = intervals
+            .iter()
+            .filter(|&interval| interval < &self.learning_params.burst_threshold)
+            .count();
+
+        let burst_ratio = burst_count as f64 / intervals.len() as f64;
+        burst_ratio > 0.7 // 70% of intervals should be short for burst pattern
     }
 }
 

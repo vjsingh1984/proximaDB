@@ -1,7 +1,6 @@
 //! Cache metrics integration with ProximaDB's metrics framework
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;

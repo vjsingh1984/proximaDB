@@ -60,8 +60,8 @@ mod tests {
     fn test_phase1_boundary_detection_basic() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = get_hardware_capabilities();
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
         let builder = MatrixBuilder::new(
             distance_compute.clone(),
             hardware,
@@ -88,8 +88,7 @@ mod tests {
             .enumerate()
             .map(|(i, c)| {
                 let dist = distance_compute
-                    .calculate(&query, c, DistanceMetric::Euclidean)
-                    .unwrap();
+                    .distance(&query, c);
                 (i, dist)
             })
             .collect();
@@ -125,7 +124,7 @@ mod tests {
 
         // Verify we found boundary centroids
         assert!(
-            !expanded.is_none() || primary.len() >= 3,
+            !expanded.is_empty() || primary.len() >= 3,
             "Should have either expanded centroids or sufficient primary ones"
         );
     }
@@ -134,8 +133,8 @@ mod tests {
     fn test_phase2_spillover_detection() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let hardware = get_hardware_capabilities();
-        let distance_compute = Arc::new(UnifiedDistanceCompute::new(hardware.clone()));
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let builder =
             MatrixBuilder::new(distance_compute.clone(), hardware, DistanceMetric::Cosine);
 
@@ -169,8 +168,7 @@ mod tests {
                     let mut distances = Vec::new();
                     for c in 0..centroids.len() {
                         let dist = distance_compute
-                            .calculate(&rowgroup_vectors[v], &centroids[c], DistanceMetric::Cosine)
-                            .unwrap();
+                            .distance(&rowgroup_vectors[v], &centroids[c]);
                         distances.push((c, dist));
                     }
                     distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
@@ -246,12 +244,14 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         // Test the adaptive coverage formula: coverage(k,d) = max(0.1, min(1.0, exp(-2 × log(k/d + 1))))
+        // The formula exp(-2 * ln(k/d + 1)) gives values that decrease as k/d increases
+        // For small k/d, the value is closer to 1; for large k/d, it approaches 0
         let test_cases = vec![
-            (10, 100, 0.1, 0.2),   // Low k/d ratio -> minimum coverage
-            (50, 100, 0.2, 0.4),   // Moderate k/d ratio
-            (100, 100, 0.3, 0.5),  // k = d -> moderate coverage
-            (200, 100, 0.5, 0.7),  // k > d -> higher coverage
-            (1000, 100, 0.8, 1.0), // High k/d ratio -> maximum coverage
+            (10, 100, 0.8, 0.9),   // Low k/d ratio -> high coverage
+            (50, 100, 0.4, 0.6),   // Moderate k/d ratio
+            (100, 100, 0.2, 0.4),  // k = d -> moderate coverage
+            (200, 100, 0.1, 0.2),  // k > d -> lower coverage
+            (1000, 100, 0.1, 0.1), // High k/d ratio -> minimum coverage (clamped at 0.1)
         ];
 
         for (k, d, min_expected, max_expected) in test_cases {

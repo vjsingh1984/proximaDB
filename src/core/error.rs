@@ -31,6 +31,9 @@ pub enum VectorDBError {
 
     #[error("Filesystem error: {0}")]
     Filesystem(String),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 }
 
 // Type alias for backward compatibility
@@ -48,8 +51,8 @@ impl From<crate::storage::persistence::filesystem::FilesystemError> for VectorDB
 
 #[derive(Error, Debug)]
 pub enum StorageError {
-    #[error("SST storage error: {0}")]
-    SstStorage(String),
+    #[error("SST engine error: {0}")]
+    SstEngine(String),
 
     #[error("MMAP error: {0}")]
     Mmap(String),

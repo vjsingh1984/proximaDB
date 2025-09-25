@@ -15,7 +15,7 @@ use tracing::{debug, info, trace};
 
 use crate::core::compression::CompressionAlgorithm;
 use crate::core::serialization::{VectorSerializationConfig, CompressionAlgorithm as CoreCompression};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 /// Optimal serialization strategy configuration
 #[derive(Debug, Clone)]

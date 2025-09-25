@@ -33,10 +33,7 @@
 //! 4. **SWIFT (SwiftEngine)**: Hierarchical superblock architecture
 //!    - Best for: Fast traversal, hot data caching
 //!    
-//! 5. **PRISM (PrismEngine)**: Memory-optimized with tiered caching
-//!    - Best for: Low-latency, high-throughput scenarios
-//!    
-//! 6. **RAPTOR (RaptorEngine)**: Experimental parallel tiered storage
+//! 5. **RAPTOR (RaptorEngine)**: Experimental parallel tiered storage
 //!    - Best for: Research and development of new storage patterns
 //!
 //! ## Integration Points
@@ -109,9 +106,8 @@ impl Default for PerformanceTier {
 /// Choose storage strategy based on workload characteristics:
 ///
 /// ### OLTP Workloads (Real-time):
-/// - **Lsm (SST)**: Best for frequent updates, point queries
+/// - **Sst**: Best for frequent updates, point queries
 /// - **Swift**: Optimized for low-latency traversal
-/// - **Prism**: Memory-first for ultra-low latency
 ///
 /// ### OLAP Workloads (Analytics):
 /// - **Viper**: Columnar with 5-10x compression
@@ -127,7 +123,7 @@ impl Default for PerformanceTier {
 /// | Strategy | Write | Read  | Compression | Memory |
 /// |----------|-------|-------|-------------|--------|
 /// | Viper    | 500K  | 50ms  | 5-10x       | Low    |
-/// | Lsm      | 200K  | 5ms   | 3-5x        | Medium |
+/// | Sst      | 200K  | 5ms   | 3-5x        | Medium |
 /// | Swift    | 300K  | 2ms   | 2-3x        | High   |
 /// | Raptor   | 250K  | 3ms   | 4-6x        | Medium |
 /// ```
@@ -137,13 +133,9 @@ pub enum StorageEngineStrategy {
     /// Best for: Analytics, batch operations, maximum compression
     Viper,
 
-    /// LSM: Log-Structured Merge Tree (Alternative for comparison)
-    /// Best for: OLTP, real-time updates, point queries
-    Lsm,
-
-    /// PRISM: Progressive Retrieval through Indexed Storage Management (Memory-optimized)
-    /// Best for: Ultra-low latency, small working sets
-    Prism,
+    /// SST: Sorted String Table storage engine
+    /// Best for: OLTP, real-time updates, point queries, row-based access
+    Sst,
 
     /// SWIFT: Storage With Instant Fast Traversal (Hierarchical superblock architecture)
     /// Best for: Fast sequential access, range queries
@@ -318,6 +310,22 @@ impl UnifiedMetricsCollector {
         let mut metrics = self.metrics.write().await;
         *metrics = MetricsData::default();
     }
+
+    /// Record an operation with timing
+    pub async fn record_operation(
+        &self,
+        op_type: MetricsOperationType,
+        success: bool,
+        bytes: usize,
+        duration: std::time::Duration,
+    ) {
+        self.record(
+            op_type,
+            duration.as_millis() as u64,
+            success,
+            if bytes > 0 { Some(bytes) } else { None },
+        );
+    }
 }
 
 impl Clone for UnifiedMetricsCollector {
@@ -431,6 +439,8 @@ impl MetricsData {
             } else {
                 0.0
             },
+            cache_hits: self.cache_hits,
+            cache_misses: self.cache_misses,
             last_reset: self.last_reset,
         }
     }
@@ -477,6 +487,8 @@ pub struct MetricsSnapshot {
     pub p99_latency_ms: u64,
     pub operations_per_type: HashMap<String, u64>,
     pub error_rate: f64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
     pub last_reset: chrono::DateTime<chrono::Utc>,
 }
 
@@ -529,11 +541,17 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
     /// Retrieve a specific vector by ID from storage (required)
     /// This method should search across all storage layers (memtable, SSTables, Parquet files)
+    ///
+    /// # Parameters
+    /// - `collection_id`: The collection to search in
+    /// - `base_path`: The base storage path (from collection.storage_assignment.base_location)
+    /// - `vector_id`: The ID of the vector to retrieve
     async fn vector_by_id(
         &self,
         collection_id: &str,
+        base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<crate::core::VectorRecord>>;
+    ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>>;
 
     /// Engine-specific unified search with optimization capabilities (required)
     /// Each engine implements its own optimizations:
@@ -595,7 +613,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         use crate::storage::unified_scan_strategy::ScanCapabilities;
 
         match self.strategy() {
-            StorageEngineStrategy::Lsm => ScanCapabilities {
+            StorageEngineStrategy::Sst => ScanCapabilities {
                 // SST capabilities
                 supports_predicate_pushdown: false,
                 supports_column_projection: false,
@@ -675,22 +693,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 supports_tier_aware_scanning: true,
                 supports_consolidated_reading: false,
             },
-            StorageEngineStrategy::Prism => ScanCapabilities {
-                // PRISM capabilities - tree-based with FastLanes
-                supports_predicate_pushdown: false,
-                supports_column_projection: false,
-                supports_row_group_pruning: false,
-                supports_parallel_column_evaluation: false,
-                supports_bloom_filters: false,
-                supports_block_cache: true,
-                supports_range_scans: true,
-                supports_index_scans: true,
-                supports_progressive_quantization: false,
-                supports_zone_maps: false,
-                supports_streaming: false,
-                supports_tier_aware_scanning: true,
-                supports_consolidated_reading: false,
-            },
             _ => ScanCapabilities {
                 // Default minimal capabilities
                 supports_predicate_pushdown: false,
@@ -726,9 +728,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn supports_collection_level_operations(&self) -> bool {
         match self.strategy() {
             StorageEngineStrategy::Viper => true, // VIPER supports collection-level ops
-            StorageEngineStrategy::Lsm => false,  // LSM operates on entire tree
+            StorageEngineStrategy::Sst => false,  // SST operates on entire tree
             StorageEngineStrategy::Hybrid => true, // Hybrid supports collection-level ops
-            StorageEngineStrategy::Prism => true, // Prism supports collection-level ops
             StorageEngineStrategy::Swift => true, // SWIFT supports collection-level ops
             StorageEngineStrategy::Nova => true,  // NOVA supports collection-level ops
             StorageEngineStrategy::Raptor => true, // RAPTOR supports collection-level ops
@@ -743,9 +744,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
     fn supports_atomic_operations(&self) -> bool {
         match self.strategy() {
             StorageEngineStrategy::Viper => true, // VIPER has atomic staging operations
-            StorageEngineStrategy::Lsm => false,  // LSM has eventual consistency
+            StorageEngineStrategy::Sst => false,  // SST has eventual consistency
             StorageEngineStrategy::Hybrid => true, // Hybrid provides atomic guarantees
-            StorageEngineStrategy::Prism => true, // Prism provides atomic guarantees
             StorageEngineStrategy::Swift => true, // SWIFT provides atomic guarantees
             StorageEngineStrategy::Nova => true,  // NOVA provides atomic guarantees
             StorageEngineStrategy::Raptor => false, // RAPTOR uses eventual consistency
@@ -1037,7 +1037,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 100 * 1024 * 1024) // 100MB default
             }
-            StorageEngineStrategy::Lsm => {
+            StorageEngineStrategy::Sst => {
                 // LSM default: flush when memtable size exceeds threshold
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
@@ -1046,11 +1046,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 // Hybrid: use VIPER heuristics
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 100 * 1024 * 1024)
-            }
-            StorageEngineStrategy::Prism => {
-                // Prism: use LSM heuristics
-                let stats = self.get_engine_stats().await?;
-                Ok(stats.memory_usage_bytes > 64 * 1024 * 1024)
             }
             StorageEngineStrategy::Swift => {
                 // SWIFT: use SST-like heuristics
@@ -1089,7 +1084,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .unwrap_or(0)
                     > 10)
             }
-            StorageEngineStrategy::Lsm => {
+            StorageEngineStrategy::Sst => {
                 // LSM default: compact when level ratios are unbalanced
                 let stats = self.get_engine_stats().await?;
                 Ok(stats
@@ -1102,16 +1097,6 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Hybrid => {
                 // Hybrid: check both strategies
                 self.should_flush(collection_id).await
-            }
-            StorageEngineStrategy::Prism => {
-                // Prism: use LSM compaction strategy
-                let stats = self.get_engine_stats().await?;
-                Ok(stats
-                    .engine_specific
-                    .get("index_count")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0)
-                    > 10)
             }
             StorageEngineStrategy::Swift => {
                 // SWIFT: compact based on file count
@@ -1245,6 +1230,72 @@ pub trait UnifiedStorageEngine: Send + Sync {
     }
 
     // =============================================================================
+    // COLLECTION HELPERS - Common collection and path utilities
+    // =============================================================================
+
+    /// Extract collection ID from parameters or collection config
+    ///
+    /// This helper method provides a consistent way for all engines to get the collection ID
+    /// from either explicit parameters or the collection configuration.
+    fn get_collection_id_from_params(&self, params: &FlushParameters) -> Result<String> {
+        params.get_collection_id()
+    }
+
+    /// Extract collection ID from compaction parameters or collection config
+    fn get_collection_id_from_compaction_params(&self, params: &CompactionParameters) -> Result<String> {
+        params.get_collection_id()
+    }
+
+    /// Construct data directory path from collection config
+    ///
+    /// Returns: {base_location}/{collection_id}/data
+    ///
+    /// This method provides a unified way for all engines to construct the data directory
+    /// path without duplicating logic. The path follows the standard pattern:
+    /// - {base_location} comes from collection.storage_assignment.base_location
+    /// - {collection_id} is the collection identifier
+    /// - /data is the standard data subdirectory
+    fn get_data_dir_from_collection_config(&self, collection_config: &Collection) -> Result<String> {
+        let collection_id = &collection_config.id;
+
+        if let Some(ref storage_assignment) = collection_config.storage_assignment {
+            let base_location = &storage_assignment.base_location;
+            Ok(format!("{}/{}/data", base_location, collection_id))
+        } else {
+            Err(anyhow::anyhow!(
+                "No storage assignment found in collection config for collection '{}'",
+                collection_id
+            ))
+        }
+    }
+
+    /// Construct data directory path from flush parameters
+    ///
+    /// Convenience method that extracts collection config from FlushParameters
+    /// and constructs the data directory path.
+    fn get_data_dir_from_flush_params(&self, params: &FlushParameters) -> Result<String> {
+        if let Some(ref collection_config) = params.collection_config {
+            self.get_data_dir_from_collection_config(collection_config)
+        } else {
+            // Fallback to helper methods for backward compatibility
+            params.get_data_dir()
+        }
+    }
+
+    /// Construct data directory path from compaction parameters
+    ///
+    /// Convenience method that extracts collection config from CompactionParameters
+    /// and constructs the data directory path.
+    fn get_data_dir_from_compaction_params(&self, params: &CompactionParameters) -> Result<String> {
+        if let Some(ref collection_config) = params.collection_config {
+            self.get_data_dir_from_collection_config(collection_config)
+        } else {
+            // Fallback to helper methods for backward compatibility
+            params.get_data_dir()
+        }
+    }
+
+    // =============================================================================
     // VALIDATION HELPERS - Common validation logic
     // =============================================================================
 
@@ -1348,7 +1399,7 @@ pub struct FlushParameters {
     pub timeout_ms: Option<u64>,
 
     /// Vector records to flush (provided by FlushCoordinator from WAL)
-    pub vector_records: Vec<crate::core::VectorRecord>,
+    pub vector_records: Vec<crate::proto::proximadb_v1::VectorRecord>,
 
     /// Whether to trigger compaction after flush
     pub trigger_compaction: bool,
@@ -1633,11 +1684,10 @@ impl StorageQueryContext {
             storage_strategy: config
                 .map(|c| match c.storage_engine {
                     0 => StorageEngineStrategy::Viper, // VIPER
-                    1 => StorageEngineStrategy::Lsm,   // SST
-                    2 => StorageEngineStrategy::Prism, // PRISM
-                    3 => StorageEngineStrategy::Lsm,   // NOVA (use LSM)
-                    4 => StorageEngineStrategy::Lsm,   // SWIFT (use LSM)
-                    5 => StorageEngineStrategy::Lsm,   // RAPTOR (use LSM)
+                    1 => StorageEngineStrategy::Sst,   // SST
+                    3 => StorageEngineStrategy::Nova,   // NOVA
+                    4 => StorageEngineStrategy::Swift,   // SWIFT
+                    5 => StorageEngineStrategy::Raptor,   // RAPTOR
                     _ => StorageEngineStrategy::Viper,
                 })
                 .unwrap_or(StorageEngineStrategy::Viper),
@@ -1672,6 +1722,12 @@ impl StorageQueryContext {
 
     /// Get the query vector (convenience method)
     pub fn query_vector(&self) -> Option<&[f32]> {
+        // Check for single vector first (most common case)
+        if let Some(ref vector) = self.search_params.vector {
+            return Some(vector.as_slice());
+        }
+
+        // Fall back to checking query_vectors array
         self.search_params
             .query_vectors
             .as_ref()
@@ -1964,6 +2020,37 @@ impl FlushParameters {
         self
     }
 
+    /// Get collection ID from explicit field or collection_config
+    pub fn get_collection_id(&self) -> Result<String> {
+        if let Some(ref collection_id) = self.collection_id {
+            Ok(collection_id.clone())
+        } else if let Some(ref collection_config) = self.collection_config {
+            Ok(collection_config.id.clone())
+        } else {
+            Err(anyhow::anyhow!("No collection_id provided and no collection_config available"))
+        }
+    }
+
+    /// Get base path from collection_config.storage_assignment
+    pub fn get_base_path(&self) -> Result<String> {
+        if let Some(ref collection_config) = self.collection_config {
+            if let Some(ref storage_assignment) = collection_config.storage_assignment {
+                Ok(storage_assignment.base_location.clone())
+            } else {
+                Err(anyhow::anyhow!("No storage assignment found in collection config"))
+            }
+        } else {
+            Err(anyhow::anyhow!("No collection_config available to extract base_path"))
+        }
+    }
+
+    /// Get data directory path: {base_path}/{collection_id}/data
+    pub fn get_data_dir(&self) -> Result<String> {
+        let collection_id = self.get_collection_id()?;
+        let base_path = self.get_base_path()?;
+        Ok(format!("{}/{}/data", base_path, collection_id))
+    }
+
     pub fn hint(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.hints.insert(key.into(), value);
         self
@@ -2004,6 +2091,37 @@ impl CompactionParameters {
     pub fn hint(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.hints.insert(key.into(), value);
         self
+    }
+
+    /// Get collection ID from explicit field or collection_config
+    pub fn get_collection_id(&self) -> Result<String> {
+        if let Some(ref collection_id) = self.collection_id {
+            Ok(collection_id.clone())
+        } else if let Some(ref collection_config) = self.collection_config {
+            Ok(collection_config.id.clone())
+        } else {
+            Err(anyhow::anyhow!("No collection_id provided and no collection_config available"))
+        }
+    }
+
+    /// Get base path from collection_config.storage_assignment
+    pub fn get_base_path(&self) -> Result<String> {
+        if let Some(ref collection_config) = self.collection_config {
+            if let Some(ref storage_assignment) = collection_config.storage_assignment {
+                Ok(storage_assignment.base_location.clone())
+            } else {
+                Err(anyhow::anyhow!("No storage assignment found in collection config"))
+            }
+        } else {
+            Err(anyhow::anyhow!("No collection_config available to extract base_path"))
+        }
+    }
+
+    /// Get data directory path: {base_path}/{collection_id}/data
+    pub fn get_data_dir(&self) -> Result<String> {
+        let collection_id = self.get_collection_id()?;
+        let base_path = self.get_base_path()?;
+        Ok(format!("{}/{}/data", base_path, collection_id))
     }
 }
 

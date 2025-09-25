@@ -12,7 +12,7 @@ use super::common::{
 use super::config::RaptorConfig;
 use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesEncoder;
 
 // RowGroup removed - consolidated into common::RowGroup
@@ -503,7 +503,7 @@ impl RowGroups {
 
         for dimension_data in &transposed.dimensions {
             if !dimension_data.is_empty() {
-                let encoded = self.fastlanes_encoder.encode_f32(dimension_data)?;
+                let encoded = self.fastlanes_encoder.encode_f32(dimension_data, None)?; // TODO: Pass expected count for optimization
                 encoded_dimensions.push(encoded);
                 encoding_schemes.push(FastLanesScheme::BitPacked { bits: 16 }); // Default scheme
             }

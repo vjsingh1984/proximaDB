@@ -115,6 +115,7 @@ pub mod collection_path; // Slug codec for collection paths
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteAheadLogManager
 pub mod simple_atomic_sync;
+pub mod unified_operations; // Unified WAL operations for vector and graph
 // MARKED FOR REMOVAL: optimized_path_resolver uses assignment_service
 // pub mod optimized_path_resolver;
 // MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
@@ -1582,7 +1583,7 @@ impl WriteAheadLogManager {
     pub async fn write_vector_batch_native_arc(
         &self,
         collection_id: &str,
-        native_vectors: Arc<Vec<crate::core::VectorRecord>>,
+        native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
     ) -> Result<Vec<u64>> {
         tracing::info!(
             "🚀 WAL NATIVE ZERO-COPY: Writing {} vectors to collection {}",
@@ -1824,8 +1825,8 @@ impl WriteAheadLogManager {
                     timestamp: Some(vector_record.timestamp),
                     updated_at: vector_record.updated_at,
                     expires_at: vector_record.expires_at,
-                    source: vector_record.source.map(|s| crate::proto::proximadb_v1::SourceContent {
-                        data: Some(crate::proto::proximadb_v1::source_content::Data::TextContent(s))
+                    source: vector_record.source.as_ref().map(|s| crate::proto::proximadb_v1::SourceContent {
+                        data: Some(crate::proto::proximadb_v1::source_content::Data::TextContent(s.clone()))
                     }),
                     expanded_context: Vec::new(),
                     semantic_similarity: Some(similarity_result.clone()),
@@ -2360,7 +2361,7 @@ impl WriteAheadLogManager {
             let collection_start = std::time::Instant::now();
             
             // 1. Force flush any pending data from memory to disk
-            match self.strategy.flush_collection(collection_id).await {
+            match self.flush_collection(collection_id).await {
                 Ok(flush_result) => {
                     debug!(
                         "Collection '{}' flushed: {} entries, {} bytes", 
@@ -2408,14 +2409,11 @@ impl WriteAheadLogManager {
                 .unwrap_or("./data/wal"), 
             collection_id);
 
-        // Get filesystem and perform sync
-        if let Ok(filesystem) = self.disk_manager.filesystem_factory().get_filesystem(&collection_wal_dir) {
-            // Sync the directory to ensure all file metadata is persisted
-            if let Err(e) = filesystem.sync(&collection_wal_dir).await {
-                warn!("Failed to sync collection directory '{}': {}", collection_wal_dir, e);
-                // Continue - this is not fatal, the data is likely still persisted
-            }
-        }
+        // TODO: Re-implement filesystem sync through shared_wal_behavior
+        // Previous disk_manager field was removed in refactoring
+        // For now, skip the explicit directory sync as the underlying flush operations
+        // should handle persistence through their respective filesystem implementations
+        debug!("Directory sync for '{}' handled by underlying flush operations", collection_wal_dir);
 
         Ok(())
     }

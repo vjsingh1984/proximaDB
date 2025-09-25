@@ -6,11 +6,11 @@
 use anyhow::Result;
 
 use proximadb::compute::{
-    UnifiedQuantizationEngine, UnifiedQuantizationLevel, QuantizationLevelType,
+    UnifiedQuantizationEngine, UnifiedQuantizationLevel, QuantizationLevel,
     ProductQuantization, BinaryQuantization, UnifiedDistanceCompute, InMemoryCodebookStore
 };
 use std::sync::Arc;
-use proximadb::storage::engines::viper::quantization::{
+use proximadb::storage::engines::impls::viper::quantization::{
     VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, QuantizationLevel
 };
 use proximadb::core::VectorRecord;
@@ -61,7 +61,7 @@ async fn test_unified_product_quantization() -> Result<()> {
     
     // Test Product Quantization using UnifiedQuantizationEngine
     let level = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Pq(ProductQuantization {
+        level_type: Some(QuantizationLevel::Pq(ProductQuantization {
             bits_per_code: 8,
             num_subvectors: 8,
             codebook_id: None,
@@ -106,7 +106,7 @@ async fn test_unified_binary_quantization() -> Result<()> {
     
     // Test Binary Quantization using UnifiedQuantizationEngine
     let level = UnifiedQuantizationLevel {
-        level_type: Some(QuantizationLevelType::Binary(BinaryQuantization {
+        level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
             threshold: Some(0.0),
             sign_based: true,
         })),
@@ -330,7 +330,7 @@ async fn test_model_serialization() -> Result<()> {
     assert!(!serialized.is_empty());
     
     // Deserialize model
-    let deserialized_model: proximadb::storage::engines::viper::quantization::QuantizationModel = 
+    let deserialized_model: proximadb::storage::engines::impls::viper::quantization::QuantizationModel = 
         serde_json::from_str(&serialized)?;
     
     // Verify model integrity

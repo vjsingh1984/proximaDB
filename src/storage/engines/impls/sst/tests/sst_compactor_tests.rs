@@ -12,8 +12,8 @@ mod tests {
     };
     use super::super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats};
     use super::super::{DataBlock, DataBlockMetadata};
-    use super::super::{SstRecord, SstStorage};
-    use crate::core::VectorRecord;
+    use super::super::{SstRecord, SstEngine};
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::core::search::mvcc_resolution::MvccResolver;
     use crate::core::{BloomFilterConfig, SstConfig};
     use crate::proto::proximadb_v1::MetadataItem;
@@ -147,7 +147,7 @@ mod tests {
         // Create SST engine
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let sst_engine =
-            SstStorage::new(sst_config, filesystem_factory.clone(), distance_compute).await?;
+            SstEngine::new(sst_config, filesystem_factory.clone(), distance_compute).await?;
         debug!("✅ SST engine created successfully");
 
         // Create collection with storage assignment
@@ -1051,7 +1051,7 @@ mod tests {
 
         // Create SST engine with compression
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
-        let sst_engine = SstStorage::new(sst_config, filesystem_factory.clone(), distance_compute)
+        let sst_engine = SstEngine::new(sst_config, filesystem_factory.clone(), distance_compute)
             .await
             .unwrap();
 

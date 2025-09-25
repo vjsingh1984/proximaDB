@@ -9,13 +9,12 @@
 //! compression strategies and engines.
 
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 /// Compression metrics for a single collection
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CompressionMetrics {
     pub collection_id: String,
     pub engine_type: String, // "sst" or "viper"
@@ -73,7 +72,7 @@ pub struct CompressionMetrics {
 }
 
 /// Distribution of block sizes for analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BlockSizeDistribution {
     pub min_bytes: u64,
     pub max_bytes: u64,
@@ -545,7 +544,7 @@ mod tests {
         );
 
         let recommendations = tracker.get_recommendations("poor_compression");
-        assert!(!recommendations.is_none());
+        assert!(!recommendations.is_empty());
 
         // Should recommend both increasing compression level and decreasing it due to slow speed
         let has_increase = recommendations.iter().any(|r| {

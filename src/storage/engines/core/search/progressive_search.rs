@@ -31,7 +31,6 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizedData;
 use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::core::search::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{QuantizationLevel, QuantizationType, StorageQueryContext};
@@ -597,7 +596,7 @@ impl ProgressiveSearchExecutor {
             for (key, item) in record.metadata {
                 let value = item.value;
                 if let Some(value) = value {
-                    use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
+                    use crate::proto::proximadb_v1::{self as proximadb_v1};
                     let sql_value = match value {
                         crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => proximadb_v1::SqlValue {
                             value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),

@@ -17,15 +17,15 @@
 //! Integration tests for filestore path handling to prevent path duplication issues
 
 use anyhow::Result;
-use proximadb::proto::proximadb::{Collection, IndexingAlgorithm};
-use proximadb::storage::metadata::backends::filestore_backend::{
-    FilestoreMetadataBackend, FilestoreMetadataConfig,
+use proximadb::proto::proximadb_v1::Collection;
+use proximadb::storage::metadata::backends::universal_backend::{
+    UniversalMetadataBackend, UniversalMetadataConfig,
 };
-use proximadb::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
-use proximadb::storage::traits::CollectionMetadataProvider;
+use proximadb::storage::persistence::filesystem::FilesystemFactory;
+use proximadb::storage::traits::MetadataProvider;
 use std::sync::{Arc, Once};
 use tempfile::TempDir;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 static HARDWARE_INIT: Once = Once::new();
 
@@ -58,7 +58,7 @@ fn ensure_test_directories() {
 
 /// Helper to create a test collection
 fn create_test_collection(id: &str, name: &str) -> Collection {
-    use proximadb::proto::proximadb::{CollectionConfig, CollectionStats};
+    use proximadb::proto::proximadb_v1::{CollectionConfig, CollectionStats, StorageAssignment};
 
     Collection {
         id: id.to_string(),
@@ -67,18 +67,11 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
             dimension: 128,
             distance_metric: 0, // Cosine
             storage_engine: 0,  // VIPER
-            primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-            filterable_columns: vec![],
-            index_configs: vec![],
-            quantization: None,
-            primary_index: String::new(),
-            auto_index_selection: false,
-            description: Some("Test collection".to_string()),
             tags: vec!["test".to_string()],
+            auto_index_selection: true,
             owner: Some("test_user".to_string()),
-            compression: None,
-            optimization_hints: None,
-            storage_location: None,
+            embedding_models: vec!["test_model".to_string()],
+            ..Default::default()
         }),
         stats: Some(CollectionStats {
             vector_count: 0,
@@ -87,7 +80,14 @@ fn create_test_collection(id: &str, name: &str) -> Collection {
         }),
         created_at: chrono::Utc::now().timestamp(),
         updated_at: chrono::Utc::now().timestamp(),
-        storage_assignment: None,
+        storage_assignment: Some(StorageAssignment {
+            primary_path: "/data/collections".to_string(),
+            backup_paths: vec![],
+            engine: 0, // VIPER
+            engine_config: std::collections::HashMap::new(),
+            base_location: "/data".to_string(),
+            assigned_at: chrono::Utc::now().timestamp(),
+        }),
     }
 }
 
@@ -118,14 +118,13 @@ async fn test_relative_url_no_path_duplication() -> Result<()> {
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
     // Create filestore backend
-    let config = FilestoreMetadataConfig {
+    let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
-        enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
 
-    let backend = FilestoreMetadataBackend::new(config, fs_factory.clone()).await?;
+    let backend = UniversalMetadataBackend::new(config, fs_factory.clone()).await?;
 
     // Store a collection
     let collection = create_test_collection("test_id", "test_collection");
@@ -193,14 +192,13 @@ async fn test_absolute_url_no_path_duplication() -> Result<()> {
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
     // Create filestore backend
-    let config = FilestoreMetadataConfig {
+    let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
-        enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
 
-    let backend = FilestoreMetadataBackend::new(config, fs_factory.clone()).await?;
+    let backend = UniversalMetadataBackend::new(config, fs_factory.clone()).await?;
 
     // Store a collection
     let collection = create_test_collection("test_abs_id", "test_abs_collection");
@@ -239,14 +237,13 @@ async fn test_atomic_operations_path_handling() -> Result<()> {
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
     // Create filestore backend
-    let config = FilestoreMetadataConfig {
+    let config = UniversalMetadataConfig {
         storage_url: metadata_url.clone(),
-        enable_compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
 
-    let backend = FilestoreMetadataBackend::new(config, fs_factory.clone()).await?;
+    let backend = UniversalMetadataBackend::new(config, fs_factory.clone()).await?;
 
     // Store multiple collections to trigger atomic operations
     for i in 1..=5 {
@@ -290,14 +287,14 @@ async fn test_concurrent_operations_no_conflicts() -> Result<()> {
     let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
     // Create filestore backend
-    let config = FilestoreMetadataConfig {
+    let config = UniversalMetadataConfig {
         storage_url: metadata_url,
-        enable_compression: false,
+        compression: false,
         enable_snapshots: false,
         ..Default::default()
     };
 
-    let backend = Arc::new(FilestoreMetadataBackend::new(config, fs_factory).await?);
+    let backend = Arc::new(UniversalMetadataBackend::new(config, fs_factory).await?);
 
     // Spawn multiple concurrent operations
     let mut handles = vec![];
@@ -357,15 +354,14 @@ async fn test_metadata_url_formats() -> Result<()> {
         let fs_factory = Arc::new(FilesystemFactory::new(Default::default()).await?);
 
         // Create filestore backend
-        let config = FilestoreMetadataConfig {
+        let config = UniversalMetadataConfig {
             storage_url: url.to_string(),
-            enable_compression: false,
             enable_snapshots: false,
             ..Default::default()
         };
 
         // This should not panic or cause path duplication
-        match FilestoreMetadataBackend::new(config, fs_factory).await {
+        match UniversalMetadataBackend::new(config, fs_factory).await {
             Ok(backend) => {
                 // Try to store a collection
                 let collection = create_test_collection("url_test", "url_test_collection");

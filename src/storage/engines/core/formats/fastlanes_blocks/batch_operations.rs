@@ -2,7 +2,6 @@
 // Efficient batch processing with memory pool integration
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -794,7 +793,7 @@ mod tests {
     #[tokio::test]
     async fn test_batch_operations_creation() {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
+        let memory_pool = Arc::new(VectorMemoryPool::new());
 
         let config = BatchConfig::default();
         let batch_ops = RowBasedBatchOperations::new(hardware, memory_pool, config);
@@ -806,7 +805,7 @@ mod tests {
     #[test]
     fn test_batch_size_calculation() {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
+        let memory_pool = Arc::new(VectorMemoryPool::new());
 
         let config = BatchConfig::default();
         let batch_ops = RowBasedBatchOperations::new(hardware, memory_pool, config);

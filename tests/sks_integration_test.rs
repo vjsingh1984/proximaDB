@@ -11,12 +11,18 @@
 mod sks_integration_tests {
     use proximadb::proto::proximadb_v1::{
         EmbeddingVersion, Entity, Modality, Provenance, Relation, StringArray, TypedField,
-        TypedMetadata,
+        TypedMetadata, SqlValue
     };
-    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
-    use proximadb::storage::provenance::{InMemoryProvenanceRegistry, ProvenanceRegistry};
-    use proximadb::storage::relations::{InMemoryRelationsStore, RelationsStore};
+    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore, RelationsStore, ProvenanceRegistry};
+    use proximadb::storage::relations::InMemoryRelationsStore;
+    use proximadb::storage::provenance::InMemoryProvenanceRegistry;
+    use proximadb::storage::traits::{StorageEngineStrategy, PerformanceTier};
+    use proximadb::core::{VectorRecord};
+    use proximadb::storage::traits::{FlushParameters, FlushResult, CompactionParameters, CompactionResult};
+    use std::collections::HashMap;
+    use anyhow::Result;
     use std::sync::Arc;
+    use chrono::{DateTime, Utc};
 
     /// Create a test entity store
     async fn create_test_store() -> Arc<ProximaEntityStore> {
@@ -38,15 +44,87 @@ mod sks_integration_tests {
     }
 
     /// Create a mock storage engine for testing
-    fn create_mock_storage_engine() -> Arc<dyn proximadb::storage::engines::UnifiedStorageEngine> {
-        // This would be a mock implementation
-        // For now, we'll use a placeholder
+    fn create_mock_storage_engine() -> Arc<dyn proximadb::storage::traits::UnifiedStorageEngine> {
         struct MockStorageEngine;
 
         #[async_trait::async_trait]
-        impl proximadb::storage::engines::UnifiedStorageEngine for MockStorageEngine {
-            // Implement required methods
-            // This is a simplified mock for testing
+        impl proximadb::storage::traits::UnifiedStorageEngine for MockStorageEngine {
+            fn engine_name(&self) -> &'static str { "mock" }
+            fn engine_version(&self) -> &'static str { "1.0.0" }
+            fn strategy(&self) -> StorageEngineStrategy { StorageEngineStrategy::Viper }
+
+            async fn do_flush(&self, _params: &FlushParameters) -> Result<FlushResult> {
+                Ok(FlushResult {
+                    success: true,
+                    collections_affected: vec![],
+                    entries_flushed: Some(0),
+                    bytes_written: Some(0),
+                    files_created: Some(0),
+                    duration_ms: Some(0),
+                    completed_at: Utc::now(),
+                    engine_metrics: HashMap::new(),
+                    compaction_triggered: false,
+                    flushed_batch_ids: vec![],
+                })
+            }
+
+            async fn do_compact(&self, _params: &CompactionParameters) -> Result<CompactionResult> {
+                Ok(CompactionResult {
+                    success: true,
+                    collections_affected: vec![],
+                    entries_processed: Some(0),
+                    entries_removed: Some(0),
+                    bytes_read: Some(0),
+                    bytes_written: Some(0),
+                    input_files: Some(0),
+                    output_files: Some(0),
+                    duration_ms: Some(0),
+                    completed_at: Utc::now(),
+                    engine_metrics: HashMap::new(),
+                })
+            }
+
+            async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+                Ok(HashMap::new())
+            }
+
+            async fn vector_by_id(
+                &self,
+                _collection_id: &str,
+                _base_path: &str,
+                _vector_id: &str,
+            ) -> Result<Option<VectorRecord>> {
+                Ok(None)
+            }
+
+            async fn search_vectors_unified(
+                &self,
+                _ctx: &proximadb::storage::traits::StorageQueryContext,
+            ) -> Result<Vec<proximadb::core::search::results::OptimizedSearchRecord>> {
+                Ok(vec![])
+            }
+
+            fn get_filesystem_factory(&self) -> &proximadb::storage::persistence::filesystem::FilesystemFactory {
+                // For testing, create a minimal filesystem factory
+                use proximadb::storage::persistence::filesystem::FilesystemFactory;
+                use std::sync::OnceLock;
+                static FACTORY: OnceLock<FilesystemFactory> = OnceLock::new();
+                FACTORY.get_or_init(|| {
+                    // For testing, create a basic filesystem factory synchronously
+                    // In real usage, this would be created with proper async initialization
+                    match tokio::runtime::Handle::try_current() {
+                        Ok(handle) => {
+                            handle.block_on(async {
+                                FilesystemFactory::new(proximadb::storage::persistence::filesystem::FilesystemConfig::default()).await.unwrap()
+                            })
+                        }
+                        Err(_) => {
+                            // If no async runtime, create minimal factory for testing
+                            panic!("FilesystemFactory requires async runtime for initialization")
+                        }
+                    }
+                })
+            }
         }
 
         Arc::new(MockStorageEngine)
@@ -59,10 +137,7 @@ mod sks_integration_tests {
             model_version: "v1".to_string(),
             vector: vec![0.1, 0.2, 0.3, 0.4, 0.5],
             dimension: 5,
-            created_at: Some(prost_types::Timestamp {
-                seconds: 1609459200,
-                nanos: 0,
-            }),
+            created_at_ms: 1609459200000, // Unix epoch milliseconds
             model_params: Default::default(),
             modality: Modality::Text as i32,
         };
@@ -72,10 +147,7 @@ mod sks_integration_tests {
             chunk_id: "chunk-1".to_string(),
             chunk_position: 0,
             extraction_method: "test-extraction".to_string(),
-            extracted_at: Some(prost_types::Timestamp {
-                seconds: 1609459200,
-                nanos: 0,
-            }),
+            extracted_at_ms: 1609459200000, // Unix epoch milliseconds
             metadata: Default::default(),
         };
 
@@ -83,7 +155,7 @@ mod sks_integration_tests {
             id: id.to_string(),
             embeddings: vec![embedding],
             typed_metadata: None,
-            flexible_metadata: None,
+            flexible_metadata: HashMap::new(),
             provenance: Some(provenance),
             relations: vec![],
             temporal: None,
@@ -135,7 +207,7 @@ mod sks_integration_tests {
             target_entity_id: "entity-2".to_string(),
             relation_type: "cites".to_string(),
             weight: 1.0,
-            created_at: 1609459200,
+            created_at_ms: 1609459200000, // Unix epoch milliseconds
             properties: Default::default(),
         };
 

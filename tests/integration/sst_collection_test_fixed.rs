@@ -3,13 +3,13 @@
 //! This test properly creates a collection with SST storage engine and
 //! verifies that flush operations route to SST correctly.
 
-mod common {
-    include!("../common/mod.rs");
-}
+// Import the common test helpers
+#[path = "../common/mod.rs"]
+mod common;
 
-use common::unified_test_utils::{UnifiedTestEnvironment, operations};
-use proximadb::core::VectorRecord;
-use proximadb::proto::proximadb::{MetadataItem, StorageEngine};
+
+use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
+use proximadb::proto::proximadb_v1::{VectorRecord, StorageEngine, SqlValue, sql_value};
 use proximadb::storage::traits::UnifiedStorageEngine;
 use tracing::{debug, info};
 
@@ -34,42 +34,66 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
 
     // Create test vectors
     let vectors = vec![
-        env.create_test_vector_record(
-            format!("{}_vec1", collection_id),
-            vec![1.0, 0.0, 0.0],
-            1000,
-            None,
-            vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string()),
-                ),
-            }],
-        ),
-        env.create_test_vector_record(
-            format!("{}_vec2", collection_id),
-            vec![0.0, 1.0, 0.0],
-            1001,
-            None,
-            vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue("B".to_string()),
-                ),
-            }],
-        ),
-        env.create_test_vector_record(
-            format!("{}_vec3", collection_id),
-            vec![0.0, 0.0, 1.0],
-            1002,
-            None,
-            vec![MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    proximadb::proto::proximadb::metadata_item::Value::StringValue("A".to_string()),
-                ),
-            }],
-        ),
+        VectorRecord {
+            id: format!("{}_vec1", collection_id),
+            vector: vec![1.0, 0.0, 0.0],
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("A".to_string())),
+                    },
+                );
+                metadata
+            },
+            timestamp: 1000,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
+        },
+        VectorRecord {
+            id: format!("{}_vec2", collection_id),
+            vector: vec![0.0, 1.0, 0.0],
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("B".to_string())),
+                    },
+                );
+                metadata
+            },
+            timestamp: 1001,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
+        },
+        VectorRecord {
+            id: format!("{}_vec3", collection_id),
+            vector: vec![0.0, 0.0, 1.0],
+            metadata: {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert(
+                    "category".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("A".to_string())),
+                    },
+                );
+                metadata
+            },
+            timestamp: 1002,
+            updated_at: None,
+            expires_at: None,
+            version: Some(1),
+            quantized_vector: vec![],
+            source: None,
+        },
     ];
 
     info!("Test 1: Flush vectors to SST engine");
@@ -80,12 +104,12 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
     // Flush directly to SST engine
     let flush_result = sst_engine.do_flush(&flush_params).await?;
     assert!(flush_result.success, "SST flush should succeed");
-    assert_eq!(flush_result.entries_flushed, 3, "Should flush 3 vectors");
-    assert!(flush_result.files_created > 0, "Should create SST files");
+    assert_eq!(flush_result.entries_flushed.unwrap_or(0), 3, "Should flush 3 vectors");
+    assert!(flush_result.files_created.unwrap_or(0) > 0, "Should create SST files");
 
     debug!(
         "✅ Successfully flushed {} vectors to SST, created {} files",
-        flush_result.entries_flushed, flush_result.files_created
+        flush_result.entries_flushed.unwrap_or(0), flush_result.files_created.unwrap_or(0)
     );
 
     info!("Test 2: Verify SST files were created");
@@ -133,17 +157,51 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
 
     // Search for vectors
     let query_vector = vec![1.0, 0.0, 0.0];
+    // Create search context for SST engine
+    let search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+        vector: Some(query_vector.clone()),
+        query_vectors: None,
+        top_k: Some(5),
+        distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+        filter_expression: None,
+        timeout_ms: None,
+        accuracy_threshold: None,
+        ..Default::default()
+    });
+
+    let collection_config = proximadb::proto::proximadb_v1::CollectionConfig {
+        name: collection_id.to_string(),
+        dimension: query_vector.len() as u32,
+        distance_metric: proximadb::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+        storage_engine: proximadb::proto::proximadb_v1::StorageEngine::Sst as i32,
+        tags: vec![],
+        auto_index_selection: false,
+        embedding_models: vec![],
+        owner: None,
+        ..Default::default()
+    };
+
+    let collection = std::sync::Arc::new(proximadb::proto::proximadb_v1::Collection {
+        id: collection_id.to_string(),
+        config: Some(collection_config),
+        stats: None,
+        created_at: 0,
+        updated_at: 0,
+        storage_assignment: None,
+    });
+
+    let query_context = proximadb::storage::traits::StorageQueryContext {
+        search_params,
+        collection: collection.clone(),
+        metadata: proximadb::storage::traits::StorageQueryMetadata {
+            collection_id: collection_id.to_string(),
+            use_axis_indexes: false,
+            ..Default::default()
+        },
+    };
+
     let search_results = sst_engine
-        .search_vectors_unified(
-            collection_id,
-            &storage_url,
-            &query_vector,
-            5,
-            &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-            None,
-            true,
-            true,
-        )
+        .search_vectors_unified(&query_context)
         .await?;
 
     assert!(!search_results.is_empty(), "Should find search results");
@@ -158,8 +216,8 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
     debug!("✅ Search returned {} results", search_results.len());
     for (i, result) in search_results.iter().enumerate() {
         debug!(
-            "  Result {}: id={}, distance={:?}",
-            i, result.id, result.distance
+            "  Result {}: id={}, score={:?}",
+            i, result.id, result.score
         );
     }
 
@@ -172,17 +230,30 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         value: serde_json::Value::String("A".to_string()),
     };
 
+    // Create filtered search context
+    let filtered_search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
+        vector: Some(query_vector.clone()),
+        query_vectors: None,
+        top_k: Some(5),
+        distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+        filter_expression: Some(filter),
+        timeout_ms: None,
+        accuracy_threshold: None,
+        ..Default::default()
+    });
+
+    let filtered_query_context = proximadb::storage::traits::StorageQueryContext {
+        search_params: filtered_search_params,
+        collection: collection.clone(),
+        metadata: proximadb::storage::traits::StorageQueryMetadata {
+            collection_id: collection_id.to_string(),
+            use_axis_indexes: false,
+            ..Default::default()
+        },
+    };
+
     let filtered_results = sst_engine
-        .search_vectors_unified(
-            collection_id,
-            &storage_url,
-            &query_vector,
-            5,
-            &proximadb::compute::distance_computation::DistanceMetric::Cosine,
-            Some(&filter),
-            true,
-            true,
-        )
+        .search_vectors_unified(&filtered_query_context)
         .await?;
 
     assert_eq!(

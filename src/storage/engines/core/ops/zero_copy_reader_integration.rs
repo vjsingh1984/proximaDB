@@ -5,16 +5,16 @@ use std::sync::Arc;
 
 use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystemBuilder;
-use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory, ZeroCopyFilesystem};
+use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 /// Example integration showing how to enhance existing readers with zero-copy optimization
 ///
-/// This example demonstrates the pattern for integrating the zero-copy I/O system
+/// This example demonstrates the pattern for integrating the unified caching filesystem
 /// with existing readers. The pattern is:
 ///
-/// 1. Create zero-copy I/O system with appropriate configuration
-/// 2. Wrap existing filesystem with zero-copy filesystem
-/// 3. Use the wrapped filesystem in readers - all operations become cache-first
+/// 1. Create unified caching filesystem with appropriate configuration
+/// 2. Use the filesystem in readers - all operations become cache-first
+/// 3. The unified filesystem handles all caching and optimization automatically
 ///
 /// The beauty is that existing readers don't need to change their code -
 /// they just get the optimized filesystem and automatically benefit from:
@@ -43,19 +43,17 @@ impl ZeroCopyReaderIntegration {
             .build()
             .await?;
 
-        // 2. Create zero-copy filesystem wrapper
+        // 2. Create unified caching filesystem (replaces zero-copy filesystem)
         let zero_copy_fs = filesystem_factory
-            .create_zero_copy_filesystem(
+            .get_unified_caching_filesystem(
                 base_path,
-                Arc::new(io_system),
                 collection_id.to_string(),
-                "SST".to_string(),
+                "sst".to_string(),
             )
-            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
-        // 3. Create enhanced reader with zero-copy filesystem
-        Ok(EnhancedSstReader::new(Arc::new(zero_copy_fs)))
+        // 3. Create enhanced reader with unified caching filesystem
+        Ok(EnhancedSstReader::new(zero_copy_fs))
     }
 
     /// Example: Create a zero-copy enhanced Parquet reader
@@ -71,18 +69,16 @@ impl ZeroCopyReaderIntegration {
             .build()
             .await?;
 
-        // 2. Create zero-copy filesystem wrapper for columnar storage
+        // 2. Create unified caching filesystem for columnar storage
         let zero_copy_fs = filesystem_factory
-            .create_zero_copy_filesystem(
+            .get_unified_caching_filesystem(
                 base_path,
-                Arc::new(io_system),
                 collection_id.to_string(),
                 "VIPER".to_string(),
             )
-            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
-        Ok(EnhancedParquetReader::new(Arc::new(zero_copy_fs)))
+        Ok(EnhancedParquetReader::new(zero_copy_fs))
     }
 
     /// Example: Create a zero-copy enhanced SWIFT reader
@@ -98,18 +94,16 @@ impl ZeroCopyReaderIntegration {
             .build()
             .await?;
 
-        // 2. Create zero-copy filesystem wrapper for hierarchical storage
+        // 2. Create unified caching filesystem for hierarchical storage
         let zero_copy_fs = filesystem_factory
-            .create_zero_copy_filesystem(
+            .get_unified_caching_filesystem(
                 base_path,
-                Arc::new(io_system),
                 collection_id.to_string(),
                 "SWIFT".to_string(),
             )
-            .await
             .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
-        Ok(EnhancedSwiftReader::new(Arc::new(zero_copy_fs)))
+        Ok(EnhancedSwiftReader::new(zero_copy_fs))
     }
 
     /// Example: Batch creation of zero-copy readers for multiple engines
@@ -140,22 +134,20 @@ impl ZeroCopyReaderIntegration {
                 .build()
                 .await?;
 
-            // Create zero-copy filesystem
+            // Create unified caching filesystem
             let zero_copy_fs = filesystem_factory
-                .create_zero_copy_filesystem(
+                .get_unified_caching_filesystem(
                     base_path,
-                    Arc::new(io_system),
                     collection_id.to_string(),
                     engine_type.to_string(),
                 )
-                .await
                 .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
             // Create appropriate reader type
             let reader: Box<dyn EnhancedReader> = match engine_type {
-                "SST" => Box::new(EnhancedSstReader::new(Arc::new(zero_copy_fs))),
-                "VIPER" => Box::new(EnhancedParquetReader::new(Arc::new(zero_copy_fs))),
-                "SWIFT" => Box::new(EnhancedSwiftReader::new(Arc::new(zero_copy_fs))),
+                "SST" => Box::new(EnhancedSstReader::new(zero_copy_fs.clone())),
+                "VIPER" => Box::new(EnhancedParquetReader::new(zero_copy_fs.clone())),
+                "SWIFT" => Box::new(EnhancedSwiftReader::new(zero_copy_fs.clone())),
                 _ => {
                     return Err(ProximaDBError::Config(format!(
                         "Unsupported engine type: {}",
@@ -188,14 +180,14 @@ pub trait EnhancedReader: Send + Sync {
     fn get_metrics(&self) -> ReaderMetrics;
 }
 
-/// Enhanced SST reader with zero-copy optimization
+/// Enhanced SST reader with unified caching optimization
 pub struct EnhancedSstReader {
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn FileSystem>,
     metrics: std::sync::atomic::AtomicU64,
 }
 
 impl EnhancedSstReader {
-    pub fn new(filesystem: Arc<ZeroCopyFilesystem>) -> Self {
+    pub fn new(filesystem: Arc<dyn FileSystem>) -> Self {
         Self {
             filesystem,
             metrics: std::sync::atomic::AtomicU64::new(0),
@@ -235,12 +227,12 @@ impl EnhancedReader for EnhancedSstReader {
 
 /// Enhanced Parquet reader with zero-copy optimization
 pub struct EnhancedParquetReader {
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn FileSystem>,
     metrics: std::sync::atomic::AtomicU64,
 }
 
 impl EnhancedParquetReader {
-    pub fn new(filesystem: Arc<ZeroCopyFilesystem>) -> Self {
+    pub fn new(filesystem: Arc<dyn FileSystem>) -> Self {
         Self {
             filesystem,
             metrics: std::sync::atomic::AtomicU64::new(0),
@@ -280,12 +272,12 @@ impl EnhancedReader for EnhancedParquetReader {
 
 /// Enhanced SWIFT reader with zero-copy optimization
 pub struct EnhancedSwiftReader {
-    filesystem: Arc<ZeroCopyFilesystem>,
+    filesystem: Arc<dyn FileSystem>,
     metrics: std::sync::atomic::AtomicU64,
 }
 
 impl EnhancedSwiftReader {
-    pub fn new(filesystem: Arc<ZeroCopyFilesystem>) -> Self {
+    pub fn new(filesystem: Arc<dyn FileSystem>) -> Self {
         Self {
             filesystem,
             metrics: std::sync::atomic::AtomicU64::new(0),

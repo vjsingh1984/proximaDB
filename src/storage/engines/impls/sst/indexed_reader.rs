@@ -8,10 +8,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::index_based_filter::{
     ColumnData, ColumnMetadata, IndexBasedDataReader, MetadataSource, ReadStrategy,
 };
+use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// SST-specific metadata source representing an SST file
 pub struct SSTMetadataSource {
@@ -63,26 +64,16 @@ impl SSTMetadataSource {
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?,
         );
-        let zero_copy_config =
-            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig {
-                metadata_cache:
-                    crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
-                        max_memory_mb: 100,
-                        ..Default::default()
-                    },
-                ..Default::default()
-            };
-        let zero_copy_system = Arc::new(
-            crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
-                zero_copy_config,
-                filesystem.clone(),
-                Vec::new(),
-            )
-            .await?,
-        );
+        // Create UnifiedCachingFilesystem for the reader
+        let base_fs = filesystem.get_filesystem("file://")?;
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            "indexed_reader".to_string(),
+            "sst".to_string(),
+        ));
         let reader = crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(
             filesystem,
-            zero_copy_system,
+            unified_fs,
             String::from("indexed_reader")
         );
 
@@ -146,32 +137,19 @@ impl SSTIndexBasedReader {
                 )
                 .expect("Failed to create filesystem factory"),
         );
-        // Create a zero-copy IO system for the reader
-        let zero_copy_config =
-            crate::storage::engines::core::io::zero_copy::config::ZeroCopyIOConfig {
-                metadata_cache:
-                    crate::storage::engines::core::io::zero_copy::config::MetadataCacheConfig {
-                        max_memory_mb: 64,
-                        ..Default::default()
-                    },
-                ..Default::default()
-            };
-        let zero_copy_system = Arc::new(
-            tokio::runtime::Handle::current()
-                .block_on(
-                    crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem::new(
-                        zero_copy_config,
-                        filesystem.clone(),
-                        Vec::new(),
-                    ),
-                )
-                .expect("Failed to create zero-copy IO system"),
-        );
+        // Create UnifiedCachingFilesystem for the reader
+        let base_fs = filesystem.get_filesystem("file://")
+            .expect("Failed to get base filesystem");
+        let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+            base_fs,
+            "default_collection".to_string(),
+            "sst".to_string(),
+        ));
 
         Self {
             reader: crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(
                 filesystem,
-                zero_copy_system,
+                unified_fs,
                 String::from("default_collection"),
             ),
         }

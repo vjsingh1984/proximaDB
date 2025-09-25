@@ -8,12 +8,11 @@
 //! Bit-packed bloom filter implementation optimized for memory efficiency
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, hash};
 
 /// Memory-efficient bit-packed bloom filter using u64 array
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BitPackedBloomFilter {
     /// Bit storage using u64 for efficient bit operations
     bits: Vec<u64>,

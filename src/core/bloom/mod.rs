@@ -338,7 +338,7 @@ impl Default for HashAlgorithm {
 }
 
 /// Enhanced bloom filter configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BloomFilterConfig {
     /// Strategy to use
     pub strategy: BloomStrategy,
@@ -581,7 +581,7 @@ mod tests {
 // ============================================================================
 
 /// Stats for bloom filter usage
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct BloomFilterStats {
     pub key_count: u64,
     pub metadata_columns: u64,
@@ -708,10 +708,10 @@ impl SstableBloomFilter {
         buffer.write_all(&self.stats.metadata_queries_saved.to_le_bytes())?;
 
         // Write data lengths and data
-        buffer.write_all(&(self.key_filter_data.len()).to_le_bytes())?;
+        buffer.write_all(&(self.key_filter_data.len() as u32).to_le_bytes())?;
         buffer.write_all(&self.key_filter_data)?;
 
-        buffer.write_all(&(self.metadata_filter_data.len()).to_le_bytes())?;
+        buffer.write_all(&(self.metadata_filter_data.len() as u32).to_le_bytes())?;
         buffer.write_all(&self.metadata_filter_data)?;
 
         Ok(buffer)

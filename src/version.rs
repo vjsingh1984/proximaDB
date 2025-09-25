@@ -15,6 +15,9 @@ pub const PROXIMADB_NAME: &str = env!("CARGO_PKG_NAME");
 /// Application description
 pub const PROXIMADB_DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 
+/// Version information struct
+pub struct VersionInfo;
+
 /// Version helper functions
 impl VersionInfo {
     /// Get the current ProximaDB version
@@ -38,24 +41,21 @@ impl VersionInfo {
     }
 }
 
-/// Version information struct
-pub struct VersionInfo;
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_version_constants() {
-        assert!(!PROXIMADB_VERSION.is_none());
-        assert!(!PROXIMADB_NAME.is_none());
-        assert!(!PROXIMADB_DESCRIPTION.is_none());
+        assert!(!PROXIMADB_VERSION.is_empty());
+        assert!(!PROXIMADB_NAME.is_empty());
+        assert!(!PROXIMADB_DESCRIPTION.is_empty());
     }
 
     #[test]
     fn test_version_info() {
         assert_eq!(VersionInfo::version(), PROXIMADB_VERSION);
         assert_eq!(VersionInfo::name(), PROXIMADB_NAME);
-        assert!(VersionInfo::version_string().contains_hash(PROXIMADB_VERSION));
+        assert!(VersionInfo::version_string().contains(PROXIMADB_VERSION));
     }
 }

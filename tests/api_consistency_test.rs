@@ -6,11 +6,12 @@
 //! 3. Handle errors consistently
 //! 4. Provide equivalent functionality
 
-use proximadb::proto::proximadb::{
-    CollectionConfig, CollectionRequest, CollectionResponse, DistanceMetric, SearchQuery,
+use proximadb::proto::proximadb_v1::{
+    CollectionConfig, CollectionRequest, CollectionResponse, DistanceMetric,
     StorageEngine, VectorBatchRequest, VectorOperationResponse, VectorRecord, VectorSearchRequest,
+    MetadataFilter, FilterClause, ComparisonOp, SqlValue, sql_value, LogicalOp,
+    SearchQuery, SearchParams, SearchOptimization, IncludeFields, filter_clause,
 };
-use serde_json::json;
 use std::time::Duration;
 use tokio;
 
@@ -41,7 +42,7 @@ mod api_consistency_tests {
             // Try to connect to gRPC (may not be available in all test environments)
             let grpc_channel = tonic::transport::Channel::from_shared(grpc_url)
                 .ok()
-                .and_then(|endpoint| endpoint.connect_lazy().ok());
+                .map(|endpoint| endpoint.connect_lazy());
 
             ApiTestFixture {
                 rest_client,
@@ -68,6 +69,7 @@ mod api_consistency_tests {
         }
 
         /// Compare two responses for equivalence
+        #[allow(dead_code)]
         fn assert_responses_equal<T: serde::Serialize>(
             rest_response: &T,
             grpc_response: &T,
@@ -101,14 +103,34 @@ mod api_consistency_tests {
             collection_id: collection_id.to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3, 0.4],
-                id: None,
-                metadata_filter: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
-            distance_metric_override: Some(DistanceMetric::Cosine as i32),
-            search_params: None,
-            include_fields: None,
-            search_optimization: None,
+            distance_metric_override: Some(DistanceMetric::Cosine as u32),
+            search_params: Some(SearchParams {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                include_expired: None,
+                timeout_ms: None,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            include_fields: Some(IncludeFields {
+                vector: true,
+                metadata: true,
+                score: true,
+                rank: false,
+                source: false,
+                source_options: std::collections::HashMap::new(),
+            }),
+            search_optimization: Some(SearchOptimization {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                filters: std::collections::HashMap::new(),
+            }),
         };
 
         // Send via REST
@@ -144,18 +166,27 @@ mod api_consistency_tests {
     #[tokio::test]
     async fn test_collection_operations_consistency() {
         let fixture = ApiTestFixture::new().await;
-        let collection_id = format!("test_collection_{}", uuid::Uuid::new_v4());
+        let collection_id = format!("test_collection_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
 
         // Test CREATE operation
         let create_request = CollectionRequest {
-            operation: proximadb::proto::proximadb::CollectionOperation::Create as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::CollectionCreate as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: Some(CollectionConfig {
                 name: collection_id.clone(),
                 dimension: 128,
-                distance_metric: Some(DistanceMetric::Euclidean as i32),
-                storage_engine: Some(StorageEngine::Viper as i32),
-                ..Default::default()
+                distance_metric: DistanceMetric::Euclidean as i32,
+                storage_engine: StorageEngine::Viper as i32,
+                tags: vec![],
+                description: None,
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
+                storage_config: None,
+                primary_index: "default".to_string(),
+                auto_index_selection: true,
+                owner: None,
+                embedding_models: vec![],
             }),
             query_params: Default::default(),
             options: Default::default(),
@@ -168,7 +199,7 @@ mod api_consistency_tests {
 
         // Test GET operation
         let get_request = CollectionRequest {
-            operation: proximadb::proto::proximadb::CollectionOperation::Get as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::CollectionGet as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: None,
             query_params: Default::default(),
@@ -185,7 +216,7 @@ mod api_consistency_tests {
 
         // Test DELETE operation
         let delete_request = CollectionRequest {
-            operation: proximadb::proto::proximadb::CollectionOperation::Delete as i32,
+            operation: proximadb::proto::proximadb_v1::CollectionOperation::CollectionDelete as i32,
             collection_id: Some(collection_id.clone()),
             collection_config: None,
             query_params: Default::default(),
@@ -210,14 +241,34 @@ mod api_consistency_tests {
             collection_id: "".to_string(), // Invalid: empty collection ID
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3],
-                id: None,
-                metadata_filter: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,
-            search_params: None,
-            include_fields: None,
-            search_optimization: None,
+            search_params: Some(SearchParams {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                include_expired: None,
+                timeout_ms: None,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            include_fields: Some(IncludeFields {
+                vector: true,
+                metadata: true,
+                score: true,
+                rank: false,
+                source: false,
+                source_options: std::collections::HashMap::new(),
+            }),
+            search_optimization: Some(SearchOptimization {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                filters: std::collections::HashMap::new(),
+            }),
         };
 
         let rest_response: Result<VectorOperationResponse, _> = fixture
@@ -232,14 +283,34 @@ mod api_consistency_tests {
             collection_id: "nonexistent_collection_12345".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3],
-                id: None,
-                metadata_filter: None,
+                filters: std::collections::HashMap::new(),
+                advanced_filter: None,
             }],
             top_k: 10,
             distance_metric_override: None,
-            search_params: None,
-            include_fields: None,
-            search_optimization: None,
+            search_params: Some(SearchParams {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                include_expired: None,
+                timeout_ms: None,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            include_fields: Some(IncludeFields {
+                vector: true,
+                metadata: true,
+                score: true,
+                rank: false,
+                source: false,
+                source_options: std::collections::HashMap::new(),
+            }),
+            search_optimization: Some(SearchOptimization {
+                top_k: Some(10),
+                accuracy_threshold: None,
+                filters: std::collections::HashMap::new(),
+            }),
         };
 
         let rest_response: Result<VectorOperationResponse, _> = fixture
@@ -258,32 +329,35 @@ mod api_consistency_tests {
     #[tokio::test]
     async fn test_batch_operations_consistency() {
         let fixture = ApiTestFixture::new().await;
-        let collection_id = format!("test_batch_{}", uuid::Uuid::new_v4());
+        let collection_id = format!("test_batch_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
 
         // Create batch request with multiple records
         let batch_request = VectorBatchRequest {
             collection_id: collection_id.clone(),
-            records: vec![
+            vectors: vec![
                 VectorRecord {
                     id: "record1".to_string(),
                     vector: vec![0.1, 0.2, 0.3, 0.4],
-                    metadata: vec![],
-                    timestamp: 0,
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: 0i64,
                     updated_at: None,
                     expires_at: None,
                     version: None,
+                    quantized_vector: vec![],
+                    source: None,
                 },
                 VectorRecord {
                     id: "record2".to_string(),
                     vector: vec![0.5, 0.6, 0.7, 0.8],
-                    metadata: vec![],
-                    timestamp: 0,
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: 0i64,
                     updated_at: None,
                     expires_at: None,
                     version: None,
+                    quantized_vector: vec![],
+                    source: None,
                 },
             ],
-            auto_create_collection: Some(true),
         };
 
         let rest_response: Result<VectorOperationResponse, _> = fixture
@@ -307,27 +381,53 @@ mod api_consistency_tests {
             collection_id: "test_collection".to_string(),
             queries: vec![SearchQuery {
                 vector: vec![0.1, 0.2, 0.3, 0.4],
-                id: None,
-                metadata_filter: Some(proximadb::proto::proximadb::MetadataFilter {
-                    conditions: vec![proximadb::proto::proximadb::FilterCondition {
-                        field_name: "category".to_string(),
-                        operation: proximadb::proto::proximadb::FilterOperation::Equals as i32,
-                        value: Some(proximadb::proto::proximadb::MetadataValue {
-                            value: Some(
-                                proximadb::proto::proximadb::metadata_value::Value::StringValue(
-                                    "electronics".to_string(),
-                                ),
+                filters: {
+                    let mut filters = std::collections::HashMap::new();
+                    filters.insert("category".to_string(), SqlValue {
+                        value: Some(
+                            sql_value::Value::StringValue(
+                                "electronics".to_string(),
                             ),
-                        }),
+                        ),
+                    });
+                    filters
+                },
+                advanced_filter: Some(MetadataFilter {
+                    clauses: vec![FilterClause {
+                        field: "category".to_string(),
+                        op: ComparisonOp::Eq as i32,
+                        value: Some(filter_clause::Value::StringValue(
+                            "electronics".to_string(),
+                        )),
                     }],
-                    operator: proximadb::proto::proximadb::FilterOperator::And as i32,
+                    op: LogicalOp::And as i32,
                 }),
             }],
             top_k: 5,
             distance_metric_override: None,
-            search_params: None,
-            include_fields: None,
-            search_optimization: None,
+            search_params: Some(SearchParams {
+                top_k: Some(5),
+                accuracy_threshold: None,
+                include_expired: None,
+                timeout_ms: None,
+                enable_two_stage: None,
+                enable_clustering_hint: None,
+                enable_metadata_filtering_hint: None,
+                custom_hints: std::collections::HashMap::new(),
+            }),
+            include_fields: Some(IncludeFields {
+                vector: true,
+                metadata: true,
+                score: true,
+                rank: false,
+                source: false,
+                source_options: std::collections::HashMap::new(),
+            }),
+            search_optimization: Some(SearchOptimization {
+                top_k: Some(5),
+                accuracy_threshold: None,
+                filters: std::collections::HashMap::new(),
+            }),
         };
 
         let _rest_response: Result<VectorOperationResponse, _> = fixture
@@ -339,6 +439,7 @@ mod api_consistency_tests {
     }
 
     /// Helper function to normalize responses for comparison
+    #[allow(dead_code)]
     fn normalize_response(response: &VectorOperationResponse) -> serde_json::Value {
         // Remove fields that might differ between REST and gRPC
         let mut json = serde_json::to_value(response).unwrap();

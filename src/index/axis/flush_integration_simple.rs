@@ -223,14 +223,9 @@ mod tests {
         collection.id = "test_collection".to_string();
         collection_cache.insert("test_collection".to_string(), Arc::new(collection));
 
-        let config = MetadataQueueServiceConfig {
-            base_storage_url: base_url,
-            enable_recovery: false,
-            max_events_in_memory: 100,
-            cleanup_interval_secs: 60,
-        };
-
-        let queue_service = MetadataQueueService::new(config, filesystem_factory, collection_cache)
+        // Create EventLogManager (aliased as MetadataQueueService)
+        let event_config = crate::index::axis::eventlog::EventLogConfig::default();
+        let queue_service = MetadataQueueService::new(event_config, filesystem_factory, collection_cache)
             .await
             .unwrap();
 

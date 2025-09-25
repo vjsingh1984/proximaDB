@@ -23,7 +23,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::{
@@ -34,7 +33,7 @@ use tracing::info;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 // VectorRecord eliminated - using ZeroOverheadVector for 75-96% memory savings
 use crate::index::axis::eventlog::{ExtractionMode, IndexEvent};
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};
@@ -375,7 +374,20 @@ impl AxisVectorIndex for AxisHnswIndex {
         // USING UTILS: Validate vector ID
         validation::validate_vector_id(&id)?;
 
-        // Register ID mapping and get internal node ID
+        // Check if this ID already exists
+        if let Some(existing_node_id) = self.id_mapping.internal(&id) {
+            // Update existing vector
+            {
+                let mut vectors = self.vectors.write().unwrap();
+                vectors.add_fp32(id.clone(), &vector_data)?;
+            }
+            // Return early - no need to re-add to graph structure
+            self.stats
+                .record_success(start.elapsed().as_micros() as u64);
+            return Ok(());
+        }
+
+        // Register ID mapping and get internal node ID for new vector
         let internal_node_id = self.id_mapping.register(id.clone())?;
 
         // Store vector with zero-overhead - just raw data!
@@ -516,11 +528,11 @@ impl AxisVectorIndex for AxisHnswIndex {
         }
 
         // USING UTILS: Remove from mappings and vectors
-        // TODO: ZeroOverheadCollection doesn't support remove yet
-        // {
-        //     let mut vectors = self.vectors.write().unwrap();
-        //     vectors.remove(id);
-        // }
+        // Remove from vectors collection
+        {
+            let mut vectors = self.vectors.write().unwrap();
+            vectors.remove(id);
+        }
         self.id_mapping.remove_by_external(id);
 
         // Update entry point if necessary
@@ -866,7 +878,7 @@ mod tests {
         assert_eq!(index.stats().vector_count, 3);
 
         // Search should work
-        let results = index.search(&[1.0, 0.0, 0.0], 2).await.unwrap();
+        let results = index.search(&[1.0, 0.0, 0.0], 2, None).await.unwrap();
         assert!(results.len() <= 2); // HNSW is approximate
 
         // Remove a vector
@@ -902,7 +914,7 @@ mod tests {
 
         // Search for nearest neighbors to v1
         let query = vec![1.0, 0.0, 0.0, 0.0];
-        let results = index.search(&query, 3).await.unwrap();
+        let results = index.search(&query, 3, None).await.unwrap();
 
         // v1, v2, v6, v7 should be closest (all have high first component)
         assert!(results.len() >= 2);
@@ -934,7 +946,7 @@ mod tests {
 
         // Search should work efficiently across layers
         let query = vec![0.5, 0.5, 0.5];
-        let results = index.search(&query, 10).await.unwrap();
+        let results = index.search(&query, 10, None).await.unwrap();
         assert!(results.len() > 0);
     }
 
@@ -956,7 +968,7 @@ mod tests {
 
         // Search for middle point
         let query = vec![10.0, 0.0];
-        let results = index.search(&query, 5).await.unwrap();
+        let results = index.search(&query, 5, None).await.unwrap();
 
         // Should find neighbors despite pruning
         assert!(results.len() >= 3);
@@ -992,7 +1004,7 @@ mod tests {
         let index = AxisHnswIndex::new(config, 3).unwrap();
 
         // Search on empty index should return empty results
-        let results = index.search(&[1.0, 0.0, 0.0], 5).await.unwrap();
+        let results = index.search(&[1.0, 0.0, 0.0], 5, None).await.unwrap();
         assert_eq!(results.len(), 0);
     }
 

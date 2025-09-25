@@ -1,9 +1,10 @@
 #[cfg(test)]
 pub mod viper_pipeline_tests {
     use super::*;
-    use crate::compute::QuantizationLevel;
-    use crate::core::VectorRecord;
-    use crate::proto::proximadb_v1::MetadataItem;
+    use crate::compute::quantization::types::QuantizationLevel;
+use crate::compute::quantization::types::*;
+    use crate::proto::proximadb_v1::VectorRecord;
+    use crate::proto::proximadb_v1::SqlValue;
     use crate::storage::engines::impls::viper::pipeline::*;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use chrono::Utc;
@@ -18,22 +19,20 @@ pub mod viper_pipeline_tests {
     ) -> VectorRecord {
         let now = Utc::now().timestamp_micros();
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector,
             metadata: metadata
                 .into_iter()
-                .map(|(k, v)| MetadataItem {
-                    key: k,
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(v)),
-                })
+                .map(|(k, v)| (k, SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v)),
+                }))
                 .collect(),
-            timestamp: now as u32,
-            updated_at: Some(now as u32),
+            timestamp: now,
+            updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            // rank removed -  None,
-            similarity: None,
-            similarity: None,
+            quantized_vector: vec![],
+            source: Some("test".to_string()),
         }
     }
 
@@ -83,7 +82,7 @@ pub mod viper_pipeline_tests {
         assert!(config.processing_config.enable_preprocessing);
         assert!(config.processing_config.enable_postprocessing);
         assert_eq!(config.processing_config.batch_size, 100);
-        assert!(config.processing_config.enable_compression);
+        assert!(config.processing_config.compression);
         assert!(matches!(
             config.processing_config.sorting_strategy,
             SortingStrategy::ByTimestamp
@@ -114,13 +113,13 @@ pub mod viper_pipeline_tests {
             batch_size: 50,
             compression: false,
             sorting_strategy: SortingStrategy::ById,
-            quantization_level: Some(QuantizationLevel::pq8(8)),
+            quantization_level: Some(crate::compute::quantization::types::UnifiedQuantizationLevel::Pq8),
         };
 
         assert!(!config.enable_preprocessing);
         assert!(!config.enable_postprocessing);
         assert_eq!(config.batch_size, 50);
-        assert!(!config.enable_compression);
+        assert!(!config.compression);
         assert!(matches!(config.sorting_strategy, SortingStrategy::ById));
         assert!(config.quantization_level.is_some());
 
@@ -207,31 +206,49 @@ pub mod viper_pipeline_tests {
         let vector = vec![0.1, 0.2, 0.3, 0.4, 0.5];
         let record = create_test_vector_record("test_vector_1", vector.clone(), metadata);
 
-        assert_eq!(record.id, Some("test_vector_1".to_string()));
+        assert_eq!(record.id, "test_vector_1".to_string());
         assert_eq!(record.vector, vector);
         assert_eq!(record.metadata.len(), 2);
         assert_eq!(record.version, Some(1));
-        assert!(record.rank.is_none());
-        assert!(record.score.is_none());
-        assert!(record.similarity.is_none());
+        // Fields updated in proto update
+        assert!(record.quantized_vector.is_empty());
+        assert_eq!(record.source, Some("test".to_string()));
     }
 
     #[test]
     fn test_quantization_level_variants() {
         let levels = vec![
-            QuantizationLevel::pq4(4),
-            QuantizationLevel::pq8(8),
-            QuantizationLevel::Uniform(16),
-            QuantizationLevel::Uniform(32),
-            QuantizationLevel::None,
+            QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 4,
+                num_subvectors: 4,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            }),
+            QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 8,
+                num_subvectors: 8,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            }),
+            QuantizationLevel::Scalar(ScalarQuantization {
+                bits: 8,
+                scale: 1.0,
+                offset: 0.0,
+                clamp_values: true,
+            }),
+            QuantizationLevel::Binary(BinaryQuantization {
+                threshold: Some(0.0),
+                sign_based: false,
+            }),
+            QuantizationLevel::None(NoQuantization {}),
         ];
 
         for level in levels {
             match level {
-                QuantizationLevel::ProductQuantization { .. } => assert!(true),
-                QuantizationLevel::Uniform(bits) => assert!(bits > 0),
-                QuantizationLevel::None => assert!(true),
-                QuantizationLevel::Custom { .. } => assert!(true),
+                QuantizationLevel::Pq(_) => assert!(true),
+                QuantizationLevel::Scalar(_) | QuantizationLevel::Binary(_) => assert!(true),
+                QuantizationLevel::None(_) => assert!(true),
+                QuantizationLevel::Uniform(_) | QuantizationLevel::Custom(_) => assert!(true),
             }
         }
     }
@@ -251,8 +268,8 @@ pub mod viper_pipeline_tests {
             Err(e) => {
                 // Expected to fail in test environment - verify error is reasonable
                 assert!(
-                    e.to_string().contains_hash("Failed")
-                        || e.to_string().contains_hash("not implemented")
+                    e.to_string().contains("Failed")
+                        || e.to_string().contains("not implemented")
                 );
             }
         }

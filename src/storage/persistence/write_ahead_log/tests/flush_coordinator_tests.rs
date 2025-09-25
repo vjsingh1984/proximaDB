@@ -6,8 +6,7 @@
 //! - Handling memory vs disk WAL modes
 //! - Cleanup instructions after successful flushes
 
-use crate::core::VectorRecord;
-use crate::proto::proximadb_v1::MetadataItem;
+use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use crate::storage::persistence::write_ahead_log::{
     FlushDataSource, WALFlushCoordinator, config::SyncMode,
 };
@@ -33,7 +32,7 @@ impl UnifiedStorageEngine for MockStorageEngine {
     }
 
     fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-        crate::storage::traits::StorageEngineStrategy::Lsm
+        crate::storage::traits::StorageEngineStrategy::Sst
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
@@ -44,17 +43,21 @@ impl UnifiedStorageEngine for MockStorageEngine {
         let mut count = self.flush_count.lock().await;
         *count += 1;
 
+        // Get the actual number of vectors from params
+        let entries_count = params.vector_records.len() as u64;
+        let bytes_written = entries_count * 100; // 100 bytes per entry for mock
+
         Ok(FlushResult {
             success: true,
-            entries_flushed: params.vector_records.len() as u64,
-            bytes_written: (params.vector_records.len() * 100) as u64,
-            files_created: 1,
-            duration_ms: 10,
+            collections_affected: vec![],
+            entries_flushed: Some(entries_count),
+            bytes_written: Some(bytes_written),
+            files_created: Some(1),
+            duration_ms: Some(10),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
             compaction_triggered: false,
-            collections_affected: vec![],
-            flushed_batch_ids: params.batch_ids.clone(),
+            flushed_batch_ids: vec![],
         })
     }
 
@@ -65,13 +68,13 @@ impl UnifiedStorageEngine for MockStorageEngine {
         Ok(crate::storage::traits::CompactionResult {
             success: true,
             collections_affected: vec![],
-            entries_processed: 0,
-            entries_removed: 0,
-            bytes_read: 0,
-            bytes_written: 0,
-            input_files: 0,
-            output_files: 0,
-            duration_ms: 0,
+            entries_processed: Some(0),
+            entries_removed: Some(0),
+            bytes_read: Some(0),
+            bytes_written: Some(0),
+            input_files: Some(0),
+            output_files: Some(0),
+            duration_ms: Some(0),
             completed_at: chrono::Utc::now(),
             engine_metrics: std::collections::HashMap::new(),
         })
@@ -86,22 +89,16 @@ impl UnifiedStorageEngine for MockStorageEngine {
     async fn vector_by_id(
         &self,
         _collection_id: &str,
+        _base_path: &str,
         _vector_id: &str,
-    ) -> Result<Option<crate::core::VectorRecord>> {
+    ) -> Result<Option<VectorRecord>> {
         Ok(None)
     }
 
     async fn search_vectors_unified(
         &self,
-        _collection_id: &str,
-        _storage_url: &str,
-        _query_vector: &[f32],
-        _k: usize,
-        _distance_metric: &crate::compute::distance_computation::DistanceMetric,
-        _metadata_filters: Option<&crate::core::search::FilterExpression>,
-        _include_vectors: bool,
-        _include_metadata: bool,
-    ) -> Result<Vec<crate::core::search::SearchResult>> {
+        _ctx: &crate::storage::traits::StorageQueryContext,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         Ok(vec![])
     }
 
@@ -114,22 +111,21 @@ impl UnifiedStorageEngine for MockStorageEngine {
 
 /// Create test vector
 fn create_test_vector(id: &str) -> VectorRecord {
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("test".to_string(), SqlValue {
+        value: Some(sql_value::Value::StringValue("true".to_string())),
+    });
+
     VectorRecord {
-        id: Some(id.to_string()),
+        id: id.to_string(),
         vector: vec![0.1; 128],
-        metadata: vec![MetadataItem {
-            key: "test".to_string(),
-            value: Some(
-                crate::proto::proximadb_v1::metadata_item::Value::StringValue("true".to_string()),
-            ),
-        }],
-        timestamp: 1234567890,
-        updated_at: Some(1234567890),
+        metadata,
+        timestamp: 1234567890i64,
+        updated_at: Some(1234567890i64),
         expires_at: None,
         version: Some(1),
-        // rank removed -  None,
-        similarity: None,
-        similarity: None,
+        quantized_vector: vec![],
+        source: None,
     }
 }
 
@@ -164,7 +160,7 @@ async fn test_register_storage_engine() {
         .await;
 
     assert!(result.is_ok());
-    assert_eq!(result.unwrap().base.entries_flushed, 1);
+    assert_eq!(result.unwrap().base.entries_flushed, Some(1));
 }
 
 #[tokio::test]
@@ -293,7 +289,7 @@ async fn test_execute_coordinated_flush_empty() {
 
     // Should succeed with 0 entries
     assert!(result.base.success);
-    assert_eq!(result.base.entries_flushed, 0);
+    assert_eq!(result.base.entries_flushed, Some(0));
 }
 
 #[tokio::test]
@@ -324,8 +320,8 @@ async fn test_execute_coordinated_flush_with_data() {
 
     // Should succeed with 3 entries
     assert!(result.base.success);
-    assert_eq!(result.base.entries_flushed, 3);
-    assert_eq!(result.base.bytes_written, 300); // 3 * 100 from mock
+    assert_eq!(result.base.entries_flushed, Some(3));
+    assert_eq!(result.base.bytes_written, Some(300)); // 3 * 100 from mock
 
     // Verify flush was called
     let count = mock_engine.flush_count.lock().await;
@@ -348,7 +344,7 @@ async fn test_execute_coordinated_flush_engine_not_found() {
         result
             .unwrap_err()
             .to_string()
-            .contains_hash("not registered")
+            .contains("not registered")
     );
 }
 

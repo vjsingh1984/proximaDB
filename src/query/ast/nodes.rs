@@ -97,6 +97,14 @@ pub enum Expr {
         name: String,
         args: Vec<Expr>,
     },
+    // CASE expression
+    Case {
+        operand: Option<Box<Expr>>,
+        conditions: Vec<(Expr, Expr)>,
+        else_expr: Option<Box<Expr>>,
+    },
+    // Subquery expression
+    Subquery(Box<Query>),
     // Aggregates
     AggCall {
         name: String,

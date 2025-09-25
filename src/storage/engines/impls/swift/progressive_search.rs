@@ -8,12 +8,15 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use tracing::{debug, info};
 
+
+
 use super::{MetadataFilter, SwiftFile};
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::core::VectorRecord;
+use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
 /// Helper function to compute L2 distance squared for INT8 vectors
@@ -526,7 +529,7 @@ async fn phase4_full_precision(
         let sem = semaphore.clone();
         let query = query.to_vec();
         let filter = filter.clone();
-        let distance_metric = sst.header.distance_metric;
+        let distance_metric = sst.header.distance_metric.clone();
 
         let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
@@ -709,9 +712,9 @@ mod tests {
         });
 
         // Should pop in order: 5.0, 10.0, 15.0
-        assert_eq!(heap.pop().unwrap().distance, 5.0);
-        assert_eq!(heap.pop().unwrap().distance, 10.0);
-        assert_eq!(heap.pop().unwrap().distance, 15.0);
+        assert_eq!(heap.pop().unwrap().similarity, 5.0);
+        assert_eq!(heap.pop().unwrap().similarity, 10.0);
+        assert_eq!(heap.pop().unwrap().similarity, 15.0);
     }
 
     #[test]
@@ -721,12 +724,12 @@ mod tests {
 
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         let euclidean_result = compute.calculate_distance(&a, &b, &DistanceMetric::Euclidean);
-        assert!((euclidean_result.similarity - 1.414).abs() < 0.01);
+        assert!((euclidean_result.distance - 1.414).abs() < 0.01);
 
         let cosine_result = compute.calculate_distance(&a, &b, &DistanceMetric::Cosine);
-        assert!((cosine_result.similarity - 1.0).abs() < 0.01); // Orthogonal vectors
+        assert!((cosine_result.distance - 1.0).abs() < 0.01); // Orthogonal vectors
 
         let dot_result = compute.calculate_distance(&a, &b, &DistanceMetric::DotProduct);
-        assert_eq!(dot_result.similarity, 0.0); // Orthogonal vectors
+        assert_eq!(dot_result.distance, 0.0); // Orthogonal vectors
     }
 }

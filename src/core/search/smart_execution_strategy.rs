@@ -7,7 +7,6 @@
 
 use anyhow::Result;
 use parking_lot::RwLock;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
@@ -772,7 +771,7 @@ mod tests {
         let config = StrategyConfig::default();
         let strategy_selector = SmartExecutionStrategy::new(config);
 
-        let _search_params = SearchParams::default();
+        let search_params = SearchParams::default();
 
         let strategy = strategy_selector
             .select_strategy("test_collection", &search_params, None)

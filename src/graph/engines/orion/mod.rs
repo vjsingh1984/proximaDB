@@ -56,6 +56,7 @@
 //! ```
 
 pub mod index;
+pub mod persistence;
 pub mod storage;
 pub mod traversal;
 
@@ -64,9 +65,10 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};
 use dashmap::DashMap;
-use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing;
 
 /// ORION Graph Engine with CSR format for high-performance traversal
 #[derive(Debug)]
@@ -89,6 +91,9 @@ pub struct OrionGraphEngine {
 
     /// Engine statistics
     stats: Arc<RwLock<EngineStats>>,
+
+    /// Persistence manager (optional)
+    persistence: Option<Arc<persistence::OrionPersistence>>,
 }
 
 /// Engine performance statistics
@@ -115,6 +120,7 @@ impl OrionGraphEngine {
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(EngineStats::default())),
+            persistence: None,
         }
     }
 
@@ -128,7 +134,86 @@ impl OrionGraphEngine {
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(EngineStats::default())),
+            persistence: None,
         }
+    }
+
+    /// Create ORION engine with persistence enabled
+    pub async fn with_persistence(
+        base_path: impl AsRef<Path>,
+        enable_wal: bool,
+    ) -> Result<Self> {
+        // Use default base URL if path is provided
+        let base_url = format!("file://{}", base_path.as_ref().display());
+        let graph_id = "default".to_string(); // Default graph for backward compatibility
+
+        let persistence = Arc::new(
+            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?
+        );
+
+        Ok(Self {
+            memory_pool: Arc::new(GraphMemoryPool::new()),
+            csr_outgoing: Arc::new(RwLock::new(storage::CsrStorage::new())),
+            csr_incoming: Arc::new(RwLock::new(storage::CsrStorage::new())),
+            edge_metadata: Arc::new(DashMap::new()),
+            node_to_index: Arc::new(DashMap::new()),
+            index_to_node: Arc::new(RwLock::new(Vec::new())),
+            stats: Arc::new(RwLock::new(EngineStats::default())),
+            persistence: Some(persistence),
+        })
+    }
+
+    /// Create ORION engine with persistence for a specific graph
+    pub async fn with_persistence_for_graph(
+        graph_id: String,
+        base_url: String,
+        enable_wal: bool,
+    ) -> Result<Self> {
+        let persistence = Arc::new(
+            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?
+        );
+
+        Ok(Self {
+            memory_pool: Arc::new(GraphMemoryPool::new()),
+            csr_outgoing: Arc::new(RwLock::new(storage::CsrStorage::new())),
+            csr_incoming: Arc::new(RwLock::new(storage::CsrStorage::new())),
+            edge_metadata: Arc::new(DashMap::new()),
+            node_to_index: Arc::new(DashMap::new()),
+            index_to_node: Arc::new(RwLock::new(Vec::new())),
+            stats: Arc::new(RwLock::new(EngineStats::default())),
+            persistence: Some(persistence),
+        })
+    }
+
+    /// Load engine from persistent snapshot
+    pub async fn load_from_snapshot(
+        snapshot_path: impl AsRef<Path>,
+        base_path: impl AsRef<Path>,
+        enable_wal: bool,
+    ) -> Result<Self> {
+        let engine = Self::with_persistence(base_path, enable_wal).await?;
+
+        if let Some(persistence) = &engine.persistence {
+            persistence.load_snapshot(&engine, snapshot_path).await?;
+        }
+
+        Ok(engine)
+    }
+
+    /// Load engine from persistent snapshot for a specific graph
+    pub async fn load_from_snapshot_for_graph(
+        snapshot_path: impl AsRef<Path>,
+        graph_id: String,
+        base_url: String,
+        enable_wal: bool,
+    ) -> Result<Self> {
+        let engine = Self::with_persistence_for_graph(graph_id, base_url, enable_wal).await?;
+
+        if let Some(persistence) = &engine.persistence {
+            persistence.load_snapshot(&engine, snapshot_path).await?;
+        }
+
+        Ok(engine)
     }
 
     /// Get engine statistics
@@ -250,10 +335,40 @@ impl OrionGraphEngine {
             Ok(Vec::new())
         }
     }
+
+    // Convenience alias methods for persistence module compatibility
+    pub async fn create_node(&self, node: Node) -> Result<Arc<Node>> {
+        self.insert_node(node)
+    }
+
+    pub async fn create_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
+        self.insert_edge(edge)
+    }
+
+    pub async fn delete_node(&self, node_id: &NodeId) -> Result<Option<Arc<Node>>> {
+        GraphEngine::delete_node(self, node_id)
+    }
+
+    pub async fn delete_edge(&self, edge_id: &EdgeId) -> Result<Option<Arc<Edge>>> {
+        GraphEngine::delete_edge(self, edge_id)
+    }
 }
 
 impl GraphEngine for OrionGraphEngine {
     fn insert_node(&self, node: Node) -> Result<Arc<Node>> {
+        // Write to WAL if persistence is enabled
+        if let Some(persistence) = &self.persistence {
+            tokio::spawn({
+                let persistence = Arc::clone(persistence);
+                let node_for_wal = node.clone();
+                async move {
+                    if let Err(e) = persistence.write_node_operation(node_for_wal).await {
+                        tracing::error!("Failed to write node operation to WAL: {:?}", e);
+                    }
+                }
+            });
+        }
+
         let node_arc = self.memory_pool.insert_node(node);
 
         // Update stats
@@ -328,6 +443,19 @@ impl GraphEngine for OrionGraphEngine {
             )));
         }
 
+        // Write to WAL if persistence is enabled
+        if let Some(persistence) = &self.persistence {
+            tokio::spawn({
+                let persistence = Arc::clone(persistence);
+                let edge_for_wal = edge.clone();
+                async move {
+                    if let Err(e) = persistence.write_edge_operation(edge_for_wal).await {
+                        tracing::error!("Failed to write edge operation to WAL: {:?}", e);
+                    }
+                }
+            });
+        }
+
         let edge_arc = self.memory_pool.insert_edge(edge.clone());
 
         // Add to CSR structures (async task to avoid blocking)
@@ -340,6 +468,7 @@ impl GraphEngine for OrionGraphEngine {
                 node_to_index: Arc::clone(&self.node_to_index),
                 index_to_node: Arc::clone(&self.index_to_node),
                 stats: Arc::clone(&self.stats),
+                persistence: self.persistence.clone(),
             };
             let edge_for_csr = edge.clone();
 
@@ -380,6 +509,7 @@ impl GraphEngine for OrionGraphEngine {
                     node_to_index: Arc::clone(&self.node_to_index),
                     index_to_node: Arc::clone(&self.index_to_node),
                     stats: Arc::clone(&self.stats),
+                    persistence: self.persistence.clone(),
                 };
 
                 async move {
@@ -410,6 +540,7 @@ impl GraphEngine for OrionGraphEngine {
                     node_to_index: Arc::clone(&self.node_to_index),
                     index_to_node: Arc::clone(&self.index_to_node),
                     stats: Arc::clone(&self.stats),
+                    persistence: self.persistence.clone(),
                 };
                 let edge_for_removal = Arc::clone(edge);
 
@@ -435,22 +566,17 @@ impl GraphEngine for OrionGraphEngine {
         node_id: &NodeId,
         edge_type: Option<&str>,
     ) -> Result<Vec<Arc<Edge>>> {
-        let rt = tokio::runtime::Handle::current();
-        let target_nodes = rt.block_on(self.get_outgoing_targets(node_id))?;
-
+        // Get outgoing edges synchronously from edge_metadata
         let mut edges = Vec::new();
-        for target_id in target_nodes {
-            // Find edges from node_id to target_id
-            for edge_entry in self.edge_metadata.iter() {
-                let edge = edge_entry.value();
-                if edge.from_node_id == *node_id && edge.to_node_id == target_id {
-                    if let Some(filter_type) = edge_type {
-                        if edge.edge_type == filter_type {
-                            edges.push(Arc::clone(edge));
-                        }
-                    } else {
+        for edge_entry in self.edge_metadata.iter() {
+            let edge = edge_entry.value();
+            if edge.from_node_id == *node_id {
+                if let Some(filter_type) = edge_type {
+                    if edge.edge_type == filter_type {
                         edges.push(Arc::clone(edge));
                     }
+                } else {
+                    edges.push(Arc::clone(edge));
                 }
             }
         }
@@ -463,22 +589,17 @@ impl GraphEngine for OrionGraphEngine {
         node_id: &NodeId,
         edge_type: Option<&str>,
     ) -> Result<Vec<Arc<Edge>>> {
-        let rt = tokio::runtime::Handle::current();
-        let source_nodes = rt.block_on(self.get_incoming_sources(node_id))?;
-
+        // Get incoming edges synchronously from edge_metadata
         let mut edges = Vec::new();
-        for source_id in source_nodes {
-            // Find edges from source_id to node_id
-            for edge_entry in self.edge_metadata.iter() {
-                let edge = edge_entry.value();
-                if edge.from_node_id == source_id && edge.to_node_id == *node_id {
-                    if let Some(filter_type) = edge_type {
-                        if edge.edge_type == filter_type {
-                            edges.push(Arc::clone(edge));
-                        }
-                    } else {
+        for edge_entry in self.edge_metadata.iter() {
+            let edge = edge_entry.value();
+            if edge.to_node_id == *node_id {
+                if let Some(filter_type) = edge_type {
+                    if edge.edge_type == filter_type {
                         edges.push(Arc::clone(edge));
                     }
+                } else {
+                    edges.push(Arc::clone(edge));
                 }
             }
         }
@@ -522,12 +643,11 @@ impl GraphEngine for OrionGraphEngine {
     }
 
     fn get_all_nodes(&self) -> Result<Vec<Arc<Node>>> {
-        Ok(self
-            .memory_pool
-            .nodes
-            .iter()
-            .map(|entry| Arc::clone(entry.value()))
-            .collect())
+        let mut nodes = Vec::new();
+        for entry in self.memory_pool.nodes.iter() {
+            nodes.push(Arc::clone(&*entry));
+        }
+        Ok(nodes)
     }
 }
 
@@ -540,8 +660,7 @@ impl Default for OrionGraphEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::PropertyValue;
-    // PropertyValue is now a struct, not enum - use direct field access;
+    use crate::proto::proximadb_v1::{PropertyValue, property_value};
 
     #[tokio::test]
     async fn test_orion_engine_creation() {
@@ -560,12 +679,12 @@ mod tests {
             properties: std::collections::HashMap::from([(
                 "name".to_string(),
                 PropertyValue {
-                    value: Some(Value::StringValue("Alice".to_string())),
+                    value: Some(property_value::Value::StringValue("Alice".to_string())),
                 },
             )]),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Insert node
@@ -573,7 +692,7 @@ mod tests {
         assert_eq!(engine.node_count().unwrap(), 1);
 
         // Get node
-        let retrieved = engine.get_node("node1").unwrap().unwrap();
+        let retrieved = engine.get_node(&"node1".to_string()).unwrap().unwrap();
         assert!(Arc::ptr_eq(&inserted, &retrieved));
 
         // Get by label
@@ -592,8 +711,8 @@ mod tests {
             labels: vec!["Person".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         let node2 = Node {
@@ -601,8 +720,8 @@ mod tests {
             labels: vec!["Person".to_string()],
             properties: std::collections::HashMap::new(),
             embedding: None,
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         engine.insert_node(node1).unwrap();
@@ -616,8 +735,8 @@ mod tests {
             edge_type: "KNOWS".to_string(),
             properties: std::collections::HashMap::new(),
             weight: Some(1.0),
-            created_at: None,
-            updated_at: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
 
         // Insert edge
@@ -628,12 +747,12 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         // Get outgoing edges
-        let outgoing = engine.get_outgoing_edges("node1", None).unwrap();
+        let outgoing = engine.get_outgoing_edges(&"node1".to_string(), None).unwrap();
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].edge_type, "KNOWS");
 
         // Get neighbors
-        let neighbors = engine.get_neighbors("node1", None).unwrap();
+        let neighbors = engine.get_neighbors(&"node1".to_string(), None).unwrap();
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].id, "node2");
     }

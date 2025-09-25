@@ -2,8 +2,8 @@
 mod tests {
     use super::*;
     use crate::core::config::HardwareConfig;
-    use crate::core::hardware_capabilities::{HardwareCapabilities, GpuBackend, HardwareBackend, HardwareQuery, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
-    use crate::query::sql_engine::vector_array_parser::SimdCapabilities;
+    use crate::core::hardware_capabilities::{HardwareCapabilities, GpuBackend, HardwareBackend, HardwareQuery, SimdCapabilities, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
+    
     
     #[test]
     fn test_hardware_config_defaults() {
@@ -14,7 +14,7 @@ mod tests {
         assert!(config.enable_simd);
         assert!(config.enable_avx512);
         assert!(config.enable_gpu_parsing);
-        assert!(config.enable_gpu_distance);
+        // enable_gpu_distance field no longer exists in current HardwareConfig
         assert_eq!(config.gpu_min_vector_size, 64);
         assert_eq!(config.gpu_min_batch_size, 100);
     }
@@ -28,7 +28,7 @@ mod tests {
         // CPU should always be detected
         assert!(caps.cpu.physical_cores > 0);
         assert!(caps.cpu.logical_cores >= caps.cpu.physical_cores);
-        assert!(!caps.cpu.vendor.is_none());
+        assert!(!caps.cpu.vendor.is_empty());
         
         // Memory should always be detected
         assert!(caps.memory.total_memory > 0 || caps.memory.recommended_cache_size > 0);
@@ -198,7 +198,7 @@ mod tests {
         
         // Test string representation
         let caps_str = caps.to_string();
-        assert!(!caps_str.is_none());
+        assert!(!caps_str.is_empty());
         
         if !has_any_simd {
             assert_eq!(caps_str, "Scalar");
@@ -226,8 +226,8 @@ mod tests {
         
         assert!(cpu.physical_cores > 0);
         assert!(cpu.logical_cores >= cpu.physical_cores);
-        assert!(!cpu.vendor.is_none());
-        assert!(!cpu.model_name.is_none());
+        assert!(!cpu.vendor.is_empty());
+        assert!(!cpu.model_name.is_empty());
         
         // SIMD capabilities should be detected
         let simd = cpu.simd;
@@ -256,7 +256,7 @@ mod tests {
         
         // If no GPU, devices should be empty
         if gpu.backend == GpuBackend::None {
-            assert!(gpu.devices.is_none());
+            assert!(gpu.devices.is_empty());
             assert_eq!(gpu.total_memory, 0);
             assert!(gpu.primary_device.is_none());
         }

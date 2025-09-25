@@ -10,7 +10,7 @@ use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     FilterCondition, MetadataFilter, UnifiedParquetReader,
 };
@@ -727,20 +727,35 @@ impl NovaColumnarSearch {
                 )
                 .await?;
 
-            // Compute exact distances
+            // Compute exact distances using batch processing
             for batch in batch {
+                // Collect all vectors from candidates for batch processing
+                let mut batch_records = Vec::new();
+
                 for candidate in &group_candidates {
                     if let Some(record) =
                         self.extract_record_from_batch(&batch, candidate.row_offset as usize)?
                     {
-                        let distance_result = self.distance_compute.calculate_distance(
-                            query_vector,
-                            &record.vector,
-                            &distance_metric,
-                        );
-                        let distance = distance_result.normalized_score;
+                        batch_records.push(record);
+                    }
+                }
 
-                        final_results.push((record, distance));
+                // Batch compute distances if we have vectors
+                if !batch_records.is_empty() {
+                    // Collect vector references after all records are collected
+                    let batch_vectors: Vec<&[f32]> = batch_records.iter()
+                        .map(|r| r.vector.as_slice())
+                        .collect();
+
+                    let distances = self.distance_compute.batch_distance_pooled_simd(
+                        query_vector,
+                        &batch_vectors,
+                        &distance_metric,
+                    );
+
+                    // Combine records with distances
+                    for (record, distance_result) in batch_records.into_iter().zip(distances.iter()) {
+                        final_results.push((record, distance_result.normalized_score));
                     }
                 }
             }
@@ -1119,6 +1134,7 @@ mod tests {
                     serde_json::json!(100.0),
                 ),
             ],
+            logic: crate::storage::engines::core::formats::columnar::FilterLogic::And,
         });
 
         let projection = build_projection_mask(&config, &filter);

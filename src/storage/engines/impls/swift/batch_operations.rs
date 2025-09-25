@@ -9,7 +9,7 @@ use tracing::{debug, info, warn};
 
 use super::SwiftFile;
 use super::id_index::BlockLocation;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
 
 /// Configuration for batch operations
@@ -232,6 +232,8 @@ async fn load_block_from_disk(superblock_idx: u32, block_idx: u32) -> Result<Fas
         enable_metadata_compression: true,
         compression_threshold_bytes: 1024,
         dictionary_compression: false,
+        vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+        metadata_algorithm: None, // Use main algorithm for metadata
     };
 
     Ok(FastLanesDataBlock::new(Vec::new(), compression_config))
@@ -394,35 +396,44 @@ mod tests {
         let cache = BlockCache::new(1024 * 1024); // 1MB cache
 
         let block = Arc::new(FastLanesDataBlock {
-            id: 0,
-            offset_in_superblock: 0,
-            compressed_size: 0,
-            uncompressed_size: 0,
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 0,
             records: vec![VectorRecord {
-                id: Some("test".to_string()),
+                id: "test".to_string(),
                 vector: vec![1.0; 768],
-                metadata: None,
+                metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
                 expires_at: None,
                 version: None,
+                quantized_vector: vec![],
+                source: None,
             }],
-            quantized_vectors: None, // Quantization handled by universal adapter
+            quantized_vectors: None,
             quantization_level: None,
+            quantized_section: None,
+            metadata: Default::default(),
+            compression_config: Default::default(),
+            compression_algorithm: Default::default(),
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
             id_range: ("test".to_string(), "test".to_string()),
-            // min_timestamp removed -  0,
-            // max_timestamp removed -  0,
-            metadata_stats: HashMap::new(),
+            timestamp_range: (0, 0),
+            statistics: Default::default(),
+            metadata_stats: None,
+            has_deletes: false,
         });
 
         // Test put and get
         cache.put((0, 0), block.clone()).await;
-        let retrieved = cache.get(&key).await;
+        let retrieved = cache.get(&(0, 0)).await;
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().records[0].id, Some("test".to_string()));
+        assert_eq!(retrieved.unwrap().records[0].id, "test".to_string());
 
         // Test cache miss
-        let miss = cache.get(&key).await;
+        let miss = cache.get(&(1, 1)).await;
         assert!(miss.is_none());
     }
 }

@@ -73,7 +73,7 @@ impl Default for AxisAnnoyConfig {
 }
 
 /// Node in an Annoy tree
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum AnnoyNode {
     /// Leaf node containing vector IDs
     Leaf { vector_ids: Vec<String> },

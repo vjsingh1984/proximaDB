@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio;
 
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::viper::ViperEngine;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
@@ -42,35 +42,24 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
         .map(|i| {
             let now = chrono::Utc::now().timestamp_millis();
             VectorRecord {
-                id: Some(format!("test_vector_{}", i)),
+                id: format!("test_vector_{}", i),
                 vector: vec![0.1 * i as f32, 0.2 * i as f32, 0.3 * i as f32],
-                metadata: vec![
-                    crate::proto::proximadb_v1::MetadataItem {
-                        key: "category".to_string(),
-                        value: Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
-                                "category_{}",
-                                i % 3
-                            )),
-                        ),
-                    },
-                    crate::proto::proximadb_v1::MetadataItem {
-                        key: "priority".to_string(),
-                        value: Some(
-                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                                i.to_string(),
-                            ),
-                        ),
-                    },
-                ],
-                timestamp: now as u32,
-                updated_at: Some(now as u32),
+                metadata: {
+                    let mut metadata = std::collections::HashMap::new();
+                    metadata.insert("category".to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(format!("category_{}", i % 3)))
+                    });
+                    metadata.insert("priority".to_string(), crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(i.to_string()))
+                    });
+                    metadata
+                },
+                timestamp: now,
+                updated_at: Some(now),
                 expires_at: None,
                 version: Some(1),
-                // rank removed -  None,
-                similarity: Some(1.0 - (i as f32 * 0.1)),
-                similarity: Some(i as f32 * 0.1),
-                ..Default::default()
+                quantized_vector: vec![],
+                source: None,
             }
         })
         .collect()
@@ -116,7 +105,7 @@ async fn test_viper_do_flush_implementation() -> Result<()> {
     // Verify flush result
     assert!(result.success);
     assert_eq!(result.collections_affected, vec![collection_id]);
-    assert_eq!(result.entries_flushed, 0); // No actual records in test
+    assert_eq!(result.entries_flushed, Some(0)); // No actual records in test
     assert!(result.engine_metrics.contains_key("operation_id"));
 
     Ok(())
@@ -173,8 +162,8 @@ async fn test_unified_atomic_operations_lifecycle() -> Result<()> {
         .await?;
 
     assert!(flush_metadata.operation_id.len() > 0);
-    assert!(flush_metadata.staging_url.contains_hash("__flush"));
-    assert!(flush_metadata.final_url.contains_hash("storage"));
+    assert!(flush_metadata.staging_url.contains("__flush"));
+    assert!(flush_metadata.final_url.contains("storage"));
 
     // Test write to staging
     let test_data = b"test parquet data";
@@ -230,13 +219,13 @@ async fn test_viper_engine_metrics_collection() -> Result<()> {
     assert!(metrics.contains_key("collection_count"));
 
     // Verify metric values exist (u64 values are always >= 0)
-    if let Some(serde_json::Value::Number(ops)) = metrics.get(key) {
+    if let Some(serde_json::Value::Number(ops)) = metrics.get("flush_operations") {
         let _ = ops.as_u64(); // Just verify it can be parsed as u64
     }
-    if let Some(serde_json::Value::Number(mem)) = metrics.get(key) {
+    if let Some(serde_json::Value::Number(mem)) = metrics.get("memory_usage_bytes") {
         let _ = mem.as_u64(); // Just verify it can be parsed as u64
     }
-    if let Some(serde_json::Value::Number(cols)) = metrics.get(key) {
+    if let Some(serde_json::Value::Number(cols)) = metrics.get("collection_count") {
         let _ = cols.as_u64(); // Just verify it can be parsed as u64
     }
 
@@ -260,7 +249,7 @@ async fn test_flush_parameter_validation() -> Result<()> {
         result
             .unwrap_err()
             .to_string()
-            .contains_hash("Collection ID required")
+            .contains("Collection ID required")
     );
 
     Ok(())

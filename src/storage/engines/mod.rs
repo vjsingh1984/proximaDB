@@ -13,7 +13,7 @@
 //!                    ┌──────────────────┴───────────────────┐
 //!                    │         Storage Engines               │
 //!                    ├────────────────────────────────────────┤
-//!                    │ SST │ VIPER │ NOVA │ SWIFT │ PRISM │ RAPTOR │
+//!                    │ SST │ VIPER │ NOVA │ SWIFT │ RAPTOR │ HELIX │
 //!                    └────────────────────────────────────────┘
 //!                                       ↓
 //!                         Core Infrastructure (Shared)
@@ -36,7 +36,6 @@
 //!   - `viper/`: Columnar Parquet for analytics
 //!   - `nova/`: Hybrid quantized columnar engine
 //!   - `swift/`: High-speed hierarchical blocks
-//!   - `prism/`: Tree-based with FastLanes encoding
 //!   - `raptor/`: Matrix-optimized with adaptive PXK
 //!
 //! ## Engine Selection Guide
@@ -47,7 +46,6 @@
 //! | **VIPER** | Analytics, batch operations | Columnar Parquet | Advanced quantization, high compression |
 //! | **NOVA** | Mixed workloads | Hybrid columnar | Quantized columns, progressive search |
 //! | **SWIFT** | High-throughput | Hierarchical blocks | Superblock caching, ID indexing |
-//! | **PRISM** | Memory-constrained | Tree-based | FastLanes encoding, memory optimization |
 //! | **RAPTOR** | Matrix operations | Matrix-optimized | Adaptive PXK, boundary detection |
 //!
 //! ## Performance Characteristics
@@ -118,7 +116,7 @@ pub use crate::storage::traits::{
 
 // Re-export main engine types
 pub use impls::{
-    nova::NovaEngine, prism::PrismEngine, raptor::RaptorEngine, sst::SstStorage,
+    nova::NovaEngine, raptor::RaptorEngine, sst::SstEngine,
     swift::SwiftEngine, viper::ViperEngine,
 };
 

@@ -14,8 +14,7 @@ use crate::compute::distance_computation::{
 };
 
 use super::{
-    adapter::{AdapterError, AdapterResult, CandidateVector},
-    hardware_manager::OptimizationStrategy,
+    adapter::{AdapterError, AdapterResult, CandidateVector, OptimizationStrategy},
     quantized_calculator::UniversalQuantizedCalculator,
 };
 
@@ -358,7 +357,7 @@ impl ProgressiveRefinementPipeline {
             stage_times,
             total_distance_calculations,
             vectors_per_stage,
-            acceleration_used: Some(OptimizationStrategy::SIMD), // Simplified
+            acceleration_used: Some(OptimizationStrategy::SpeedOptimized), // Simplified
             memory_usage_bytes: current_candidates.len() * std::mem::size_of::<CandidateVector>(),
             cache_hit_rate: 0.8, // Would be calculated from actual cache statistics
             cache_hits: 0,       // Would be tracked from cache operations

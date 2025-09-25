@@ -1,12 +1,8 @@
-// Custom serde implementations for protobuf oneof types
-// This allows memory-efficient oneof while maintaining JSON compatibility
-
+// Custom serde implementations for protobuf oneof types ONLY
 use serde::{Serialize, Deserialize, Serializer, Deserializer};
 use crate::utils::encoding::{base64_encode, base64_decode};
 use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlValueVariant};
 use crate::proto::proximadb_v1::{PropertyValue, property_value::Value as PropertyValueVariant};
-
-// Custom serde for SqlValue
 impl Serialize for SqlValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -48,7 +44,6 @@ impl Serialize for SqlValue {
         map.end()
     }
 }
-
 impl<'de> Deserialize<'de> for SqlValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -92,8 +87,6 @@ impl<'de> Deserialize<'de> for SqlValue {
         Ok(SqlValue { value })
     }
 }
-
-// Custom serde for PropertyValue
 impl Serialize for PropertyValue {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -135,7 +128,6 @@ impl Serialize for PropertyValue {
         map.end()
     }
 }
-
 impl<'de> Deserialize<'de> for PropertyValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -182,12 +174,6 @@ impl<'de> Deserialize<'de> for PropertyValue {
         Ok(PropertyValue { value })
     }
 }
-
-// prost automatically provides PartialEq for oneof types - no manual implementation needed
-
-// Add custom serde implementations for other oneof types
-
-// Custom serde for SourceContent
 impl Serialize for crate::proto::proximadb_v1::SourceContent {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -208,8 +194,6 @@ impl Serialize for crate::proto::proximadb_v1::SourceContent {
         map.end()
     }
 }
-
-// Custom serde for FilterClause (from entity.proto)
 impl Serialize for crate::proto::proximadb_v1::FilterClause {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -234,120 +218,380 @@ impl Serialize for crate::proto::proximadb_v1::FilterClause {
     }
 }
 
-// Custom serde for VectorRecord
-impl Serialize for crate::proto::proximadb_v1::VectorRecord {
+// Custom serde for TypedField (has oneof value)
+impl Serialize for crate::proto::proximadb_v1::TypedField {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("VectorRecord", 6)?;
-        state.serialize_field("id", &self.id)?;
-        state.serialize_field("vector", &self.vector)?;
-        state.serialize_field("metadata", &self.metadata)?;
-        state.serialize_field("timestamp", &self.timestamp)?;
-        state.serialize_field("updated_at", &self.updated_at)?;
-        state.serialize_field("expires_at", &self.expires_at)?;
+        let mut state = serializer.serialize_struct("TypedField", 3)?;
+        
+        // Serialize the oneof value field
+        match &self.value {
+            Some(crate::proto::proximadb_v1::typed_field::Value::StringValue(v)) => {
+                state.serialize_field("value", &serde_json::json!({"string_value": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::IntValue(v)) => {
+                state.serialize_field("value", &serde_json::json!({"int_value": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::DoubleValue(v)) => {
+                state.serialize_field("value", &serde_json::json!({"double_value": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::BoolValue(v)) => {
+                state.serialize_field("value", &serde_json::json!({"bool_value": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::StringArray(v)) => {
+                state.serialize_field("value", &serde_json::json!({"string_array": v}))?;
+            }
+            Some(crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs(v)) => {
+                state.serialize_field("value", &serde_json::json!({"timestamp_value_ms": v}))?;
+            }
+            None => {
+                state.serialize_field("value", &serde_json::Value::Null)?;
+            }
+        }
+        
+        // Serialize the boolean fields
+        state.serialize_field("indexed", &self.indexed)?;
+        state.serialize_field("filterable", &self.filterable)?;
+        
         state.end()
     }
 }
 
-impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::VectorRecord {
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::TypedField {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field {
-            Id,
-            Vector,
-            Metadata,
-            Timestamp,
-            UpdatedAt,
-            ExpiresAt,
+        struct TypedFieldHelper {
+            value: Option<serde_json::Value>,
+            indexed: Option<bool>,
+            filterable: Option<bool>,
         }
 
-        struct VectorRecordVisitor;
+        let helper = TypedFieldHelper::deserialize(deserializer)?;
 
-        impl<'de> serde::de::Visitor<'de> for VectorRecordVisitor {
-            type Value = crate::proto::proximadb_v1::VectorRecord;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("struct VectorRecord")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<crate::proto::proximadb_v1::VectorRecord, V::Error>
-            where
-                V: serde::de::MapAccess<'de>,
-            {
-                let mut id = None;
-                let mut vector = None;
-                let mut metadata = None;
-                let mut timestamp = None;
-                let mut updated_at = None;
-                let mut expires_at = None;
-
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Id => {
-                            if id.is_some() {
-                                return Err(serde::de::Error::duplicate_field("id"));
-                            }
-                            id = Some(map.next_value()?);
-                        }
-                        Field::Vector => {
-                            if vector.is_some() {
-                                return Err(serde::de::Error::duplicate_field("vector"));
-                            }
-                            vector = Some(map.next_value()?);
-                        }
-                        Field::Metadata => {
-                            if metadata.is_some() {
-                                return Err(serde::de::Error::duplicate_field("metadata"));
-                            }
-                            metadata = Some(map.next_value()?);
-                        }
-                        Field::Timestamp => {
-                            if timestamp.is_some() {
-                                return Err(serde::de::Error::duplicate_field("timestamp"));
-                            }
-                            timestamp = Some(map.next_value()?);
-                        }
-                        Field::UpdatedAt => {
-                            if updated_at.is_some() {
-                                return Err(serde::de::Error::duplicate_field("updated_at"));
-                            }
-                            updated_at = Some(map.next_value()?);
-                        }
-                        Field::ExpiresAt => {
-                            if expires_at.is_some() {
-                                return Err(serde::de::Error::duplicate_field("expires_at"));
-                            }
-                            expires_at = Some(map.next_value()?);
-                        }
-                    }
+        let value = if let Some(val) = helper.value {
+            if let Some(obj) = val.as_object() {
+                if let Some(string_val) = obj.get("string_value") {
+                    if let Some(s) = string_val.as_str() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::StringValue(s.to_string()))
+                    } else { None }
+                } else if let Some(int_val) = obj.get("int_value") {
+                    if let Some(i) = int_val.as_i64() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::IntValue(i))
+                    } else { None }
+                } else if let Some(double_val) = obj.get("double_value") {
+                    if let Some(d) = double_val.as_f64() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::DoubleValue(d))
+                    } else { None }
+                } else if let Some(bool_val) = obj.get("bool_value") {
+                    if let Some(b) = bool_val.as_bool() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::BoolValue(b))
+                    } else { None }
+                } else if let Some(timestamp_val) = obj.get("timestamp_value_ms") {
+                    if let Some(t) = timestamp_val.as_i64() {
+                        Some(crate::proto::proximadb_v1::typed_field::Value::TimestampValueMs(t))
+                    } else { None }
+                } else {
+                    None
                 }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
-                let id = id.ok_or_else(|| serde::de::Error::missing_field("id"))?;
-                let vector = vector.ok_or_else(|| serde::de::Error::missing_field("vector"))?;
-                let metadata = metadata.ok_or_else(|| serde::de::Error::missing_field("metadata"))?;
-                let timestamp = timestamp.ok_or_else(|| serde::de::Error::missing_field("timestamp"))?;
+        Ok(crate::proto::proximadb_v1::TypedField {
+            value,
+            indexed: helper.indexed.unwrap_or(false),
+            filterable: helper.filterable.unwrap_or(false),
+        })
+    }
+}
 
-                Ok(crate::proto::proximadb_v1::VectorRecord {
-                    id,
-                    vector,
-                    metadata,
-                    timestamp,
-                    updated_at,
-                    expires_at,
-                    quantized_vector: None,
-                    source: String::new(),
-                    version: 0,
-                })
+// Custom serde for MetadataValue (has oneof value)
+impl Serialize for crate::proto::proximadb_v1::MetadataValue {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+
+        match &self.value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue(v)) => {
+                map.serialize_entry("string_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::metadata_value::Value::IntValue(v)) => {
+                map.serialize_entry("int_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::metadata_value::Value::DoubleValue(v)) => {
+                map.serialize_entry("double_value", v)?;
+            }
+            Some(crate::proto::proximadb_v1::metadata_value::Value::BoolValue(v)) => {
+                map.serialize_entry("bool_value", v)?;
+            }
+            None => {
+                map.serialize_entry("null_value", &serde_json::Value::Null)?;
             }
         }
 
-        deserializer.deserialize_struct("VectorRecord", &["id", "vector", "metadata", "timestamp", "updated_at", "expires_at"], VectorRecordVisitor)
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::MetadataValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct MetadataValueHelper {
+            string_value: Option<String>,
+            int_value: Option<i64>,
+            double_value: Option<f64>,
+            bool_value: Option<bool>,
+            null_value: Option<serde_json::Value>,
+        }
+
+        let helper = MetadataValueHelper::deserialize(deserializer)?;
+
+        let value = if let Some(v) = helper.string_value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::StringValue(v))
+        } else if let Some(v) = helper.int_value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::IntValue(v))
+        } else if let Some(v) = helper.double_value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::DoubleValue(v))
+        } else if let Some(v) = helper.bool_value {
+            Some(crate::proto::proximadb_v1::metadata_value::Value::BoolValue(v))
+        } else {
+            None
+        };
+
+        Ok(crate::proto::proximadb_v1::MetadataValue { value })
+    }
+}
+
+// FilterClause Deserialize implementation
+impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::FilterClause {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct FilterClauseHelper {
+            field: String,
+            op: i32,
+            string_value: Option<String>,
+            int_value: Option<i64>,
+            double_value: Option<f64>,
+            bool_value: Option<bool>,
+            null_value: Option<serde_json::Value>,
+        }
+
+        let helper = FilterClauseHelper::deserialize(deserializer)?;
+
+        let value = if let Some(v) = helper.string_value {
+            Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(v))
+        } else if let Some(v) = helper.int_value {
+            Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(v))
+        } else if let Some(v) = helper.double_value {
+            Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(v))
+        } else if let Some(v) = helper.bool_value {
+            Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(v))
+        } else {
+            None
+        };
+
+        Ok(crate::proto::proximadb_v1::FilterClause {
+            field: helper.field,
+            op: helper.op,
+            value,
+        })
+    }
+}
+
+// ============================================================================
+// Graph Types - Custom Serde for Complex Types with PropertyValue
+// ============================================================================
+
+use crate::proto::proximadb_v1::{Node, Edge};
+
+// Node - has PropertyValue fields
+impl Serialize for Node {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Node", 6)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("labels", &self.labels)?;
+        state.serialize_field("properties", &self.properties)?;
+        state.serialize_field("embedding", &self.embedding)?;
+        state.serialize_field("created_at_ms", &self.created_at_ms)?;
+        state.serialize_field("updated_at_ms", &self.updated_at_ms)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Node {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct NodeHelper {
+            id: String,
+            labels: Vec<String>,
+            properties: std::collections::HashMap<String, PropertyValue>,
+            embedding: Option<crate::proto::proximadb_v1::EmbeddingVersion>,
+            created_at_ms: i64,
+            updated_at_ms: i64,
+        }
+
+        let helper = NodeHelper::deserialize(deserializer)?;
+        Ok(Node {
+            id: helper.id,
+            labels: helper.labels,
+            properties: helper.properties,
+            embedding: helper.embedding,
+            created_at_ms: helper.created_at_ms,
+            updated_at_ms: helper.updated_at_ms,
+        })
+    }
+}
+
+// Edge - has PropertyValue fields
+impl Serialize for Edge {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Edge", 8)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("from_node_id", &self.from_node_id)?;
+        state.serialize_field("to_node_id", &self.to_node_id)?;
+        state.serialize_field("edge_type", &self.edge_type)?;
+        state.serialize_field("properties", &self.properties)?;
+        state.serialize_field("weight", &self.weight)?;
+        state.serialize_field("created_at_ms", &self.created_at_ms)?;
+        state.serialize_field("updated_at_ms", &self.updated_at_ms)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Edge {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct EdgeHelper {
+            id: String,
+            from_node_id: String,
+            to_node_id: String,
+            edge_type: String,
+            properties: std::collections::HashMap<String, PropertyValue>,
+            weight: Option<f64>,
+            created_at_ms: i64,
+            updated_at_ms: i64,
+        }
+
+        let helper = EdgeHelper::deserialize(deserializer)?;
+        Ok(Edge {
+            id: helper.id,
+            from_node_id: helper.from_node_id,
+            to_node_id: helper.to_node_id,
+            edge_type: helper.edge_type,
+            properties: helper.properties,
+            weight: helper.weight,
+            created_at_ms: helper.created_at_ms,
+            updated_at_ms: helper.updated_at_ms,
+        })
+    }
+}
+
+// GraphCollection and CreateGraphRequest now use auto-generated serde
+// since all their nested types have serde derives in build.rs
+
+// PropertyConstraint - has oneof so needs custom serde
+use crate::proto::proximadb_v1::{PropertyConstraint, property_constraint::Constraint};
+
+impl Serialize for PropertyConstraint {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+
+        match &self.constraint {
+            Some(Constraint::StringConstraint(v)) => {
+                map.serialize_entry("string_constraint", v)?;
+            }
+            Some(Constraint::NumericConstraint(v)) => {
+                map.serialize_entry("numeric_constraint", v)?;
+            }
+            Some(Constraint::ArrayConstraint(v)) => {
+                map.serialize_entry("array_constraint", v)?;
+            }
+            Some(Constraint::RegexConstraint(v)) => {
+                map.serialize_entry("regex_constraint", v)?;
+            }
+            None => {
+                map.serialize_entry("null_constraint", &serde_json::Value::Null)?;
+            }
+        }
+
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for PropertyConstraint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if let Some(obj) = value.as_object() {
+            if let Some(v) = obj.get("string_constraint") {
+                let constraint = serde_json::from_value(v.clone())
+                    .map_err(serde::de::Error::custom)?;
+                return Ok(PropertyConstraint {
+                    constraint: Some(Constraint::StringConstraint(constraint)),
+                });
+            }
+            if let Some(v) = obj.get("numeric_constraint") {
+                let constraint = serde_json::from_value(v.clone())
+                    .map_err(serde::de::Error::custom)?;
+                return Ok(PropertyConstraint {
+                    constraint: Some(Constraint::NumericConstraint(constraint)),
+                });
+            }
+            if let Some(v) = obj.get("array_constraint") {
+                let constraint = serde_json::from_value(v.clone())
+                    .map_err(serde::de::Error::custom)?;
+                return Ok(PropertyConstraint {
+                    constraint: Some(Constraint::ArrayConstraint(constraint)),
+                });
+            }
+            if let Some(v) = obj.get("regex_constraint") {
+                let constraint = serde_json::from_value(v.clone())
+                    .map_err(serde::de::Error::custom)?;
+                return Ok(PropertyConstraint {
+                    constraint: Some(Constraint::RegexConstraint(constraint)),
+                });
+            }
+        }
+
+        Ok(PropertyConstraint { constraint: None })
     }
 }

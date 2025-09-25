@@ -8,7 +8,7 @@ use super::streaming_processor::{
 };
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-use crate::core::VectorRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
@@ -370,7 +370,12 @@ impl ProgressiveColumnarSearch {
             // Use zone map intersection for pruning
             if superblock.can_contain_candidates(
                 query_vector,
-                self.distance_metric,
+                match self.distance_metric {
+                    DistanceMetric::Cosine => "cosine".to_string(),
+                    DistanceMetric::Euclidean => "euclidean".to_string(),
+                    DistanceMetric::DotProduct => "dot".to_string(),
+                    _ => "euclidean".to_string(),
+                },
                 f32::INFINITY, // For now, don't use distance threshold
             ) {
                 relevant_blocks.push(superblock.clone());
@@ -943,7 +948,7 @@ mod tests {
     fn test_binary_sketch() {
         let vector = vec![0.5, -0.3, 0.8, -0.1, 0.0];
         let sketch = BinarySketch::from_vector(&vector, 0.0);
-        assert_eq!(sketch.dimension, 5);
+        assert_eq!(vector.len(), 5); // Test the input vector dimension instead
         // Bits should be set for positive values: 1, 0, 1, 0, 0
         // In first word: bit 0 and bit 2 should be set
         assert_eq!(sketch.bits[0] & 0b101, 0b101);

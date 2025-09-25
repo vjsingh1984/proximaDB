@@ -571,7 +571,7 @@ impl AdvancedSearchOptimizer {
             for search_result in cached_v1 {
                 for record in search_result.results {
                     // Use SqlValue metadata directly - no conversion needed!
-                    let mut rec =
+                    let rec =
                         OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
                             .add_vector(record.vector.clone())
                             .with_metadata(record.metadata);
@@ -1126,6 +1126,16 @@ impl BufferPool {
             buffers.push(buffer);
         }
         // Otherwise, let it be dropped
+    }
+
+    /// Async wrapper for buffer acquisition (for test compatibility)
+    pub async fn acquire_buffer(&self) -> anyhow::Result<BytesMut> {
+        Ok(self.buffer())
+    }
+
+    /// Async wrapper for buffer release (for test compatibility)
+    pub async fn release_buffer(&self, buffer: BytesMut) {
+        self.return_buffer(buffer);
     }
 }
 

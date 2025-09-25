@@ -1,6 +1,5 @@
 //! Search query types
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Search query placeholder

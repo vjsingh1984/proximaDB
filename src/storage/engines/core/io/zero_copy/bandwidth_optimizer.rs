@@ -5,7 +5,6 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::config::{

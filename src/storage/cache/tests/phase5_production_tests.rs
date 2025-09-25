@@ -29,7 +29,7 @@ async fn test_cache_config_validation() {
         validation
             .unwrap_err()
             .to_string()
-            .contains_hash("must sum to 100")
+            .contains("must sum to 100")
     );
 
     // Test invalid thresholds
@@ -67,9 +67,9 @@ async fn test_monitoring_dashboard() {
     let state = dashboard.get_dashboard_state().await;
 
     // Verify state components
-    assert!(!state.active_alerts.is_none() || state.active_alerts.is_none());
-    assert!(!state.cache_status.is_none());
-    assert!(!state.optimization_suggestions.is_none() || state.optimization_suggestions.is_none());
+    assert!(!state.active_alerts.is_empty() || state.active_alerts.is_empty());
+    assert!(!state.cache_status.is_empty());
+    assert!(!state.optimization_suggestions.is_empty() || state.optimization_suggestions.is_empty());
 
     // Check cache status
     assert!(state.cache_status.contains_key("vector_data"));
