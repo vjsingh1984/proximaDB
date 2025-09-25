@@ -45,6 +45,13 @@ pub mod zero_copy_reader_integration;
 /// Used by SST, SWIFT, RAPTOR, and PRISM for efficient vector storage
 pub mod fastlanes_encoding;
 
+/// Unified FastLanes SIMD optimization module for HELIX, SST, and SWIFT engines
+/// Provides hardware-accelerated encoding/decoding with engine-specific optimizations
+pub mod unified_fastlanes_simd;
+
+/// SIMD configuration system for fine-tuning optimization behavior
+pub mod simd_config;
+
 /// Common utility function for estimating vector record size in bytes
 ///
 /// This function calculates the storage size of a vector record based on:

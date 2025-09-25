@@ -33,12 +33,31 @@ pub mod markers {
     pub const FASTLANES_DICTIONARY: u8 = 0x50;
     pub const FASTLANES_RUN_LENGTH: u8 = 0x60;
 
+    // === NEW STATE-OF-THE-ART ENCODING MARKERS ===
+    // Advanced compression algorithms for optimal compression ratios
+    pub const FASTLANES_PFOR_DELTA: u8 = 0x35;      // Patched Frame of Reference Delta
+    pub const FASTLANES_ZIGZAG: u8 = 0x25;          // Zigzag encoding for signed values
+    pub const FASTLANES_SIMPLE8B: u8 = 0x45;        // Simple-8b variable bit-width
+    pub const FASTLANES_VBYTE: u8 = 0x55;           // Variable-byte encoding
+    pub const FASTLANES_DOUBLE_DELTA: u8 = 0x28;    // Double-delta for time series
+    pub const FASTLANES_SIMD_RLE: u8 = 0x65;        // SIMD-optimized RLE
+    pub const FASTLANES_HYBRID: u8 = 0x75;          // Hybrid multi-scheme encoding
+
     // Versions with count flag set (0x80-0xFF range, for sparse/variable data)
     pub const RAW_UNCOMPRESSED_WITH_COUNT: u8 = RAW_UNCOMPRESSED | HAS_COUNT_FLAG;
     pub const FASTLANES_BITPACKED_WITH_COUNT: u8 = FASTLANES_BITPACKED | HAS_COUNT_FLAG;
     pub const FASTLANES_DELTA_WITH_COUNT: u8 = FASTLANES_DELTA | HAS_COUNT_FLAG;
     pub const FASTLANES_FRAME_OF_REFERENCE_WITH_COUNT: u8 = FASTLANES_FRAME_OF_REFERENCE | HAS_COUNT_FLAG;
     pub const FASTLANES_RUN_LENGTH_WITH_COUNT: u8 = FASTLANES_RUN_LENGTH | HAS_COUNT_FLAG;
+
+    // New advanced encodings with count flags
+    pub const FASTLANES_PFOR_DELTA_WITH_COUNT: u8 = FASTLANES_PFOR_DELTA | HAS_COUNT_FLAG;
+    pub const FASTLANES_ZIGZAG_WITH_COUNT: u8 = FASTLANES_ZIGZAG | HAS_COUNT_FLAG;
+    pub const FASTLANES_SIMPLE8B_WITH_COUNT: u8 = FASTLANES_SIMPLE8B | HAS_COUNT_FLAG;
+    pub const FASTLANES_VBYTE_WITH_COUNT: u8 = FASTLANES_VBYTE | HAS_COUNT_FLAG;
+    pub const FASTLANES_DOUBLE_DELTA_WITH_COUNT: u8 = FASTLANES_DOUBLE_DELTA | HAS_COUNT_FLAG;
+    pub const FASTLANES_SIMD_RLE_WITH_COUNT: u8 = FASTLANES_SIMD_RLE | HAS_COUNT_FLAG;
+    pub const FASTLANES_HYBRID_WITH_COUNT: u8 = FASTLANES_HYBRID | HAS_COUNT_FLAG;
 
     /// Check if a marker indicates count is stored
     #[inline]
@@ -152,6 +171,42 @@ pub enum FastLanesScheme {
     RunLength,
     /// Patched encoding for outliers
     PatchedBase { base: i64, patch_bits: u8 },
+
+    // === NEW STATE-OF-THE-ART ENCODING SCHEMES ===
+
+    /// PForDelta: Patched Frame of Reference with Delta encoding
+    /// Optimal for sequences with outliers - stores exceptions separately
+    /// Best compression for data with majority of small values and few large outliers
+    PForDelta { majority_bits: u8, base: i64 },
+
+    /// Zigzag encoding: Maps signed integers to unsigned using interleaved encoding
+    /// Optimal for signed integers with small absolute values
+    /// Formula: (n << 1) ^ (n >> 31) - excellent for time-series deltas
+    Zigzag { bits: u8 },
+
+    /// Simple-8b: Variable bit-width integer encoding in 32-bit words
+    /// Packs multiple integers per word with optimal bit allocation
+    /// Superior compression for mixed-range integer sequences
+    Simple8b,
+
+    /// Variable-byte encoding: 7 bits data + 1 continuation bit per byte
+    /// Excellent for small positive integers, self-delimiting
+    /// Optimal for sparse vectors and identifier sequences
+    VByte,
+
+    /// Double-delta encoding: Delta of deltas for monotonic sequences
+    /// Exceptional compression for time-series and ordered data
+    /// Two-level differential encoding: Δ(Δ(values))
+    DoubleDelta { first_value: i64, first_delta: i64 },
+
+    /// SIMD-optimized run-length with bit-packed counts
+    /// Enhanced RLE with SIMD acceleration and compact count representation
+    SIMDRunLength { value_bits: u8, count_bits: u8 },
+
+    /// Hybrid encoding: Combines multiple schemes within single block
+    /// Automatically selects optimal encoding per chunk
+    /// Meta-encoding for maximum compression across diverse patterns
+    Hybrid { primary_scheme: u8, secondary_scheme: u8 },
 }
 
 /// Vector encoding layout strategy

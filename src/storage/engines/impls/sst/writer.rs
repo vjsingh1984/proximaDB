@@ -64,6 +64,11 @@ use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, HashAlgorithm};
 use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, FastLanesBlockMetadata};
 
+// NEW: Import unified SIMD module for SST optimization
+use crate::storage::engines::core::ops::unified_fastlanes_simd::{
+    UnifiedFastLanesSIMD, EngineProfile, SIMDConfig,
+};
+
 /// ✅ SST-specific metadata using FastLanes composition pattern (like HELIX)
 /// This follows the same pattern as HelixBlockMetadata but for SST engine optimizations
 #[derive(Debug, Clone)]
@@ -121,6 +126,7 @@ pub struct SstableWriter {
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
     /// Compression configuration from flush parameters
     compression_config: Option<CompressionConfig>,
+    // SIMD encoding now handled internally by FastLanesDataBlock
 }
 
 impl SstableWriter {
@@ -192,6 +198,7 @@ impl SstableWriter {
         );
 
         // Compression configuration can be added here if needed
+        // SIMD encoding now handled internally by FastLanesDataBlock
 
         Self {
             path: path.as_ref().to_path_buf(),
@@ -621,7 +628,12 @@ impl SstableWriter {
         // Use centralized compression config conversion from FastLanes
         use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
 
-        let block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(self.compression_config.as_ref());
+        let mut block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(self.compression_config.as_ref());
+
+        // Enable SIMD optimization for SST (maximum compression focus)
+        block_compression_config.vector_layout = Some(
+            crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector
+        );
 
         // ✅ FastLanes automatically provides:
         // - 🔍 Automatic Bloom Filter Generation
@@ -630,7 +642,13 @@ impl SstableWriter {
         // - 🧠 Automatic Delete Detection
         // - ⚡ Automatic SIMD Encoding
         // - 🗜️ Automatic Compression
-        let mut data_block = FastLanesDataBlock::new(current_block.to_vec(), block_compression_config);
+        // NEW: SIMD-Enhanced Block Creation for Maximum SST Compression
+        // Always use SIMD-optimized block creation with SST engine profile
+        let mut data_block = FastLanesDataBlock::new_with_engine_profile(
+            current_block.to_vec(),
+            block_compression_config,
+            EngineProfile::SST
+        );
         data_block.block_id = block_id;
 
         // ✅ STEP 2: Reuse FastLanes auto-generated metadata (like HELIX pattern)
@@ -1082,6 +1100,9 @@ impl SstableWriter {
             _ => Ordering::Equal,
         }
     }
+
+    // Method removed: FastLanesDataBlock now handles SIMD encoding internally
+    // Use FastLanesDataBlock::new_with_engine_profile(records, config, EngineProfile::SST) instead
 }
 
 #[cfg(test)]

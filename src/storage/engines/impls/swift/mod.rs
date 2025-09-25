@@ -178,6 +178,11 @@ use crate::proto::proximadb_v1::VectorRecord;
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
 use crate::core::bloom::SstableBloomFilter;
 // FastLanes encoding for columnar vector optimization
+
+// NEW: SIMD optimization for SWIFT low-latency requirements
+use crate::storage::engines::core::ops::unified_fastlanes_simd::{
+    UnifiedFastLanesSIMD, EngineProfile, SIMDConfig,
+};
 use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
 // NOTE: Quantization now uses unified engine from compute module
 
@@ -327,6 +332,9 @@ pub struct SwiftFile {
 
     /// Memory management
     memory_manager: Arc<MemoryManager>,
+
+    /// SIMD-optimized FastLanes encoder for low-latency operations
+    simd_encoder: UnifiedFastLanesSIMD,
 }
 
 /// Magic constant for SWIFT files (4 bytes)
@@ -501,8 +509,17 @@ impl SwiftFile {
             // - 🚀 Automatic Quantization (if enabled)
             // Use centralized compression config conversion from FastLanes
             use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
-            let compression_config = RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
-            let block = FastLanesDataBlock::new(chunk.to_vec(), compression_config);
+            let mut compression_config = RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
+
+            // Enable SIMD optimization for SWIFT (low-latency focus)
+            compression_config.vector_layout = Some(crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector);
+
+            // Create block with SWIFT engine profile for optimized SIMD encoding
+            let block = FastLanesDataBlock::new_with_engine_profile(
+                chunk.to_vec(),
+                compression_config,
+                EngineProfile::Swift
+            );
 
             // ❌ REMOVED: Manual quantization processing - FastLanes handles this automatically!
             // ❌ REMOVED: Manual FastLanes encoding - FastLanes does this during construction!
@@ -573,10 +590,18 @@ impl SwiftFile {
         for chunk in records.chunks(records_per_block) {
             // Use centralized compression config conversion from FastLanes
             use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
-            let block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config.as_ref());
+            let mut block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config.as_ref());
+
+            // Enable SIMD optimization for SWIFT (hierarchical low-latency focus)
+            block_compression_config.vector_layout = Some(crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector);
 
             // ✅ FastLanes automatically handles quantization, bloom filters, and metadata statistics
-            let block = FastLanesDataBlock::new(chunk.to_vec(), block_compression_config);
+            // Now with SIMD-optimized encoding!
+            let block = FastLanesDataBlock::new_with_engine_profile(
+                chunk.to_vec(),
+                block_compression_config,
+                EngineProfile::Swift
+            );
 
             // ❌ REMOVED: Manual quantization processing - FastLanes handles this automatically!
             // ❌ REMOVED: Manual vector collection - unnecessary with FastLanes
@@ -689,6 +714,7 @@ impl SwiftFile {
                 max_memory_bytes: 4 * 1024 * 1024 * 1024, // 4GB
                 current_usage: std::sync::atomic::AtomicUsize::new(0),
             }),
+            simd_encoder: UnifiedFastLanesSIMD::new(EngineProfile::Swift),
         }
     }
 

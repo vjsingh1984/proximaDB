@@ -1,0 +1,12 @@
+error: no bench target named `bench_04_storage_unified` in default-run packages
+help: available bench targets:
+    distance_benchmark
+    engine_comparison_bench
+    flush_optimization_bench
+    graph_benchmarks
+    optimization_benchmarks
+    parquet_optimizations_bench
+    progressive_search_bench
+    simd_distance_bench
+    sst_quantization_bench
+    vector_optimization_bench

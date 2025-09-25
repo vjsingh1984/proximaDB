@@ -50,6 +50,7 @@ use tracing::{debug, trace, warn};
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
+use crate::storage::engines::core::ops::unified_fastlanes_simd::{UnifiedFastLanesSIMD, EngineProfile};
 // Quantization now handled by unified compute module
 
 /// Pattern detected in vector data for optimal encoding selection
@@ -198,6 +199,13 @@ pub struct FastLanesDataBlock {
     pub quantized_vectors: Option<Vec<Vec<u8>>>,
     /// Quantization level used
     pub quantization_level: Option<crate::compute::quantization::unified::UnifiedQuantizationLevel>,
+
+    /// SIMD-encoded vector data (when layout != FullVector)
+    /// Stores transposed and encoded dimensions for SIMD operations
+    pub encoded_vectors: Option<Vec<Vec<u8>>>,
+
+    /// Vector encoding layout used for this block
+    pub vector_layout: VectorEncodingLayout,
 
     /// Quantized section for hierarchical storage (SST/Swift specific)
     pub quantized_section: Option<QuantizedSection>,
@@ -463,6 +471,98 @@ pub struct BlockLocation {
 }
 
 impl FastLanesDataBlock {
+    /// Get or create the global SIMD encoder instance
+    fn get_simd_encoder(engine_profile: EngineProfile) -> &'static UnifiedFastLanesSIMD {
+        use std::sync::OnceLock;
+        static SIMD_ENCODER_SST: OnceLock<UnifiedFastLanesSIMD> = OnceLock::new();
+        static SIMD_ENCODER_SWIFT: OnceLock<UnifiedFastLanesSIMD> = OnceLock::new();
+        static SIMD_ENCODER_HELIX: OnceLock<UnifiedFastLanesSIMD> = OnceLock::new();
+
+        match engine_profile {
+            EngineProfile::SST => SIMD_ENCODER_SST.get_or_init(|| {
+                UnifiedFastLanesSIMD::new(EngineProfile::SST)
+            }),
+            EngineProfile::Swift => SIMD_ENCODER_SWIFT.get_or_init(|| {
+                UnifiedFastLanesSIMD::new(EngineProfile::Swift)
+            }),
+            EngineProfile::Helix => SIMD_ENCODER_HELIX.get_or_init(|| {
+                UnifiedFastLanesSIMD::new(EngineProfile::Helix)
+            }),
+        }
+    }
+
+    /// Apply SIMD-optimized encoding based on layout strategy
+    fn apply_simd_encoding(
+        &mut self,
+        vectors: &[Vec<f32>],
+        layout: VectorEncodingLayout,
+        engine_profile: EngineProfile,
+    ) -> anyhow::Result<()> {
+        if vectors.is_empty() {
+            return Ok(());
+        }
+
+        let simd_encoder = Self::get_simd_encoder(engine_profile);
+
+        match layout {
+            VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector |
+            VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector => {
+                // Transpose vectors for columnar processing
+                let transposed = simd_encoder.simd_transpose_vectors(vectors)?;
+                // Encode dimensions in parallel using SIMD
+                let encoded = simd_encoder.encode_dimensions_parallel(transposed)?;
+                self.encoded_vectors = Some(encoded);
+
+                // Calculate compression ratio for metadata
+                let original_size = vectors.len() * vectors[0].len() * 4;
+                let encoded_size: usize = self.encoded_vectors.as_ref()
+                    .map(|e| e.iter().map(|d| d.len()).sum()).unwrap_or(0);
+                let compression_ratio = if original_size > 0 {
+                    (encoded_size as f64 / original_size as f64) * 100.0
+                } else {
+                    100.0
+                };
+
+                debug!("SIMD encoding achieved {:.1}% compression ratio", compression_ratio);
+            },
+            VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector |
+            VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector => {
+                // Group dimensions into 32-dimension chunks for better cache locality
+                let dimension = vectors[0].len();
+                let group_size = 32;
+                let num_groups = (dimension + group_size - 1) / group_size;
+
+                let mut grouped_encoded = Vec::new();
+                for group_idx in 0..num_groups {
+                    let start_dim = group_idx * group_size;
+                    let end_dim = ((group_idx + 1) * group_size).min(dimension);
+
+                    // Extract group dimensions
+                    let mut group_data = Vec::new();
+                    for dim_idx in start_dim..end_dim {
+                        let dim_values: Vec<f32> = vectors.iter()
+                            .map(|v| v[dim_idx])
+                            .collect();
+                        group_data.push(dim_values);
+                    }
+
+                    // Encode group
+                    let encoded = simd_encoder.encode_dimensions_parallel(group_data)?;
+                    grouped_encoded.extend(encoded);
+                }
+
+                self.encoded_vectors = Some(grouped_encoded);
+            },
+            VectorEncodingLayout::FullVector => {
+                // No SIMD encoding for full vector layout - keep original
+                self.encoded_vectors = None;
+            },
+        }
+
+        self.vector_layout = layout;
+        Ok(())
+    }
+
     /// Analyze float data pattern and return descriptive information
     fn analyze_pattern_f32(data: &[f32]) -> String {
         if data.is_empty() {
@@ -634,13 +734,16 @@ impl FastLanesDataBlock {
             None
         };
 
-        Self {
+        // Initialize with default values, SIMD encoding will be applied later if needed
+        let mut block = Self {
             encoding_marker,
             encoding_metadata,
             block_id,
             records: records.clone(),
             quantized_vectors: None,
             quantization_level: None,
+            encoded_vectors: None,
+            vector_layout: compression_config.vector_layout.unwrap_or(VectorEncodingLayout::FullVector),
             quantized_section: None,
             metadata: FastLanesBlockMetadata {
                 record_count,
@@ -666,7 +769,135 @@ impl FastLanesDataBlock {
             statistics: BlockStatistics::default(),
             metadata_stats: None,
             has_deletes,
+        };
+
+        // Apply SIMD encoding if layout requires it
+        if compression_config.vector_layout.is_some() {
+            let layout = compression_config.vector_layout.unwrap();
+            if layout != VectorEncodingLayout::FullVector && !records.is_empty() {
+                // Extract vectors for SIMD encoding
+                let vectors: Vec<Vec<f32>> = records.iter()
+                    .filter(|r| !r.vector.is_empty())
+                    .map(|r| r.vector.clone())
+                    .collect();
+
+                if !vectors.is_empty() {
+                    // Determine engine profile from compression config or use default
+                    let engine_profile = EngineProfile::SST; // Default, can be overridden
+                    if let Err(e) = block.apply_simd_encoding(&vectors, layout, engine_profile) {
+                        debug!("Failed to apply SIMD encoding: {}, falling back to FullVector", e);
+                        block.vector_layout = VectorEncodingLayout::FullVector;
+                    }
+                }
+            }
         }
+
+        block
+    }
+
+    /// Create a new FastLanes data block with specific engine profile
+    /// This allows engines to pass their profile for optimized SIMD encoding
+    pub fn new_with_engine_profile(
+        records: Vec<VectorRecord>,
+        compression_config: BlockCompressionConfig,
+        engine_profile: EngineProfile,
+    ) -> Self {
+        let record_count = records.len() as u32;
+        let block_id = 0u32;
+
+        // Calculate ID range
+        let mut ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
+        ids.sort();
+        let id_range = if ids.is_empty() {
+            ("".to_string(), "".to_string())
+        } else {
+            (ids[0].clone(), ids[ids.len() - 1].clone())
+        };
+
+        // Calculate timestamp range
+        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp as i64).collect();
+        let timestamp_range = if timestamps.is_empty() {
+            (0, 0)
+        } else {
+            (
+                *timestamps.iter().min().unwrap(),
+                *timestamps.iter().max().unwrap(),
+            )
+        };
+
+        // Check for deletes
+        let has_deletes = records.iter().any(|r| {
+            r.metadata.iter().any(|(key, sql_value)| {
+                key == "_deleted" && matches!(
+                    sql_value.value.as_ref(),
+                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "true"
+                )
+            })
+        });
+
+        // Analyze vectors to choose optimal encoding
+        let encoding_marker = Self::choose_optimal_encoding_marker(&records);
+        let encoding_metadata = if encoding_marker != 0x00 {
+            Some(Self::create_encoding_metadata(&records, encoding_marker))
+        } else {
+            None
+        };
+
+        let mut block = Self {
+            encoding_marker,
+            encoding_metadata,
+            block_id,
+            records: records.clone(),
+            quantized_vectors: None,
+            quantization_level: None,
+            encoded_vectors: None,
+            vector_layout: compression_config.vector_layout.unwrap_or(VectorEncodingLayout::FullVector),
+            quantized_section: None,
+            metadata: FastLanesBlockMetadata {
+                record_count,
+                size_bytes: 0,
+                compressed_size: 0,
+                timestamp: chrono::Utc::now().timestamp(),
+                compaction_level: 0,
+                has_deletes,
+                has_updates: false,
+                version_range: (0, 0),
+                column_stats: HashMap::new(),
+                quantization_stats: QuantizationStatistics::default(),
+                data_checksum: 0,
+                metadata_checksum: 0,
+            },
+            compression_config: compression_config.clone(),
+            compression_algorithm: compression_config.algorithm,
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range,
+            timestamp_range,
+            statistics: BlockStatistics::default(),
+            metadata_stats: None,
+            has_deletes,
+        };
+
+        // Apply SIMD encoding with specific engine profile
+        if compression_config.vector_layout.is_some() {
+            let layout = compression_config.vector_layout.unwrap();
+            if layout != VectorEncodingLayout::FullVector && !records.is_empty() {
+                let vectors: Vec<Vec<f32>> = records.iter()
+                    .filter(|r| !r.vector.is_empty())
+                    .map(|r| r.vector.clone())
+                    .collect();
+
+                if !vectors.is_empty() {
+                    if let Err(e) = block.apply_simd_encoding(&vectors, layout, engine_profile) {
+                        debug!("Failed to apply SIMD encoding: {}, falling back to FullVector", e);
+                        block.vector_layout = VectorEncodingLayout::FullVector;
+                    }
+                }
+            }
+        }
+
+        block
     }
 
     /// Get record by index
