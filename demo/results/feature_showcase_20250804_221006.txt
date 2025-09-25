@@ -1,9 +1,0 @@
-ℹ️ Protocol: GRPC, Engine: VIPER, Mode: Quick
-ℹ️ Testing VIPER engine...
-📊 VIPER Performance: 6,693 vec/s insert, 3.0ms search
-ℹ️ ❌ BERT model not available!
-ℹ️    Please install: pip install sentence-transformers
-ℹ️ ❌ Showcase failed: BERT model required for embeddings
-ℹ️ ✅ Deleted collection: demo_viper_engine
-ℹ️ ✅ Deleted collection: demo_distance_metrics
-ℹ️ 🗑️  Cleaned up 2 demo collections

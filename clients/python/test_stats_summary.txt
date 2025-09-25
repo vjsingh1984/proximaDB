@@ -1,9 +1,0 @@
-=== PYTHON SDK TEST SUMMARY ===
-Total Tests Collected: 317
-Passed: 288
-Failed: 3
-Errors: 12
-Skipped: 14
-Success Rate: 90.9%
-Coverage: 68%
-Test Duration: 40.06s

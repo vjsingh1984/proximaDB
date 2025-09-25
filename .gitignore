@@ -119,6 +119,11 @@ logs/
 *.sqlite
 *.sqlite3
 *.db
+current_error.log
+test_error.log
+*_server.log
+*_results.txt
+file_list.txt
 
 # PID files
 *.pid
@@ -128,8 +133,13 @@ logs/
 *.temp
 *.bak
 *.backup
+*.migrated
+*.old
 tmp/
 temp/
+demo/results/
+test-data/
+test_exists_dir/
 
 # Storage and data directories (database files)
 /data/*
