@@ -105,7 +105,9 @@ For detailed benchmark charts and comparative analysis, see:
 
 [IMPORTANT]
 ====
-**Performance Achievement**: ProximaDB's SIMD acceleration delivers **8.44M+ operations/sec** for 384D vectors and consistent **sub-microsecond latency** across all storage engines.
+**Performance Achievement**: ProximaDB's SIMD acceleration delivers **8.44M+ operations/sec** for 384D vectors with consistent performance across storage engines.
+
+**Storage Engine Performance (Sep 2025)**: Benchmarks show SST and VIPER engines achieve similar search latencies (~74-79µs for 768D vectors), with VIPER providing superior compression (up to 69% space savings).
 
 **Recent Optimizations (Sep 2024)**: Memory pooling, Arc sharing, and batch processing optimizations delivered **6-11% performance improvements** across all distance metrics, with the largest gains in DotProduct calculations.
 
@@ -275,6 +277,60 @@ _Note: Normalized using core count, SIMD capabilities, and memory bandwidth rati
 |1.5-4.0x
 |Auto-optimized
 |===
+
+=== Storage Engine Comparison (Benchmark Validated)
+
+**Based on Sep 2025 bench_04_storage_unified results:**
+
+[cols="3,3,3,3,3", options="header"]
+|===
+|Engine |Search Latency |Compression |Space Savings |Flush Time
+
+|**SST (none)**
+|74.18µs
+|No compression
+|Baseline
+|29ms
+
+|**SST (zstd)**
+|78.83µs
+|ZSTD compression
+|16.2%
+|58ms
+
+|**SST (lz4)**
+|81.74µs
+|LZ4 compression
+|4.9%
+|37ms
+
+|**VIPER (none)**
+|76.31µs
+|No compression
+|+58.4% size
+|17ms
+
+|**VIPER (zstd)**
+|76.49µs
+|ZSTD compression
+|69.5% savings
+|21ms
+
+|**VIPER (lz4)**
+|78.60µs
+|LZ4 compression
+|69.5% savings
+|16ms
+|===
+
+[NOTE]
+====
+**Key Findings:**
+- Similar search performance between SST and VIPER (~74-79µs)
+- VIPER achieves superior compression ratios (up to 69% space savings)
+- SST provides faster flush times for real-time scenarios
+- All engines show consistent sub-100µs search latency
+====
 
 ==== Vector Operations Performance (M4 Pro)
 

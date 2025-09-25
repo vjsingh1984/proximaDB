@@ -128,23 +128,23 @@ graph TB
 
 |**SST**
 |Real-time queries, OLTP
-|High insert throughput
+|Row-based, LSM-tree architecture
 
 |**VIPER**
 |Analytics, batch operations
-|3x compression, columnar
+|Columnar format, up to 69% compression
 
 |**NOVA**
 |Mixed workloads
-|Progressive search
+|Progressive search capabilities
 
 |**SWIFT**
 |Low-latency operations
-|FastLanes encoding
+|FastLanes encoding optimization
 
 |**RAPTOR**
 |Dynamic workloads
-|Adaptive optimization
+|Adaptive optimization strategies
 
 |**HELIX**
 |Spatial/graph data
