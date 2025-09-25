@@ -215,6 +215,14 @@ pub enum FastLanesScheme {
     /// Automatically selects optimal encoding per chunk
     /// Meta-encoding for maximum compression across diverse patterns
     Hybrid { primary_scheme: u8, secondary_scheme: u8 },
+
+    /// Gorilla encoding: XOR-based compression for time-series data
+    /// Optimal for floating-point time-series with similar consecutive values
+    Gorilla,
+
+    /// Adaptive encoding: Automatically selects best encoding based on data
+    /// Uses statistics to choose optimal encoding scheme
+    Adaptive,
 }
 
 /// Vector encoding layout strategy

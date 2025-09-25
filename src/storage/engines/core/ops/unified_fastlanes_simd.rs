@@ -128,7 +128,7 @@ impl SIMDConfig {
         let vector_width = match backend {
             HardwareBackend::AVX512 => 16, // 16x f32
             HardwareBackend::AVX2 => 8,    // 8x f32
-            HardwareBackend::SSE2 => 4,    // 4x f32
+            HardwareBackend::SSE => 4,     // 4x f32
             HardwareBackend::NEON => 4,    // 4x f32
             _ => 1,                        // Scalar fallback
         };
@@ -261,20 +261,17 @@ impl UnifiedFastLanesSIMD {
 
         // Adjust pool size based on engine requirements
         let pool_capacity = match engine_profile {
-            EngineProfile::Helix { spatial_grouping_size, .. } => {
+            EngineProfile::Helix => {
                 // HELIX benefits from larger pools for spatial grouping
-                std::cmp::max(base_pool_capacity, spatial_grouping_size * 2)
+                base_pool_capacity * 2
             },
-            EngineProfile::Sst { .. } => {
+            EngineProfile::SST => {
                 // SST benefits from medium pools for write buffering
                 base_pool_capacity
             },
-            EngineProfile::Swift { low_latency_mode: true, .. } => {
-                // SWIFT low-latency mode prefers smaller pools
+            EngineProfile::Swift => {
+                // SWIFT prefers smaller pools for low latency
                 base_pool_capacity / 2
-            },
-            EngineProfile::Swift { .. } => {
-                base_pool_capacity
             },
         };
 
@@ -302,13 +299,9 @@ impl UnifiedFastLanesSIMD {
     }
 
     /// Convenience constructors for specific engines
-    pub fn new_for_helix(dimension: usize, estimated_vectors: usize, spatial_grouping: usize) -> Self {
+    pub fn new_for_helix(dimension: usize, estimated_vectors: usize, _spatial_grouping: usize) -> Self {
         Self::new_for_engine(
-            EngineProfile::Helix {
-                hilbert_curve_aware: true,
-                spatial_grouping_size: spatial_grouping,
-                enable_clustering_detection: true,
-            },
+            EngineProfile::Helix,
             dimension,
             estimated_vectors,
         )
@@ -316,23 +309,15 @@ impl UnifiedFastLanesSIMD {
 
     pub fn new_for_sst(dimension: usize, estimated_vectors: usize) -> Self {
         Self::new_for_engine(
-            EngineProfile::Sst {
-                filter_stage_optimization: true,
-                bloom_filter_aware: true,
-                write_buffer_size: 8192,
-            },
+            EngineProfile::SST,
             dimension,
             estimated_vectors,
         )
     }
 
-    pub fn new_for_swift(dimension: usize, estimated_vectors: usize, low_latency: bool) -> Self {
+    pub fn new_for_swift(dimension: usize, estimated_vectors: usize, _low_latency: bool) -> Self {
         Self::new_for_engine(
-            EngineProfile::Swift {
-                low_latency_mode: low_latency,
-                cache_line_optimization: true,
-                skip_advanced_patterns: low_latency,
-            },
+            EngineProfile::Swift,
             dimension,
             estimated_vectors,
         )
@@ -396,10 +381,10 @@ impl UnifiedFastLanesSIMD {
 
         match self.config.backend {
             HardwareBackend::AVX2 => unsafe { self.simd_stats_avx2(values) },
-            HardwareBackend::SSE2 => unsafe { self.simd_stats_sse2(values) },
+            HardwareBackend::SSE => unsafe { self.simd_stats_sse(values) },
             #[cfg(target_arch = "aarch64")]
             HardwareBackend::NEON => unsafe { self.simd_stats_neon(values) },
-            _ => Ok(self.scalar_stats(values)),
+            _ => Ok(self.compute_stats_fallback(values)),
         }
     }
 
@@ -537,7 +522,7 @@ impl UnifiedFastLanesSIMD {
     }
 
     #[cfg(target_arch = "x86_64")]
-    unsafe fn simd_stats_sse2(&self, values: &[f32]) -> Result<SIMDVectorStats> {
+    unsafe fn simd_stats_sse(&self, values: &[f32]) -> Result<SIMDVectorStats> {
         // Similar implementation to AVX2 but with SSE2 instructions
         // Process 4 f32 values at a time instead of 8
         let mut min_reg = _mm_set1_ps(f32::INFINITY);
@@ -803,8 +788,8 @@ impl UnifiedFastLanesSIMD {
                 HardwareBackend::AVX2 => unsafe {
                     self.simd_transpose_block_avx2(block_vectors, &mut transposed, block_start)?
                 },
-                HardwareBackend::SSE2 => unsafe {
-                    self.simd_transpose_block_sse2(block_vectors, &mut transposed, block_start)?
+                HardwareBackend::SSE => unsafe {
+                    self.simd_transpose_block_sse(block_vectors, &mut transposed, block_start)?
                 },
                 #[cfg(target_arch = "aarch64")]
                 HardwareBackend::NEON => unsafe {
@@ -869,7 +854,7 @@ impl UnifiedFastLanesSIMD {
     }
 
     #[cfg(target_arch = "x86_64")]
-    unsafe fn simd_transpose_block_sse2(
+    unsafe fn simd_transpose_block_sse(
         &self,
         block_vectors: &[Vec<f32>],
         transposed: &mut [PooledItem<Vec<f32>>],
@@ -1622,56 +1607,6 @@ impl UnifiedFastLanesSIMD {
         }
     }
 
-    /// SIMD encode single dimension using specified scheme
-    fn simd_encode_dimension(&self, values: &[f32], scheme: &FastLanesScheme) -> Result<Vec<u8>> {
-        match scheme {
-            FastLanesScheme::BitPacked { bits } => {
-                self.simd_bitpack_encode(values, *bits)
-            },
-            FastLanesScheme::Delta { base } => {
-                self.simd_delta_encode(values, *base as i32)
-            },
-            FastLanesScheme::FrameOfReference { reference, bits } => {
-                self.simd_frame_encode(values, *reference as i32, *bits)
-            },
-            FastLanesScheme::PForDelta { majority_bits, base } => {
-                self.simd_pfor_delta_encode(values)
-            },
-            FastLanesScheme::Zigzag { bits: _ } => {
-                self.simd_zigzag_encode(values)
-            },
-            FastLanesScheme::Simple8b => {
-                self.simd_simple8b_encode(values)
-            },
-            FastLanesScheme::VByte => {
-                self.simd_vbyte_encode(values)
-            },
-            FastLanesScheme::DoubleDelta { first_value: _, first_delta: _ } => {
-                self.simd_double_delta_encode(values)
-            },
-            FastLanesScheme::SIMDRunLength { value_bits: _, count_bits: _ } => {
-                // For now, fallback to regular RLE - could implement SIMD version later
-                self.simd_delta_encode(values, 0) // Placeholder
-            },
-            FastLanesScheme::Hybrid { primary_scheme: _, secondary_scheme: _ } => {
-                // For now, use PForDelta as primary hybrid scheme
-                self.simd_pfor_delta_encode(values)
-            },
-            // Legacy schemes
-            FastLanesScheme::Dictionary => {
-                // Fallback to bit-packing for now
-                self.simd_bitpack_encode(values, 32)
-            },
-            FastLanesScheme::RunLength => {
-                // Simple RLE implementation
-                self.simd_delta_encode(values, 0) // Placeholder
-            },
-            FastLanesScheme::PatchedBase { base, patch_bits: _ } => {
-                // Use PForDelta as improved patched base
-                self.simd_pfor_delta_encode(values)
-            },
-        }
-    }
 
     /// Parallel encoding with engine-specific optimization
     pub fn encode_dimensions_parallel(
