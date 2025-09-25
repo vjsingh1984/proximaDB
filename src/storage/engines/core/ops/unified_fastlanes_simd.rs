@@ -1992,12 +1992,12 @@ mod tests {
                 println!("{} pattern → scheme: {:?}", pattern_name, scheme);
 
                 // Verify scheme makes sense for pattern
-                match (pattern_name, scheme) {
-                    ("constant", &FastLanesScheme::SIMDRunLength { .. }) => {},
-                    ("sparse", &FastLanesScheme::VByte) => {},
-                    ("sequential", &FastLanesScheme::DoubleDelta { .. }) if engine_name == &"swift" => {},
-                    ("sequential", &FastLanesScheme::Zigzag { .. }) if engine_name == &"helix" => {},
-                    ("sequential", &FastLanesScheme::PForDelta { .. }) => {},
+                match (*pattern_name, scheme) {
+                    ("constant", FastLanesScheme::SIMDRunLength { .. }) => {},
+                    ("sparse", FastLanesScheme::VByte) => {},
+                    ("sequential", FastLanesScheme::DoubleDelta { .. }) if engine_name == &"swift" => {},
+                    ("sequential", FastLanesScheme::Zigzag { .. }) if engine_name == &"helix" => {},
+                    ("sequential", FastLanesScheme::PForDelta { .. }) => {},
                     ("normalized", _) => {}, // Various schemes are valid
                     _ => {
                         println!("Note: {} engine chose {:?} for {} pattern",
