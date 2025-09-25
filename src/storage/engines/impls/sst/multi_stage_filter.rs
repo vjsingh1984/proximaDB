@@ -587,6 +587,8 @@ mod tests {
             encoding_marker: 0,
             encoding_metadata: None,
             block_id: 0,
+            encoded_vectors: None,
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
             records: vec![
                 crate::proto::proximadb_v1::VectorRecord {
                     id: "vec1".to_string(),

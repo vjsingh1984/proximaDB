@@ -227,7 +227,7 @@ pub async fn write_helix_sstable_simd(
         ..Default::default()
     };
 
-    let mut global_bloom = BloomFilterFactory::create(bloom_config)?;
+    let mut global_bloom = BloomFilterFactory::create(&bloom_config);
 
     // Track SIMD performance metrics
     let mut total_simd_time = std::time::Duration::ZERO;

@@ -284,15 +284,9 @@ impl UnifiedFastLanesSIMD {
         };
 
         Self {
-            memory_pool: Arc::new(VectorMemoryPool::with_config(
-                pool_capacity, dimension, pool_config.clone()
-            )),
-            int_buffer_pool: Arc::new(VectorMemoryPool::with_config(
-                pool_capacity, dimension * 4, pool_config.clone() // i32 buffers
-            )),
-            temp_buffer_pool: Arc::new(VectorMemoryPool::with_config(
-                pool_capacity, dimension, pool_config
-            )),
+            memory_pool: Arc::new(VectorMemoryPool::with_config(pool_config.clone())),
+            int_buffer_pool: Arc::new(VectorMemoryPool::with_config(pool_config.clone())),
+            temp_buffer_pool: Arc::new(VectorMemoryPool::with_config(pool_config)),
             config,
             engine_profile,
         }
@@ -380,12 +374,51 @@ impl UnifiedFastLanesSIMD {
         );
 
         match self.config.backend {
+            #[cfg(target_arch = "x86_64")]
             HardwareBackend::AVX2 => unsafe { self.simd_stats_avx2(values) },
+            #[cfg(target_arch = "x86_64")]
             HardwareBackend::SSE => unsafe { self.simd_stats_sse(values) },
             #[cfg(target_arch = "aarch64")]
             HardwareBackend::NEON => unsafe { self.simd_stats_neon(values) },
-            _ => Ok(self.compute_stats_fallback(values)),
+            _ => self.compute_stats_fallback(values),
         }
+    }
+
+    fn compute_stats_fallback(&self, values: &[f32]) -> Result<SIMDVectorStats> {
+        if values.is_empty() {
+            return Ok(SIMDVectorStats::default());
+        }
+
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        let mut sum = 0.0;
+        let mut sum_sq = 0.0;
+        let mut zero_count = 0;
+
+        for &v in values {
+            min = min.min(v);
+            max = max.max(v);
+            sum += v;
+            sum_sq += v * v;
+            if v == 0.0 {
+                zero_count += 1;
+            }
+        }
+
+        let count = values.len() as f32;
+        let mean = sum / count;
+        let variance = (sum_sq / count) - (mean * mean);
+
+        Ok(SIMDVectorStats {
+            min,
+            max,
+            sum,
+            sum_squares: sum_sq,
+            zero_count,
+            element_count: values.len(),
+            first_moment: mean,
+            second_moment: sum_sq / count,
+        })
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -626,13 +659,11 @@ impl UnifiedFastLanesSIMD {
 
             // Count zeros
             let zero_mask = vceqq_f32(vals, vdupq_n_f32(0.0));
-            // Convert mask to counts (NEON doesn't have direct popcount for float masks)
-            let mask_u32 = vreinterpretq_u32_u32(zero_mask);
             // Use fixed indices since vgetq_lane_u32 requires compile-time constants
-            if vgetq_lane_u32(mask_u32, 0) != 0 { zero_count += 1; }
-            if vgetq_lane_u32(mask_u32, 1) != 0 { zero_count += 1; }
-            if vgetq_lane_u32(mask_u32, 2) != 0 { zero_count += 1; }
-            if vgetq_lane_u32(mask_u32, 3) != 0 { zero_count += 1; }
+            if vgetq_lane_u32(zero_mask, 0) != 0 { zero_count += 1; }
+            if vgetq_lane_u32(zero_mask, 1) != 0 { zero_count += 1; }
+            if vgetq_lane_u32(zero_mask, 2) != 0 { zero_count += 1; }
+            if vgetq_lane_u32(zero_mask, 3) != 0 { zero_count += 1; }
         }
 
         // Process remaining elements
@@ -770,7 +801,7 @@ impl UnifiedFastLanesSIMD {
         // Acquire pooled buffers for transposed data
         let mut transposed = Vec::with_capacity(dimension);
         for _ in 0..dimension {
-            let mut buffer = self.memory_pool.acquire()?;
+            let mut buffer = self.memory_pool.vector_buffers.acquire();
             buffer.clear();
             buffer.reserve(vector_count);
             transposed.push(buffer);
@@ -782,17 +813,19 @@ impl UnifiedFastLanesSIMD {
             let block_vectors = &vectors[block_start..block_end];
 
             match self.config.backend {
+                #[cfg(target_arch = "x86_64")]
                 HardwareBackend::AVX2 => unsafe {
-                    self.simd_transpose_block_avx2(block_vectors, &mut transposed, block_start)?
+                    self.simd_transpose_block_avx2(block_vectors, &mut transposed)?
                 },
+                #[cfg(target_arch = "x86_64")]
                 HardwareBackend::SSE => unsafe {
-                    self.simd_transpose_block_sse(block_vectors, &mut transposed, block_start)?
+                    self.simd_transpose_block_sse(block_vectors, &mut transposed)?
                 },
                 #[cfg(target_arch = "aarch64")]
                 HardwareBackend::NEON => unsafe {
-                    self.simd_transpose_block_neon(block_vectors, &mut transposed, block_start)?
+                    self.simd_transpose_block_neon(block_vectors, &mut transposed)?
                 },
-                _ => self.scalar_transpose_block(block_vectors, &mut transposed, block_start)?,
+                _ => self.scalar_transpose_block(block_vectors, &mut transposed)?,
             }
         }
 
@@ -804,12 +837,27 @@ impl UnifiedFastLanesSIMD {
         Ok(transposed)
     }
 
+    fn scalar_transpose_block(
+        &self,
+        block_vectors: &[Vec<f32>],
+        transposed: &mut [PooledItem<Vec<f32>>],
+    ) -> Result<()> {
+        let dimension = transposed.len();
+
+        for vector in block_vectors.iter() {
+            for (dim_idx, &value) in vector.iter().take(dimension).enumerate() {
+                transposed[dim_idx].push(value);
+            }
+        }
+
+        Ok(())
+    }
+
     #[cfg(target_arch = "x86_64")]
     unsafe fn simd_transpose_block_avx2(
         &self,
         block_vectors: &[Vec<f32>],
         transposed: &mut [PooledItem<Vec<f32>>],
-        block_start: usize,
     ) -> Result<()> {
         let dimension = transposed.len();
         let vector_count = block_vectors.len();
@@ -855,7 +903,6 @@ impl UnifiedFastLanesSIMD {
         &self,
         block_vectors: &[Vec<f32>],
         transposed: &mut [PooledItem<Vec<f32>>],
-        block_start: usize,
     ) -> Result<()> {
         let dimension = transposed.len();
         let vector_count = block_vectors.len();
@@ -901,7 +948,6 @@ impl UnifiedFastLanesSIMD {
         &self,
         block_vectors: &[Vec<f32>],
         transposed: &mut [PooledItem<Vec<f32>>],
-        block_start: usize,
     ) -> Result<()> {
         let dimension = transposed.len();
         let vector_count = block_vectors.len();
@@ -942,24 +988,6 @@ impl UnifiedFastLanesSIMD {
         Ok(())
     }
 
-    /// Fallback scalar transpose implementation
-    fn scalar_transpose_block(
-        &self,
-        block_vectors: &[Vec<f32>],
-        transposed: &mut [PooledItem<Vec<f32>>],
-        block_start: usize,
-    ) -> Result<()> {
-        let dimension = transposed.len();
-
-        for vector in block_vectors {
-            for (dim_idx, &value) in vector.iter().enumerate().take(dimension) {
-                transposed[dim_idx].push(value);
-            }
-        }
-
-        Ok(())
-    }
-
     /// SIMD-optimized encoding for specific schemes
     pub fn simd_encode_dimension(
         &self,
@@ -971,23 +999,49 @@ impl UnifiedFastLanesSIMD {
                 self.simd_bitpack_encode(values, *bits)
             },
             FastLanesScheme::Delta { base } => {
-                self.simd_delta_encode(values, *base)
+                self.simd_delta_encode(values, *base as f32)
             },
             FastLanesScheme::FrameOfReference { reference, bits } => {
-                self.simd_frame_encode(values, *reference, *bits)
+                self.simd_frame_encode(values, *reference as f32, *bits)
             },
             _ => {
                 // Fall back to existing encoder for unsupported schemes
                 let encoder = FastLanesEncoder::new(scheme.clone());
-                encoder.encode_f32_batch(values)
+                encoder.encode_f32(values, None)
             }
         }
     }
 
+    fn simd_delta_encode(&self, values: &[f32], base: f32) -> Result<Vec<u8>> {
+        // For now, fall back to regular encoding
+        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: base as i64 });
+        encoder.encode_f32(values, None)
+    }
+
+    fn simd_frame_encode(&self, values: &[f32], reference: f32, bits: u8) -> Result<Vec<u8>> {
+        // For now, fall back to regular encoding
+        let encoder = FastLanesEncoder::new(FastLanesScheme::FrameOfReference { reference: reference as i64, bits });
+        encoder.encode_f32(values, None)
+    }
+
+    fn simd_bitpack_encode(&self, values: &[f32], bits: u8) -> Result<Vec<u8>> {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            self.simd_bitpack_encode_x86(values, bits)
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            // Fallback to regular encoding
+            let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits });
+            encoder.encode_f32(values, None)
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
-    unsafe fn simd_bitpack_encode(&self, values: &[f32], bits: u8) -> Result<Vec<u8>> {
+    unsafe fn simd_bitpack_encode_x86(&self, values: &[f32], bits: u8) -> Result<Vec<u8>> {
         // Acquire integer buffer from pool
-        let mut int_buffer = self.int_buffer_pool.acquire()?;
+        let mut int_buffer = self.int_buffer_pool.acquire();
         int_buffer.clear();
         int_buffer.reserve(values.len());
 
@@ -1014,8 +1068,26 @@ impl UnifiedFastLanesSIMD {
         self.simd_pack_bits(&int_buffer, bits)
     }
 
+    fn simd_pack_bits(&self, integers: &[i32], bits: u8) -> Result<Vec<u8>> {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            self.simd_pack_bits_x86(integers, bits)
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            // Fallback implementation
+            let mut result = Vec::with_capacity((integers.len() * bits as usize + 7) / 8);
+            for &val in integers {
+                let bytes = (val as u32).to_le_bytes();
+                result.extend_from_slice(&bytes[..(bits as usize + 7) / 8]);
+            }
+            Ok(result)
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
-    unsafe fn simd_pack_bits(&self, integers: &[i32], bits: u8) -> Result<Vec<u8>> {
+    unsafe fn simd_pack_bits_x86(&self, integers: &[i32], bits: u8) -> Result<Vec<u8>> {
         use std::arch::x86_64::*;
 
         let output_bits = integers.len() * bits as usize;
@@ -1113,7 +1185,7 @@ impl UnifiedFastLanesSIMD {
         Ok(output)
     }
 
-    fn simd_delta_encode(&self, values: &[f32], base: i32) -> Result<Vec<u8>> {
+    fn simd_delta_encode_i32(&self, values: &[f32], base: i32) -> Result<Vec<u8>> {
         if values.is_empty() {
             return Ok(Vec::new());
         }
@@ -1191,10 +1263,10 @@ impl UnifiedFastLanesSIMD {
             values.len(), deltas.len(), bits
         );
 
-        unsafe { self.simd_pack_bits(&deltas, bits) }
+        self.simd_pack_bits(&deltas, bits)
     }
 
-    fn simd_frame_encode(&self, values: &[f32], reference: i32, bits: u8) -> Result<Vec<u8>> {
+    fn simd_frame_encode_i32(&self, values: &[f32], reference: i32, bits: u8) -> Result<Vec<u8>> {
         if values.is_empty() {
             return Ok(Vec::new());
         }
@@ -1249,7 +1321,7 @@ impl UnifiedFastLanesSIMD {
             values.len(), reference, bits
         );
 
-        unsafe { self.simd_pack_bits(&frame_values, bits) }
+        self.simd_pack_bits(&frame_values, bits)
     }
 
     /// Advanced SIMD encoding: PForDelta (Patched Frame of Reference)
@@ -1306,7 +1378,7 @@ impl UnifiedFastLanesSIMD {
         result.extend_from_slice(&(exceptions.len() as u16).to_le_bytes());
 
         // Pack majority values
-        let packed_data = unsafe { self.simd_pack_bits_u32(&packed_values, majority_bits)? };
+        let packed_data = self.simd_pack_bits_u32(&packed_values, majority_bits)?;
         result.extend_from_slice(&packed_data);
 
         // Store exceptions: position (4 bytes) + value (4 bytes) each
@@ -1376,7 +1448,7 @@ impl UnifiedFastLanesSIMD {
 
         debug!("⚡ SIMD zigzag encoding: {} values, {} bits per value", values.len(), bits);
 
-        unsafe { self.simd_pack_bits_u32(&zigzag_values, bits) }
+        self.simd_pack_bits_u32(&zigzag_values, bits)
     }
 
     /// Simple-8b encoding - stores 8 integers in 32-bit words with variable bit widths
@@ -1426,7 +1498,7 @@ impl UnifiedFastLanesSIMD {
             // Pack values into remaining 28 bits
             for j in 0..best_count {
                 if i + j < int_values.len() {
-                    word |= (int_values[i + j] & ((1u32 << bits) - 1)) << (j * bits);
+                    word |= (int_values[i + j] & ((1u32 << bits) - 1)) << (j * bits as usize);
                 }
             }
 
@@ -1471,7 +1543,7 @@ impl UnifiedFastLanesSIMD {
     fn simd_double_delta_encode(&self, values: &[f32]) -> Result<Vec<u8>> {
         if values.len() < 3 {
             // Fall back to regular delta encoding for short sequences
-            return self.simd_delta_encode(values, 0);
+            return self.simd_delta_encode(values, 0.0);
         }
 
         let int_values: Vec<i32> = values.iter().map(|&v| v as i32).collect();
@@ -1502,23 +1574,20 @@ impl UnifiedFastLanesSIMD {
         result.extend_from_slice(&first_delta.to_le_bytes());
 
         // Pack double deltas
-        let packed = unsafe { self.simd_pack_bits(&double_deltas, bits)? };
+        let packed = self.simd_pack_bits(&double_deltas, bits)?;
         result.extend_from_slice(&packed);
 
         Ok(result)
     }
 
     /// SIMD bit-packing for unsigned integers (helper for new encodings)
-    #[cfg(target_arch = "x86_64")]
-    unsafe fn simd_pack_bits_u32(&self, integers: &[u32], bits: u8) -> Result<Vec<u8>> {
-        use std::arch::x86_64::*;
-
+    fn simd_pack_bits_u32(&self, integers: &[u32], bits: u8) -> Result<Vec<u8>> {
         let signed_ints: Vec<i32> = integers.iter().map(|&v| v as i32).collect();
         self.simd_pack_bits(&signed_ints, bits)
     }
 
     /// Convert pattern to engine-optimized encoding scheme with state-of-the-art algorithms
-    fn pattern_to_engine_scheme(&self, pattern: &SIMDVectorPattern) -> FastLanesScheme {
+    pub fn pattern_to_engine_scheme(&self, pattern: &SIMDVectorPattern) -> FastLanesScheme {
         match (pattern, &self.engine_profile) {
             // Constant values: Use SIMD-optimized RLE
             (SIMDVectorPattern::Constant(_), _) => {
@@ -1531,11 +1600,11 @@ impl UnifiedFastLanesSIMD {
             },
 
             // Sequential data: Choose optimal delta-based encoding by engine
-            (SIMDVectorPattern::Sequential { .. }, EngineProfile::Swift { .. }) => {
+            (SIMDVectorPattern::Sequential { .. }, EngineProfile::Swift) => {
                 // SWIFT prefers double-delta for time-series patterns
                 FastLanesScheme::DoubleDelta { first_value: 0, first_delta: 1 }
             },
-            (SIMDVectorPattern::Sequential { .. }, EngineProfile::Helix { .. }) => {
+            (SIMDVectorPattern::Sequential { .. }, EngineProfile::Helix) => {
                 // HELIX prefers zigzag for spatial sequences
                 FastLanesScheme::Zigzag { bits: 24 }
             },
@@ -1545,7 +1614,7 @@ impl UnifiedFastLanesSIMD {
             },
 
             // Spatially clustered data: Optimal for HELIX engine
-            (SIMDVectorPattern::SpatialClustered { .. }, EngineProfile::Helix { .. }) => {
+            (SIMDVectorPattern::SpatialClustered { .. }, EngineProfile::Helix) => {
                 // HELIX-specific: Use PForDelta for clustered spatial data with outliers
                 FastLanesScheme::PForDelta { majority_bits: 20, base: 0 }
             },
@@ -1555,7 +1624,7 @@ impl UnifiedFastLanesSIMD {
             },
 
             // Normalized data: Optimize based on range and engine
-            (SIMDVectorPattern::Normalized { range, .. }, EngineProfile::Sst { .. }) => {
+            (SIMDVectorPattern::Normalized { range, .. }, EngineProfile::SST) => {
                 // SST prefers maximum compression: Use zigzag for small ranges
                 if *range < 50.0 {
                     FastLanesScheme::Zigzag { bits: 12 }
@@ -1565,7 +1634,7 @@ impl UnifiedFastLanesSIMD {
                     FastLanesScheme::FrameOfReference { reference: 0, bits: 20 }
                 }
             },
-            (SIMDVectorPattern::Normalized { range, .. }, EngineProfile::Swift { low_latency_mode: true, .. }) => {
+            (SIMDVectorPattern::Normalized { range, .. }, EngineProfile::Swift) => {
                 // SWIFT low-latency mode: Simple but fast encodings
                 if *range < 100.0 {
                     FastLanesScheme::FrameOfReference { reference: 0, bits: 16 }
@@ -1585,15 +1654,15 @@ impl UnifiedFastLanesSIMD {
             },
 
             // General data: Engine-specific strategies for unknown patterns
-            (SIMDVectorPattern::General { .. }, EngineProfile::Swift { low_latency_mode: true, .. }) => {
+            (SIMDVectorPattern::General { .. }, EngineProfile::Swift) => {
                 // SWIFT low-latency mode: Fast bit-packing
                 FastLanesScheme::BitPacked { bits: 24 }
             },
-            (SIMDVectorPattern::General { .. }, EngineProfile::Sst { .. }) => {
+            (SIMDVectorPattern::General { .. }, EngineProfile::SST) => {
                 // SST: Hybrid encoding for maximum compression on general data
                 FastLanesScheme::Hybrid { primary_scheme: 0x35, secondary_scheme: 0x25 } // PForDelta + Zigzag
             },
-            (SIMDVectorPattern::General { .. }, EngineProfile::Helix { .. }) => {
+            (SIMDVectorPattern::General { .. }, EngineProfile::Helix) => {
                 // HELIX: PForDelta for general spatial data
                 FastLanesScheme::PForDelta { majority_bits: 24, base: 0 }
             },
@@ -1613,7 +1682,7 @@ impl UnifiedFastLanesSIMD {
         use rayon::prelude::*;
 
         let parallel_threshold = match self.engine_profile {
-            EngineProfile::Swift { low_latency_mode: true, .. } => {
+            EngineProfile::Swift => {
                 // Low latency mode uses less parallelism to reduce overhead
                 transposed_dimensions.len() / 2
             },
@@ -1651,9 +1720,9 @@ impl UnifiedFastLanesSIMD {
     /// Get memory pool statistics for monitoring
     pub fn get_pool_stats(&self) -> (crate::core::memory::pool::PoolStats, crate::core::memory::pool::PoolStats, crate::core::memory::pool::PoolStats) {
         (
-            self.memory_pool.get_stats(),
-            self.int_buffer_pool.get_stats(),
-            self.temp_buffer_pool.get_stats(),
+            self.memory_pool.vector_buffers.stats(),
+            self.int_buffer_pool.vector_buffers.stats(),
+            self.temp_buffer_pool.vector_buffers.stats(),
         )
     }
 }
@@ -1727,21 +1796,9 @@ mod tests {
     #[test]
     fn test_engine_profile_configurations() {
         let profiles = [
-            ("helix", EngineProfile::Helix {
-                hilbert_curve_aware: true,
-                spatial_grouping_size: 1024,
-                enable_clustering_detection: true,
-            }),
-            ("sst", EngineProfile::Sst {
-                filter_stage_optimization: true,
-                bloom_filter_aware: true,
-                write_buffer_size: 8192,
-            }),
-            ("swift", EngineProfile::Swift {
-                low_latency_mode: false,
-                cache_line_optimization: true,
-                skip_advanced_patterns: false,
-            }),
+            ("helix", EngineProfile::Helix),
+            ("sst", EngineProfile::SST),
+            ("swift", EngineProfile::Swift),
         ];
 
         for (name, profile) in profiles {
@@ -1936,11 +1993,11 @@ mod tests {
 
                 // Verify scheme makes sense for pattern
                 match (pattern_name, &scheme) {
-                    ("constant", FastLanesScheme::SIMDRunLength { .. }) => {},
-                    ("sparse", FastLanesScheme::VByte) => {},
-                    ("sequential", FastLanesScheme::DoubleDelta { .. }) if engine_name == &"swift" => {},
-                    ("sequential", FastLanesScheme::Zigzag { .. }) if engine_name == &"helix" => {},
-                    ("sequential", FastLanesScheme::PForDelta { .. }) => {},
+                    ("constant", crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::SIMDRunLength { .. }) => {},
+                    ("sparse", crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::VByte) => {},
+                    ("sequential", crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::DoubleDelta { .. }) if engine_name == &"swift" => {},
+                    ("sequential", crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::Zigzag { .. }) if engine_name == &"helix" => {},
+                    ("sequential", crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::PForDelta { .. }) => {},
                     ("normalized", _) => {}, // Various schemes are valid
                     _ => {
                         println!("Note: {} engine chose {:?} for {} pattern",

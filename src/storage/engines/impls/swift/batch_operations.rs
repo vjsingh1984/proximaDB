@@ -399,6 +399,8 @@ mod tests {
             encoding_marker: 0x00,
             encoding_metadata: None,
             block_id: 0,
+            encoded_vectors: None,
+            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
             records: vec![VectorRecord {
                 id: "test".to_string(),
                 vector: vec![1.0; 768],

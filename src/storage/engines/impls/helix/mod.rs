@@ -778,7 +778,7 @@ impl UnifiedStorageEngine for HelixEngine {
             self.config.fastlane_block_size,
             HELIX_MAGIC,
             Some(&hilbert_keys_for_write),
-            Some(self.config.hilbert_curve_bits as usize), // Use configured Hilbert curve size
+            Some(16), // Default Hilbert curve bits
         )
         .await?;
 

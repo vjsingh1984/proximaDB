@@ -537,18 +537,18 @@ impl FastLanesDataBlock {
                     let start_dim = group_idx * group_size;
                     let end_dim = ((group_idx + 1) * group_size).min(dimension);
 
-                    // Extract group dimensions
-                    let mut group_data = Vec::new();
+                    // Extract and encode group dimensions
                     for dim_idx in start_dim..end_dim {
                         let dim_values: Vec<f32> = vectors.iter()
                             .map(|v| v[dim_idx])
                             .collect();
-                        group_data.push(dim_values);
-                    }
 
-                    // Encode group
-                    let encoded = simd_encoder.encode_dimensions_parallel(group_data)?;
-                    grouped_encoded.extend(encoded);
+                        // Detect pattern and encode
+                        let pattern = simd_encoder.simd_detect_pattern(&dim_values)?;
+                        let scheme = simd_encoder.pattern_to_engine_scheme(&pattern);
+                        let encoded = simd_encoder.simd_encode_dimension(&dim_values, &scheme)?;
+                        grouped_encoded.push(encoded);
+                    }
                 }
 
                 self.encoded_vectors = Some(grouped_encoded);
@@ -556,6 +556,25 @@ impl FastLanesDataBlock {
             VectorEncodingLayout::FullVector => {
                 // No SIMD encoding for full vector layout - keep original
                 self.encoded_vectors = None;
+            },
+            VectorEncodingLayout::Auto => {
+                // Auto mode: Use transpose for best compression
+                // Encode each dimension independently
+                let mut encoded = Vec::new();
+                let dimension = vectors[0].len();
+
+                for dim_idx in 0..dimension {
+                    let dim_values: Vec<f32> = vectors.iter()
+                        .map(|v| v[dim_idx])
+                        .collect();
+
+                    let pattern = simd_encoder.simd_detect_pattern(&dim_values)?;
+                    let scheme = simd_encoder.pattern_to_engine_scheme(&pattern);
+                    let encoded_dim = simd_encoder.simd_encode_dimension(&dim_values, &scheme)?;
+                    encoded.push(encoded_dim);
+                }
+
+                self.encoded_vectors = Some(encoded);
             },
         }
 

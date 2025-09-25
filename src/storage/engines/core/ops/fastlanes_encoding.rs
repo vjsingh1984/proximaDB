@@ -128,6 +128,8 @@ pub mod markers {
             super::FastLanesScheme::DoubleDelta { .. } => 0x0B,
             super::FastLanesScheme::Gorilla => 0x0C,
             super::FastLanesScheme::Adaptive => 0x0D,
+            super::FastLanesScheme::SIMDRunLength { .. } => 0x0E,
+            super::FastLanesScheme::Hybrid { .. } => 0x0F,
         }
     }
 
