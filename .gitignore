@@ -209,6 +209,11 @@ flamegraph.svg
 benches/target/
 # criterion/ - commented out to allow target/criterion/ tracking
 
+# Benchmark output files
+benchmark_*.txt
+*_benchmark_*.txt
+system_monitor.txt
+
 # Serverless/Cloud function packages
 *.zip
 lambda-package/
