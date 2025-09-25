@@ -50,6 +50,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::sync::{Arc, OnceLock};
 use tracing::{debug, info};
+use crate::core::memory::pool::{VectorMemoryPool, PooledItem};
 
 // Use proto enum as the single source of truth for DistanceMetric
 pub use crate::proto::proximadb_v1::DistanceMetric;
@@ -320,6 +321,89 @@ pub struct SimilarityResult {
     pub rank_value: f32,
 }
 
+/// Lazy wrapper for batch distance results
+/// Delays conversion from raw distances until actually needed
+pub struct BatchDistanceResults {
+    /// Pooled buffer containing raw distances
+    pub distances: PooledItem<Vec<f32>>,
+    /// The metric used for distance calculation
+    pub metric: DistanceMetric,
+    /// Reference to compute engine for normalization
+    compute: UnifiedDistanceCompute,
+}
+
+impl BatchDistanceResults {
+    /// Get the number of results
+    pub fn len(&self) -> usize {
+        self.distances.len()
+    }
+
+    /// Check if results are empty
+    pub fn is_empty(&self) -> bool {
+        self.distances.is_empty()
+    }
+
+    /// Get raw distance at index
+    pub fn raw_distance(&self, index: usize) -> Option<f32> {
+        if index < self.distances.len() {
+            Some(self.distances[index])
+        } else {
+            None
+        }
+    }
+
+    /// Convert to similarity results (consumes self)
+    pub fn into_similarity_results(self) -> Vec<SimilarityResult> {
+        self.distances
+            .iter()
+            .map(|&raw_distance| {
+                let normalized = self.compute.normalize_distance(raw_distance, &self.metric);
+                SimilarityResult {
+                    distance: raw_distance,
+                    raw_value: raw_distance,
+                    metric: self.metric,
+                    similarity_score: normalized,
+                    normalized_score: normalized,
+                    rank_value: raw_distance,
+                }
+            })
+            .collect()
+    }
+
+    /// Get top-k results without converting all
+    pub fn top_k(self, k: usize) -> Vec<SimilarityResult> {
+        let mut indexed: Vec<(usize, f32)> = self.distances
+            .iter()
+            .enumerate()
+            .map(|(i, &d)| (i, d))
+            .collect();
+
+        // Partial sort for top-k
+        let k = k.min(indexed.len());
+        if k > 0 {
+            indexed.select_nth_unstable_by(k - 1, |a, b| {
+                a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
+            });
+        }
+
+        // Convert only top-k to results
+        indexed[..k]
+            .iter()
+            .map(|&(_, raw_distance)| {
+                let normalized = self.compute.normalize_distance(raw_distance, &self.metric);
+                SimilarityResult {
+                    distance: raw_distance,
+                    raw_value: raw_distance,
+                    metric: self.metric,
+                    similarity_score: normalized,
+                    normalized_score: normalized,
+                    rank_value: raw_distance,
+                }
+            })
+            .collect()
+    }
+}
+
 impl SimilarityResult {
     /// Create a new similarity result with normalization
     pub fn new(raw_value: f32, metric: DistanceMetric) -> Self {
@@ -448,6 +532,8 @@ pub struct UnifiedDistanceCompute {
     gpu_accelerator_lazy: std::sync::OnceLock<Option<Arc<dyn GpuAccelerator>>>,
     /// Preferred hardware backend
     preferred_backend: HardwareBackend,
+    /// Memory pool for reducing allocations in batch operations
+    memory_pool: Arc<VectorMemoryPool>,
     /// Enable GPU acceleration
     gpu_enabled: bool,
 }
@@ -493,6 +579,7 @@ impl UnifiedDistanceCompute {
             platform_capability,
             gpu_accelerator_lazy: std::sync::OnceLock::new(),
             preferred_backend,
+            memory_pool: Arc::new(VectorMemoryPool::new()),
             gpu_enabled,
         }
     }
@@ -511,6 +598,7 @@ impl UnifiedDistanceCompute {
             platform_capability,
             gpu_accelerator_lazy: std::sync::OnceLock::new(),
             preferred_backend: backend,
+            memory_pool: Arc::new(VectorMemoryPool::new()),
             gpu_enabled: false,
         }
     }
@@ -1103,17 +1191,263 @@ impl UnifiedDistanceCompute {
         self.compute_distance_simd(vec_a, vec_b, metric)
     }
 
-    /// Calculate batch distances (compatibility method)
+    /// Basic batch distance calculation (for backward compatibility)
+    /// Delegates to the optimized pooled version
     pub fn calculate_distance_batch(
         &self,
         query: &[f32],
         vectors: &[&[f32]],
         metric: &DistanceMetric,
     ) -> Vec<SimilarityResult> {
-        vectors
-            .iter()
-            .map(|v| self.calculate_distance(query, v, metric))
-            .collect()
+        // Delegate to the optimized pooled version
+        self.batch_distance_pooled_simd(query, vectors, metric)
+    }
+
+    /// Optimized batch distance with memory pooling and SIMD
+    /// This is the recommended method for batch distance calculations
+    ///
+    /// Processing hierarchy:
+    /// 1. Acquire buffer from memory pool (reduces allocations)
+    /// 2. Process in cache-friendly batches (improves locality)
+    /// 3. Use SIMD for each batch if available (maximizes throughput)
+    pub fn batch_distance_pooled_simd(
+        &self,
+        query: &[f32],
+        vectors: &[&[f32]],
+        metric: &DistanceMetric,
+    ) -> Vec<SimilarityResult> {
+        // Step 1: Acquire pooled buffer for results
+        let mut pooled_results = self.memory_pool.vector_buffers.acquire();
+        pooled_results.clear();
+        pooled_results.reserve(vectors.len());
+
+        // Step 2: Process in batches with SIMD
+        self.batch_process_with_simd(query, vectors, metric, &mut pooled_results);
+
+        // Convert pooled buffer to owned vector with all fields
+        let results: Vec<SimilarityResult> = pooled_results.iter()
+            .map(|&raw_distance| {
+                let normalized = self.normalize_distance(raw_distance, metric);
+                SimilarityResult {
+                    distance: raw_distance,
+                    raw_value: raw_distance,
+                    metric: *metric,
+                    similarity_score: normalized,
+                    normalized_score: normalized,
+                    rank_value: raw_distance,  // For ranking, lower is better
+                }
+            })
+            .collect();
+
+        // Buffer automatically returns to pool when dropped
+        results
+    }
+
+    /// Optimized batch distance returning lazy wrapper
+    /// Returns a wrapper that delays conversion until actually needed
+    pub fn batch_distance_pooled_lazy(
+        &self,
+        query: &[f32],
+        vectors: &[&[f32]],
+        metric: &DistanceMetric,
+    ) -> BatchDistanceResults {
+        // Acquire pooled buffer for results
+        let mut pooled_results = self.memory_pool.vector_buffers.acquire();
+        pooled_results.clear();
+        pooled_results.reserve(vectors.len());
+
+        // Process in batches with SIMD
+        self.batch_process_with_simd(query, vectors, metric, &mut pooled_results);
+
+        // Return lazy wrapper that delays conversion
+        BatchDistanceResults {
+            distances: pooled_results,
+            metric: *metric,
+            compute: self.clone(),
+        }
+    }
+
+    /// Batch distance calculation with external buffer reuse
+    /// Best for repeated operations where you manage the buffer
+    pub fn batch_distance_into_buffer(
+        &self,
+        query: &[f32],
+        vectors: &[&[f32]],
+        metric: &DistanceMetric,
+        results: &mut Vec<SimilarityResult>,
+    ) {
+        results.clear();
+        results.reserve(vectors.len());
+
+        // Use temporary pooled buffer for intermediate calculations
+        let mut distances = self.memory_pool.vector_buffers.acquire();
+        distances.clear();
+
+        // Process with SIMD
+        self.batch_process_with_simd(query, vectors, metric, &mut distances);
+
+        // Convert distances to results
+        for &raw_distance in distances.iter() {
+            let normalized = self.normalize_distance(raw_distance, metric);
+            results.push(SimilarityResult {
+                distance: raw_distance,
+                raw_value: raw_distance,
+                metric: *metric,
+                similarity_score: normalized,
+                normalized_score: normalized,
+                rank_value: raw_distance,
+            });
+        }
+    }
+
+    /// Core batch processing with SIMD dispatch
+    fn batch_process_with_simd(
+        &self,
+        query: &[f32],
+        vectors: &[&[f32]],
+        metric: &DistanceMetric,
+        distances: &mut Vec<f32>,
+    ) {
+        // Determine optimal batch size based on hardware
+        let batch_size = self.get_optimal_batch_size();
+
+        // Process in cache-friendly batches
+        for chunk in vectors.chunks(batch_size) {
+            #[cfg(target_arch = "x86_64")]
+            if self.platform_capability.has_avx2 {
+                unsafe {
+                    self.simd_batch_avx2(query, chunk, metric, distances);
+                    continue;
+                }
+            }
+
+            #[cfg(target_arch = "aarch64")]
+            if true {  // NEON is always available on AArch64
+                unsafe {
+                    self.simd_batch_neon(query, chunk, metric, distances);
+                    continue;
+                }
+            }
+
+            // Scalar fallback
+            self.scalar_batch(query, chunk, metric, distances);
+        }
+    }
+
+    /// Get optimal batch size for current hardware
+    fn get_optimal_batch_size(&self) -> usize {
+        #[cfg(target_arch = "x86_64")]
+        {
+            if self.platform_capability.has_avx512 {
+                return 128;  // AVX-512: Process more vectors for better cache use
+            } else if self.platform_capability.has_avx2 {
+                return 64;   // AVX2: Good balance of cache and register use
+            } else {
+                return 32;   // SSE2: Smaller batches
+            }
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        {
+            return 32;  // NEON: Smaller batches for mobile/embedded
+        }
+
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            return 16;  // Scalar: Small batches for cache locality
+        }
+    }
+
+    /// Normalize distance based on metric type
+    fn normalize_distance(&self, distance: f32, metric: &DistanceMetric) -> f32 {
+        match metric {
+            DistanceMetric::Cosine => 1.0 - distance,
+            DistanceMetric::DotProduct => -distance,
+            DistanceMetric::Euclidean => 1.0 / (1.0 + distance),
+            DistanceMetric::Manhattan => 1.0 / (1.0 + distance),
+            _ => distance,
+        }
+    }
+
+    /// Scalar batch processing (fallback)
+    fn scalar_batch(
+        &self,
+        query: &[f32],
+        vectors: &[&[f32]],
+        metric: &DistanceMetric,
+        distances: &mut Vec<f32>,
+    ) {
+        for vector in vectors {
+            let distance = self.compute_distance_simd(query, vector, metric);
+            distances.push(distance);
+        }
+    }
+
+    /// AVX2 batch processing - processes multiple vectors with SIMD
+    #[cfg(target_arch = "x86_64")]
+    #[target_feature(enable = "avx2")]
+    unsafe fn simd_batch_avx2(
+        &self,
+        query: &[f32],
+        vectors: &[&[f32]],
+        metric: &DistanceMetric,
+        distances: &mut Vec<f32>,
+    ) {
+        // For true multi-vector SIMD, we'd need to transpose data
+        // For now, use optimized per-vector SIMD with better batching
+        const UNROLL_FACTOR: usize = 4;  // Process 4 vectors per loop iteration
+
+        let chunks = vectors.chunks_exact(UNROLL_FACTOR);
+        let remainder = chunks.remainder();
+
+        // Unrolled loop for better instruction pipelining
+        for chunk in chunks {
+            // Calculate distances for 4 vectors, allowing CPU to pipeline better
+            let d0 = self.compute_distance_simd(query, chunk[0], metric);
+            let d1 = self.compute_distance_simd(query, chunk[1], metric);
+            let d2 = self.compute_distance_simd(query, chunk[2], metric);
+            let d3 = self.compute_distance_simd(query, chunk[3], metric);
+
+            distances.push(d0);
+            distances.push(d1);
+            distances.push(d2);
+            distances.push(d3);
+        }
+
+        // Process remainder
+        for vector in remainder {
+            distances.push(self.compute_distance_simd(query, vector, metric));
+        }
+    }
+
+    /// NEON batch processing - processes multiple vectors with SIMD
+    #[cfg(target_arch = "aarch64")]
+    unsafe fn simd_batch_neon(
+        &self,
+        query: &[f32],
+        vectors: &[&[f32]],
+        metric: &DistanceMetric,
+        distances: &mut Vec<f32>,
+    ) {
+        // For NEON, use 2-way unrolling for better pipeline usage
+        const UNROLL_FACTOR: usize = 2;
+
+        let chunks = vectors.chunks_exact(UNROLL_FACTOR);
+        let remainder = chunks.remainder();
+
+        // Unrolled loop for better instruction pipelining
+        for chunk in chunks {
+            let d0 = self.compute_distance_simd(query, chunk[0], metric);
+            let d1 = self.compute_distance_simd(query, chunk[1], metric);
+
+            distances.push(d0);
+            distances.push(d1);
+        }
+
+        // Process remainder
+        for vector in remainder {
+            distances.push(self.compute_distance_simd(query, vector, metric));
+        }
     }
 
     /// Batch distance computation for optimal performance

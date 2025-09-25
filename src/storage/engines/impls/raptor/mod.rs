@@ -141,7 +141,6 @@ pub use common::{
     RowGroupBloomFilter,
     RowGroupMetadata,
     SchemaDescriptor,
-    SearchResult,
     SpilloverInfo,
     VectorCentroidMatrix, // Matrix Trinity architecture
     VectorEncoding,

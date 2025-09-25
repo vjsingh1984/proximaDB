@@ -1,0 +1,186 @@
+[2m2025-09-25T04:43:15.392786Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 🔍 Detecting hardware capabilities...
+[2m2025-09-25T04:43:15.405329Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m Detected macOS cache sizes: L1D=64KB, L1I=128KB, L2=4096KB, L3=8MB
+[2m2025-09-25T04:43:15.416555Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m ✅ Hardware detection completed in 23.72ms
+[2m2025-09-25T04:43:15.416578Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 🖥️  CPU: Apple Apple Silicon (14 physical cores, 14 logical cores)
+[2m2025-09-25T04:43:15.416587Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 🎯 SIMD: NEON
+[2m2025-09-25T04:43:15.416594Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 🎮 GPU: Not available (CPU-only mode)
+[2m2025-09-25T04:43:15.416597Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 💾 Memory: 48.0GB total, 21.9GB available
+
+╔══════════════════════════════════════════════════════════════╗
+║           ProximaDB Unified Benchmark Suite                 ║
+║                    Statistical Edition                      ║
+╚══════════════════════════════════════════════════════════════╝
+
+
+================================================================================
+Running Statistical Benchmarks
+Sample size: 25
+================================================================================
+[2m2025-09-25T04:43:15.416637Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 🔍 Detecting hardware capabilities...
+[2m2025-09-25T04:43:15.430205Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m Detected macOS cache sizes: L1D=64KB, L1I=128KB, L2=4096KB, L3=8MB
+[2m2025-09-25T04:43:15.440741Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m ✅ Hardware detection completed in 24.10ms
+[2m2025-09-25T04:43:15.440766Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 🖥️  CPU: Apple Apple Silicon (14 physical cores, 14 logical cores)
+[2m2025-09-25T04:43:15.440788Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 🎯 SIMD: NEON
+[2m2025-09-25T04:43:15.440791Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 🎮 GPU: Not available (CPU-only mode)
+[2m2025-09-25T04:43:15.440794Z[0m [32m INFO[0m [2mproximadb::core::hardware_capabilities[0m[2m:[0m 💾 Memory: 48.0GB total, 21.9GB available
+
+📊 Hardware SIMD Benchmarks
+------------------------------------------------------------
+
+📈 SIMD Distance Computation by Dimension:
+
+  Dimension 384 (Normalized model):
+[2m2025-09-25T04:43:15.440826Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Using scalar implementation from global hardware detection
+[2m2025-09-25T04:43:15.440831Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Cosine, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.440838Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440843Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440846Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440850Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Cosine       SIMD: 0.235 ± 0.054 μs
+[2m2025-09-25T04:43:15.440867Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Euclidean, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.440877Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440879Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440890Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440894Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Euclidean    SIMD: 0.120 ± 0.018 μs
+[2m2025-09-25T04:43:15.440903Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: DotProduct, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.440906Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440908Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440910Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440913Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    DotProduct   SIMD: 0.113 ± 0.019 μs
+
+  Dimension 768 (Bert model):
+[2m2025-09-25T04:43:15.440952Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Cosine, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.440955Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440958Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440970Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440973Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Cosine       SIMD: 0.420 ± 0.037 μs
+[2m2025-09-25T04:43:15.440995Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Euclidean, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.440997Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.440998Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441000Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441002Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Euclidean    SIMD: 0.293 ± 0.008 μs
+[2m2025-09-25T04:43:15.441017Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: DotProduct, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441019Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441021Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441023Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441025Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    DotProduct   SIMD: 0.282 ± 0.021 μs
+
+  Dimension 1024 (Normalized model):
+[2m2025-09-25T04:43:15.441049Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Cosine, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441055Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441057Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441059Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441061Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Cosine       SIMD: 0.555 ± 0.023 μs
+[2m2025-09-25T04:43:15.441085Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Euclidean, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441087Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441088Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441090Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441092Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Euclidean    SIMD: 0.427 ± 0.018 μs
+[2m2025-09-25T04:43:15.441111Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: DotProduct, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441113Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441115Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441117Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441118Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    DotProduct   SIMD: 0.412 ± 0.014 μs
+
+  Dimension 1536 (OpenAIAda model):
+[2m2025-09-25T04:43:15.441174Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Cosine, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441176Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441178Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441180Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441182Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Cosine       SIMD: 1.160 ± 0.062 μs
+[2m2025-09-25T04:43:15.441225Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Euclidean, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441227Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441229Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441232Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441234Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Euclidean    SIMD: 0.763 ± 0.019 μs
+[2m2025-09-25T04:43:15.441266Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: DotProduct, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441268Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441273Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441275Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441277Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    DotProduct   SIMD: 0.665 ± 0.014 μs
+
+  Dimension 3072 (Normalized model):
+[2m2025-09-25T04:43:15.441331Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Cosine, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441333Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441335Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441337Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441339Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Cosine       SIMD: 2.063 ± 0.339 μs
+[2m2025-09-25T04:43:15.441413Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Euclidean, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441416Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441419Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441422Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441425Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Euclidean    SIMD: 1.735 ± 0.186 μs
+[2m2025-09-25T04:43:15.441493Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: DotProduct, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.441495Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441497Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441499Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.441501Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    DotProduct   SIMD: 1.507 ± 0.094 μs
+
+📈 SIMD Batch Processing (768D BERT):
+[2m2025-09-25T04:43:15.444726Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Cosine, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.444732Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.444734Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.444736Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.444738Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+  Batch   250: 102.9 ± 0.0 μs total (0.412 μs/vec)
+[2m2025-09-25T04:43:15.457472Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Cosine, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.457493Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.457509Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.457513Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.457516Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+  Batch  1000: 462.7 ± 0.1 μs total (0.463 μs/vec)
+[2m2025-09-25T04:43:15.520750Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: Cosine, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.520775Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.520779Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.520783Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.520786Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+  Batch  5000: 2233.3 ± 165.7 μs total (0.447 μs/vec)
+
+📈 SIMD Alignment Impact:
+
+  Dimension 512:
+[2m2025-09-25T04:43:15.548449Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: DotProduct, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.548468Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548475Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548478Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548480Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Aligned:   0.157 ± 0.021 μs
+    Unaligned: 0.163 ± 0.031 μs
+    → Alignment improves by 4.1%
+
+  Dimension 1024:
+[2m2025-09-25T04:43:15.548519Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: DotProduct, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.548522Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548524Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548526Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548528Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Aligned:   0.400 ± 0.024 μs
+    Unaligned: 0.395 ± 0.021 μs
+
+  Dimension 2048:
+[2m2025-09-25T04:43:15.548601Z[0m [34mDEBUG[0m [2mproximadb::compute::distance_computation::engine[0m[2m:[0m Creating UnifiedDistanceCompute with metric: DotProduct, backend: Scalar, platform: Scalar
+[2m2025-09-25T04:43:15.548603Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548605Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548607Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+[2m2025-09-25T04:43:15.548609Z[0m [34mDEBUG[0m [2mproximadb::core::memory::pool[0m[2m:[0m 🏊 Initialized pool with 16 buffers
+    Aligned:   0.912 ± 0.021 μs
+    Unaligned: 0.913 ± 0.020 μs
+    → Alignment improves by 0.2%
+✅ Hardware SIMD benchmarks completed
+
+✅ Benchmark suite completed successfully!
+

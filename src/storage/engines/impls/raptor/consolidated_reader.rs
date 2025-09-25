@@ -31,7 +31,6 @@ use super::common::{
     RaptorFooter,
     RowGroupBloomFilter,
     RowGroupMetadata,
-    SearchResult, // Add SearchResult import
     VectorCentroidMatrix,
     VectorCentroidStorageStrategy,
 };
@@ -3364,7 +3363,7 @@ impl RaptorReader {
         file_path: &str,
         query: &[f32],
         k: usize,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let metadata = self.read_metadata(file_path).await?;
         let mut all_results = Vec::new();
 
@@ -3386,20 +3385,19 @@ impl RaptorReader {
                     let distance = distance_compute
                         .calculate_distance(query, vector, &DistanceMetric::Cosine)
                         .raw_value;
-                    all_results.push(SearchResult {
-                        vector_id: ids[idx].clone(),
-                        distance,
-                        vector: Some(vector.clone()),
-                        metadata: None, // Not loaded in fullscan mode
-                        rowgroup_id: rg_idx as u16,
-                        ranking_score: distance, // Initial score is distance
+                    all_results.push(OptimizedSearchRecord {
+                        id: ids[idx].clone(),
+                        score: -distance, // Convert distance to similarity score (negative for sorting)
+                        vector: Some(Arc::new(vector.clone())), // Use Arc to avoid copying
+                        metadata: Default::default(), // Not loaded in fullscan mode
+                        ..Default::default()
                     });
                 }
             }
         }
 
-        // Sort by distance and take top k
-        all_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        // Sort by score (higher is better) and take top k
+        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         all_results.truncate(k);
 
         Ok(all_results)

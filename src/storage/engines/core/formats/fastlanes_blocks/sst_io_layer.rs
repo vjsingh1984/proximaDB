@@ -482,45 +482,53 @@ impl SharedSstFormatReader {
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>, ProximaDBError> {
         let mut all_results = Vec::new();
 
-        // Process each block with predicate pushdown
+        // Process each block with batch distance computation
         for block in blocks {
-            // Search within the block for matching records
+            // Collect vectors from block for batch processing
+            let mut block_records = Vec::new();
+            let mut block_vectors = Vec::new();
+
             for record in &block.records {
                 // Apply filter expression if provided
                 if let Some(filter) = filter_expression {
                     // TODO: Implement proper filter evaluation
                     // For now, pass all records
                 }
+                block_records.push(record);
+                block_vectors.push(record.vector.as_slice());
+            }
 
-                // Calculate distance using passed UnifiedDistanceCompute
-                let distance_result = distance_compute.calculate_distance(
+            // Batch calculate distances for entire block
+            if !block_vectors.is_empty() {
+                let distances = distance_compute.batch_distance_pooled_simd(
                     query_vector,
-                    &record.vector,
+                    &block_vectors,
                     &distance_metric
                 );
-                let distance = distance_result.distance;
 
-                // Create OptimizedSearchRecord using builder pattern with defaults
-                let search_record = crate::core::search::results::OptimizedSearchRecord {
-                    id: record.id.clone(),
-                    vector_id: Some(record.id.clone()),
-                    score: distance,
-                    similarity: Some(distance),
-                    metadata: record.metadata.clone(),
-                    vector: Some(Arc::new(record.vector.clone())),
-                    debug_info: None,
-                    version: None,
-                    timestamp: Some(record.timestamp),
-                    updated_at: None,
-                    expires_at: None,
-                    source: None,
-                    expanded_context: Vec::new(),
-                    semantic_similarity: None,
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None,
-                };
-                all_results.push(search_record);
+                // Create search records with batch distances
+                for (record, distance_result) in block_records.into_iter().zip(distances.iter()) {
+                    let search_record = crate::core::search::results::OptimizedSearchRecord {
+                        id: record.id.clone(),
+                        vector_id: Some(record.id.clone()),
+                        score: distance_result.distance,
+                        similarity: Some(distance_result.distance),
+                        metadata: record.metadata.clone(),
+                        vector: Some(Arc::new(record.vector.clone())),
+                        debug_info: None,
+                        version: None,
+                        timestamp: Some(record.timestamp),
+                        updated_at: None,
+                        expires_at: None,
+                        source: None,
+                        expanded_context: Vec::new(),
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                    };
+                    all_results.push(search_record);
+                }
             }
         }
 

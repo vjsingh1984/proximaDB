@@ -558,14 +558,21 @@ mod tests {
         // Test distance calculations with sparse vectors using UnifiedDistanceCompute
         let query = generator.generate_sparse_vector(0.05);
         let distance_compute = UnifiedDistanceCompute::default();
-        let mut results = Vec::new();
 
-        for (idx, vector) in sparse_vectors.iter().enumerate() {
-            // Use UnifiedDistanceCompute for consistent distance calculation
-            let distance_result =
-                distance_compute.calculate_distance(&query, vector, &DistanceMetric::Cosine);
-            results.push((distance_result.rank_value, idx));
-        }
+        // Use batch distance computation for faster tests
+        let vector_refs: Vec<&[f32]> = sparse_vectors.iter().map(|v| v.as_slice()).collect();
+        let distances = distance_compute.batch_distance_pooled_simd(
+            &query,
+            &vector_refs,
+            &DistanceMetric::Cosine,
+        );
+
+        // Combine distances with indices
+        let mut results: Vec<(f32, usize)> = distances
+            .iter()
+            .enumerate()
+            .map(|(idx, result)| (result.distance, idx))
+            .collect();
 
         // Sort by distance (lower = more similar)
         results.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());

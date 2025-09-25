@@ -7,10 +7,12 @@
 use anyhow::Result;
 use dashmap::DashMap;
 use std::sync::Arc;
+use std::hash::{Hash, Hasher};
 use tracing::{debug, info, warn};
 
 use super::unified::{Codebook, CodebookStore, UnifiedQuantizationLevel};
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
+use crate::utils::hash::XxHash64;
 
 /// Composite key for global quantization cache
 /// Format: "{collection_id}#{quantization_type}#{level_params}"
@@ -69,6 +71,43 @@ impl QuantizationCacheKey {
     }
 }
 
+/// Key for quantized vector cache
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct QuantizedVectorKey {
+    /// Hash of the original vector
+    vector_hash: u64,
+    /// Quantization level
+    level: String,
+    /// Collection ID for partitioning
+    collection_id: String,
+}
+
+impl QuantizedVectorKey {
+    pub fn new(vector: &[f32], level: &str, collection_id: &str) -> Self {
+        // Use fast XxHash64 for vector hashing
+        let mut hasher = XxHash64::new(0);
+        for &v in vector {
+            hasher.write_u32(v.to_bits());
+        }
+        Self {
+            vector_hash: hasher.finish(),
+            level: level.to_string(),
+            collection_id: collection_id.to_string(),
+        }
+    }
+}
+
+/// Cached quantized vector result
+#[derive(Clone)]
+pub struct CachedQuantizedVector {
+    /// Quantized data
+    pub data: Arc<Vec<u8>>,
+    /// Access count for LRU tracking
+    pub access_count: Arc<std::sync::atomic::AtomicUsize>,
+    /// Last access timestamp
+    pub last_access: Arc<std::sync::atomic::AtomicU64>,
+}
+
 /// Global quantization cache integrated with CrossCacheOrchestrator
 pub struct GlobalQuantizationCache {
     /// Collection-partitioned codebook storage
@@ -76,20 +115,41 @@ pub struct GlobalQuantizationCache {
     /// Value: Serialized codebook data
     codebooks: Arc<DashMap<String, Arc<Codebook>>>,
 
+    /// Quantized vector cache with LRU eviction
+    /// Key: (vector_hash, level, collection_id)
+    /// Value: Quantized vector data
+    quantized_vectors: Arc<DashMap<QuantizedVectorKey, CachedQuantizedVector>>,
+
+    /// Maximum number of cached quantized vectors per collection
+    max_cached_vectors_per_collection: usize,
+
     /// CrossCacheOrchestrator for unified memory management
     orchestrator: Option<Arc<CrossCacheOrchestrator>>,
 
     /// Memory budget allocated for quantization (managed by orchestrator)
     allocated_memory_bytes: std::sync::atomic::AtomicUsize,
+
+    /// Cache hit statistics
+    cache_hits: std::sync::atomic::AtomicUsize,
+    cache_misses: std::sync::atomic::AtomicUsize,
 }
 
 impl GlobalQuantizationCache {
     /// Create new global quantization cache
     pub fn new() -> Self {
+        Self::with_capacity(10000) // Default to 10K cached vectors per collection
+    }
+
+    /// Create with specified capacity
+    pub fn with_capacity(max_vectors_per_collection: usize) -> Self {
         Self {
             codebooks: Arc::new(DashMap::new()),
+            quantized_vectors: Arc::new(DashMap::new()),
+            max_cached_vectors_per_collection: max_vectors_per_collection,
             orchestrator: CrossCacheOrchestrator::global(),
             allocated_memory_bytes: std::sync::atomic::AtomicUsize::new(0),
+            cache_hits: std::sync::atomic::AtomicUsize::new(0),
+            cache_misses: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -245,6 +305,170 @@ impl GlobalQuantizationCache {
             },
         }
     }
+
+    // ========================================================================
+    // QUANTIZED VECTOR CACHING METHODS
+    // ========================================================================
+
+    /// Get or compute quantized vector
+    /// Returns cached result if available, otherwise computes and caches
+    pub fn get_or_quantize(
+        &self,
+        vector: &[f32],
+        level: &str,
+        collection_id: &str,
+        quantize_fn: impl FnOnce() -> Result<Vec<u8>>,
+    ) -> Result<Arc<Vec<u8>>> {
+        let key = QuantizedVectorKey::new(vector, level, collection_id);
+
+        // Check cache first
+        if let Some(cached) = self.quantized_vectors.get(&key) {
+            // Update access stats
+            cached.access_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            cached.last_access.store(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+
+            self.cache_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            debug!(
+                "Quantization cache hit for collection: {}, level: {}, hash: {}",
+                collection_id, level, key.vector_hash
+            );
+
+            return Ok(Arc::clone(&cached.data));
+        }
+
+        // Cache miss - compute quantization
+        self.cache_misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        debug!(
+            "Quantization cache miss for collection: {}, level: {}, hash: {}",
+            collection_id, level, key.vector_hash
+        );
+
+        let quantized = quantize_fn()?;
+        let quantized_arc = Arc::new(quantized);
+
+        // Check if we need to evict old entries for this collection
+        self.evict_if_needed(collection_id);
+
+        // Store in cache
+        let cached = CachedQuantizedVector {
+            data: Arc::clone(&quantized_arc),
+            access_count: Arc::new(std::sync::atomic::AtomicUsize::new(1)),
+            last_access: Arc::new(std::sync::atomic::AtomicU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            )),
+        };
+
+        self.quantized_vectors.insert(key, cached);
+
+        // Update memory tracking
+        let size_estimate = quantized_arc.len();
+        self.allocated_memory_bytes.fetch_add(size_estimate, std::sync::atomic::Ordering::Relaxed);
+
+        Ok(quantized_arc)
+    }
+
+    /// Evict least recently used entries if cache is full for a collection
+    fn evict_if_needed(&self, collection_id: &str) {
+        // Count vectors for this collection
+        let collection_count = self.quantized_vectors
+            .iter()
+            .filter(|entry| entry.key().collection_id == collection_id)
+            .count();
+
+        if collection_count >= self.max_cached_vectors_per_collection {
+            debug!(
+                "Cache full for collection {}, evicting LRU entries",
+                collection_id
+            );
+
+            // Find and remove least recently used entry
+            let mut oldest_key = None;
+            let mut oldest_time = u64::MAX;
+
+            for entry in self.quantized_vectors.iter() {
+                if entry.key().collection_id == collection_id {
+                    let last_access = entry.value().last_access.load(std::sync::atomic::Ordering::Relaxed);
+                    if last_access < oldest_time {
+                        oldest_time = last_access;
+                        oldest_key = Some(entry.key().clone());
+                    }
+                }
+            }
+
+            if let Some(key) = oldest_key {
+                if let Some((_, removed)) = self.quantized_vectors.remove(&key) {
+                    let size_estimate = removed.data.len();
+                    self.allocated_memory_bytes.fetch_sub(size_estimate, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    /// Get cache hit rate
+    pub fn cache_hit_rate(&self) -> f64 {
+        let hits = self.cache_hits.load(std::sync::atomic::Ordering::Relaxed);
+        let misses = self.cache_misses.load(std::sync::atomic::Ordering::Relaxed);
+        let total = hits + misses;
+
+        if total == 0 {
+            0.0
+        } else {
+            hits as f64 / total as f64
+        }
+    }
+
+    /// Clear quantized vector cache for a collection
+    pub fn clear_quantized_vectors(&self, collection_id: &str) {
+        let mut removed_size = 0usize;
+
+        self.quantized_vectors.retain(|key, value| {
+            if key.collection_id == collection_id {
+                removed_size += value.data.len();
+                false
+            } else {
+                true
+            }
+        });
+
+        self.allocated_memory_bytes.fetch_sub(removed_size, std::sync::atomic::Ordering::Relaxed);
+
+        info!(
+            "Cleared quantized vector cache for collection: {}, freed {} bytes",
+            collection_id, removed_size
+        );
+    }
+
+    /// Get statistics including quantized vector cache
+    pub fn get_extended_stats(&self) -> ExtendedCacheStats {
+        ExtendedCacheStats {
+            codebook_count: self.codebooks.len(),
+            quantized_vector_count: self.quantized_vectors.len(),
+            allocated_bytes: self.allocated_memory_bytes.load(std::sync::atomic::Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(std::sync::atomic::Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(std::sync::atomic::Ordering::Relaxed),
+            hit_rate: self.cache_hit_rate(),
+        }
+    }
+}
+
+/// Extended cache statistics
+#[derive(Debug, Clone)]
+pub struct ExtendedCacheStats {
+    pub codebook_count: usize,
+    pub quantized_vector_count: usize,
+    pub allocated_bytes: usize,
+    pub cache_hits: usize,
+    pub cache_misses: usize,
+    pub hit_rate: f64,
 }
 
 /// Statistics for quantization cache

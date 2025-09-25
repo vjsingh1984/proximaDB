@@ -722,19 +722,22 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             // Use filesystem API for efficient range reads
             let batch = self.read_rowgroup_with_range(rg_id).await?;
 
-            // Compute distances using SIMD if available
+            // Compute distances using optimized batch methods
             let distances = if self.config.enable_simd {
-                // Use unified distance compute directly instead of removed simd_ops wrapper
+                // Use optimized batch distance with memory pool
                 let vectors = self.extract_vectors_from_batch(&batch)?;
+                let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
                 let compute = UnifiedDistanceCompute::default();
-                vectors
-                    .iter()
-                    .map(|v| {
-                        compute
-                            .calculate_distance(query, v, distance_metric)
-                            .raw_value
-                    })
-                    .collect::<Vec<_>>()
+
+                // Use pooled SIMD batch method for maximum performance
+                let results = compute.batch_distance_pooled_simd(
+                    query,
+                    &vector_refs,
+                    distance_metric,
+                );
+
+                // Extract raw distances
+                results.into_iter().map(|r| r.distance).collect::<Vec<_>>()
             } else {
                 self.compute_distances_scalar(query, &batch)?
             };
@@ -1308,19 +1311,22 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                 batch
             };
 
-            // Compute distances using SIMD if available
+            // Compute distances using optimized batch methods
             let distances = if self.config.enable_simd {
-                // Use unified distance compute directly instead of removed simd_ops wrapper
+                // Use optimized batch distance with memory pool
                 let vectors = self.extract_vectors_from_batch(&batch)?;
+                let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
                 let compute = UnifiedDistanceCompute::default();
-                vectors
-                    .iter()
-                    .map(|v| {
-                        compute
-                            .calculate_distance(query, v, distance_metric)
-                            .raw_value
-                    })
-                    .collect::<Vec<_>>()
+
+                // Use pooled SIMD batch method for maximum performance
+                let results = compute.batch_distance_pooled_simd(
+                    query,
+                    &vector_refs,
+                    distance_metric,
+                );
+
+                // Extract raw distances
+                results.into_iter().map(|r| r.distance).collect::<Vec<_>>()
             } else {
                 self.compute_distances_scalar(query, &batch)?
             };

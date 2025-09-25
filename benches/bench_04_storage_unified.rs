@@ -5,7 +5,7 @@ mod common;
 use common::benchmark_utils::{print_system_info, STANDARD_BATCH_SIZES};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, trace};
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, StorageAssignment, StorageConfig, VectorRecord, CompressionAlgorithm};
 use proximadb::storage::engines::factory::StorageEngineFactory;
@@ -475,7 +475,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
                                 }
                             }
                         } else {
-                            eprintln!("    ✅ FOUND: Pure search returned {} results for {} with {} in {}ms",
+                            trace!("    ✅ FOUND: Pure search returned {} results for {} with {} in {}ms",
                                      results.len(), engine_name, compress_name, pure_time_ms);
                             // Log detailed results with debug tracing (distance=0.0 means exact match)
                             for (i, result) in results.iter().take(5).enumerate() {
@@ -623,7 +623,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
                                 }
                             }
                         } else {
-                            eprintln!("    ✅ FOUND: Filtered search returned {} results for {} with {}",
+                            trace!("    ✅ FOUND: Filtered search returned {} results for {} with {}",
                                      results.len(), engine_name, compress_name);
                             // Log top 3 results with debug tracing
                             for (i, result) in results.iter().take(3).enumerate() {

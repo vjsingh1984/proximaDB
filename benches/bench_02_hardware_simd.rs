@@ -111,7 +111,7 @@ fn benchmark_batch_processing(c: &mut Criterion) {
             |b, _| {
                 let calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
                 b.iter(|| {
-                    let results = calculator.calculate_distance_batch(
+                    let results = calculator.batch_distance_pooled_simd(
                         &query,
                         &vector_refs,
                         &DistanceMetric::Cosine,
@@ -121,15 +121,14 @@ fn benchmark_batch_processing(c: &mut Criterion) {
             },
         );
 
-        // GPU-enabled batch processing
+        // SIMD-optimized with memory pool
         group.bench_with_input(
-            BenchmarkId::new("gpu_enabled", batch_size),
+            BenchmarkId::new("simd_pooled", batch_size),
             batch_size,
             |b, _| {
-                let calculator = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
-                // GPU acceleration enabled by default in UnifiedDistanceCompute
+                let calculator = UnifiedDistanceCompute::default(); // Memory pool is integrated
                 b.iter(|| {
-                    let results = calculator.calculate_distance_batch(
+                    let results = calculator.batch_distance_pooled_simd(
                         &query,
                         &vector_refs,
                         &DistanceMetric::Cosine,

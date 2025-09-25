@@ -654,17 +654,8 @@ pub enum ReadPattern {
     Adaptive, // Detect pattern at runtime
 }
 
-// ====== Search Results (unified) ======
-
-#[derive(Debug, Clone)]
-pub struct SearchResult {
-    pub vector_id: String,
-    pub distance: f32,
-    pub vector: Option<Vec<f32>>,
-    pub metadata: Option<HashMap<String, MetadataValue>>,
-    pub rowgroup_id: u16,
-    pub ranking_score: f32, // For boosting
-}
+// ====== Search Results ======
+// Note: Using OptimizedSearchRecord from core::search::results instead of custom SearchResult struct
 
 // ====== Predicates for filtering ======
 

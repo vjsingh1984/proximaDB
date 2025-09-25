@@ -530,7 +530,9 @@ impl ModularBlockReader {
         );
 
         // Stage 3: Load full vectors for top candidates and compute exact distances
-        let mut results = Vec::new();
+        // First, collect all vectors for batch processing
+        let mut loaded_vectors = Vec::new();
+        let mut indices_map = Vec::new();
 
         for (idx, _candidate) in final_candidates.iter().enumerate().take(k) {
             if let Some((block_idx, record_idx)) = block_indices.get(idx) {
@@ -539,16 +541,35 @@ impl ModularBlockReader {
                     .load_full_vector(*block_idx, *record_idx, &index_entries)
                     .await
                 {
-                    let distance = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-                        .calculate_distance(query_vector, &full_vector, distance_metric);
+                    loaded_vectors.push(full_vector);
+                    indices_map.push((block_idx, record_idx));
+                }
+            }
+        }
 
+        // Batch compute distances using optimized method
+        let mut results = Vec::new();
+        if !loaded_vectors.is_empty() {
+            let vector_refs: Vec<&[f32]> = loaded_vectors.iter().map(|v| v.as_slice()).collect();
+            let compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+
+            // Use optimized batch distance computation
+            let distances = compute.batch_distance_pooled_simd(
+                query_vector,
+                &vector_refs,
+                distance_metric,
+            );
+
+            // Create results from batch distances
+            for (i, distance) in distances.into_iter().enumerate() {
+                if let Some((block_idx, record_idx)) = indices_map.get(i) {
                     results.push(
                         OptimizedSearchRecord::new(
                             format!("block_{}_record_{}", block_idx, record_idx),
-                            distance.rank_value,
+                            distance.distance,
                         )
                         .with_similarity(distance.normalized_score)
-                        .add_vector(full_vector)
+                        .add_vector(loaded_vectors[i].clone())
                         .with_metadata(HashMap::new()),
                     );
                 }

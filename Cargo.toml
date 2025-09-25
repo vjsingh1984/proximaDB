@@ -153,6 +153,8 @@ config = "0.13"
 clap = { version = "4.0", features = ["derive"] }
 toml = "0.8"
 
+# Benchmarking (HTML reports available via `cargo bench`)
+
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
@@ -276,20 +278,23 @@ incremental = true
 # Benchmark configuration - Organized by functional categories
 
 # 1. COMPUTE & DISTANCE BENCHMARKS (01-03)
-[[bench]]
-name = "bench_01_core_distance"
-harness = false
-path = "benches/bench_01_core_distance.rs"
+# Migrated to proximadb-bench binary
+# [[bench]]
+# name = "bench_01_core_distance"
+# harness = false
+# path = "benches/bench_01_core_distance.rs"
 
-[[bench]]
-name = "bench_02_hardware_simd"
-harness = false
-path = "benches/bench_02_hardware_simd.rs"
+# Migrated to proximadb-bench binary
+# [[bench]]
+# name = "bench_02_hardware_simd"
+# harness = false
+# path = "benches/bench_02_hardware_simd.rs"
 
-[[bench]]
-name = "bench_03_memory_vector"
-harness = false
-path = "benches/bench_03_memory_vector.rs"
+# Migrated to proximadb-bench binary (Arc optimizations already implemented)
+# [[bench]]
+# name = "bench_03_memory_vector"
+# harness = false
+# path = "benches/bench_03_memory_vector.rs"
 
 # 2. STORAGE ENGINE BENCHMARKS (04 - Unified)
 # Consolidated storage benchmark combining all storage tests:

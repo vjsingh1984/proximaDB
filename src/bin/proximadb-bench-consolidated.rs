@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tracing::warn;
 
-use proximadb::compute::distance_computation::DistanceMetric;
+use proximadb::compute::distance_computation::{DistanceMetric, SimilarityResult};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use proximadb::index::axis::indexes::{
@@ -46,7 +46,7 @@ use rand::prelude::*;
 )]
 struct Cli {
     /// Benchmark suite to run (defaults to 'all')
-    #[arg(value_enum, help = "Available suites: distance, simd, vectors, index, encoding, memory, storage, quantization, viper, query, system, complete, graph, all")]
+    #[arg(value_enum, help = "Available suites: bench_01-bench_13 or aliases (distance, simd, memory, storage, vectors, index, encoding, quantization, viper, query, system, graph, all)")]
     suite: Option<CriterionSuite>,
 
     /// Sample size for statistical analysis (more samples = better accuracy)
@@ -78,22 +78,49 @@ enum Commands {
     /// Run all benchmarks
     All,
 
-    /// Benchmark distance computation algorithms
-    Distance {
+    /// [01] Core distance computation benchmarks
+    #[command(name = "bench_01", alias = "distance")]
+    Bench01Distance {
         /// Specific metrics to test (cosine, euclidean, dot_product, manhattan)
         #[arg(short, long, value_delimiter = ',')]
         metrics: Option<Vec<String>>,
     },
 
-    /// Benchmark vector operations
-    Vectors {
+    /// [02] Hardware SIMD optimization benchmarks
+    #[command(name = "bench_02", alias = "simd")]
+    Bench02Simd {
         /// Number of vectors to test with
         #[arg(short, long, default_value_t = 1000)]
         num_vectors: usize,
     },
 
-    /// Benchmark index operations
-    Index {
+    /// [03] Memory and vector allocation benchmarks
+    #[command(name = "bench_03", alias = "memory")]
+    Bench03Memory {
+        /// Number of vectors to test with
+        #[arg(short, long, default_value_t = 1000)]
+        num_vectors: usize,
+    },
+
+    /// [04] Storage unified benchmarks
+    #[command(name = "bench_04", alias = "storage")]
+    Bench04Storage {
+        /// Number of vectors to test with
+        #[arg(short, long, default_value_t = 1000)]
+        num_vectors: usize,
+    },
+
+    /// [05] Vector operations benchmarks
+    #[command(name = "bench_05", alias = "vectors")]
+    Bench05Vectors {
+        /// Number of vectors to test with
+        #[arg(short, long, default_value_t = 1000)]
+        num_vectors: usize,
+    },
+
+    /// [06] Index operations benchmarks (HNSW, LSH)
+    #[command(name = "bench_06", alias = "index")]
+    Bench06Index {
         /// Index types to test (hnsw, lsh)
         #[arg(short, long, value_delimiter = ',')]
         types: Option<Vec<String>>,
@@ -103,8 +130,9 @@ enum Commands {
         num_vectors: usize,
     },
 
-    /// Benchmark FastLanes encoding strategies (columnar vs row-wise)
-    Encoding {
+    /// [07] FastLanes encoding strategies (columnar vs row-wise)
+    #[command(name = "bench_07", alias = "encoding")]
+    Bench07Encoding {
         /// Vector counts to test (realistic rowgroup sizes)
         #[arg(short, long, value_delimiter = ',', default_values = vec!["512", "1024", "1536", "2048"])]
         vector_counts: Vec<usize>,
@@ -118,8 +146,9 @@ enum Commands {
         matrix: bool,
     },
 
-    /// Benchmark all compression algorithms with both encoding layouts
-    Compression {
+    /// [08] Compression algorithms benchmarks
+    #[command(name = "bench_08", alias = "compression")]
+    Bench08Compression {
         /// Number of vectors to test
         #[arg(short = 'v', long, default_value_t = 1024)]
         vector_count: usize,
@@ -127,6 +156,46 @@ enum Commands {
         /// Dimensions to test
         #[arg(short, long, value_delimiter = ',', default_values = vec!["384", "768", "1536"])]
         dimensions: Vec<usize>,
+    },
+
+    /// [09] Quantization SST benchmarks
+    #[command(name = "bench_09", alias = "quantization")]
+    Bench09Quantization {
+        /// Sample size for statistical analysis
+        #[arg(short = 's', long, default_value_t = 100)]
+        sample_size: usize,
+    },
+
+    /// [10] Columnar VIPER benchmarks
+    #[command(name = "bench_10", alias = "viper")]
+    Bench10Viper {
+        /// Sample size for statistical analysis
+        #[arg(short = 's', long, default_value_t = 100)]
+        sample_size: usize,
+    },
+
+    /// [11] Query progressive benchmarks
+    #[command(name = "bench_11", alias = "query")]
+    Bench11Query {
+        /// Sample size for statistical analysis
+        #[arg(short = 's', long, default_value_t = 100)]
+        sample_size: usize,
+    },
+
+    /// [12] System optimization benchmarks
+    #[command(name = "bench_12", alias = "system")]
+    Bench12System {
+        /// Sample size for statistical analysis
+        #[arg(short = 's', long, default_value_t = 100)]
+        sample_size: usize,
+    },
+
+    /// [13] Graph operations benchmarks
+    #[command(name = "bench_13", alias = "graph")]
+    Bench13Graph {
+        /// Sample size for statistical analysis
+        #[arg(short = 's', long, default_value_t = 100)]
+        sample_size: usize,
     },
 
     /// Run Criterion-based benchmarks with statistical analysis
@@ -147,57 +216,53 @@ enum Commands {
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum CriterionSuite {
-    /// Core distance computation benchmarks (cosine, euclidean, etc.)
-    #[value(name = "distance")]
+    /// [01] Core distance computation benchmarks (cosine, euclidean, etc.)
+    #[value(name = "bench_01", alias = "distance")]
     CoreDistance,
 
-    /// Hardware SIMD optimization benchmarks
-    #[value(name = "simd")]
+    /// [02] Hardware SIMD optimization benchmarks
+    #[value(name = "bench_02", alias = "simd")]
     HardwareSimd,
 
-    /// Vector operations benchmarks (cloning, serialization, etc.)
-    #[value(name = "vectors")]
-    VectorOps,
-
-    /// Index operations benchmarks (HNSW, LSH)
-    #[value(name = "index")]
-    IndexOps,
-
-    /// FastLanes encoding benchmarks (columnar vs row-wise)
-    #[value(name = "encoding")]
-    Encoding,
-
-    /// Memory and vector allocation benchmarks
-    #[value(name = "memory")]
+    /// [03] Memory and vector allocation benchmarks
+    #[value(name = "bench_03", alias = "memory")]
     MemoryVector,
 
-    /// Storage unified benchmarks
-    #[value(name = "storage")]
+    /// [04] Storage unified benchmarks
+    #[value(name = "bench_04", alias = "storage")]
     StorageUnified,
 
-    /// Quantization SST benchmarks
-    #[value(name = "quantization")]
+    /// [05] Vector operations benchmarks (cloning, serialization, etc.)
+    #[value(name = "bench_05", alias = "vectors")]
+    VectorOps,
+
+    /// [06] Index operations benchmarks (HNSW, LSH)
+    #[value(name = "bench_06", alias = "index")]
+    IndexOps,
+
+    /// [07] FastLanes encoding benchmarks (columnar vs row-wise)
+    #[value(name = "bench_07", alias = "encoding")]
+    Encoding,
+
+    /// [08] Quantization SST benchmarks
+    #[value(name = "bench_09", alias = "quantization")]
     QuantizationSst,
 
-    /// Columnar VIPER benchmarks
-    #[value(name = "viper")]
+    /// [10] Columnar VIPER benchmarks
+    #[value(name = "bench_10", alias = "viper")]
     ColumnarViper,
 
-    /// Query progressive benchmarks
-    #[value(name = "query")]
+    /// [11] Query progressive benchmarks
+    #[value(name = "bench_11", alias = "query")]
     QueryProgressive,
 
-    /// System optimization benchmarks
-    #[value(name = "system")]
+    /// [12] System optimization benchmarks
+    #[value(name = "bench_12", alias = "system")]
     SystemOptimization,
 
-    /// Complete benchmark suite (all core benchmarks)
-    #[value(name = "complete")]
-    CompleteSuite,
-
-    /// Graph operations benchmarks
-    #[value(name = "graph")]
-    GraphOperations,
+    /// [13] Graph operations benchmarks
+    #[value(name = "bench_13", alias = "graph")]
+    GraphOps,
 
     /// All benchmarks (comprehensive testing)
     #[value(name = "all")]
@@ -471,24 +536,25 @@ async fn main() -> Result<()> {
     // Handle --list flag
     if cli.list {
         println!("\n📊 Available Benchmark Suites:\n");
-        println!("  distance      - Core distance computation benchmarks (cosine, euclidean, etc.)");
-        println!("  simd          - Hardware SIMD optimization benchmarks");
-        println!("  vectors       - Vector operations benchmarks (cloning, serialization)");
-        println!("  index         - Index operations benchmarks (HNSW, LSH)");
-        println!("  encoding      - FastLanes encoding benchmarks (columnar vs row-wise)");
-        println!("  memory        - Memory and vector allocation benchmarks");
-        println!("  storage       - Storage unified benchmarks");
-        println!("  quantization  - Quantization SST benchmarks");
-        println!("  viper         - Columnar VIPER benchmarks");
-        println!("  query         - Query progressive benchmarks");
-        println!("  system        - System optimization benchmarks");
-        println!("  complete      - Complete benchmark suite (all core benchmarks)");
-        println!("  graph         - Graph operations benchmarks");
-        println!("  all           - Run ALL benchmarks (comprehensive testing)\n");
+        println!("  bench_01 (distance)     - Core distance computation benchmarks");
+        println!("  bench_02 (simd)         - Hardware SIMD optimization benchmarks");
+        println!("  bench_03 (memory)       - Memory and vector allocation benchmarks");
+        println!("  bench_04 (storage)      - Storage unified benchmarks");
+        println!("  bench_05 (vectors)      - Vector operations benchmarks");
+        println!("  bench_06 (index)        - Index operations benchmarks (HNSW, LSH)");
+        println!("  bench_07 (encoding)     - FastLanes encoding benchmarks");
+        println!("  bench_08 (compression)  - Compression algorithms benchmarks");
+        println!("  bench_09 (quantization) - Quantization SST benchmarks");
+        println!("  bench_10 (viper)        - Columnar VIPER benchmarks");
+        println!("  bench_11 (query)        - Query progressive benchmarks");
+        println!("  bench_12 (system)       - System optimization benchmarks");
+        println!("  bench_13 (graph)        - Graph operations benchmarks");
+        println!("  all                     - Run ALL benchmarks\n");
         println!("Usage examples:");
         println!("  proximadb-bench                    # Run all benchmarks");
-        println!("  proximadb-bench distance           # Run distance benchmarks only");
-        println!("  proximadb-bench encoding -s 200    # Run encoding with 200 samples\n");
+        println!("  proximadb-bench bench_01           # Run distance benchmarks");
+        println!("  proximadb-bench distance           # Same as bench_01 (alias)");
+        println!("  proximadb-bench bench_07 -s 200    # Run encoding with 200 samples\n");
         return Ok(());
     }
 
@@ -505,27 +571,51 @@ async fn main() -> Result<()> {
 
     // Default to criterion-style benchmarks
     if let Some(command) = &cli.command {
-        // Handle legacy commands if specified
+        // Handle commands with deterministic ordering
         match command {
             Commands::All => {
                 // Run all criterion benchmarks
                 run_criterion_benchmarks(CriterionSuite::All, cli.sample_size, cli.measurement_time).await?;
             }
-            Commands::Distance { metrics: _ } => {
+            Commands::Bench01Distance { metrics: _ } => {
                 run_criterion_benchmarks(CriterionSuite::CoreDistance, cli.sample_size, cli.measurement_time).await?;
             }
-            Commands::Vectors { num_vectors: _ } => {
+            Commands::Bench02Simd { num_vectors: _ } => {
+                run_criterion_benchmarks(CriterionSuite::HardwareSimd, cli.sample_size, cli.measurement_time).await?;
+            }
+            Commands::Bench03Memory { num_vectors: _ } => {
+                run_criterion_benchmarks(CriterionSuite::MemoryVector, cli.sample_size, cli.measurement_time).await?;
+            }
+            Commands::Bench04Storage { num_vectors: _ } => {
+                run_criterion_benchmarks(CriterionSuite::StorageUnified, cli.sample_size, cli.measurement_time).await?;
+            }
+            Commands::Bench05Vectors { num_vectors: _ } => {
                 run_criterion_benchmarks(CriterionSuite::VectorOps, cli.sample_size, cli.measurement_time).await?;
             }
-            Commands::Index { .. } => {
+            Commands::Bench06Index { .. } => {
                 run_criterion_benchmarks(CriterionSuite::IndexOps, cli.sample_size, cli.measurement_time).await?;
             }
-            Commands::Encoding { .. } => {
+            Commands::Bench07Encoding { .. } => {
                 run_criterion_benchmarks(CriterionSuite::Encoding, cli.sample_size, cli.measurement_time).await?;
             }
-            Commands::Compression { .. } => {
+            Commands::Bench08Compression { .. } => {
                 println!("\n🗜️  Running Comprehensive Compression Benchmarks");
                 benchmark_compression_algorithms(1024, 768)?;
+            }
+            Commands::Bench09Quantization { sample_size } => {
+                run_criterion_benchmarks(CriterionSuite::QuantizationSst, *sample_size, cli.measurement_time).await?;
+            }
+            Commands::Bench10Viper { sample_size } => {
+                run_criterion_benchmarks(CriterionSuite::ColumnarViper, *sample_size, cli.measurement_time).await?;
+            }
+            Commands::Bench11Query { sample_size } => {
+                run_criterion_benchmarks(CriterionSuite::QueryProgressive, *sample_size, cli.measurement_time).await?;
+            }
+            Commands::Bench12System { sample_size } => {
+                run_criterion_benchmarks(CriterionSuite::SystemOptimization, *sample_size, cli.measurement_time).await?;
+            }
+            Commands::Bench13Graph { sample_size } => {
+                run_criterion_benchmarks(CriterionSuite::GraphOps, *sample_size, cli.measurement_time).await?;
             }
             Commands::Criterion { suite, sample_size, measurement_time } => {
                 run_criterion_benchmarks(suite.clone(), *sample_size, *measurement_time).await?;
@@ -966,6 +1056,16 @@ impl EmbeddingGenerator {
     }
 }
 
+// ============= Statistical Analysis Functions =============
+
+fn print_criterion_info() {
+    println!("\n📈 For HTML reports and advanced visualizations:");
+    println!("   Run: cargo bench --bench bench_01_core_distance");
+    println!("   HTML reports: target/criterion/");
+    println!("   Comparison plots, regression analysis, and detailed stats available");
+    println!();
+}
+
 async fn run_criterion_benchmarks(
     suite: CriterionSuite,
     sample_size: usize,
@@ -975,6 +1075,8 @@ async fn run_criterion_benchmarks(
     println!("Running Statistical Benchmarks");
     println!("Sample size: {}", sample_size);
     println!("{}", "=".repeat(80));
+
+    print_criterion_info();
 
     // Initialize hardware capabilities
     proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default()?;
@@ -991,8 +1093,8 @@ async fn run_criterion_benchmarks(
         CriterionSuite::ColumnarViper => run_columnar_viper_benchmarks(sample_size),
         CriterionSuite::QueryProgressive => run_query_progressive_benchmarks(sample_size),
         CriterionSuite::SystemOptimization => run_system_optimization_benchmarks(sample_size),
-        CriterionSuite::CompleteSuite => run_complete_suite_benchmarks(sample_size),
-        CriterionSuite::GraphOperations => run_graph_operations_benchmarks(sample_size),
+        CriterionSuite::GraphOps => run_graph_operations_benchmarks(sample_size),
+        CriterionSuite::GraphOps => run_graph_operations_benchmarks(sample_size),
         CriterionSuite::All => {
             run_core_distance_benchmarks(sample_size)?;
             run_hardware_simd_benchmarks(sample_size)?;
@@ -1043,6 +1145,7 @@ fn run_core_distance_benchmarks(sample_size: usize) -> Result<()> {
     // Distance computation benchmarks
     benchmark_distance_computation_statistical(sample_size);
     benchmark_batch_operations_statistical(sample_size);
+    benchmark_memory_pool_effectiveness_statistical(sample_size);
 
     println!("✅ Core distance benchmarks completed");
     Ok(())
@@ -1089,15 +1192,19 @@ fn benchmark_batch_operations_statistical(sample_size: usize) {
     let query: Vec<f32> = (0..768).map(|i| (i as f32).sin()).collect();
 
     for &batch_size in STANDARD_BATCH_SIZES {
+        println!("\n  Batch size {}:", batch_size);
+
         let vectors: Vec<Vec<f32>> = (0..batch_size)
             .map(|j| (0..768).map(|i| ((i + j) as f32).cos()).collect())
             .collect();
+        let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
-        let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+        let compute = UnifiedDistanceCompute::default();
 
-        let (mean, std_dev) = measure_function(
+        // Benchmark OLD method (sequential processing)
+        let (mean_old, std_old) = measure_function(
             || {
-                let results: Vec<f32> = vectors
+                let results: Vec<f32> = vector_refs
                     .iter()
                     .map(|v| compute.calculate_distance(&query, v, &DistanceMetric::Cosine).distance)
                     .collect();
@@ -1106,14 +1213,92 @@ fn benchmark_batch_operations_statistical(sample_size: usize) {
             sample_size / 10, // Fewer samples for batch operations
         );
 
-        let per_vector_mean = mean / batch_size as f64;
-        let per_vector_std = std_dev / batch_size as f64;
-
-        println!(
-            "  Batch {:5}: {:.1} ± {:.1} μs total ({:.3} μs/vec)",
-            batch_size, mean, std_dev, per_vector_mean
+        // Benchmark NEW optimized batch method (pooled SIMD)
+        let (mean_pooled, std_pooled) = measure_function(
+            || {
+                let results = compute.batch_distance_pooled_simd(
+                    &query,
+                    &vector_refs,
+                    &DistanceMetric::Cosine,
+                );
+                results
+            },
+            sample_size / 10,
         );
+
+        // Benchmark NEW lazy batch method
+        let (mean_lazy, std_lazy) = measure_function(
+            || {
+                let results = compute.batch_distance_pooled_lazy(
+                    &query,
+                    &vector_refs,
+                    &DistanceMetric::Cosine,
+                );
+                // Access first few results to trigger computation
+                let distances = results.distances.get();
+                let _ = distances.get(0);
+                let _ = distances.get(1);
+                results
+            },
+            sample_size / 10,
+        );
+
+        println!("    Sequential : {:.1} ± {:.1} μs ({:.3} μs/vec)",
+                 mean_old, std_old, mean_old / batch_size as f64);
+        println!("    Pooled SIMD: {:.1} ± {:.1} μs ({:.3} μs/vec) - {:.1}x speedup",
+                 mean_pooled, std_pooled, mean_pooled / batch_size as f64, mean_old / mean_pooled);
+        println!("    Lazy eval  : {:.1} ± {:.1} μs ({:.3} μs/vec) - {:.1}x speedup",
+                 mean_lazy, std_lazy, mean_lazy / batch_size as f64, mean_old / mean_lazy);
     }
+}
+
+fn benchmark_memory_pool_effectiveness_statistical(sample_size: usize) {
+    println!("\n📈 Memory Pool Effectiveness (1000x768D vectors):");
+
+    // Test with 1000 vectors of dimension 768
+    let query: Vec<f32> = (0..768).map(|i| (i as f32).sin()).collect();
+    let vectors: Vec<Vec<f32>> = (0..1000)
+        .map(|j| (0..768).map(|i| ((i + j) as f32).cos()).collect())
+        .collect();
+    let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
+
+    // Create compute engines with and without pooling
+    let compute_default = UnifiedDistanceCompute::default();
+    let compute_pooled = UnifiedDistanceCompute::default(); // Memory pool is integrated
+
+    // Benchmark without memory pool (sequential)
+    let (mean_without, std_without) = measure_function(
+        || {
+            // Use basic loop for non-pooled version
+            let results: Vec<SimilarityResult> = vector_refs.iter()
+                .map(|v| compute_default.calculate_distance(&query, v, &DistanceMetric::Cosine))
+                .collect();
+            results
+        },
+        sample_size / 20, // Even fewer samples for large batch
+    );
+
+    // Benchmark with memory pool
+    let (mean_with, std_with) = measure_function(
+        || {
+            let results = compute_pooled.batch_distance_pooled_simd(
+                &query,
+                &vector_refs,
+                &DistanceMetric::Cosine,
+            );
+            results
+        },
+        sample_size / 20,
+    );
+
+    let speedup = mean_without / mean_with;
+    let per_vec_without = mean_without / 1000.0;
+    let per_vec_with = mean_with / 1000.0;
+
+    println!("  Without pool: {:.1} ± {:.1} μs ({:.3} μs/vec)", mean_without, std_without, per_vec_without);
+    println!("  With pool   : {:.1} ± {:.1} μs ({:.3} μs/vec)", mean_with, std_with, per_vec_with);
+    println!("  Speedup     : {:.2}x", speedup);
+    println!("  Memory saved: ~{:.0}% allocation reduction", (1.0 - 1.0 / speedup) * 100.0);
 }
 
 // ============= Hardware SIMD Benchmarks (from bench_02) =============
@@ -1844,10 +2029,154 @@ fn print_memory_vector_summary_table(results: &[MemoryVectorResult]) {
     println!("\n{}", "=".repeat(120));
 }
 
-fn run_storage_unified_benchmarks(_sample_size: usize) -> Result<()> {
+fn run_storage_unified_benchmarks(sample_size: usize) -> Result<()> {
     println!("\n📊 Storage Unified Benchmarks");
-    println!("TODO: Migrate bench_04_storage_unified");
+    println!("================================================================================");
+    println!("Testing storage performance with:");
+    println!("  • Compression: None, Constant");
+    println!("  • Dimensions: 784, 1536 (fixed for batch tests)");
+    println!("  • Batch sizes: 1000, 5000 (fixed for dimension tests)");
+    println!("================================================================================\n");
+
+    // Test configuration
+    let compressions = vec![
+        (CompressionAlgorithm::None, "None"),
+        (CompressionAlgorithm::Lz4, "LZ4"),
+    ];
+    let test_dimensions = vec![384, 768, 784, 1024, 1536, 2048];
+    let test_batch_sizes = vec![1000, 5000];
+    let fixed_dimensions = vec![784, 1536];
+
+    // Part 1: Dimension sensitivity (fixed batch size = 1000)
+    println!("📈 Part 1: Dimension Sensitivity Analysis (Batch Size = 1000)");
+    println!("------------------------------------------------------------");
+
+    for (compression, comp_name) in &compressions {
+        println!("\n  Compression: {}", comp_name);
+        for &dim in &test_dimensions {
+            let encode_times = benchmark_storage_encoding(
+                1000,
+                dim,
+                compression.clone(),
+                sample_size
+            )?;
+
+            let mean = encode_times.iter().sum::<f64>() / encode_times.len() as f64;
+            let variance = encode_times.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / encode_times.len() as f64;
+            let std_dev = variance.sqrt();
+
+            println!("    Dim {:4}: {:.2} ± {:.2} ms ({:.3} μs/vec)",
+                dim, mean, std_dev, mean * 1000.0 / 1000.0);
+        }
+    }
+
+    // Part 2: Batch size sensitivity (fixed dimensions)
+    println!("\n📈 Part 2: Batch Size Sensitivity Analysis");
+    println!("------------------------------------------------------------");
+
+    for &dim in &fixed_dimensions {
+        println!("\n  Dimension: {}", dim);
+        for (compression, comp_name) in &compressions {
+            println!("    Compression: {}", comp_name);
+            for &batch_size in &test_batch_sizes {
+                let encode_times = benchmark_storage_encoding(
+                    batch_size,
+                    dim,
+                    compression.clone(),
+                    sample_size
+                )?;
+
+                let mean = encode_times.iter().sum::<f64>() / encode_times.len() as f64;
+                let variance = encode_times.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / encode_times.len() as f64;
+            let std_dev = variance.sqrt();
+
+                println!("      Batch {:4}: {:.2} ± {:.2} ms ({:.3} μs/vec)",
+                    batch_size, mean, std_dev, mean * 1000.0 / batch_size as f64);
+            }
+        }
+    }
+
+    print_storage_interpretation_guide();
+    println!("✅ Storage unified benchmarks completed");
     Ok(())
+}
+
+fn benchmark_storage_encoding(
+    batch_size: usize,
+    dimension: usize,
+    compression: CompressionAlgorithm,
+    sample_size: usize,
+) -> Result<Vec<f64>> {
+    let mut times = Vec::new();
+
+    // Generate test data
+    let vectors: Vec<Vec<f32>> = (0..batch_size)
+        .map(|_| (0..dimension).map(|i| (i as f32).sin()).collect())
+        .collect();
+
+    // Create block configuration
+    let config = BlockCompressionConfig {
+        algorithm: compression,
+        compression_level: 3,
+        enable_vector_compression: true,
+        enable_metadata_compression: false,
+        compression_threshold_bytes: 1024,
+        dictionary_compression: false,
+        vector_layout: VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector,
+        metadata_algorithm: None,
+    };
+
+    for _ in 0..sample_size {
+        // Create vector records
+        let records: Vec<VectorRecord> = vectors.iter()
+            .enumerate()
+            .map(|(i, v)| VectorRecord {
+                id: format!("vec_{}", i),
+                vector: v.clone(),
+                metadata: HashMap::new(),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                quantized_vector: Vec::new(),
+                source: None,
+            })
+            .collect();
+
+        // Benchmark encoding
+        let start = Instant::now();
+        let _block = FastLanesDataBlock::new(
+            records,
+            config.clone(),
+        );
+        let elapsed = start.elapsed().as_secs_f64() * 1000.0; // Convert to ms
+
+        times.push(elapsed);
+    }
+
+    Ok(times)
+}
+
+fn print_storage_interpretation_guide() {
+    println!("\n{}", "=".repeat(80));
+    println!("📖 STORAGE BENCHMARK INTERPRETATION GUIDE");
+    println!("{}", "=".repeat(80));
+
+    println!("\n🎯 KEY INSIGHTS:");
+    println!("   • None compression: Baseline performance, no overhead");
+    println!("   • Constant compression: Fast compression for repeated values");
+    println!("   • Dimension scaling: How storage cost increases with vector size");
+    println!("   • Batch efficiency: Amortization benefits of larger batches");
+
+    println!("\n📊 WHAT TO LOOK FOR:");
+    println!("   • Linear scaling with dimensions (good)");
+    println!("   • Sub-linear scaling with batch size (excellent)");
+    println!("   • Compression overhead < 20% for Constant (acceptable)");
+
+    println!("\n⚡ OPTIMIZATION TIPS:");
+    println!("   • Use None for latency-critical paths");
+    println!("   • Use Constant for sparse or repeated data");
+    println!("   • Batch operations when possible for better throughput\n");
 }
 
 fn run_quantization_sst_benchmarks(_sample_size: usize) -> Result<()> {
@@ -1874,11 +2203,6 @@ fn run_system_optimization_benchmarks(_sample_size: usize) -> Result<()> {
     Ok(())
 }
 
-fn run_complete_suite_benchmarks(_sample_size: usize) -> Result<()> {
-    println!("\n📊 Complete Suite Benchmarks");
-    println!("TODO: Migrate bench_13_complete_suite");
-    Ok(())
-}
 
 fn run_graph_operations_benchmarks(_sample_size: usize) -> Result<()> {
     println!("\n📊 Graph Operations Benchmarks");

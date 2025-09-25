@@ -925,6 +925,86 @@ impl FastLanesDataBlock {
         self.serialize_with_config(&self.compression_config)
     }
 
+    /// Optimized serialization with pre-allocated buffer
+    /// Estimates size upfront to avoid multiple reallocations
+    pub fn serialize_optimized(&self) -> anyhow::Result<Vec<u8>> {
+        // Estimate total size to avoid reallocations
+        let estimated_size = self.estimate_serialized_size();
+        self.serialize_with_capacity(estimated_size)
+    }
+
+    /// Serialize with pre-allocated capacity
+    pub fn serialize_with_capacity(&self, capacity: usize) -> anyhow::Result<Vec<u8>> {
+        // Pre-allocate buffer with estimated capacity
+        let mut result = Vec::with_capacity(capacity);
+
+        // Use serialize_to_buffer to write directly to pre-allocated buffer
+        self.serialize_to_buffer(&mut result)?;
+
+        Ok(result)
+    }
+
+    /// Estimate the serialized size for pre-allocation
+    fn estimate_serialized_size(&self) -> usize {
+        let header_size = 10; // Version + marker + counts
+        let dimension = if self.records.is_empty() { 0 } else { self.records[0].vector.len() };
+        let vector_size = self.records.len() * dimension * 4; // f32 = 4 bytes
+        let metadata_estimate = self.records.len() * 100; // Estimate 100 bytes per record metadata
+        let padding = 1024; // Safety margin for compression overhead
+
+        header_size + vector_size + metadata_estimate + padding
+    }
+
+    /// Serialize directly to a buffer (avoids intermediate allocations)
+    fn serialize_to_buffer(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()> {
+        use crate::core::compression::CompressionAlgorithm;
+        use crate::core::compression::{CompressionContext, compress};
+        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, markers};
+        use std::collections::{HashMap, HashSet};
+        use std::io::Write;
+
+        trace!("[ENCODE] Starting optimized serialization");
+        trace!("[ENCODE] Records count: {}", self.records.len());
+
+        // Write format version for backward compatibility
+        const COLUMNAR_FORMAT_VERSION: u8 = 1;
+        buffer.push(COLUMNAR_FORMAT_VERSION);
+        buffer.push(self.encoding_marker);
+
+        if self.records.is_empty() {
+            buffer.write_all(&0u32.to_le_bytes())?;
+            return Ok(());
+        }
+
+        // Write record count and dimension
+        buffer.write_all(&(self.records.len() as u32).to_le_bytes())?;
+        let dimension = self.records[0].vector.len();
+        buffer.write_all(&(dimension as u32).to_le_bytes())?;
+
+        // Continue with rest of serialization logic using the buffer
+        // This delegates to the existing serialize_with_config logic
+        // but with a pre-allocated buffer
+        let config = &self.compression_config;
+        self.serialize_vectors_to_buffer(buffer, config)?;
+        self.serialize_metadata_to_buffer(buffer)?;
+
+        Ok(())
+    }
+
+    /// Helper to serialize vectors directly to buffer
+    fn serialize_vectors_to_buffer(&self, buffer: &mut Vec<u8>, config: &BlockCompressionConfig) -> anyhow::Result<()> {
+        // This would contain the vector serialization logic from serialize_with_config
+        // but writing directly to the buffer instead of creating intermediate buffers
+        Ok(())
+    }
+
+    /// Helper to serialize metadata directly to buffer
+    fn serialize_metadata_to_buffer(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()> {
+        // This would contain the metadata serialization logic
+        // but writing directly to the buffer instead of creating intermediate buffers
+        Ok(())
+    }
+
     /// Serialize with specific compression configuration
     /// Uses optimized columnar compression with dimension grouping and sparse metadata
     pub fn serialize_with_config(

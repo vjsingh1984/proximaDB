@@ -1,0 +1,11 @@
+=== SYSTEM RESOURCE MONITORING ===
+Date: Wed Sep 24 23:45:05 CDT 2025
+Hardware: Apple M4 Pro, 14 cores, 48GB RAM
+
+BASELINE (idle):
+CPU usage: 12.12% user, 11.58% sys, 76.29% idle 
+PhysMem: 33G used (3631M wired, 4621M compressor), 14G unused.
+
+DURING BENCHMARK:
+CPU usage: 7.15% user, 7.43% sys, 85.41% idle 
+PhysMem: 33G used (3577M wired, 4621M compressor), 14G unused.

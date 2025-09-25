@@ -6,6 +6,7 @@ use common::benchmark_utils::{print_system_info, STANDARD_DIMENSIONS, STANDARD_B
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::{
     DistanceMetric,
+    SimilarityResult,
     engine::UnifiedDistanceCompute,
 };
 
@@ -69,8 +70,9 @@ fn benchmark_batch_operations(c: &mut Criterion) {
 
         let compute = UnifiedDistanceCompute::default();
 
+        // Benchmark OLD method (for comparison)
         group.bench_with_input(
-            BenchmarkId::new("cosine_batch", batch_size),
+            BenchmarkId::new("cosine_batch_old", batch_size),
             &(&query, &vector_refs),
             |bencher, (query, vectors)| {
                 bencher.iter(|| {
@@ -89,7 +91,100 @@ fn benchmark_batch_operations(c: &mut Criterion) {
                 });
             },
         );
+
+        // Benchmark NEW optimized batch method
+        group.bench_with_input(
+            BenchmarkId::new("cosine_batch_optimized", batch_size),
+            &(&query, &vector_refs),
+            |bencher, (query, vectors)| {
+                bencher.iter(|| {
+                    let results = compute.batch_distance_pooled_simd(
+                        query,
+                        vectors,
+                        &DistanceMetric::Cosine,
+                    );
+                    black_box(results)
+                });
+            },
+        );
+
+        // Benchmark NEW pooled batch method
+        group.bench_with_input(
+            BenchmarkId::new("cosine_batch_pooled", batch_size),
+            &(&query, &vector_refs),
+            |bencher, (query, vectors)| {
+                bencher.iter(|| {
+                    let results = compute.batch_distance_pooled_simd(
+                        query,
+                        vectors,
+                        &DistanceMetric::Cosine,
+                    );
+                    black_box(results)
+                });
+            },
+        );
+
+        // Benchmark NEW lazy batch method
+        group.bench_with_input(
+            BenchmarkId::new("cosine_batch_lazy", batch_size),
+            &(&query, &vector_refs),
+            |bencher, (query, vectors)| {
+                bencher.iter(|| {
+                    let results = compute.batch_distance_pooled_lazy(
+                        query,
+                        vectors,
+                        &DistanceMetric::Cosine,
+                    );
+                    // Access first few results to trigger computation
+                    let distances = results.distances.get();
+                    let _ = distances.get(0);
+                    let _ = distances.get(1);
+                    black_box(results)
+                });
+            },
+        );
     }
+
+    group.finish();
+}
+
+fn benchmark_memory_pool_effectiveness(c: &mut Criterion) {
+    init_hardware();
+    let mut group = c.benchmark_group("memory_pool_effectiveness");
+
+    // Test with 1000 vectors of dimension 768
+    let query: Vec<f32> = (0..768).map(|i| (i as f32).sin()).collect();
+    let vectors: Vec<Vec<f32>> = (0..1000)
+        .map(|j| (0..768).map(|i| ((i + j) as f32).cos()).collect())
+        .collect();
+    let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
+
+    // Create compute engines with and without pooling
+    let compute_default = UnifiedDistanceCompute::default();
+    let compute_pooled = UnifiedDistanceCompute::default(); // Memory pool is integrated
+
+    // Benchmark without memory pool
+    group.bench_function("batch_without_pool", |b| {
+        b.iter(|| {
+            // Use basic loop for non-pooled version
+            let results: Vec<SimilarityResult> = vector_refs.iter()
+                .map(|v| compute_default.calculate_distance(&query, v, &DistanceMetric::Cosine))
+                .collect();
+            black_box(results)
+        });
+    });
+
+    // Benchmark with memory pool
+    group.bench_function("batch_with_pool", |b| {
+        b.iter(|| {
+            let results = compute_pooled.batch_distance_pooled_simd(
+                &query,
+                &vector_refs,
+                &DistanceMetric::Cosine,
+            );
+            black_box(results)
+        });
+    });
 
     group.finish();
 }
@@ -102,6 +197,7 @@ criterion_group! {
         .measurement_time(std::time::Duration::from_secs(5))
         .warm_up_time(std::time::Duration::from_secs(1));
     targets = benchmark_distance_computation,
-              benchmark_batch_operations
+              benchmark_batch_operations,
+              benchmark_memory_pool_effectiveness
 }
 criterion_main!(benches);

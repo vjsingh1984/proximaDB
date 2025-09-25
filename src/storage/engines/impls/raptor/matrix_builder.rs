@@ -61,16 +61,20 @@ impl MatrixBuilder {
         let mut min_dist = f32::MAX;
         let mut max_dist = f32::MIN;
 
-        for i in 0..num_vectors {
-            for j in 0..num_vectors {
-                let dist = if i == j {
-                    0.0
-                } else {
-                    self.distance_compute
-                        .calculate_distance(&vectors[i], &vectors[j], &self.distance_metric)
-                        .raw_value
-                };
+        // Process row by row using batch distance computation
+        let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
+        for i in 0..num_vectors {
+            // Compute distances from vector i to all vectors using batch method
+            let row_distances = self.distance_compute.batch_distance_pooled_simd(
+                &vectors[i],
+                &vector_refs,
+                &self.distance_metric,
+            );
+
+            // Process the row results
+            for (j, dist_result) in row_distances.into_iter().enumerate() {
+                let dist = if i == j { 0.0 } else { dist_result.distance };
                 distances.push(dist);
                 if dist > 0.0 {
                     min_dist = min_dist.min(dist);
