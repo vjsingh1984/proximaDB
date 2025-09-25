@@ -97,6 +97,10 @@ flowchart LR
 * 🔄 Enterprise SSO and compliance (SOC 2)
 * 📋 **AdvancedSearchOptimizer integration** - link:future/advanced_search_optimization.adoc[Detailed Plan]
 
+==== Documentation
+* 📋 **2025 Development Roadmap** - link:future/ROADMAP_2025.adoc[Full Year Plan]
+* 📋 **Documentation Improvements** - link:future/SUGGESTED_IMPROVEMENTS.adoc[Enhancement Plan]
+
 === Q2 2025: Platform & Ecosystem
 * 📋 Multi-modal support (text, images, audio)
 * 📋 Real-time streaming and CDC integration

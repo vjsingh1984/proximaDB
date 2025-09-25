@@ -209,9 +209,10 @@ cargo check --all-targets  # Faster compilation check without generating binarie
 
 ### Available Binaries
 - `proximadb-server`: Main database server (src/bin/server.rs)
-- `proximadb-bench-consolidated`: Consolidated benchmarking tool (src/bin/proximadb-bench-consolidated.rs)
+- `proximadb-bench`: Consolidated benchmarking tool (src/bin/proximadb-bench-consolidated.rs) - Note: binary name is `proximadb-bench`
 - `test_bloom_filter`: Bloom filter testing utility (src/bin/test_bloom_filter.rs)
 - `test_engine_data_sizes`: Storage engine data size analyzer (src/bin/test_engine_data_sizes.rs)
+- `proximadb-bench-data-generator`: Test data generator (src/bin/proximadb-bench-data-generator.rs)
 
 ### Helper Scripts (scripts/)
 - `build_and_test.sh`: Full build and test pipeline
@@ -242,6 +243,9 @@ cargo test --lib storage::engines::impls::raptor
 
 # Run single test with debug output
 RUST_LOG=debug cargo test test_name -- --exact --nocapture
+
+# Run tests for a specific module without failing fast
+cargo test --lib module_name --no-fail-fast
 ```
 
 ### Running Tests
@@ -327,7 +331,7 @@ cargo bench --bench flush_optimization_bench
 cargo bench --bench engine_comparison_bench
 cargo bench -- --warm-up-time 1 --measurement-time 5  # Custom timing
 
-# Run benchmark binary
+# Run benchmark binary (note: binary name differs from file name)
 cargo run --bin proximadb-bench
 
 # Generate documentation
@@ -619,18 +623,21 @@ The caching system has been recently unified (`src/storage/cache/`):
    - Use `compute::quantization::unified` for quantization
    - Use `UnifiedCachingFilesystem` for all I/O operations
    - Add engine to factory in `src/storage/engines/factory.rs`
+   - Add tests in module with `#[cfg(test)]` and in `tests/engines/`
 
 2. **Modifying API Endpoints**:
    - Update proto definitions in `proto/proximadb.proto`
    - Run `cargo build` to regenerate proto types
    - Implement handlers in `src/api_handlers/`
    - Keep internal types separate from proto types
+   - Test with curl commands or Python client in `clients/python/`
 
 3. **Running Tests After Changes**:
    ```bash
    cargo test --lib module_name  # Test specific module first
    cargo test --no-fail-fast     # See all failures at once
    cargo test 2>&1 | tee test_error.log  # Capture output for analysis
+   cargo test -- --test-threads=1  # Run tests sequentially to avoid race conditions
    ```
 
 
