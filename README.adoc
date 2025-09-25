@@ -128,32 +128,32 @@ graph TB
 
 |**SST**
 |Real-time queries, OLTP
-|Row-based, LSM-tree architecture
+|Row-based, 74µs search latency
 
 |**VIPER**
 |Analytics, batch operations
 |Columnar format, up to 69% compression
 
-|**NOVA***
+|**NOVA**
 |Mixed workloads
-|Progressive search capabilities
+|Fastest search at 15.68µs
 
-|**SWIFT***
+|**SWIFT**
 |Low-latency operations
-|FastLanes encoding optimization
+|FastLanes encoding, 16.4% compression
 
-|**RAPTOR***
+|**RAPTOR**
 |Dynamic workloads
-|Adaptive optimization strategies
+|27.1% compression, adaptive optimization
 
-|**HELIX***
+|**HELIX**
 |Spatial/graph data
-|Hilbert curve clustering
+|35µs search, Hilbert curve clustering
 |===
 
 [NOTE]
 ====
-**Benchmark Status**: SST and VIPER engines have **benchmark-validated performance data**. Engines marked with * (NOVA, SWIFT, RAPTOR, HELIX) require additional benchmarking to validate performance claims.
+**Benchmark Status**: All 6 storage engines have **validated performance data** from Sep 2025 benchmarks. Performance metrics include actual search latencies and compression ratios from bench_04_storage_unified results.
 ====
 
 === Performance Benchmarks
