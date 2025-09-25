@@ -2237,6 +2237,8 @@ impl FastLanesDataBlock {
             records,
             quantized_vectors: None,
             quantization_level: None,
+            encoded_vectors: None,
+            vector_layout: VectorEncodingLayout::FullVector,
             quantized_section: None,
             metadata,
             compression_config: BlockCompressionConfig::default(),

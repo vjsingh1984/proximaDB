@@ -351,7 +351,7 @@ impl UnifiedFastLanesSIMD {
 
         // Engine-specific pattern detection
         match (&self.engine_profile, &base_pattern) {
-            (EngineProfile::Helix { enable_clustering_detection: true, .. },
+            (EngineProfile::Helix,
              SIMDVectorPattern::General { .. }) => {
                 // Check if data shows spatial clustering for HELIX
                 if stats.spatial_spread() < stats.range() / 4.0 {
@@ -427,7 +427,7 @@ impl UnifiedFastLanesSIMD {
             sum_sq_reg = _mm256_add_ps(sum_sq_reg, vals_squared);
 
             // HELIX-specific: Spatial moments for clustering detection
-            if matches!(self.engine_profile, EngineProfile::Helix { enable_clustering_detection: true, .. }) {
+            if matches!(self.engine_profile, EngineProfile::Helix) {
                 let indices = _mm256_set_ps(7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0, 0.0);
                 let offset_indices = _mm256_add_ps(indices, _mm256_set1_ps(chunk_start as f32));
 
@@ -448,7 +448,7 @@ impl UnifiedFastLanesSIMD {
             sum_reg = _mm256_add_ps(sum_reg, _mm256_set1_ps(val));
             sum_sq_reg = _mm256_add_ps(sum_sq_reg, _mm256_set1_ps(val * val));
 
-            if matches!(self.engine_profile, EngineProfile::Helix { enable_clustering_detection: true, .. }) {
+            if matches!(self.engine_profile, EngineProfile::Helix) {
                 let idx = (aligned_len + i) as f32;
                 first_moment_reg = _mm256_add_ps(first_moment_reg, _mm256_set1_ps(val * idx));
                 second_moment_reg = _mm256_add_ps(second_moment_reg, _mm256_set1_ps(val * idx * idx));
@@ -709,7 +709,7 @@ impl UnifiedFastLanesSIMD {
             }
 
             // Spatial moments for HELIX (scalar fallback)
-            if matches!(self.engine_profile, EngineProfile::Helix { enable_clustering_detection: true, .. }) {
+            if matches!(self.engine_profile, EngineProfile::Helix) {
                 let idx = i as f32;
                 stats.first_moment += val * idx;
                 stats.second_moment += val * idx * idx;
@@ -753,20 +753,17 @@ impl UnifiedFastLanesSIMD {
 
         // Engine-specific block size optimization
         let optimal_block_size = match self.engine_profile {
-            EngineProfile::Helix { spatial_grouping_size, .. } => {
+            EngineProfile::Helix => {
                 // Align with Hilbert curve grouping
-                std::cmp::min(spatial_grouping_size, vector_count)
+                std::cmp::min(1024, vector_count)
             },
-            EngineProfile::Sst { write_buffer_size, .. } => {
+            EngineProfile::SST => {
                 // Use larger blocks for write optimization
-                std::cmp::min(write_buffer_size / dimension / 4, vector_count)
+                std::cmp::min(2048, vector_count)
             },
-            EngineProfile::Swift { low_latency_mode: true, .. } => {
+            EngineProfile::Swift => {
                 // Smaller blocks for low latency
                 std::cmp::min(512, vector_count)
-            },
-            EngineProfile::Swift { .. } => {
-                std::cmp::min(2048, vector_count)
             },
         };
 
