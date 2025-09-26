@@ -447,13 +447,9 @@ impl ParquetReconstructor {
 
         // Get column indices
         let id_column = record_batch.column_by_name("id");
-        // Use the constant for vector field name
-        let vector_column = record_batch.column_by_name(crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32)
-            .or_else(|| record_batch.column_by_name("vector_fp32"))
-            .or_else(|| record_batch.column_by_name("vector"));
-        // Try new field name first, then fall back to legacy name
-        let metadata_column = record_batch.column_by_name(crate::storage::engines::core::formats::columnar::FIELD_EXTRA_META)
-            .or_else(|| record_batch.column_by_name("metadata_info"));
+        // Use the constants for field names
+        let vector_column = record_batch.column_by_name(crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32);
+        let metadata_column = record_batch.column_by_name(crate::storage::engines::core::formats::columnar::FIELD_EXTRA_META);
 
         for row_idx in 0..record_batch.num_rows() {
             // Extract ID
@@ -638,26 +634,12 @@ impl ParquetReconstructor {
                             };
 
                             if let Some(value) = value {
-                                // Check if the key is "_json_metadata" - this means it's a JSON blob
-                                if key == "_json_metadata" {
-                                    // Parse the JSON and extract all metadata items
-                                    if let Ok(json_map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(value) {
-                                        for (k, v) in json_map {
-                                            let item = MetadataItem {
-                                                key: k,
-                                                value: Some(metadata_item::Value::StringValue(v.to_string())),
-                                            };
-                                            metadata_items.push(item);
-                                        }
-                                    }
-                                } else {
-                                    // Regular key-value pair
-                                    let item = MetadataItem {
-                                        key: key.to_string(),
-                                        value: Some(metadata_item::Value::StringValue(value.to_string())),
-                                    };
-                                    metadata_items.push(item);
-                                }
+                                // Direct Map entry
+                                let item = MetadataItem {
+                                    key: key.to_string(),
+                                    value: Some(metadata_item::Value::StringValue(value.to_string())),
+                                };
+                                metadata_items.push(item);
                             }
                         }
                     }
@@ -665,28 +647,8 @@ impl ParquetReconstructor {
             }
 
             Ok(metadata_items)
-        } else if let Some(string_array) = column.as_any().downcast_ref::<StringArray>() {
-            // Fall back to JSON string format (legacy)
-            if !string_array.is_null(row_idx) {
-                let json_str = string_array.value(row_idx);
-                if let Ok(json_map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(json_str) {
-                    let mut metadata_items = Vec::new();
-                    for (key, value) in json_map {
-                        let item = MetadataItem {
-                            key,
-                            value: Some(metadata_item::Value::StringValue(value.to_string())),
-                        };
-                        metadata_items.push(item);
-                    }
-                    Ok(metadata_items)
-                } else {
-                    Ok(Vec::new())
-                }
-            } else {
-                Ok(Vec::new())
-            }
         } else {
-            // Unknown column type, return empty metadata
+            // No Map column, return empty metadata
             Ok(Vec::new())
         }
     }

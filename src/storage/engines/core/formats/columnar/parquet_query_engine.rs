@@ -808,10 +808,78 @@ impl UnifiedParquetReader {
             .column_by_name("version")
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::Int64Array>())
             .map(|arr| arr.value(row_idx) as u32);
+
+        // Extract metadata from extra_meta Map column
+        let mut metadata = std::collections::HashMap::new();
+
+        // Get metadata from the extra_meta Map column
+        if let Some(extra_meta_col) = batch.column_by_name(super::FIELD_EXTRA_META) {
+            if let Some(map_array) = extra_meta_col.as_any().downcast_ref::<arrow_array::MapArray>() {
+                // Extract entries for this row
+                let start = map_array.value_offsets()[row_idx] as usize;
+                let end = map_array.value_offsets()[row_idx + 1] as usize;
+
+                if start < end {
+                    let entries = map_array.values();
+                    if let Some(struct_array) = entries.as_any().downcast_ref::<arrow_array::StructArray>() {
+                        let keys = struct_array.column(0).as_any().downcast_ref::<StringArray>();
+                        let values = struct_array.column(1).as_any().downcast_ref::<StringArray>();
+
+                        if let (Some(keys), Some(values)) = (keys, values) {
+                            for i in start..end {
+                                let key = keys.value(i);
+                                let value = values.value(i);
+
+                                // Direct Map entry - store as string value
+                                let sql_value = crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value.to_string())),
+                                };
+                                metadata.insert(key.to_string(), sql_value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check for individual filterable metadata columns
+        for field in batch.schema().fields() {
+            let field_name = field.name();
+            // Skip known non-metadata columns
+            if field_name == "id" || field_name == "vector" || field_name == "vector_fp32" ||
+               field_name == "timestamp" || field_name == "version" ||
+               field_name == super::FIELD_EXTRA_META || field_name == "metadata_info" ||
+               field_name.starts_with("vector_") || field_name == "row_group_offset" ||
+               field_name == "row_index" {
+                continue;
+            }
+
+            // This could be a filterable metadata column
+            if let Some(col) = batch.column_by_name(field_name) {
+                if !col.is_null(row_idx) {
+                    let value = if let Some(str_array) = col.as_any().downcast_ref::<StringArray>() {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(str_array.value(row_idx).to_string()))
+                    } else if let Some(int_array) = col.as_any().downcast_ref::<arrow_array::Int64Array>() {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(int_array.value(row_idx)))
+                    } else if let Some(float_array) = col.as_any().downcast_ref::<arrow_array::Float64Array>() {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(float_array.value(row_idx)))
+                    } else if let Some(bool_array) = col.as_any().downcast_ref::<arrow_array::BooleanArray>() {
+                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(bool_array.value(row_idx)))
+                    } else {
+                        None
+                    };
+
+                    if let Some(value) = value {
+                        metadata.insert(field_name.to_string(), crate::proto::proximadb_v1::SqlValue { value: Some(value) });
+                    }
+                }
+            }
+        }
+
         Ok(Some(VectorRecord {
             id: id.unwrap_or_else(|| format!("row_{}", row_idx)),
             vector,
-            metadata: std::collections::HashMap::new(), // Would extract from metadata columns
+            metadata,
             timestamp: timestamp.unwrap_or(0) as i64,
             updated_at: None,
             quantized_vector: Vec::new(),
