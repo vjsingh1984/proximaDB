@@ -296,31 +296,39 @@ impl VIPERColumnFilterEvaluator {
                 crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
                     Arc::new(filesystem_factory),
                 )
-                .await;
+                .await?;
 
-            // Read all records to extract column data
-            // TODO: Optimize to read specific columns only
-            // TODO: Implement proper batch reading
-            let all_records = Vec::<crate::proto::proximadb_v1::VectorRecord>::new(); // Placeholder
+            // Get collection context to check if this is a filterable column
+            let collection_context = reader.get_collection_context().await;
+            let filterable_columns: Vec<String> = collection_context.as_ref()
+                .map(|ctx| ctx.filterable_columns.iter().map(|col| col.name.clone()).collect())
+                .unwrap_or_default();
 
-            // Extract column values
-            let mut column_values = Vec::new();
-            for record in &all_records {
-                let metadata_map =
-                    crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
-                if let Some(value) = metadata_map.get(name).cloned() {
-                    column_values.push(value);
-                } else {
-                    column_values.push(serde_json::Value::Null);
-                }
+            // Use common helper for consistency
+            if crate::storage::engines::core::filter_evaluator::is_filterable_field(name, &filterable_columns) {
+                // For filterable columns, read the specific column directly
+                // This is the fast path - column-based access
+                debug!("🎯 Column '{}' is filterable - using direct column access", name);
+
+                // TODO: Implement actual column reading from Parquet
+                // For now, placeholder implementation
+                let column_values = Vec::new();
+                self.column_cache.insert(name.clone(), column_values);
+            } else {
+                // For non-filterable columns, we need to read from extra_meta Map
+                // This is the slow path - requires scanning Map entries
+                debug!("🎯 Column '{}' is in extra_meta Map - using Map scan (slower)", name);
+
+                // TODO: Implement Map column scanning
+                // This requires reading the extra_meta column and extracting specific keys
+                let column_values = Vec::new();
+                self.column_cache.insert(name.clone(), column_values);
             }
 
-            self.column_cache.insert(name.clone(), column_values);
             self.loaded_columns.insert(name.clone());
 
             debug!(
-                "🎯 Loaded {} values for column '{}'",
-                all_records.len(),
+                "🎯 Loaded values for column '{}'",
                 name
             );
         }
@@ -421,6 +429,35 @@ pub struct VIPERCacheStats {
     pub columns_loaded: usize,
     pub total_values: usize,
     pub estimated_memory_bytes: usize,
+}
+
+/// Evaluate metadata filter with filterable column awareness
+pub async fn evaluate_metadata_filter_with_config(
+    record: &crate::proto::proximadb_v1::VectorRecord,
+    filter: &FilterExpression,
+    filterable_columns: &[crate::proto::proximadb_v1::FilterableColumnSpec],
+) -> bool {
+    // Convert filterable columns to string vector for common helper
+    let filterable_column_names: Vec<String> = filterable_columns
+        .iter()
+        .map(|col| col.name.clone())
+        .collect();
+
+    // Convert SqlValue metadata to serde_json::Value
+    let metadata_json = crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
+
+    // Extract extra_meta if present (for non-filterable fields)
+    // Note: This would need to be extracted from the record's metadata
+    // For now, we'll use None as Map extraction needs implementation
+    let extra_meta: Option<std::collections::HashMap<String, String>> = None;
+
+    // Use common filter evaluation function
+    crate::storage::engines::core::filter_evaluator::evaluate_filter_with_config(
+        filter,
+        &metadata_json,
+        extra_meta.as_ref(),
+        &filterable_column_names,
+    )
 }
 
 /// Selective vector reader that uses qualifying indices

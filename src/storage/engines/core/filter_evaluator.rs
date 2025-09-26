@@ -14,6 +14,7 @@ use anyhow::{Result, anyhow};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::cmp::Ordering;
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
 
@@ -512,6 +513,110 @@ pub fn evaluate_filter_strings(
         .flatten()
         .map(|evaluator| evaluator.evaluate_strings(metadata))
         .unwrap_or(false)
+}
+
+/// Check if a field is filterable based on collection configuration
+pub fn is_filterable_field(field: &str, filterable_columns: &[String]) -> bool {
+    filterable_columns.contains(&field.to_string())
+}
+
+/// Evaluate a field value considering both filterable columns and extra_meta
+pub fn get_field_value(
+    field: &str,
+    metadata: &HashMap<String, Value>,
+    extra_meta: Option<&HashMap<String, String>>,
+    filterable_columns: &[String],
+) -> Option<Value> {
+    if is_filterable_field(field, filterable_columns) {
+        // Fast path: direct column access
+        metadata.get(field).cloned()
+    } else {
+        // Slow path: check extra_meta Map
+        extra_meta.and_then(|map| {
+            map.get(field).map(|s| Value::String(s.clone()))
+        })
+    }
+}
+
+/// Evaluate filter with awareness of filterable columns
+/// This function optimizes metadata filtering by checking filterable columns first
+pub fn evaluate_filter_with_config(
+    expr: &FilterExpression,
+    metadata: &HashMap<String, Value>,
+    extra_meta: Option<&HashMap<String, String>>,
+    filterable_columns: &[String],
+) -> bool {
+    match expr {
+        FilterExpression::Comparison { field, operator, value } => {
+            let field_value = get_field_value(field, metadata, extra_meta, filterable_columns);
+
+            if let Some(metadata_value) = field_value {
+                evaluate_comparison_op(&metadata_value, operator, value)
+            } else {
+                // Field not present - handle NULL comparison
+                match operator {
+                    ComparisonOperator::Equals => value.is_null(),
+                    ComparisonOperator::NotEquals => !value.is_null(),
+                    _ => false,
+                }
+            }
+        }
+        FilterExpression::And(exprs) => {
+            exprs.iter().all(|e| evaluate_filter_with_config(e, metadata, extra_meta, filterable_columns))
+        }
+        FilterExpression::Or(exprs) => {
+            exprs.iter().any(|e| evaluate_filter_with_config(e, metadata, extra_meta, filterable_columns))
+        }
+        FilterExpression::Not(expr) => {
+            !evaluate_filter_with_config(expr, metadata, extra_meta, filterable_columns)
+        }
+    }
+}
+
+fn evaluate_comparison_op(record_value: &Value, operator: &ComparisonOperator, expected: &Value) -> bool {
+    match operator {
+        ComparisonOperator::Equals => {
+            if let (Value::Number(n1), Value::Number(n2)) = (record_value, expected) {
+                // Use numeric comparison for numbers
+                n1.as_f64() == n2.as_f64()
+            } else {
+                record_value == expected
+            }
+        }
+        ComparisonOperator::NotEquals => {
+            if let (Value::Number(n1), Value::Number(n2)) = (record_value, expected) {
+                n1.as_f64() != n2.as_f64()
+            } else {
+                record_value != expected
+            }
+        }
+        ComparisonOperator::GreaterThan => {
+            compare_json_values(record_value, expected) == Ordering::Greater
+        }
+        ComparisonOperator::LessThan => {
+            compare_json_values(record_value, expected) == Ordering::Less
+        }
+        ComparisonOperator::GreaterThanOrEqual => {
+            let ord = compare_json_values(record_value, expected);
+            ord == Ordering::Greater || ord == Ordering::Equal
+        }
+        ComparisonOperator::LessThanOrEqual => {
+            let ord = compare_json_values(record_value, expected);
+            ord == Ordering::Less || ord == Ordering::Equal
+        }
+        _ => false,
+    }
+}
+
+fn compare_json_values(v1: &Value, v2: &Value) -> Ordering {
+    match (v1, v2) {
+        (Value::Number(n1), Value::Number(n2)) => {
+            n1.as_f64().partial_cmp(&n2.as_f64()).unwrap_or(Ordering::Equal)
+        }
+        (Value::String(s1), Value::String(s2)) => s1.cmp(s2),
+        (Value::Bool(b1), Value::Bool(b2)) => b1.cmp(b2),
+        _ => Ordering::Equal,
+    }
 }
 
 #[cfg(test)]
