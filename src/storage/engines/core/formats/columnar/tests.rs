@@ -29,7 +29,7 @@ async fn test_id_column_always_preserved() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
 
     // Write test records with IDs
     let test_records = create_test_records(100);
@@ -68,7 +68,7 @@ async fn test_id_less_storage_warning() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
 
     let test_records = create_test_records(50);
     writer.write_batch(&test_records).await.unwrap();
@@ -96,7 +96,7 @@ async fn test_id_bloom_filters() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 256, config).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 256, config, None).unwrap();
 
     // Create records with predictable IDs
     let test_records: Vec<VectorRecord> = (0..2500)
@@ -169,7 +169,7 @@ async fn test_fast_id_lookup_performance() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 512, config).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 512, config, None).unwrap();
 
     // Generate 50,000 records
     let test_records: Vec<VectorRecord> = (0..50000)
@@ -254,7 +254,7 @@ async fn test_dictionary_encoding_optimization() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
 
     // Create records with repeated ID patterns (good for dictionary encoding)
     let test_records: Vec<VectorRecord> = (0..1000)
@@ -325,7 +325,7 @@ async fn test_customer_api_compatibility() {
 
     // Test that customer-facing APIs work correctly
     let config = ParquetWriterConfig::default(); // Uses default: id_less_storage = false
-    let mut writer = StreamingParquetWriter::new(&file_path, 384, config).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 384, config, None).unwrap();
 
     let test_records = vec![
         {
@@ -445,7 +445,7 @@ async fn test_row_group_offset_optimization() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config).unwrap();
+    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
 
     let test_records = create_test_records(250); // Multiple row groups
     writer.write_batch(&test_records).await.unwrap();

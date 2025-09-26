@@ -618,6 +618,7 @@ impl NovaEngine {
             file_path,
             nova_file.metadata.dimension,
             writer_config,
+            None, // TODO: Add filterable columns support to NOVA
         )?;
 
         // Set metadata collector
@@ -1197,6 +1198,7 @@ impl UnifiedStorageEngine for NovaEngine {
             &output_path,
             dimension as usize,
             writer_config,
+            None, // TODO: Add filterable columns support to NOVA compaction
         )?;
 
         writer.set_metadata_collector(Box::new(nova_collector));

@@ -96,7 +96,7 @@ async fn test_footer_cache_functionality() -> Result<()> {
     
     for (i, path) in file_paths.iter().enumerate() {
         let config = ParquetWriterConfig::default();
-        let mut writer = StreamingParquetWriter::new(path, 128, config)?;
+        let mut writer = StreamingParquetWriter::new(path, 128, config, None)?;
         let vectors = generate_test_vectors(100, 128);
         writer.write_batch(&vectors).await?;
         writer.finalize().await?;
@@ -158,7 +158,7 @@ async fn test_pq_sorting_compression() -> Result<()> {
         enable_pq_sorting: false,
         ..Default::default()
     };
-    let mut writer_without = StreamingParquetWriter::new(&path_without, 768, config_without)?;
+    let mut writer_without = StreamingParquetWriter::new(&path_without, 768, config_without, None)?;
     writer_without.write_batch(&vectors).await?;
     let stats_without = writer_without.finalize().await?;
     
@@ -170,7 +170,7 @@ async fn test_pq_sorting_compression() -> Result<()> {
         pq_sorting_codebook_size: 256,
         ..Default::default()
     };
-    let mut writer_with = StreamingParquetWriter::new(&path_with, 768, config_with)?;
+    let mut writer_with = StreamingParquetWriter::new(&path_with, 768, config_with, None)?;
     writer_with.write_batch(&vectors).await?;
     let stats_with = writer_with.finalize().await?;
     

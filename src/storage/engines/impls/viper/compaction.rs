@@ -1273,11 +1273,21 @@ impl Compaction {
                         )
                     })?;
 
-                // Create StreamingParquetWriter with temp file
+                // Extract filterable columns from collection config
+                let filterable_columns = collection_config.as_ref()
+                    .and_then(|c| c.config.as_ref())
+                    .and_then(|cfg| if cfg.filterable_columns.is_empty() {
+                        None
+                    } else {
+                        Some(cfg.filterable_columns.as_slice())
+                    });
+
+                // Create StreamingParquetWriter with temp file and filterable columns
                 let mut writer = StreamingParquetWriter::new(
                     &temp_file_path,
                     dimension as usize,
                     writer_config,
+                    filterable_columns,
                 )?;
 
                 // Convert RecordData to VectorRecord for writing
@@ -2008,26 +2018,23 @@ impl Compaction {
                         .collect();
                     Arc::new(BooleanArray::from(bool_values))
                 }
-                DataType::Map(map_field, _sorted) => {
+                DataType::Map(_map_field, _sorted) => {
                     // Handle Map type for extra_meta field
-                    trace!("Building Map array for field: {}", field.name());
+                    // During compaction, we don't extract Map metadata - just create empty maps
                     use arrow_array::{MapArray, StructArray};
                     use arrow_buffer::{OffsetBuffer, ScalarBuffer};
 
-                    // Since we're not extracting Map metadata during compaction,
-                    // create an empty Map array with the correct structure
-                    let mut offsets = vec![0i32];
-                    let keys = Vec::<Option<String>>::new();
-                    let values_str = Vec::<Option<String>>::new();
+                    let num_records = values.len();
 
-                    // Add empty map for each record
-                    for _value in values {
-                        offsets.push(0i32);
-                    }
+                    // For empty maps during compaction, create proper offset array
+                    // Offsets are cumulative: [0, 0, 0, ...] for n empty maps
+                    let offsets: Vec<i32> = vec![0; num_records + 1];
 
-                    let keys_array = StringArray::from(keys);
-                    let values_array = StringArray::from(values_str);
+                    // Empty keys and values arrays (0 entries total)
+                    let keys_array = StringArray::from(vec![] as Vec<Option<&str>>);
+                    let values_array = StringArray::from(vec![] as Vec<Option<&str>>);
 
+                    // Build struct array with empty fields
                     let struct_array = StructArray::from(vec![
                         (
                             Arc::new(arrow_schema::Field::new("key", DataType::Utf8, false)),
@@ -2039,7 +2046,7 @@ impl Compaction {
                         ),
                     ]);
 
-                    // Create Map field matching the schema exactly
+                    // Create Map field matching the expected schema structure
                     let map_field_new = Arc::new(arrow_schema::Field::new(
                         "entries",
                         DataType::Struct(vec![
@@ -2049,13 +2056,14 @@ impl Compaction {
                         false,
                     ));
 
+                    // Create Map array
                     let map_array = MapArray::try_new(
                         map_field_new,
                         OffsetBuffer::new(ScalarBuffer::from(offsets)),
                         struct_array,
-                        None,
-                        false,
-                    ).context("Failed to create Map array")?;
+                        None,  // No null bitmap
+                        false, // Not sorted
+                    ).context("Failed to create Map array for compaction")?;
 
                     Arc::new(map_array)
                 }
@@ -2154,7 +2162,60 @@ impl Compaction {
             arrays.push(array);
         }
 
-        RecordBatch::try_new(schema, arrays)
+        // Debug: Log schema and arrays info before creating RecordBatch
+        trace!("Creating RecordBatch with schema fields: {}",
+            schema.fields().iter().map(|f| format!("{}:{:?}", f.name(), f.data_type())).collect::<Vec<_>>().join(", "));
+        trace!("Number of arrays: {}, Number of records: {}", arrays.len(), records.len());
+
+        for (i, array) in arrays.iter().enumerate() {
+            let field = &schema.fields()[i];
+            trace!("Array {}: field={}, type={:?}, len={}, null_count={}",
+                i, field.name(), field.data_type(), array.len(), array.null_count());
+        }
+
+        // Final validation before RecordBatch creation
+        if schema.fields().len() != arrays.len() {
+            let err_msg = format!(
+                "Schema/array mismatch: schema has {} fields but we have {} arrays",
+                schema.fields().len(),
+                arrays.len()
+            );
+            eprintln!("{}", err_msg);
+            eprintln!("Schema fields:");
+            for (i, field) in schema.fields().iter().enumerate() {
+                eprintln!("  {}: {} ({:?})", i, field.name(), field.data_type());
+            }
+            eprintln!("Arrays provided:");
+            for (i, array) in arrays.iter().enumerate() {
+                eprintln!("  {}: len={}, type={:?}", i, array.len(), array.data_type());
+            }
+            return Err(anyhow::anyhow!(err_msg));
+        }
+
+        // Check array lengths match
+        if !arrays.is_empty() {
+            let expected_len = arrays[0].len();
+            for (i, array) in arrays.iter().enumerate() {
+                if array.len() != expected_len {
+                    let err_msg = format!(
+                        "Array length mismatch at index {}: expected {} but got {}",
+                        i, expected_len, array.len()
+                    );
+                    eprintln!("{}", err_msg);
+                    return Err(anyhow::anyhow!(err_msg));
+                }
+            }
+        }
+
+        RecordBatch::try_new(schema.clone(), arrays)
+            .map_err(|e| {
+                eprintln!("RecordBatch creation failed: {}", e);
+                eprintln!("Schema has {} fields, provided same number of arrays", schema.fields().len());
+                for (i, field) in schema.fields().iter().enumerate() {
+                    eprintln!("  Field {}: name={}, type={:?}", i, field.name(), field.data_type());
+                }
+                e
+            })
             .context("Failed to create RecordBatch from collected data")
     }
 }

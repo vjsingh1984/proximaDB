@@ -160,7 +160,8 @@ pub enum FilterableData {
     Boolean,
     Datetime,
     Array(Box<FilterableData>),
-    Json,
+    Json,  // JSON stored as string for backward compatibility
+    Map,   // Native Parquet Map<String, String> for complex metadata
 }
 
 /// Schema optimization settings
@@ -661,6 +662,20 @@ impl ColumnarSchemaBuilder {
                 let inner_type = self.convert_filterable_type(inner)?;
                 DataType::List(Arc::new(Field::new("item", inner_type, false)))
             }
+            FilterableData::Map => {
+                // Native Parquet Map<String, String>
+                DataType::Map(
+                    Arc::new(Field::new(
+                        "entries",
+                        DataType::Struct(vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ].into()),
+                        false,
+                    )),
+                    false,
+                )
+            }
         };
         Ok(arrow_type)
     }
@@ -785,6 +800,20 @@ impl FilterableData {
                 DataType::List(Arc::new(Field::new("item", inner_type, true)))
             }
             FilterableData::Json => DataType::Utf8, // Store JSON as string
+            FilterableData::Map => {
+                // Native Parquet Map<String, String>
+                DataType::Map(
+                    Arc::new(Field::new(
+                        "entries",
+                        DataType::Struct(vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ].into()),
+                        false,
+                    )),
+                    false,
+                )
+            }
         }
     }
 }

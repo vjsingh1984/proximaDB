@@ -713,8 +713,17 @@ impl Flush {
             return Ok(Vec::new());
         };
 
-        // Create StreamingParquetWriter with temp file
-        let mut writer = StreamingParquetWriter::new(&temp_file_path, dimension, writer_config)?;
+        // Extract filterable columns from collection config
+        let filterable_columns = collection_config.as_ref()
+            .and_then(|c| c.config.as_ref())
+            .and_then(|cfg| if cfg.filterable_columns.is_empty() {
+                None
+            } else {
+                Some(cfg.filterable_columns.as_slice())
+            });
+
+        // Create StreamingParquetWriter with temp file and filterable columns
+        let mut writer = StreamingParquetWriter::new(&temp_file_path, dimension, writer_config, filterable_columns)?;
 
         // Write all records using the columnar writer's optimized batching
         writer.write_batch(records).await?;

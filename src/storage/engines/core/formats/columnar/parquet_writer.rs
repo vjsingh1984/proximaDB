@@ -8,8 +8,8 @@
 
 use anyhow::{Context, Result, anyhow};
 use arrow_array::{
-    ArrayRef, BinaryArray, FixedSizeBinaryArray, Float32Array, Int64Array, RecordBatch,
-    StringArray, UInt32Array,
+    ArrayRef, BinaryArray, BooleanArray, FixedSizeBinaryArray, Float32Array, Float64Array,
+    Int64Array, RecordBatch, StringArray, UInt32Array,
 };
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
@@ -216,23 +216,31 @@ pub struct StreamingParquetWriter {
 
     /// Metadata samples for type inference
     metadata_samples: Vec<serde_json::Map<String, serde_json::Value>>,
+    /// Filterable column definitions for proper metadata extraction
+    filterable_columns: Vec<super::schema::ColumnarFilterableSpec>,
 
     /// Optional metadata collector for engine-specific sidecar files
     metadata_collector: Option<Box<dyn super::metadata_collector::MetadataCollector>>,
 }
 
 impl StreamingParquetWriter {
-    /// Create new streaming writer
+    /// Create new streaming writer with optional filterable columns
     pub fn new<P: AsRef<Path>>(
         file_path: P,
         dimension: usize,
         config: ParquetWriterConfig,
+        filterable_columns: Option<&[crate::proto::proximadb_v1::FilterableColumnSpec]>,
     ) -> Result<Self> {
         let file_path_str = file_path.as_ref().to_string_lossy().to_string();
         info!("Creating streaming Parquet writer: {}", file_path_str);
 
-        // Create optimized schema
-        let schema = Self::create_optimized_schema(dimension, &config)?;
+        // Convert proto filterable columns to columnar format
+        let columnar_filterable: Vec<super::schema::ColumnarFilterableSpec> = filterable_columns
+            .map(|cols| cols.iter().map(super::schema::ColumnarFilterableSpec::from_proto).collect())
+            .unwrap_or_else(Vec::new);
+
+        // Create optimized schema with filterable columns
+        let schema = Self::create_optimized_schema(dimension, &config, &columnar_filterable)?;
 
         // Create writer properties with optimizations
         let props = Self::create_writer_properties(&config)?;
@@ -260,6 +268,7 @@ impl StreamingParquetWriter {
             native_metadata_handler,
             metadata_samples: Vec::new(),
             metadata_collector: None,
+            filterable_columns: columnar_filterable,
         })
     }
 
@@ -279,10 +288,11 @@ impl StreamingParquetWriter {
         self.metadata_collector.take()
     }
 
-    /// Create optimized Parquet schema
+    /// Create optimized Parquet schema with filterable columns
     fn create_optimized_schema(
         dimension: usize,
         config: &ParquetWriterConfig,
+        filterable_columns: &[super::schema::ColumnarFilterableSpec],
     ) -> Result<Arc<Schema>> {
         debug!("PARQUET_DEBUG: Creating schema for dimension={}", dimension);
         let mut fields = Vec::new();
@@ -340,8 +350,37 @@ impl StreamingParquetWriter {
         fields.push(Field::new("timestamp", DataType::Int64, false));
         fields.push(Field::new("version", DataType::Int64, true));
 
-        // Use native Map type for extra metadata - much faster querying than JSON strings
-        // Map<String, String> for non-filterable metadata
+        // Add filterable metadata columns as native Parquet columns
+        for col in filterable_columns {
+            use super::schema::FilterableData;
+            let data_type = match &col.data_type {
+                FilterableData::String => DataType::Utf8,
+                FilterableData::Integer => DataType::Int64,
+                FilterableData::Float => DataType::Float64,
+                FilterableData::Boolean => DataType::Boolean,
+                FilterableData::Datetime => DataType::Int64, // Unix timestamp
+                FilterableData::Json => DataType::Utf8,  // JSON as string for backward compatibility
+                FilterableData::Map => {
+                    // Native Map<String, String> for complex metadata
+                    DataType::Map(
+                        Arc::new(Field::new(
+                            "entries",
+                            DataType::Struct(vec![
+                                Field::new("key", DataType::Utf8, false),
+                                Field::new("value", DataType::Utf8, true),
+                            ].into()),
+                            false,
+                        )),
+                        false, // not sorted
+                    )
+                },
+                FilterableData::Array(_) => DataType::Utf8, // Array types as JSON strings for now
+            };
+            // All filterable columns are nullable - NULL if not present in record
+            fields.push(Field::new(&col.name, data_type, col.nullable));
+        }
+
+        // Use native Map type for extra (non-filterable) metadata
         let map_field = Field::new(
             super::FIELD_EXTRA_META,
             DataType::Map(
@@ -704,6 +743,13 @@ impl StreamingParquetWriter {
         let num_records = records.len();
         let mut arrays: Vec<ArrayRef> = Vec::new();
 
+        // Debug logging to diagnose mismatch
+        debug!("Creating RecordBatch with {} records", num_records);
+        debug!("Schema has {} fields", self.schema.fields().len());
+        for (i, field) in self.schema.fields().iter().enumerate() {
+            debug!("  Field {}: {} (type: {:?})", i, field.name(), field.data_type());
+        }
+
         // ID column (ALWAYS REQUIRED for customer APIs)
         let ids: Vec<Option<String>> = records.iter().map(|r| Some(r.id.clone())).collect();
         arrays.push(Arc::new(StringArray::from(ids)));
@@ -749,6 +795,158 @@ impl StreamingParquetWriter {
             .map(|r| r.version.map(|v| v as i64))
             .collect();
         arrays.push(Arc::new(Int64Array::from(versions)));
+
+        // Add filterable metadata columns as individual arrays
+        for col in &self.filterable_columns {
+            use super::schema::FilterableData;
+
+            // Extract values for this column from records
+            let array: ArrayRef = match col.data_type {
+                FilterableData::String => {
+                    let values: Vec<Option<String>> = records.iter().map(|r| {
+                        r.metadata.get(&col.name)
+                            .and_then(|v| v.value.as_ref())
+                            .and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                    }).collect();
+                    Arc::new(StringArray::from(values))
+                },
+                FilterableData::Integer => {
+                    let values: Vec<Option<i64>> = records.iter().map(|r| {
+                        r.metadata.get(&col.name)
+                            .and_then(|v| v.value.as_ref())
+                            .and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => Some(*i),
+                                _ => None,
+                            })
+                    }).collect();
+                    Arc::new(Int64Array::from(values))
+                },
+                FilterableData::Float => {
+                    let values: Vec<Option<f64>> = records.iter().map(|r| {
+                        r.metadata.get(&col.name)
+                            .and_then(|v| v.value.as_ref())
+                            .and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => Some(*f),
+                                _ => None,
+                            })
+                    }).collect();
+                    Arc::new(Float64Array::from(values))
+                },
+                FilterableData::Boolean => {
+                    let values: Vec<Option<bool>> = records.iter().map(|r| {
+                        r.metadata.get(&col.name)
+                            .and_then(|v| v.value.as_ref())
+                            .and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => Some(*b),
+                                _ => None,
+                            })
+                    }).collect();
+                    Arc::new(BooleanArray::from(values))
+                },
+                FilterableData::Datetime => {
+                    // Stored as timestamp (Int64)
+                    let values: Vec<Option<i64>> = records.iter().map(|r| {
+                        r.metadata.get(&col.name)
+                            .and_then(|v| v.value.as_ref())
+                            .and_then(|v| match v {
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => Some(*i),
+                                _ => None,
+                            })
+                    }).collect();
+                    Arc::new(Int64Array::from(values))
+                },
+                FilterableData::Json => {
+                    // JSON as string for backward compatibility
+                    let values: Vec<Option<String>> = records.iter().map(|r| {
+                        r.metadata.get(&col.name)
+                            .and_then(|v| v.value.as_ref())
+                            .map(|v| format!("{:?}", v))  // Convert to string representation
+                    }).collect();
+                    Arc::new(StringArray::from(values))
+                },
+                FilterableData::Map => {
+                    // Native Map type for complex metadata
+                    // For a filterable Map column, we look for nested metadata under this column name
+                    // If the metadata field exists and has complex data, extract it as a Map
+                    use arrow_array::builder::{StringBuilder, MapBuilder};
+                    use arrow_buffer::{OffsetBuffer, ScalarBuffer};
+
+                    // Build offsets for each record's map
+                    let mut offsets = vec![0i32];
+                    let mut keys_vec = Vec::new();
+                    let mut values_vec = Vec::new();
+
+                    for r in records.iter() {
+                        // For Map type column, the value itself could be complex
+                        // We treat it as a single-entry map for now
+                        if let Some(sql_value) = r.metadata.get(&col.name) {
+                            keys_vec.push(Some(col.name.clone()));
+                            let value_str = if let Some(ref v) = sql_value.value {
+                                Some(match v {
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => s.clone(),
+                                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(n) => n.to_string(),
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => n.to_string(),
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => b.to_string(),
+                                    _ => "null".to_string(),
+                                })
+                            } else {
+                                Some("null".to_string())
+                            };
+                            values_vec.push(value_str);
+                            offsets.push(offsets.last().unwrap() + 1);
+                        } else {
+                            // No entry for this record
+                            offsets.push(*offsets.last().unwrap());
+                        }
+                    }
+
+                    // Create struct array for Map entries
+                    let keys_array = StringArray::from(keys_vec);
+                    let values_array = StringArray::from(values_vec);
+                    let struct_array = arrow_array::StructArray::from(vec![
+                        (
+                            Arc::new(Field::new("key", DataType::Utf8, false)),
+                            Arc::new(keys_array) as ArrayRef,
+                        ),
+                        (
+                            Arc::new(Field::new("value", DataType::Utf8, true)),
+                            Arc::new(values_array) as ArrayRef,
+                        ),
+                    ]);
+
+                    // Create Map array
+                    let map_array = arrow_array::MapArray::try_new(
+                        Arc::new(Field::new(
+                            "entries",
+                            DataType::Struct(vec![
+                                Field::new("key", DataType::Utf8, false),
+                                Field::new("value", DataType::Utf8, true),
+                            ].into()),
+                            false,
+                        )),
+                        OffsetBuffer::new(ScalarBuffer::from(offsets)),
+                        struct_array,
+                        None,
+                        false,
+                    ).context("Failed to create Map array for filterable column")?;
+
+                    Arc::new(map_array)
+                },
+                FilterableData::Array(_) => {
+                    // Array types as JSON strings for now
+                    let values: Vec<Option<String>> = records.iter().map(|r| {
+                        r.metadata.get(&col.name)
+                            .and_then(|v| v.value.as_ref())
+                            .map(|v| format!("{:?}", v))
+                    }).collect();
+                    Arc::new(StringArray::from(values))
+                },
+            };
+            arrays.push(array);
+        }
 
         // Use native metadata types if handler is configured
         if let Some(ref handler) = self.native_metadata_handler {
@@ -799,18 +997,56 @@ impl StreamingParquetWriter {
                     stats.total_fields
                 );
             } else {
-                // Fall back to JSON string if type inference not done yet
-                let metadata: Vec<Option<String>> = records
-                    .iter()
-                    .map(|r| {
-                        if r.metadata.is_empty() {
-                            None
-                        } else {
-                            serde_json::to_string(&r.metadata).ok()
-                        }
-                    })
-                    .collect();
-                arrays.push(Arc::new(StringArray::from(metadata)));
+                // Fall back to Map type if type inference not done yet
+                // We still use Map type for consistency with schema
+                let mut keys_builder = arrow_array::builder::StringBuilder::new();
+                let mut values_builder = arrow_array::builder::StringBuilder::new();
+                let mut offsets = vec![0i32];
+                let mut entry_count = 0i32;
+
+                for r in records.iter() {
+                    if !r.metadata.is_empty() {
+                        // Add all metadata entries as a single JSON string entry
+                        // This maintains compatibility while using Map structure
+                        keys_builder.append_value("_json_metadata");
+                        let json_str = serde_json::to_string(&r.metadata).unwrap_or_else(|_| "{}".to_string());
+                        values_builder.append_value(&json_str);
+                        entry_count += 1;
+                    }
+                    offsets.push(entry_count);
+                }
+
+                // Create struct array for Map entries
+                let keys_array = keys_builder.finish();
+                let values_array = values_builder.finish();
+                let struct_array = arrow_array::StructArray::from(vec![
+                    (
+                        Arc::new(Field::new("key", DataType::Utf8, false)),
+                        Arc::new(keys_array) as ArrayRef,
+                    ),
+                    (
+                        Arc::new(Field::new("value", DataType::Utf8, true)),
+                        Arc::new(values_array) as ArrayRef,
+                    ),
+                ]);
+
+                // Create Map array
+                let map_array = arrow_array::MapArray::try_new(
+                    Arc::new(Field::new(
+                        "entries",
+                        DataType::Struct(vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ].into()),
+                        false,
+                    )),
+                    arrow_buffer::OffsetBuffer::new(arrow_buffer::ScalarBuffer::from(offsets)),
+                    struct_array,
+                    None,
+                    false,
+                ).context("Failed to create Map array for fallback metadata")?;
+
+                arrays.push(Arc::new(map_array));
             }
         } else {
             // Use native Map type for metadata - much faster than JSON
@@ -821,8 +1057,12 @@ impl StreamingParquetWriter {
 
             for r in records.iter() {
                 if !r.metadata.is_empty() {
-                    // Add each metadata entry
+                    // Add each metadata entry EXCEPT filterable columns (they have their own columns)
                     for (key, sql_value) in r.metadata.iter() {
+                        // Skip if this is a filterable column
+                        if self.filterable_columns.iter().any(|col| col.name == *key) {
+                            continue;
+                        }
                         keys_builder.append_value(key);
 
                         // Convert SqlValue to string
@@ -878,7 +1118,20 @@ impl StreamingParquetWriter {
             arrays.push(Arc::new(map_array));
         }
 
-        RecordBatch::try_new(self.schema.clone(), arrays).context("Failed to create RecordBatch")
+        debug!("Created {} arrays for RecordBatch", arrays.len());
+        for (i, array) in arrays.iter().enumerate() {
+            debug!("  Array {}: {} rows, type: {:?}", i, array.len(), array.data_type());
+        }
+
+        let array_count = arrays.len();
+        RecordBatch::try_new(self.schema.clone(), arrays)
+            .map_err(|e| {
+                eprintln!("RecordBatch creation failed!");
+                eprintln!("  Schema fields: {}", self.schema.fields().len());
+                eprintln!("  Arrays provided: {}", array_count);
+                eprintln!("  Error: {}", e);
+                anyhow::anyhow!("Failed to create RecordBatch: {}", e)
+            })
     }
 
     /// Create FP32 vector array
@@ -1533,7 +1786,7 @@ impl BatchParquetWriter {
         );
 
         let mut writer =
-            StreamingParquetWriter::new(&self.file_path, self.dimension, self.config.clone())?;
+            StreamingParquetWriter::new(&self.file_path, self.dimension, self.config.clone(), None)?;
 
         // Write in optimized batches
         let batch_size = self.config.write_batch_size;
@@ -1624,7 +1877,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut writer = StreamingParquetWriter::new(&file_path, 128, config).unwrap();
+        let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
 
         // Write some test records
         for i in 0..25 {
@@ -1701,7 +1954,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut writer = StreamingParquetWriter::new(&file_path, 64, config).unwrap();
+        let mut writer = StreamingParquetWriter::new(&file_path, 64, config, None).unwrap();
 
         // Create vectors with some similarity patterns
         let mut records = Vec::new();
@@ -1777,7 +2030,7 @@ mod tests {
         // Create a mock writer to test PQ codebook
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("test.parquet");
-        let writer = StreamingParquetWriter::new(&file_path, 4, config).unwrap();
+        let writer = StreamingParquetWriter::new(&file_path, 4, config, None).unwrap();
 
         // Test codebook generation
         let codebook = writer.build_pq_codebook(&records).unwrap();

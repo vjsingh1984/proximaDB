@@ -248,7 +248,7 @@ pub async fn nova_optimization_example() -> Result<()> {
             ..Default::default()
         };
 
-        let mut writer = StreamingParquetWriter::new(&file_path, 1024, config)?;
+        let mut writer = StreamingParquetWriter::new(&file_path, 1024, config, None)?;
 
         println!("✍️  Writing 25,000 high-dimensional vectors...");
 

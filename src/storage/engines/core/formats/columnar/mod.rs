@@ -556,7 +556,7 @@ impl ColumnarFactory {
             ..Default::default()
         };
 
-        StreamingParquetWriter::new(file_path, dimension, config)
+        StreamingParquetWriter::new(file_path, dimension, config, None)
     }
 
     /// Create columnar optimizer with hardware-specific settings
