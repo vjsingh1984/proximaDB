@@ -36,6 +36,21 @@ async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
     Ok((viper_engine, temp_dir))
 }
 
+/// Create test collection config with dimension
+fn create_test_collection_config(collection_id: &str, dimension: usize) -> crate::proto::proximadb_v1::Collection {
+    crate::proto::proximadb_v1::Collection {
+        id: collection_id.to_string(),
+        config: Some(crate::proto::proximadb_v1::CollectionConfig {
+            name: collection_id.to_string(),
+            dimension: dimension as u32,
+            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+            storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
 /// Create test vector records for testing
 fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorRecord> {
     (0..count)
@@ -91,12 +106,13 @@ async fn test_viper_do_flush_implementation() -> Result<()> {
 
     let collection_id = "test_collection";
 
-    // Test flush with valid collection ID
+    // Test flush with valid collection ID and config
+    let collection_config = create_test_collection_config(collection_id, 3);
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        collection_config: None,
+        collection_config: Some(collection_config.clone()),
         ..Default::default()
     };
 
@@ -118,12 +134,13 @@ async fn test_viper_flush_with_high_level_trait_method() -> Result<()> {
     let collection_id = "test_collection";
 
     // Test high-level flush method (not do_flush directly)
+    let collection_config = create_test_collection_config(collection_id, 3);
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
         trigger_compaction: false,
-        collection_config: None,
+        collection_config: Some(collection_config.clone()),
         ..Default::default()
     };
 
@@ -190,11 +207,12 @@ async fn test_dynamic_storage_engine_flush() -> Result<()> {
     let collection_id = "dynamic_test_collection";
 
     // The memtable would call this without knowing the specific engine type
+    let collection_config = create_test_collection_config(collection_id, 3);
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        collection_config: None,
+        collection_config: Some(collection_config.clone()),
         ..Default::default()
     };
 
@@ -249,7 +267,7 @@ async fn test_flush_parameter_validation() -> Result<()> {
         result
             .unwrap_err()
             .to_string()
-            .contains("Collection ID required")
+            .contains("No collection_id provided")
     );
 
     Ok(())
