@@ -263,7 +263,7 @@ impl TestDataGenerator {
             Field::new("id", DataType::Utf8, true), // Nullable for test flexibility
             Field::new("collection_id", DataType::Utf8, false),
             Field::new(
-                "vector",
+                crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32,
                 DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
                 true,
             ), // Both field and items are nullable

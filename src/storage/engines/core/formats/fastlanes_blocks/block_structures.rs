@@ -781,7 +781,7 @@ impl FastLanesDataBlock {
             compression_config: compression_config.clone(),
             compression_algorithm: compression_config.algorithm,
             uncompressed_size: 0, // Will be calculated during compression
-            bloom_filter: None,
+            bloom_filter: Self::generate_bloom_filter(&records),
             block_bloom_filter: None,
             id_range,
             timestamp_range,
@@ -809,6 +809,48 @@ impl FastLanesDataBlock {
         }
 
         block
+    }
+
+    /// Generate bloom filter for record IDs
+    fn generate_bloom_filter(records: &[VectorRecord]) -> Option<SstableBloomFilter> {
+        if records.is_empty() {
+            return None;
+        }
+
+        use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+
+        let bloom_config = BloomFilterConfig::for_sstable(records.len());
+        let mut bloom = BloomFilterFactory::create(&bloom_config);
+
+        for record in records {
+            bloom.insert(record.id.as_bytes());
+        }
+
+        // Serialize the bloom filter and create SstableBloomFilter
+        match bloom.serialize() {
+            Ok(data) => {
+                use crate::core::bloom::BloomFilterStats;
+
+                let stats = BloomFilterStats {
+                    key_count: records.len() as u64,
+                    metadata_columns: 0, // No metadata columns in block-level bloom
+                    total_keys: records.len() as u64,
+                    key_lookups_saved: 0,
+                    metadata_queries_saved: 0,
+                };
+
+                Some(SstableBloomFilter::new(
+                    bloom_config,
+                    data,
+                    Vec::new(), // No metadata filter for blocks
+                    stats,
+                ))
+            },
+            Err(e) => {
+                warn!("Failed to create bloom filter: {}", e);
+                None
+            }
+        }
     }
 
     /// Create a new FastLanes data block with specific engine profile
@@ -886,7 +928,7 @@ impl FastLanesDataBlock {
             compression_config: compression_config.clone(),
             compression_algorithm: compression_config.algorithm,
             uncompressed_size: 0,
-            bloom_filter: None,
+            bloom_filter: Self::generate_bloom_filter(&records),
             block_bloom_filter: None,
             id_range,
             timestamp_range,
@@ -1247,6 +1289,65 @@ impl FastLanesDataBlock {
         // This would contain the metadata serialization logic
         // but writing directly to the buffer instead of creating intermediate buffers
         Ok(())
+    }
+
+    /// Generate bloom filter for the block's records
+    pub fn generate_bloom(&self) -> anyhow::Result<Option<Vec<u8>>> {
+        if self.records.is_empty() {
+            return Ok(None);
+        }
+
+        use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+
+        let bloom_config = BloomFilterConfig::for_sstable(self.records.len());
+        let mut bloom = BloomFilterFactory::create(&bloom_config);
+
+        for record in &self.records {
+            bloom.insert(record.id.as_bytes());
+        }
+
+        bloom.serialize().map(Some)
+    }
+
+    /// Serialize with bloom filter generation in parallel (async)
+    pub async fn serialize_with_bloom(&self) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
+        use tokio::task;
+        use std::sync::Arc;
+
+        // Share self through Arc for parallel access
+        let self_arc = Arc::new(self.clone());
+
+        // Spawn serialization task
+        let serialize_self = Arc::clone(&self_arc);
+        let serialize_handle = task::spawn_blocking(move || {
+            serialize_self.serialize_with_config(&serialize_self.compression_config)
+        });
+
+        // Spawn bloom generation task
+        let bloom_self = Arc::clone(&self_arc);
+        let bloom_handle = task::spawn_blocking(move || {
+            bloom_self.generate_bloom()
+        });
+
+        // Wait for both to complete
+        let serialized_block = serialize_handle.await
+            .map_err(|e| anyhow::anyhow!("Serialization failed: {}", e))??;
+        let bloom_filter = bloom_handle.await
+            .map_err(|e| anyhow::anyhow!("Bloom filter generation failed: {}", e))??;
+
+        Ok((serialized_block, bloom_filter))
+    }
+
+    /// Serialize with bloom filter generation in parallel (sync)
+    pub fn serialize_with_bloom_sync(&self) -> anyhow::Result<(Vec<u8>, Option<Vec<u8>>)> {
+        use rayon::prelude::*;
+
+        let (serialized_block, bloom_filter) = rayon::join(
+            || self.serialize_with_config(&self.compression_config),
+            || self.generate_bloom()
+        );
+
+        Ok((serialized_block?, bloom_filter?))
     }
 
     /// Serialize with specific compression configuration
@@ -2250,6 +2351,10 @@ impl FastLanesDataBlock {
         // Reconstruct the block
         let block_id = metadata.record_count;
         let has_deletes = metadata.has_deletes;
+
+        // Generate bloom filter before moving records
+        let bloom_filter = Self::generate_bloom_filter(&records);
+
         Ok(Self {
             encoding_marker: encoding_marker,
             encoding_metadata: None, // Will be reconstructed if needed
@@ -2264,7 +2369,7 @@ impl FastLanesDataBlock {
             compression_config: BlockCompressionConfig::default(),
             compression_algorithm: CompressionAlgorithm::None,
             uncompressed_size: 0,
-            bloom_filter: None,
+            bloom_filter,
             block_bloom_filter: None,
             id_range: ("".to_string(), "".to_string()),
             timestamp_range: (0, 0),
@@ -4062,5 +4167,141 @@ mod tests {
                 println!("Mixed pattern compression test: Deserialization failed (can happen with mixed patterns): {}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_generate_bloom() {
+        use crate::proto::proximadb_v1::VectorRecord;
+
+        // Create test records
+        let records = vec![
+            VectorRecord {
+                id: "vec1".to_string(),
+                vector: vec![1.0, 2.0, 3.0],
+                ..Default::default()
+            },
+            VectorRecord {
+                id: "vec2".to_string(),
+                vector: vec![4.0, 5.0, 6.0],
+                ..Default::default()
+            },
+            VectorRecord {
+                id: "vec3".to_string(),
+                vector: vec![7.0, 8.0, 9.0],
+                ..Default::default()
+            },
+        ];
+
+        let block = FastLanesDataBlock::new(
+            records.clone(),
+            BlockCompressionConfig::default()
+        );
+
+        // Test bloom filter generation
+        let bloom_result = block.generate_bloom();
+        assert!(bloom_result.is_ok());
+
+        let bloom_data = bloom_result.unwrap();
+        assert!(bloom_data.is_some());
+
+        let bloom_bytes = bloom_data.unwrap();
+        assert!(!bloom_bytes.is_empty());
+
+        // Verify bloom filter can be deserialized
+        use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+        let config = BloomFilterConfig::for_sstable(records.len());
+        let deserialized = BloomFilterFactory::deserialize(&config, &bloom_bytes);
+        assert!(deserialized.is_ok());
+    }
+
+    #[test]
+    fn test_serialize_with_bloom_sync() {
+        use crate::proto::proximadb_v1::VectorRecord;
+
+        // Create test records
+        let records = vec![
+            VectorRecord {
+                id: "test1".to_string(),
+                vector: vec![1.0, 2.0],
+                ..Default::default()
+            },
+            VectorRecord {
+                id: "test2".to_string(),
+                vector: vec![3.0, 4.0],
+                ..Default::default()
+            },
+        ];
+
+        let block = FastLanesDataBlock::new(
+            records,
+            BlockCompressionConfig::default()
+        );
+
+        // Test parallel serialization with bloom
+        let result = block.serialize_with_bloom_sync();
+        assert!(result.is_ok());
+
+        let (serialized_block, bloom_data) = result.unwrap();
+
+        // Verify block was serialized
+        assert!(!serialized_block.is_empty());
+
+        // Verify bloom filter was generated
+        assert!(bloom_data.is_some());
+        assert!(!bloom_data.unwrap().is_empty());
+
+        // Verify block can be deserialized
+        let deserialized_block = FastLanesDataBlock::deserialize(&serialized_block);
+        assert!(deserialized_block.is_ok());
+        assert_eq!(deserialized_block.unwrap().records.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_serialize_with_bloom_async() {
+        use crate::proto::proximadb_v1::VectorRecord;
+
+        // Create test records
+        let records = vec![
+            VectorRecord {
+                id: "async1".to_string(),
+                vector: vec![10.0, 20.0, 30.0],
+                ..Default::default()
+            },
+        ];
+
+        let block = FastLanesDataBlock::new(
+            records,
+            BlockCompressionConfig::default()
+        );
+
+        // Test async parallel serialization
+        let result = block.serialize_with_bloom().await;
+        assert!(result.is_ok());
+
+        let (serialized_block, bloom_data) = result.unwrap();
+
+        // Verify both were generated
+        assert!(!serialized_block.is_empty());
+        assert!(bloom_data.is_some());
+    }
+
+    #[test]
+    fn test_empty_block_bloom() {
+        // Test with empty records
+        let block = FastLanesDataBlock::new(
+            vec![],
+            BlockCompressionConfig::default()
+        );
+
+        // Empty block should return None for bloom
+        let bloom_result = block.generate_bloom();
+        assert!(bloom_result.is_ok());
+        assert!(bloom_result.unwrap().is_none());
+
+        // Sync serialization with empty block
+        let result = block.serialize_with_bloom_sync();
+        assert!(result.is_ok());
+        let (_, bloom_data) = result.unwrap();
+        assert!(bloom_data.is_none());
     }
 }

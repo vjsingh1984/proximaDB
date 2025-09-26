@@ -271,7 +271,7 @@ pub async fn write_helix_sstable_simd(
         }
 
         // Serialize the SIMD-optimized block
-        let block_bytes = simd_block.serialize()?;
+        let (block_bytes, _bloom_data) = simd_block.serialize_with_bloom_sync()?;
         let block_size_bytes = block_bytes.len();
 
         // Track compression statistics
@@ -451,7 +451,7 @@ pub async fn write_helix_sstable(
         // Hilbert range will be stored in HelixBlockMetadata, not in FastLanes metadata
 
         // Serialize block before creating metadata (to get compressed size)
-        let block_bytes = block.serialize()?;
+        let (block_bytes, _bloom_data) = block.serialize_with_bloom_sync()?;
         let compressed_size = block_bytes.len();
 
         // Store header info in our metadata instead

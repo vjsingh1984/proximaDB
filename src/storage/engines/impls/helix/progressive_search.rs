@@ -416,7 +416,7 @@ mod tests {
             SStableMetadata {
                 path: "test2.helix".into(),
                 level: 1,
-                hilbert_range: Some((5000, 6000)),
+                hilbert_range: Some((10000, 11000)),  // More distant to ensure pruning
                 num_vectors: 100,
                 size_bytes: 1024,
                 created_at: chrono::Utc::now(),

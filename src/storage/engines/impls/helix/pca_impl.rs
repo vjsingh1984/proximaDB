@@ -204,7 +204,15 @@ impl EnhancedPCAModel {
 
 fn calculate_mean(data: &DMatrix<f32>) -> DVector<f32> {
     let n_samples = data.nrows() as f32;
-    data.column_sum() / n_samples
+    let n_features = data.ncols();
+
+    // Calculate mean for each feature (column)
+    let mut mean = DVector::zeros(n_features);
+    for j in 0..n_features {
+        let col_sum: f32 = data.column(j).iter().sum();
+        mean[j] = col_sum / n_samples;
+    }
+    mean
 }
 
 fn center_data(data: &DMatrix<f32>, mean: &DVector<f32>) -> DMatrix<f32> {

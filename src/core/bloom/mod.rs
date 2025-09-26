@@ -84,7 +84,7 @@
 //! Multiple hash algorithms for different needs:
 //! - **MurmurHash3**: Default, good distribution
 //! - **xxHash**: Extremely fast
-//! - **CityHash**: Optimized for short keys
+//! - **FNV-1a**: Simple and fast, good for small keys
 //!
 //! Double hashing generates k hash values from 2 base hashes:
 //! ```rust
@@ -325,15 +325,15 @@ pub enum BloomStrategy {
 pub enum HashAlgorithm {
     /// MurmurHash3 - fast and good distribution
     Murmur3,
-    /// xxHash - extremely fast
+    /// xxHash - extremely fast (default) - our internal optimized implementation
     XXHash,
-    /// CityHash - good for short keys
-    CityHash,
+    /// FNV-1a - simple and fast, good for small keys
+    Fnv1a,
 }
 
 impl Default for HashAlgorithm {
     fn default() -> Self {
-        Self::Murmur3
+        Self::XXHash  // Default to fastest algorithm
     }
 }
 
@@ -467,7 +467,7 @@ pub mod hash {
         hash
     }
 
-    /// CityHash 64-bit placeholder implementation
+    /// FNV-1a - fast simple hash
     pub fn cityhash64(data: &[u8]) -> u64 {
         // Simple placeholder - in production, use cityhash crate
         let mut hash = 0x9ae16a3b2f90404fu64;
@@ -534,12 +534,50 @@ pub mod hash {
 
     /// Double hashing to generate multiple hash values
     pub fn double_hash(key: &[u8], num_hashes: u32, bit_count: usize) -> Vec<usize> {
+        // Default to XXHash for speed
+        double_hash_with_algorithm(key, num_hashes, bit_count, crate::core::bloom::HashAlgorithm::XXHash)
+    }
+
+    /// Double hashing with configurable algorithm
+    pub fn double_hash_with_algorithm(
+        key: &[u8],
+        num_hashes: u32,
+        bit_count: usize,
+        algorithm: crate::core::bloom::HashAlgorithm
+    ) -> Vec<usize> {
         if bit_count == 0 {
-            return vec![0; num_hashes as usize]; // Return zeros for empty filter
+            return vec![0; num_hashes as usize];
         }
 
-        let h1 = murmur3_32(key, 0);
-        let h2 = murmur3_32(key, h1);
+        let (h1, h2) = match algorithm {
+            crate::core::bloom::HashAlgorithm::XXHash => {
+                use crate::utils::hash::{XxHasher, FastHash};
+                // Two independent hashes using XXHash
+                let h1 = XxHasher::hash_bytes(key) as u32;
+                let h2 = XxHasher::hash_bytes(&[key, b"_salt"].concat()) as u32;
+                (h1, h2)
+            }
+            crate::core::bloom::HashAlgorithm::Murmur3 => {
+                let h1 = murmur3_32(key, 0);
+                let h2 = murmur3_32(key, h1);
+                (h1, h2)
+            }
+            crate::core::bloom::HashAlgorithm::Fnv1a => {
+                // Use FNV-1a from our internal utils module
+                use crate::utils::hash::{FnvHasher, FastHash};
+
+                // First hash
+                let h1 = FnvHasher::hash_bytes(key) as u32;
+
+                // Second hash with salt for independence
+                let mut key_with_salt = Vec::with_capacity(key.len() + 8);
+                key_with_salt.extend_from_slice(key);
+                key_with_salt.extend_from_slice(b"_fnv_h2");
+                let h2 = FnvHasher::hash_bytes(&key_with_salt) as u32;
+
+                (h1, h2)
+            }
+        };
 
         (0..num_hashes)
             .map(|i| {
@@ -625,11 +663,21 @@ impl SstableBloomFilter {
         }
     }
 
-    /// Check if key might exist
-    pub fn might_contain_key(&self, _key: &str) -> Result<bool> {
-        // For now, return true conservatively
-        // TODO: Implement proper deserialization once strategies are fixed
-        Ok(true)
+    /// Check if key might exist using the unified bloom filter
+    pub fn might_contain_key(&self, key: &str) -> Result<bool> {
+        // If bloom filter is empty, conservatively return true
+        if self.key_filter_data.is_empty() {
+            return Ok(true);
+        }
+
+        // Deserialize the bloom filter strategy based on configuration
+        let bloom_strategy = factory::BloomFilterFactory::deserialize(
+            &self.key_filter_config,
+            &self.key_filter_data
+        )?;
+
+        // Use the unified bloom filter's might_contain method
+        Ok(bloom_strategy.might_contain(key.as_bytes()))
     }
 
     /// Check if metadata might match using MetadataItem for type safety
@@ -696,7 +744,7 @@ impl SstableBloomFilter {
         let hash_byte = match self.key_filter_config.hash_algorithm {
             HashAlgorithm::Murmur3 => 0u8,
             HashAlgorithm::XXHash => 1u8,
-            HashAlgorithm::CityHash => 2u8,
+            HashAlgorithm::Fnv1a => 2u8,
         };
         buffer.write_all(&[hash_byte])?;
 
@@ -762,7 +810,7 @@ impl SstableBloomFilter {
         let hash_algorithm = match hash_buf[0] {
             0 => HashAlgorithm::Murmur3,
             1 => HashAlgorithm::XXHash,
-            2 => HashAlgorithm::CityHash,
+            2 => HashAlgorithm::Fnv1a,
             _ => HashAlgorithm::Murmur3,
         };
 
@@ -894,7 +942,7 @@ impl From<SerializedSstableBloomFilter> for SstableBloomFilter {
         let hash_algorithm = match serialized.hash_algorithm {
             0 => HashAlgorithm::Murmur3,
             1 => HashAlgorithm::XXHash,
-            2 => HashAlgorithm::CityHash,
+            2 => HashAlgorithm::Fnv1a,
             _ => HashAlgorithm::Murmur3,
         };
 
@@ -947,7 +995,7 @@ impl From<SstableBloomFilter> for SerializedSstableBloomFilter {
             hash_algorithm: match bf.key_filter_config.hash_algorithm {
                 HashAlgorithm::Murmur3 => 0,
                 HashAlgorithm::XXHash => 1,
-                HashAlgorithm::CityHash => 2,
+                HashAlgorithm::Fnv1a => 2,
             },
             key_filter_data: bf.key_filter_data,
             metadata_filter_data: bf.metadata_filter_data,

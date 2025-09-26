@@ -10,6 +10,7 @@ use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use crate::utils::StoragePath;
 
 /// Helper to read and debug parquet file contents
 async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {
@@ -186,9 +187,9 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
 
     // Set up storage assignment
     use tokio::fs;
-    let data_dir = format!("{}/{}/data", base_path, collection_id);
+    let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
     fs::create_dir_all(&data_dir).await?;
-    let temp_dir = format!("{}/{}/data/___temp", base_path, collection_id);
+    let temp_dir = StoragePath::data_file_path(base_path, &collection_id, "___temp");
     fs::create_dir_all(&temp_dir).await?;
 
     // Storage assignment is now handled internally by CollectionService
@@ -197,7 +198,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
     fs::create_dir_all(&wal_dir).await?;
 
-    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
     debug!("📍 Data directory: {}", data_url);
 
     // Step 1: Create and flush vectors
@@ -304,7 +305,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     // Step 7: Try to search
     debug!("\n🔍 Step 7: Testing search on compacted data");
 
-    let storage_url = format!("file://{}/{}/data", base_path, collection_id);
+    let storage_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
     let search_results = engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 10)
         .await?;

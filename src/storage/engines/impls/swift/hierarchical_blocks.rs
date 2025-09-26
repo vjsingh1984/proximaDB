@@ -62,13 +62,88 @@ pub enum CompositeIndexType {
     Partial,  // Index with WHERE clause
 }
 
-/// Ordered wrapper for JSON values
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct OrderedValue(String);
+/// Wrapper for f64 that implements Ord by treating NaN as greater than all other values
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct OrderedFloat(f64);
+
+impl Eq for OrderedFloat {}
+
+impl PartialOrd for OrderedFloat {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrderedFloat {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.0.partial_cmp(&other.0) {
+            Some(ordering) => ordering,
+            None => {
+                // Handle NaN cases
+                if self.0.is_nan() && other.0.is_nan() {
+                    std::cmp::Ordering::Equal
+                } else if self.0.is_nan() {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
+                }
+            }
+        }
+    }
+}
+
+/// Ordered wrapper for JSON values that preserves type-aware ordering
+#[derive(Debug, Clone, PartialEq)]
+pub enum OrderedValue {
+    Null,
+    Bool(bool),
+    Number(OrderedFloat),
+    String(String),
+}
+
+impl Eq for OrderedValue {}
+
+impl PartialOrd for OrderedValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrderedValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use OrderedValue::*;
+        match (self, other) {
+            (Null, Null) => std::cmp::Ordering::Equal,
+            (Null, _) => std::cmp::Ordering::Less,
+            (_, Null) => std::cmp::Ordering::Greater,
+
+            (Bool(a), Bool(b)) => a.cmp(b),
+            (Bool(_), _) => std::cmp::Ordering::Less,
+            (_, Bool(_)) => std::cmp::Ordering::Greater,
+
+            (Number(a), Number(b)) => a.cmp(b),
+            (Number(_), String(_)) => std::cmp::Ordering::Less,
+            (String(_), Number(_)) => std::cmp::Ordering::Greater,
+
+            (String(a), String(b)) => a.cmp(b),
+        }
+    }
+}
 
 impl From<serde_json::Value> for OrderedValue {
     fn from(val: serde_json::Value) -> Self {
-        OrderedValue(val.to_string())
+        match val {
+            serde_json::Value::Null => OrderedValue::Null,
+            serde_json::Value::Bool(b) => OrderedValue::Bool(b),
+            serde_json::Value::Number(n) => {
+                OrderedValue::Number(OrderedFloat(n.as_f64().unwrap_or(0.0)))
+            }
+            serde_json::Value::String(s) => OrderedValue::String(s),
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                // For complex types, fall back to string representation
+                OrderedValue::String(val.to_string())
+            }
+        }
     }
 }
 
@@ -441,6 +516,8 @@ impl MetadataIndex {
             let max_ordered = OrderedValue::from(max.clone());
 
             let mut result = BitSet::new(self.table_stats.total_blocks as usize);
+
+            // With proper type-aware ordering, we can directly use the range
             for (value, bitset) in tree.range(min_ordered..=max_ordered) {
                 result = result.union(bitset);
             }
@@ -581,6 +658,7 @@ mod tests {
         assert!(matches.test(0));
 
         // Test finding blocks in range
+        // Now that OrderedValue properly handles numeric types, this should work correctly
         let matches = index
             .find_blocks_in_range("price", &serde_json::json!(50.0), &serde_json::json!(150.0))
             .unwrap();

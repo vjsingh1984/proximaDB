@@ -1486,6 +1486,7 @@ impl UnifiedSstableReader {
         k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        eprintln!("🔍 DEBUG READER: search_with_filter called with file_path: {}", file_path);
         // REFACTORED: Use SharedSstFormatReader like SWIFT does
         // No more duplicate I/O logic!
 
@@ -1524,6 +1525,7 @@ impl UnifiedSstableReader {
         // Step 3: Use apply_strategy to leverage SharedSstFormatReader
         // This delegates all I/O to the shared infrastructure
         let blocks = self.apply_strategy(&strategy, &params, &context).await?;
+        eprintln!("🔍 DEBUG READER: apply_strategy returned {} blocks", blocks.len());
 
         // Step 4: Process blocks and compute distances
         let mut results = Vec::new();
@@ -2045,6 +2047,7 @@ impl UnifiedSstableReader {
         Box<dyn std::future::Future<Output = Result<Vec<FastLanesDataBlock>>> + Send + 'a>,
     > {
         Box::pin(async move {
+            eprintln!("🔍 DEBUG APPLY_STRATEGY: Starting with strategy type");
             match strategy {
                 SstableReadingStrategy::FullScan { use_block_cache } => {
                     self.full_scan_strategy(context, *use_block_cache).await
@@ -2508,6 +2511,7 @@ impl UnifiedSstableReader {
         context: &CollectionContext,
         use_block_cache: bool,
     ) -> Result<Vec<FastLanesDataBlock>> {
+        eprintln!("🔍 DEBUG FULL_SCAN: Starting for {} files", context.sstable_files.len());
         debug!(
             "🔍 Full scan strategy for {} files (cache={})",
             context.sstable_files.len(),
@@ -2521,6 +2525,7 @@ impl UnifiedSstableReader {
         let mut all_blocks = Vec::new();
 
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
+            eprintln!("🔍 DEBUG FULL_SCAN: Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
             debug!(
                 "📂 Reading file {} of {}: {}",
                 idx + 1,
@@ -2542,21 +2547,26 @@ impl UnifiedSstableReader {
             }
 
             // Validate SST1 magic marker before attempting to read the file
+            eprintln!("🔍 DEBUG FULL_SCAN: Validating SST file: {}", file_path);
             match self.validate_sst_file(file_path).await {
                 Ok(()) => {
+                    eprintln!("🔍 DEBUG FULL_SCAN: Validation passed for: {}", file_path);
                     debug!("✅ SST1 validation passed for file: {}", file_path);
                 }
                 Err(e) => {
+                    eprintln!("🔍 DEBUG FULL_SCAN: Validation failed for {}: {}", file_path, e);
                     warn!("⚠️ Skipping invalid SSTable file {}: {}", file_path, e);
                     continue; // Skip this file entirely and move to the next one
                 }
             }
 
+            eprintln!("🔍 DEBUG FULL_SCAN: Reading blocks (use_block_cache={})", use_block_cache);
             let blocks = if use_block_cache {
                 self.read_file_with_cache(file_path).await?
             } else {
                 self.read_file_direct(file_path).await?
             };
+            eprintln!("🔍 DEBUG FULL_SCAN: Loaded {} blocks from file", blocks.len());
             debug!("  📦 Loaded {} blocks from this file", blocks.len());
 
             // Debug: print sample records from first block
@@ -3106,16 +3116,20 @@ impl UnifiedSstableReader {
 
     /// Load index with cloud-optimized metadata reading
     async fn load_index_optimized(&self, file_path: &str) -> Result<SstableIndex> {
+        eprintln!("🔍 DEBUG LOAD_INDEX: Starting for: {}", file_path);
         // Extract scheme from file path for proper filesystem selection
         let scheme = if file_path.contains("://") {
             file_path.split("://").next().unwrap_or("file")
         } else {
             "file"
         };
+        eprintln!("🔍 DEBUG LOAD_INDEX: Detected scheme: {}", scheme);
         let fs = self.filesystem.get_filesystem(&format!("{}://", scheme))?;
+        eprintln!("🔍 DEBUG LOAD_INDEX: Got filesystem, reading magic bytes");
 
         // Read and verify SST1 magic bytes
         let first_8_bytes = fs.read_range(file_path, 0, 8).await?;
+        eprintln!("🔍 DEBUG LOAD_INDEX: Read {} magic bytes", first_8_bytes.len());
         if first_8_bytes.len() < 8 {
             return Err(anyhow::anyhow!(
                 "SSTable file too small: expected at least 8 bytes, got {}",
@@ -3129,6 +3143,7 @@ impl UnifiedSstableReader {
             ));
         }
 
+        eprintln!("🔍 DEBUG LOAD_INDEX: SST1 format detected");
         debug!("SST1 format detected");
         let header_len = u32::from_le_bytes([
             first_8_bytes[4],
@@ -3136,10 +3151,13 @@ impl UnifiedSstableReader {
             first_8_bytes[6],
             first_8_bytes[7],
         ]) as u64;
+        eprintln!("🔍 DEBUG LOAD_INDEX: Header length: {}", header_len);
         let header_offset = 8u64; // Skip magic + header_len
 
         // Read header
+        eprintln!("🔍 DEBUG LOAD_INDEX: Reading header at offset {} length {}", header_offset, header_len);
         let header_data = fs.read_range(file_path, header_offset, header_len).await?;
+        eprintln!("🔍 DEBUG LOAD_INDEX: Read {} bytes of header data", header_data.len());
         if header_data.len() < header_len as usize {
             return Err(anyhow::anyhow!(
                 "Failed to read complete header: expected {} bytes, got {}",
@@ -3147,8 +3165,13 @@ impl UnifiedSstableReader {
                 header_data.len()
             ));
         }
+        eprintln!("🔍 DEBUG LOAD_INDEX: Deserializing header");
         let header: SstableHeader = bincode::deserialize(&header_data)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize header: {}", e))?;
+            .map_err(|e| {
+                eprintln!("🔍 DEBUG LOAD_INDEX: ERROR deserializing header: {}", e);
+                anyhow::anyhow!("Failed to deserialize header: {}", e)
+            })?;
+        eprintln!("🔍 DEBUG LOAD_INDEX: Header deserialized successfully");
 
         // Calculate bloom filter offset and read its length
         let bloom_offset = header_offset + header_len;
@@ -3170,6 +3193,7 @@ impl UnifiedSstableReader {
         let index_offset = bloom_offset + 4 + bloom_len;
 
         // Read index length
+        eprintln!("🔍 DEBUG LOAD_INDEX: Reading index length at offset {}", index_offset);
         let index_len_data = fs.read_range(file_path, index_offset, 4).await?;
         let index_len = u32::from_le_bytes([
             index_len_data[0],
@@ -3177,11 +3201,16 @@ impl UnifiedSstableReader {
             index_len_data[2],
             index_len_data[3],
         ]) as u64;
+        eprintln!("🔍 DEBUG LOAD_INDEX: Index length: {}", index_len);
 
         // Read index data
-        let index_data = fs
-            .read_range(file_path, index_offset + 4, index_len)
-            .await?;
+        let index_data = if index_len > 0 {
+            eprintln!("🔍 DEBUG LOAD_INDEX: Reading index data at offset {} length {}", index_offset + 4, index_len);
+            fs.read_range(file_path, index_offset + 4, index_len).await?
+        } else {
+            eprintln!("🔍 DEBUG LOAD_INDEX: No index data (index_len = 0)");
+            vec![]
+        };
 
         // Deserialize index entries using custom deserialization
         let mut entries = Vec::new();
@@ -3645,38 +3674,195 @@ impl UnifiedSstableReader {
     }
 
     async fn read_file_with_cache(&self, path: &str) -> Result<Vec<FastLanesDataBlock>> {
-        // Use zero-copy system for metadata caching
-        // Load index directly when needed
-        let index = {
-            // Zero-copy system handles index caching automatically
-            SstableIndex {
-                entries: vec![],
-                metadata_stats: HashMap::new(),
-                vector_count: 0,
-                min_key: String::new(),
-                max_key: String::new(),
-            }
-        };
+        eprintln!("🔍 DEBUG READ_WITH_CACHE: Starting for path: {}", path);
 
-        // Load index if not empty path
-        let index = if !path.is_empty() {
-            let loaded_index = self.load_index_optimized(path).await?;
-            // Zero-copy system handles caching automatically
-            loaded_index
+        // For FastLanes format, we need to read the data blocks directly after the header
+        // The format is: SST1 | header_len | header | bloom_len | bloom | index_len | index | data_blocks
+
+        // Read the file to find data blocks
+        let blocks = self.read_fastlanes_blocks(path).await?;
+
+        eprintln!("🔍 DEBUG READ_WITH_CACHE: Loaded {} FastLanes blocks", blocks.len());
+        Ok(blocks)
+    }
+
+    /// Attempt to read data blocks without bloom filter or index
+    /// This is a fallback for corrupted/truncated files
+    async fn read_blocks_without_index(&self, path: &str, start_offset: u64) -> Result<Vec<FastLanesDataBlock>> {
+        use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+
+        eprintln!("⚠️ Attempting to read blocks without index from offset {}", start_offset);
+
+        let scheme = if path.contains("://") {
+            path.split("://").next().unwrap_or("file")
         } else {
-            // Return empty index for empty path
-            SstableIndex {
-                entries: vec![],
-                metadata_stats: HashMap::new(),
-                vector_count: 0,
-                min_key: String::new(),
-                max_key: String::new(),
-            }
+            "file"
         };
+        let fs = self.filesystem.get_filesystem(&format!("{}://", scheme))?;
 
-        let num_blocks = index.entries.len();
+        let mut blocks = Vec::new();
+        let mut offset = start_offset;
 
-        // Load all blocks using cache
+        // Try to read blocks until we hit end of file
+        loop {
+            // Try to read block size (4 bytes)
+            match fs.read_range(path, offset, 4).await {
+                Ok(size_bytes) if size_bytes.len() == 4 => {
+                    let block_size = u32::from_le_bytes([
+                        size_bytes[0], size_bytes[1], size_bytes[2], size_bytes[3]
+                    ]);
+
+                    if block_size == 0 || block_size > 100_000_000 { // Sanity check: 100MB max block size
+                        eprintln!("Invalid block size {} at offset {}, stopping", block_size, offset);
+                        break;
+                    }
+
+                    offset += 4;
+
+                    // Read the block data
+                    match fs.read_range(path, offset, block_size as u64).await {
+                        Ok(block_data) if block_data.len() == block_size as usize => {
+                            // Try to deserialize as FastLanes block
+                            match FastLanesDataBlock::deserialize(&block_data) {
+                                Ok(block) => {
+                                    blocks.push(block);
+                                    offset += block_size as u64;
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to deserialize block at offset {}: {}", offset, e);
+                                    break;
+                                }
+                            }
+                        }
+                        _ => {
+                            eprintln!("Incomplete block data at offset {}, stopping", offset);
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    // End of file or can't read size
+                    eprintln!("Reached end of file or corrupted data at offset {}", offset);
+                    break;
+                }
+            }
+        }
+
+        eprintln!("⚠️ Recovered {} blocks without index", blocks.len());
+        Ok(blocks)
+    }
+
+    /// Read FastLanes format data blocks from SST file
+    async fn read_fastlanes_blocks(&self, path: &str) -> Result<Vec<FastLanesDataBlock>> {
+        use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+
+        eprintln!("🔍 DEBUG FASTLANES: Reading blocks from: {}", path);
+
+        // Get filesystem
+        let scheme = if path.contains("://") {
+            path.split("://").next().unwrap_or("file")
+        } else {
+            "file"
+        };
+        let fs = self.filesystem.get_filesystem(&format!("{}://", scheme))?;
+
+        // Read the header to find where data blocks start
+        // First read magic and header length
+        let first_8_bytes = fs.read_range(path, 0, 8).await?;
+        if &first_8_bytes[0..4] != b"SST1" {
+            return Err(anyhow::anyhow!("Not an SST1 file"));
+        }
+
+        let header_len = u32::from_le_bytes([
+            first_8_bytes[4], first_8_bytes[5], first_8_bytes[6], first_8_bytes[7]
+        ]) as u64;
+
+        // Skip header
+        let mut offset = 8 + header_len;
+
+        // Read bloom filter length and skip it
+        let bloom_len_bytes = fs.read_range(path, offset, 4).await?;
+        if bloom_len_bytes.len() < 4 {
+            // File is truncated or corrupted - log warning but try to continue
+            // This could happen if bloom filter generation was interrupted
+            eprintln!("⚠️ WARNING: SST file {} appears truncated at bloom filter section (offset {}). Attempting to read without bloom filter.", path, offset);
+            // Try to read data blocks directly, assuming no bloom filter or index
+            // This is a best-effort recovery attempt
+            return self.read_blocks_without_index(path, offset).await;
+        }
+        let bloom_len = u32::from_le_bytes([
+            bloom_len_bytes[0], bloom_len_bytes[1], bloom_len_bytes[2], bloom_len_bytes[3]
+        ]) as u64;
+        offset += 4 + bloom_len;
+
+        // Read index length and skip it
+        let index_len_bytes = fs.read_range(path, offset, 4).await?;
+        if index_len_bytes.len() < 4 {
+            // File is truncated at index section
+            eprintln!("⚠️ WARNING: SST file {} appears truncated at index section (offset {}). Attempting direct block read.", path, offset);
+            return self.read_blocks_without_index(path, offset).await;
+        }
+        let index_len = u32::from_le_bytes([
+            index_len_bytes[0], index_len_bytes[1], index_len_bytes[2], index_len_bytes[3]
+        ]) as u64;
+        offset += 4 + index_len;
+
+        eprintln!("🔍 DEBUG FASTLANES: Data blocks start at offset: {}", offset);
+
+        // Now read the data blocks
+        // Each block is prefixed with its length
+        let mut blocks = Vec::new();
+
+        // Read the rest of the file
+        let file_metadata = fs.metadata(path).await?;
+        let file_size = file_metadata.size as u64;
+
+        while offset < file_size {
+            // Try to read block length
+            if offset + 4 > file_size {
+                break; // Not enough data for another block
+            }
+
+            let block_len_bytes = fs.read_range(path, offset, 4).await?;
+            if block_len_bytes.len() < 4 {
+                break;
+            }
+
+            let block_len = u32::from_le_bytes([
+                block_len_bytes[0], block_len_bytes[1], block_len_bytes[2], block_len_bytes[3]
+            ]) as u64;
+
+            if block_len == 0 || offset + 4 + block_len > file_size {
+                break; // Invalid block or not enough data
+            }
+
+            offset += 4;
+
+            // Read the block data
+            let block_data = fs.read_range(path, offset, block_len).await?;
+            eprintln!("🔍 DEBUG FASTLANES: Reading block at offset {} with {} bytes", offset, block_len);
+
+            // Deserialize using FastLanes deserializer
+            match FastLanesDataBlock::deserialize(&block_data) {
+                Ok(block) => {
+                    eprintln!("🔍 DEBUG FASTLANES: Successfully deserialized block with {} records", block.records.len());
+                    blocks.push(block);
+                }
+                Err(e) => {
+                    eprintln!("🔍 DEBUG FASTLANES: Failed to deserialize block: {}", e);
+                    // Continue with next block
+                }
+            }
+
+            offset += block_len;
+        }
+
+        eprintln!("🔍 DEBUG FASTLANES: Read {} total blocks", blocks.len());
+        Ok(blocks)
+    }
+
+    async fn read_blocks_from_index(&self, path: &str, index: &SstableIndex) -> Result<Vec<FastLanesDataBlock>> {
+        // Helper method for when we have an index
         let mut blocks = Vec::new();
         let context = CollectionContext {
             file_path: path.to_string(),
@@ -3688,6 +3874,7 @@ impl UnifiedSstableReader {
             io_optimization_hints: None,
         };
 
+        let num_blocks = index.entries.len();
         for block_idx in 0..num_blocks {
             if let Some(block) = self.load_block_with_cache(&context, block_idx).await? {
                 blocks.push(block);
@@ -3921,8 +4108,9 @@ impl UnifiedSstableReader {
     }
 
     async fn read_file_direct(&self, path: &str) -> Result<Vec<FastLanesDataBlock>> {
-        self.read_file_direct_with_strategy(path, &ReadStrategy::FullScan)
-            .await
+        // Use the same FastLanes reader as read_file_with_cache
+        eprintln!("🔍 DEBUG READ_DIRECT: Starting for path: {}", path);
+        self.read_fastlanes_blocks(path).await
     }
 
     async fn read_file_direct_with_strategy(

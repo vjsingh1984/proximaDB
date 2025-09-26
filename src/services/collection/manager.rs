@@ -73,6 +73,7 @@ use crate::core::config::StorageConfig;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::InternalCollectionProvider;
+use crate::utils::StoragePath;
 
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
 
@@ -1249,11 +1250,10 @@ impl CollectionService {
 
         let mut created_components = Vec::new();
 
-        // Build paths under base location
-        let collection_dir = format!("{}/{}", base_location, collection_uuid);
-        let write_buffer_dir = format!("{}/write_buffer", collection_dir);
-        let data_dir = format!("{}/data", collection_dir);
-        let indexes_dir = format!("{}/indexes", collection_dir);
+        // Build paths under base location using StoragePath utility
+        let write_buffer_dir = StoragePath::collection_write_buffer_path(base_location, &collection_uuid);
+        let data_dir = StoragePath::collection_data_path(base_location, &collection_uuid);
+        let indexes_dir = StoragePath::collection_index_path(base_location, &collection_uuid);
 
         // Create directories
         if let Ok(filesystem) = self.filesystem_factory.get_filesystem(base_location) {

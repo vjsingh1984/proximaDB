@@ -302,9 +302,9 @@ mod tests {
 
     #[test]
     fn test_hilbert_2d() {
-        let curve = HilbertCurve::new(2, 32); // 2 dimensions, 32 bits per dimension
+        let curve = HilbertCurve::new(2, 16); // 2 dimensions, 16 bits per dimension (within 21-bit limit)
         let key1 = curve.encode(&[0, 0]);
-        let key2 = curve.encode(&[u32::MAX, u32::MAX]);
+        let key2 = curve.encode(&[65535, 65535]); // Max value for 16 bits
         assert!(key1 < key2);
     }
 

@@ -282,7 +282,11 @@ mod tests {
             let start = std::time::Instant::now();
 
             let engine = create_test_engine_with_compression(compression).await?;
-            let collection = create_collection_with_compression(compression);
+            // Create collection with dimension matching test vectors (64)
+            let mut collection = create_collection_with_compression(compression);
+            if let Some(ref mut config) = collection.config {
+                config.dimension = 64;
+            }
 
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),

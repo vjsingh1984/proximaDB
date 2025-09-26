@@ -260,6 +260,7 @@ use crate::compute::quantization::unified::{
 use crate::core::compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
+use crate::utils::StoragePath;
 // Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::optimization::SortingStats;
@@ -1824,9 +1825,8 @@ impl SstEngine {
             if let Some(ref assignment) = collection.storage_assignment {
                 info!("   - Base location: {}", assignment.base_location);
                 info!("   - Collection ID: {:?}", params.collection_id);
-                let storage_url = format!(
-                    "{}/{}/data",
-                    assignment.base_location,
+                let storage_url = crate::utils::StoragePath::collection_data_path(
+                    &assignment.base_location,
                     params
                         .collection_id
                         .as_ref()
@@ -2104,7 +2104,7 @@ impl UniversallyOptimized for SstEngine {
         let collection_storage_url = match collection_config
             .and_then(|c| c.storage_assignment.as_ref()) {
             Some(assignment) => {
-                let url = format!("{}/{}/data", assignment.base_location, collection_id);
+                let url = StoragePath::collection_data_path(&assignment.base_location, &collection_id);
                 debug!("🔍 SST: Using storage URL: {} for collection: {}", url, collection_id);
                 url
             }
@@ -2744,7 +2744,7 @@ impl UnifiedStorageEngine for SstEngine {
                 }
             };
 
-            let collection_storage_url = format!("{}/{}/data", storage_location, collection_id);
+            let collection_storage_url = crate::utils::StoragePath::collection_data_path(&storage_location, &collection_id);
             info!(
                 "🔄 SST COMPACTION: Checking for compaction needs in {}",
                 collection_storage_url
@@ -2994,7 +2994,7 @@ impl UnifiedStorageEngine for SstEngine {
         );
 
         // Construct the data directory path
-        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let data_dir = crate::utils::StoragePath::collection_data_path(&base_path, &collection_id);
 
         // Get SSTable files from the data directory
         // TODO: Implement proper overlapping file search using manifest
@@ -3353,11 +3353,28 @@ impl UnifiedStorageEngine for SstEngine {
         // Pre-discover SSTable files to avoid redundant filesystem queries
         let sstable_files = {
             let mut files = Vec::new();
+            eprintln!("🔍 DEBUG SST SEARCH: storage_url = {}", storage_url);
+            eprintln!("🔍 DEBUG SST SEARCH: collection_id = {}", collection_id);
+
+            // The storage_url from collection_storage_path() already includes the /data suffix
+            // We can use it directly
             let fs = self.filesystem.get_filesystem(&storage_url)?;
-            let entries = fs.list(&storage_url).await?;
-            for entry in entries {
-                if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
-                    files.push(entry.url);
+            eprintln!("🔍 DEBUG SST SEARCH: Got filesystem, listing {}", storage_url);
+
+            match fs.list(&storage_url).await {
+                Ok(entries) => {
+                    eprintln!("🔍 DEBUG SST SEARCH: Found {} entries", entries.len());
+                    for entry in entries {
+                        eprintln!("🔍 DEBUG SST SEARCH: Entry: name={}, url={}, is_dir={}", entry.name, entry.url, entry.metadata.is_directory);
+                        if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
+                            eprintln!("🔍 DEBUG SST SEARCH: Adding SST file: {}", entry.url);
+                            files.push(entry.url);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("🔍 DEBUG SST SEARCH: Error listing directory: {}", e);
+                    return Err(e.into());
                 }
             }
             files
@@ -3393,6 +3410,7 @@ impl UnifiedStorageEngine for SstEngine {
 
         // Process each SSTable file with bloom filter optimization
         for sstable_path in &sstable_files {
+            eprintln!("🔍 DEBUG SST: Searching SSTable file: {}", sstable_path);
             debug!("🔍 SST: Searching SSTable: {}", sstable_path);
 
             // Use unified filesystem for cached metadata access
@@ -3740,7 +3758,7 @@ impl SstEngine {
                 .and_then(|c| c.storage_assignment.as_ref())
             {
                 Some(assignment) => {
-                    let url = format!("{}/{}/data", assignment.base_location, collection_id);
+                    let url = StoragePath::collection_data_path(&assignment.base_location, &collection_id);
                     debug!(
                         "🔍 SST: Using storage URL: {} for collection: {}",
                         url, collection_id
@@ -3793,9 +3811,12 @@ impl SstEngine {
 
             // Ensure directory exists
             if let Some(parent) = sst_path.parent() {
+                eprintln!("DEBUG SST: Creating directory: {:?}", parent);
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                    eprintln!("DEBUG SST: Failed to create directory {:?}: {}", parent, e);
                     SstError::Internal(format!("Failed to create directory: {}", e))
                 })?;
+                eprintln!("DEBUG SST: Directory created successfully: {:?}", parent);
             }
 
             // Convert VectorRecords to BTreeMap for SstableWriter (OPTIMIZED: Direct conversion)
@@ -3861,10 +3882,15 @@ impl SstEngine {
             );
             let record_count = entries.len();
             let sorted_records_iter = entries.into_iter(); // BTreeMap already sorted by key
+            eprintln!("DEBUG SST: Writing {} records to {:?}", record_count, sst_path);
             writer
                 .write_sorted_vector_records(sorted_records_iter, record_count)
                 .await
-                .map_err(|e| SstError::Flush(format!("Failed to write SSTable: {}", e)))?;
+                .map_err(|e| {
+                    eprintln!("DEBUG SST: Failed to write SSTable: {}", e);
+                    SstError::Flush(format!("Failed to write SSTable: {}", e))
+                })?;
+            eprintln!("DEBUG SST: Successfully wrote SSTable file: {:?}", sst_path);
             debug!(
                 "🔍 SST: Successfully wrote SSTable file: {}",
                 sst_path.display()
@@ -4966,8 +4992,23 @@ impl SstEngine {
         // Pre-discover SSTable files
         let sstable_files = {
             let mut files = Vec::new();
-            let fs = self.filesystem.get_filesystem(&storage_url)?;
-            let entries = fs.list(&storage_url).await?;
+            // Extract base URL and collection ID from the storage URL
+            let (base_url, collection_id) = if let Some((base, coll)) =
+                crate::utils::StoragePath::parse_collection_path(&format!("{}/dummy", storage_url)) {
+                (base, coll)
+            } else {
+                // Fallback: assume storage_url is base_url/collection_id format
+                if let Some(last_slash) = storage_url.rfind('/') {
+                    let base = &storage_url[..last_slash];
+                    let collection = &storage_url[last_slash + 1..];
+                    (base.to_string(), collection.to_string())
+                } else {
+                    return Err(SstError::InvalidArgument(format!("Invalid storage URL format: {}", storage_url)).into());
+                }
+            };
+            let data_url = crate::utils::StoragePath::collection_data_path(&base_url, &collection_id);
+            let fs = self.filesystem.get_filesystem(&data_url)?;
+            let entries = fs.list(&data_url).await?;
             for entry in entries {
                 if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
                     files.push(entry.url);

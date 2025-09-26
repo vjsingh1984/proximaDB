@@ -108,6 +108,31 @@ use crate::core::compression::{
 // FastLanes encoding delegation
 use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
 
+/// FastLanes encoding markers as constants
+mod encoding_markers {
+    pub const RAW: u8 = 0x00;           // Raw/Uncompressed
+    pub const BITPACKED: u8 = 0x10;     // FastLanes BitPacked
+    pub const DELTA: u8 = 0x20;         // FastLanes Delta encoding
+    pub const FRAME_OF_REF: u8 = 0x30;  // FastLanes FrameOfReference
+    pub const PATCHED_BASE: u8 = 0x40;  // FastLanes PatchedBase
+    pub const DICTIONARY: u8 = 0x50;    // FastLanes Dictionary
+    pub const RUN_LENGTH: u8 = 0x60;    // FastLanes RunLength
+}
+
+/// Cache alignment constant
+const CACHE_LINE_SIZE: usize = 64;
+
+/// Block index entry for random access
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct BlockIndexEntry {
+    block_id: u32,
+    offset: u64,
+    size: u32,
+    record_count: u32,
+    min_id: String,
+    max_id: String,
+}
+
 /// SSTable writer with atomic write optimization and quantization support
 /// MIGRATED: Now uses universal adapters to eliminate code duplication
 pub struct SstableWriter {
@@ -241,9 +266,15 @@ impl SstableWriter {
         debug!("   Level: {}", level);
         debug!("   Block records: {}", data_block.records.len());
 
-        // FASTLANES: Apply encoding before serialization based on block analysis
+        // FASTLANES: Apply encoding and generate bloom filter in parallel
         let encoded_data_block = self.encode_block_with_fastlanes(data_block)?;
-        let serialized = encoded_data_block.serialize()?;
+        let (serialized, bloom_filter_data) = encoded_data_block.serialize_with_bloom_sync()?;
+
+        // Store bloom filter data for later use if generated
+        if let Some(bloom_data) = bloom_filter_data {
+            // The bloom filter will be used when building the index
+            debug!("✅ Generated bloom filter: {} bytes", bloom_data.len());
+        }
 
         // Use the provided algorithm, don't override it
         let context = CompressionContext::Block;
@@ -349,6 +380,7 @@ impl SstableWriter {
     where
         I: Iterator<Item = (String, VectorRecord)>,
     {
+        eprintln!("DEBUG WRITER: write_sorted_vector_records called with {} records", record_count);
         info!(
             "🚀 SST STREAMING PATH: Writing {} pre-sorted VectorRecords directly",
             record_count
@@ -360,6 +392,7 @@ impl SstableWriter {
         debug!("   - Compression: Applied based on collection config");
 
         if record_count == 0 {
+            eprintln!("DEBUG WRITER: No records to write, returning error");
             info!(
                 "⚠️ SST: No records to write - this may be a valid scenario (e.g., compaction with no data)"
             );
@@ -389,8 +422,13 @@ impl SstableWriter {
         let mut block_id = 0u32;
         let mut processed_count = 0;
 
+        // Collect records to get min/max keys
+        let sorted_records_vec: Vec<(String, VectorRecord)> = sorted_records.collect();
+        let min_key = sorted_records_vec.first().map(|(k, _)| k.clone()).unwrap_or_default();
+        let max_key = sorted_records_vec.last().map(|(k, _)| k.clone()).unwrap_or_default();
+
         // ✅ STEP 2: Process VectorRecords in streaming fashion - FastLanes handles bloom filters!
-        for (key, vector_record) in sorted_records {
+        for (key, vector_record) in sorted_records_vec.into_iter() {
             // ✅ No manual bloom filter updates needed - FastLanes automatically handles this!
 
             // FASTEST: Use existing protobuf serialization (already optimized)
@@ -455,38 +493,42 @@ impl SstableWriter {
         // Three-stage filtering: Bloom → Quantized → Full precision implemented
         // For current write operation, using direct vector storage with bloom filter optimization
 
-        // ✅ STEP 3: Use FastLanes auto-generated bloom filters from data blocks
-        // Extract global bloom filter from all blocks (FastLanes automatically creates them)
-        let combined_bloom_filter = if let Some(first_block) = data_blocks.first() {
-            // Use FastLanes auto-generated bloom filter from first block as template
-            if let Some(ref auto_bloom) = first_block.bloom_filter {
-                super::bloom_filter::SstableBloomFilter::new(
-                    self.bloom_config.clone(),
-                    auto_bloom.serialize().unwrap_or_default(),
-                    Vec::new(), // FastLanes handles metadata bloom filters automatically
-                    super::bloom_filter::BloomFilterStats {
-                        key_count: processed_count as u64,
-                        metadata_columns: first_block.metadata.column_stats.len() as u64,
-                        total_keys: processed_count as u64,
-                        key_lookups_saved: 0,
-                        metadata_queries_saved: 0,
-                    },
-                )
-            } else {
-                // Fallback if no FastLanes bloom filter available
-                super::bloom_filter::SstableBloomFilter::new(
-                    self.bloom_config.clone(),
-                    Vec::new(),
-                    Vec::new(),
-                    super::bloom_filter::BloomFilterStats::default(),
-                )
+        // ✅ STEP 3: Use unified bloom filter module for consistency
+        // Create bloom filter using the factory with proper configuration
+        let combined_bloom_filter = {
+            use crate::core::bloom::{BloomFilterBuilder, BloomFilterConfig, BloomStrategy, HashAlgorithm};
+
+            // Use XXHash for speed - configured in bloom config
+            let mut bloom_config = self.bloom_config.clone();
+            bloom_config.hash_algorithm = HashAlgorithm::XXHash; // Ensure XXHash is used
+
+            // Build bloom filter with all record IDs
+            let mut builder = BloomFilterBuilder::new(bloom_config.clone());
+
+            for record in &vector_records {
+                builder.add(record.id.as_bytes());
             }
-        } else {
+
+            let bloom_strategy = builder.build();
+
+            // Serialize the bloom filter
+            let bloom_data = bloom_strategy.serialize()
+                .unwrap_or_else(|_| Vec::new());
+
+            debug!("📊 Generated bloom filter: {} records, {} bytes using {:?}",
+                   vector_records.len(), bloom_data.len(), bloom_config.hash_algorithm);
+
             super::bloom_filter::SstableBloomFilter::new(
-                self.bloom_config.clone(),
+                bloom_config,
+                bloom_data,
                 Vec::new(),
-                Vec::new(),
-                super::bloom_filter::BloomFilterStats::default(),
+                super::bloom_filter::BloomFilterStats {
+                    key_count: processed_count as u64,
+                    metadata_columns: 0,
+                    total_keys: processed_count as u64,
+                    key_lookups_saved: 0,
+                    metadata_queries_saved: 0,
+                },
             )
         };
 
@@ -540,17 +582,114 @@ impl SstableWriter {
         // Write SST1 magic bytes at the beginning
         output_data.extend_from_slice(b"SST1");
 
-        // Write header length placeholder (will be updated after header is built)
-        let header_len_pos = output_data.len();
-        output_data.extend_from_slice(&0u32.to_le_bytes());
-        // Use shared FastLanes serialization for data blocks
+        // Create and write a proper SSTable header that the reader expects
+        let header = super::SstableHeader {
+            version: 1,
+            level: 0,
+            entry_count: processed_count as u64,
+            min_key: min_key.clone(),
+            max_key: max_key.clone(),
+            timestamp: chrono::Utc::now().timestamp(),
+            compression_algorithm: super::CompressionAlgorithm::None,
+            compression_level: 0,
+            has_bloom_filter: true,
+            has_global_bloom: false,
+            has_block_blooms: false,
+            metadata_column_count: 0,
+            block_size: self.block_size as u32,
+            batch_size: 100,
+            block_count: data_blocks.len() as u32,
+            header_size: 0,
+            index_size: 0,
+            data_size: 0,
+            global_bloom_offset: 0,
+            global_bloom_size: 0,
+            block_index_offset: 0,
+            block_index_size: 0,
+            data_blocks_offset: 0,
+            vector_format: super::VectorFormat::Fixed { dimension: 3 },
+            fixed_dimension: None,
+            compression_ratio: 1.0,
+        };
+        // Serialize header without compression (minimal savings not worth complexity)
+        let header_bytes = bincode::serialize(&header)?;
+        let header_len = header_bytes.len() as u32;
+
+        // Write header length and data
+        output_data.extend_from_slice(&header_len.to_le_bytes());
+        output_data.extend_from_slice(&header_bytes);
+        debug!("📊 Header: {} bytes", header_bytes.len());
+
+        // Write bloom filter with actual data
+        let bloom_bytes = combined_bloom_filter.serialize()?;
+        output_data.extend_from_slice(&(bloom_bytes.len() as u32).to_le_bytes());
+        output_data.extend_from_slice(&bloom_bytes);
+        debug!("✅ Wrote bloom filter: {} bytes", bloom_bytes.len());
+
+        // Write block index for random access
+        let mut index_data = Vec::new();
+        let mut current_offset = output_data.len() + 4; // After index length
+
+        for (i, block) in data_blocks.iter().enumerate() {
+            // Create index entry: block_id -> (offset, size, record_count)
+            let block_entry = BlockIndexEntry {
+                block_id: i as u32,
+                offset: current_offset as u64,
+                size: 0, // Will be updated
+                record_count: block.records.len() as u32,
+                min_id: block.records.first().map(|r| r.id.clone()).unwrap_or_default(),
+                max_id: block.records.last().map(|r| r.id.clone()).unwrap_or_default(),
+            };
+            let entry_bytes = bincode::serialize(&block_entry)?;
+            index_data.extend_from_slice(&entry_bytes);
+
+            // Update offset for next block
+            let (serialized_block, _bloom_data) = block.serialize_with_bloom_sync()?;
+            current_offset += 4 + serialized_block.len(); // length prefix + data
+        }
+
+        output_data.extend_from_slice(&(index_data.len() as u32).to_le_bytes());
+        output_data.extend_from_slice(&index_data);
+        debug!("✅ Wrote block index: {} bytes for {} blocks", index_data.len(), data_blocks.len());
+        // Use shared FastLanes serialization for data blocks with optimizations
         debug!("📦 Writing {} data blocks using FastLanes serialization", data_blocks.len());
-        for block in &data_blocks {
+
+        // Use the constant defined at module level
+
+        for (i, block) in data_blocks.iter().enumerate() {
+            // Apply adaptive encoding based on data characteristics
+            let mut optimized_block = block.clone();
+
+            // For sorted data, use delta encoding for better compression
+            if i > 0 && block.records.len() > 10 {
+                // Check if records appear sorted by ID
+                let is_sorted = block.records.windows(2)
+                    .all(|w| w[0].id <= w[1].id);
+
+                if is_sorted {
+                    // Use delta encoding marker for sorted data
+                    optimized_block.encoding_marker = encoding_markers::DELTA;
+                    debug!("  📈 Block {}: Using delta encoding for sorted data", i);
+                }
+            }
+
             // Serialize the block using the shared FastLanes format
-            let serialized_block = block.serialize()?;
-            // Write block length prefix for framing
+            let (serialized_block, _bloom_data) = optimized_block.serialize_with_bloom_sync()?;
+
+            // Align to cache line boundaries for better CPU performance
+            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
+            let padding = aligned_size - serialized_block.len();
+
+            // Write block length prefix (actual data size, not padded)
             output_data.extend_from_slice(&(serialized_block.len() as u32).to_le_bytes());
             output_data.extend_from_slice(&serialized_block);
+
+            // Add cache line padding for alignment
+            if padding > 0 && padding < CACHE_LINE_SIZE {
+                output_data.extend(vec![0u8; padding]);
+                debug!("  📐 Block {}: {} bytes + {} padding (cache-aligned to {})",
+                       i, serialized_block.len(), padding, aligned_size);
+            }
         }
         let data_blocks_size = output_data.len();
         debug!("✅ Wrote {} bytes of FastLanes-encoded vector data", data_blocks_size);
@@ -600,15 +739,19 @@ impl SstableWriter {
         footer_bytes.extend_from_slice(&0u32.to_le_bytes()); // No variable data
         output_data.extend_from_slice(&footer_bytes);
 
-        // Update header length at the reserved position
-        let header_len = footer_bytes.len() as u32;
-        let header_len_bytes = header_len.to_le_bytes();
-        output_data[header_len_pos..header_len_pos + 4].copy_from_slice(&header_len_bytes);
+        // Header was already written at the beginning, no need to update
 
         // Write all data atomically
-        atomic_writer
-            .write_atomic(&*fs, &self.path.to_string_lossy(), &output_data, None)
-            .await?;
+        let write_path = self.path.to_string_lossy();
+        eprintln!("DEBUG WRITER: Atomic write of {} bytes to: {}", output_data.len(), write_path);
+        let result = atomic_writer
+            .write_atomic(&*fs, &write_path, &output_data, None)
+            .await;
+        match result {
+            Ok(_) => eprintln!("DEBUG WRITER: Atomic write successful to: {}", write_path),
+            Err(ref e) => eprintln!("DEBUG WRITER: Atomic write failed to {}: {}", write_path, e),
+        }
+        result?;
 
         Ok(())
     }
@@ -793,18 +936,65 @@ impl SstableWriter {
         file_content.extend_from_slice(b"SST1");
 
         // Write header length (4 bytes, little-endian)
-        let header = serde_json::json!({
-            "version": 1,
-            "block_size": self.block_size,
-            "record_count": sorted_records.len(),
-            "compression": "none"
-        });
-        let header_bytes = serde_json::to_vec(&header)?;
+        // Create a proper SstableHeader structure that matches what the reader expects
+        let header = super::SstableHeader {
+            version: 1,
+            level: 0, // L0 for new SSTable
+            entry_count: sorted_records.len() as u64,
+            min_key: sorted_records.first().map(|(k, _)| k.clone()).unwrap_or_default(),
+            max_key: sorted_records.last().map(|(k, _)| k.clone()).unwrap_or_default(),
+            timestamp: chrono::Utc::now().timestamp(),
+            compression_algorithm: super::CompressionAlgorithm::None,
+            compression_level: 0,
+            has_bloom_filter: true,
+            has_global_bloom: false,
+            has_block_blooms: false,
+            metadata_column_count: 0,
+            block_size: self.block_size as u32,
+            batch_size: 100,
+            block_count: 1,
+            header_size: 0, // Will be updated
+            index_size: 0, // Will be updated
+            data_size: 0, // Will be updated
+            global_bloom_offset: 0,
+            global_bloom_size: 0,
+            block_index_offset: 0,
+            block_index_size: 0,
+            data_blocks_offset: 0,
+            vector_format: super::VectorFormat::Fixed { dimension: 3 },
+            fixed_dimension: None, // Not used when vector_format contains dimension
+            compression_ratio: 1.0,
+        };
+        let header_bytes = bincode::serialize(&header)?;
         let header_len = header_bytes.len() as u32;
+        eprintln!("DEBUG WRITER: Header serialized to {} bytes", header_len);
         file_content.extend_from_slice(&header_len.to_le_bytes());
 
         // Write header
         file_content.extend_from_slice(&header_bytes);
+
+        // Create and write bloom filter for vector IDs
+        let bloom_filter = {
+            let config = crate::core::bloom::BloomFilterConfig {
+                enabled: true,
+                strategy: crate::core::bloom::BloomStrategy::BitPacked,
+                bits_per_key: 10,
+                expected_items: sorted_records.len(),
+                false_positive_rate: Some(0.01),
+                hash_algorithm: crate::core::bloom::HashAlgorithm::XXHash,
+            };
+            let mut builder = crate::core::bloom::BloomFilterBuilder::new(config);
+            for (key, _) in &sorted_records {
+                builder.add(key.as_bytes());
+            }
+            let filter = builder.build();
+            filter.serialize()?
+        };
+        file_content.extend_from_slice(&(bloom_filter.len() as u32).to_le_bytes());
+        file_content.extend_from_slice(&bloom_filter);
+
+        // Write empty index for now (reader will skip to data blocks)
+        file_content.extend_from_slice(&0u32.to_le_bytes()); // Index length = 0
 
         // Write data blocks (simplified - just serialize records)
         for (key, record) in sorted_records {
@@ -815,8 +1005,15 @@ impl SstableWriter {
         }
 
         // Write to file using filesystem
+        let write_path = self.path.to_str().unwrap();
+        eprintln!("DEBUG WRITER: Writing {} bytes to path: {}", file_content.len(), write_path);
         let fs = self.filesystem.get_filesystem("file://")?;
-        fs.write(self.path.to_str().unwrap(), &file_content, None).await?;
+        let result = fs.write(write_path, &file_content, None).await;
+        match result {
+            Ok(_) => eprintln!("DEBUG WRITER: Successfully wrote file to: {}", write_path),
+            Err(ref e) => eprintln!("DEBUG WRITER: Failed to write file to {}: {}", write_path, e),
+        }
+        result?;
 
         Ok(())
     }

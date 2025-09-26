@@ -28,6 +28,7 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
     use tracing::debug;
+    use crate::utils::StoragePath;
 
     /// Setup test directories
     async fn setup_test_directories(base_path: &Path) -> anyhow::Result<()> {
@@ -191,7 +192,7 @@ mod tests {
         );
 
         // Get storage URL from collection config
-        let storage_url = format!("file://{}/{}/data", base_path, collection_id);
+        let storage_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
         debug!("📁 Looking for SST files in: {}", storage_url);
 
         let fs = filesystem_factory.get_filesystem("file:///")?;

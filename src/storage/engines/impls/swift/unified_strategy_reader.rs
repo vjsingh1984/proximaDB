@@ -448,7 +448,7 @@ mod tests {
 
         // Initially configured for search (cached)
         assert!(reader.config.cache_metadata);
-        assert_eq!(reader.config.streaming_threshold_mb, 10);
+        assert_eq!(reader.config.streaming_threshold_mb, 5);
 
         // Change to direct stream
         reader.set_strategy(ReadAccessStrategy::DirectStream);

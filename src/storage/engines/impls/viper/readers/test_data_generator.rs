@@ -5,7 +5,9 @@
 use anyhow::Result;
 use arrow_array::{
     Array, BooleanArray, FixedSizeListArray, Float32Array, Int64Array, RecordBatch, StringArray,
+    MapArray, StructArray, ArrayRef, builder::StringBuilder,
 };
+use arrow_buffer::{OffsetBuffer, ScalarBuffer};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 use rand::{Rng, SeedableRng};
@@ -225,7 +227,23 @@ impl ParquetTestDataGenerator {
         ];
 
         if config.include_metadata {
-            fields.push(Field::new("metadata_info", DataType::Utf8, true));
+            // Use native Map type for extra metadata
+            let map_field = Field::new(
+                crate::storage::engines::core::formats::columnar::FIELD_EXTRA_META,
+                DataType::Map(
+                    Arc::new(Field::new(
+                        "entries",
+                        DataType::Struct(vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ].into()),
+                        false,
+                    )),
+                    false, // not sorted
+                ),
+                true, // nullable
+            );
+            fields.push(map_field);
         }
 
         if config.include_timestamps {
@@ -288,7 +306,23 @@ impl ParquetTestDataGenerator {
         }
 
         if config.include_metadata {
-            fields.push(Field::new("metadata_info", DataType::Utf8, true));
+            // Use native Map type for extra metadata
+            let map_field = Field::new(
+                crate::storage::engines::core::formats::columnar::FIELD_EXTRA_META,
+                DataType::Map(
+                    Arc::new(Field::new(
+                        "entries",
+                        DataType::Struct(vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ].into()),
+                        false,
+                    )),
+                    false, // not sorted
+                ),
+                true, // nullable
+            );
+            fields.push(map_field);
         }
 
         Ok(Arc::new(Schema::new(fields)))
@@ -319,7 +353,23 @@ impl ParquetTestDataGenerator {
         ];
 
         if config.include_metadata {
-            fields.push(Field::new("metadata_info", DataType::Utf8, true));
+            // Use native Map type for extra metadata
+            let map_field = Field::new(
+                crate::storage::engines::core::formats::columnar::FIELD_EXTRA_META,
+                DataType::Map(
+                    Arc::new(Field::new(
+                        "entries",
+                        DataType::Struct(vec![
+                            Field::new("key", DataType::Utf8, false),
+                            Field::new("value", DataType::Utf8, true),
+                        ].into()),
+                        false,
+                    )),
+                    false, // not sorted
+                ),
+                true, // nullable
+            );
+            fields.push(map_field);
         }
 
         Ok(Arc::new(Schema::new(fields)))
@@ -343,23 +393,67 @@ impl ParquetTestDataGenerator {
         let vectors = self.generate_vectors(config.num_rows, config.vector_dim);
         arrays.push(Arc::new(vectors));
 
-        // Metadata column (if included)
+        // Metadata column as native Map (if included)
         if config.include_metadata {
-            let metadata_json: Vec<Option<String>> = (0..config.num_rows)
-                .map(|i| {
-                    if self.rng.gen_range(0.0..1.0) < config.null_percentage {
-                        None
-                    } else {
-                        Some(format!(
-                            r#"{{"category":"cat_{}","year":{},"score":{:.2}}}"#,
-                            i % config.metadata_cardinality,
-                            2020 + (i % 5),
-                            self.rng.gen_range(0.0..1.0)
-                        ))
-                    }
-                })
-                .collect();
-            arrays.push(Arc::new(StringArray::from(metadata_json)));
+            // Build Map array for metadata
+            let mut keys_builder = StringBuilder::new();
+            let mut values_builder = StringBuilder::new();
+            let mut offsets = vec![0i32];
+            let mut entry_count = 0i32;
+
+            for i in 0..config.num_rows {
+                if self.rng.gen_range(0.0..1.0) < config.null_percentage {
+                    // Empty map for null case
+                    offsets.push(entry_count);
+                } else {
+                    // Add metadata entries
+                    keys_builder.append_value("category");
+                    values_builder.append_value(&format!("cat_{}", i % config.metadata_cardinality));
+                    entry_count += 1;
+
+                    keys_builder.append_value("year");
+                    values_builder.append_value(&(2020 + (i % 5)).to_string());
+                    entry_count += 1;
+
+                    keys_builder.append_value("score");
+                    values_builder.append_value(&format!("{:.2}", self.rng.gen_range(0.0..1.0)));
+                    entry_count += 1;
+
+                    offsets.push(entry_count);
+                }
+            }
+
+            // Create struct array for Map entries
+            let keys_array = keys_builder.finish();
+            let values_array = values_builder.finish();
+            let struct_array = StructArray::from(vec![
+                (
+                    Arc::new(Field::new("key", DataType::Utf8, false)),
+                    Arc::new(keys_array) as ArrayRef,
+                ),
+                (
+                    Arc::new(Field::new("value", DataType::Utf8, true)),
+                    Arc::new(values_array) as ArrayRef,
+                ),
+            ]);
+
+            // Create Map array
+            let map_array = MapArray::try_new(
+                Arc::new(Field::new(
+                    "entries",
+                    DataType::Struct(vec![
+                        Field::new("key", DataType::Utf8, false),
+                        Field::new("value", DataType::Utf8, true),
+                    ].into()),
+                    false,
+                )),
+                OffsetBuffer::new(ScalarBuffer::from(offsets)),
+                struct_array,
+                None,
+                false,
+            ).unwrap();
+
+            arrays.push(Arc::new(map_array));
         }
 
         // Timestamp columns (if included)
@@ -401,22 +495,66 @@ impl ParquetTestDataGenerator {
             // TODO: Generate quantized vectors properly
         }
 
-        // Metadata column (if included)
+        // Metadata column as native Map (if included)
         if config.include_metadata {
-            let metadata_json: Vec<Option<String>> = (0..config.num_rows)
-                .map(|i| {
-                    Some(format!(
-                        r#"{{"category":"cat_{}","quantized":true,"method":"{}"}}"#,
-                        i % config.metadata_cardinality,
-                        match &config.quantization_types[0] {
-                            QuantizationType::PQ4 => "PQ4",
-                            QuantizationType::PQ8 => "PQ8",
-                            QuantizationType::Binary => "Binary",
-                        }
-                    ))
-                })
-                .collect();
-            arrays.push(Arc::new(StringArray::from(metadata_json)));
+            // Build Map array for metadata
+            let mut keys_builder = StringBuilder::new();
+            let mut values_builder = StringBuilder::new();
+            let mut offsets = vec![0i32];
+            let mut entry_count = 0i32;
+
+            for i in 0..config.num_rows {
+                // Add metadata entries
+                keys_builder.append_value("category");
+                values_builder.append_value(&format!("cat_{}", i % config.metadata_cardinality));
+                entry_count += 1;
+
+                keys_builder.append_value("quantized");
+                values_builder.append_value("true");
+                entry_count += 1;
+
+                keys_builder.append_value("method");
+                values_builder.append_value(match &config.quantization_types[0] {
+                    QuantizationType::PQ4 => "PQ4",
+                    QuantizationType::PQ8 => "PQ8",
+                    QuantizationType::Binary => "Binary",
+                });
+                entry_count += 1;
+
+                offsets.push(entry_count);
+            }
+
+            // Create struct array for Map entries
+            let keys_array = keys_builder.finish();
+            let values_array = values_builder.finish();
+            let struct_array = StructArray::from(vec![
+                (
+                    Arc::new(Field::new("key", DataType::Utf8, false)),
+                    Arc::new(keys_array) as ArrayRef,
+                ),
+                (
+                    Arc::new(Field::new("value", DataType::Utf8, true)),
+                    Arc::new(values_array) as ArrayRef,
+                ),
+            ]);
+
+            // Create Map array
+            let map_array = MapArray::try_new(
+                Arc::new(Field::new(
+                    "entries",
+                    DataType::Struct(vec![
+                        Field::new("key", DataType::Utf8, false),
+                        Field::new("value", DataType::Utf8, true),
+                    ].into()),
+                    false,
+                )),
+                OffsetBuffer::new(ScalarBuffer::from(offsets)),
+                struct_array,
+                None,
+                false,
+            ).unwrap();
+
+            arrays.push(Arc::new(map_array));
         }
 
         RecordBatch::try_new(Arc::new(schema.clone()), arrays)
@@ -506,18 +644,63 @@ impl ParquetTestDataGenerator {
         }
         arrays.push(Arc::new(tags_builder.finish()));
 
-        // Metadata column (if included)
+        // Metadata column as native Map (if included)
         if config.include_metadata {
-            let metadata_json: Vec<Option<String>> = (0..config.num_rows)
-                .map(|i| {
-                    Some(format!(
-                        r#"{{"filterable":true,"row_index":{},"generated_at":"{}"}}"#,
-                        i,
-                        chrono::Utc::now().to_rfc3339()
-                    ))
-                })
-                .collect();
-            arrays.push(Arc::new(StringArray::from(metadata_json)));
+            // Build Map array for metadata
+            let mut keys_builder = StringBuilder::new();
+            let mut values_builder = StringBuilder::new();
+            let mut offsets = vec![0i32];
+            let mut entry_count = 0i32;
+            let generated_at = chrono::Utc::now().to_rfc3339();
+
+            for i in 0..config.num_rows {
+                // Add metadata entries
+                keys_builder.append_value("filterable");
+                values_builder.append_value("true");
+                entry_count += 1;
+
+                keys_builder.append_value("row_index");
+                values_builder.append_value(&i.to_string());
+                entry_count += 1;
+
+                keys_builder.append_value("generated_at");
+                values_builder.append_value(&generated_at);
+                entry_count += 1;
+
+                offsets.push(entry_count);
+            }
+
+            // Create struct array for Map entries
+            let keys_array = keys_builder.finish();
+            let values_array = values_builder.finish();
+            let struct_array = StructArray::from(vec![
+                (
+                    Arc::new(Field::new("key", DataType::Utf8, false)),
+                    Arc::new(keys_array) as ArrayRef,
+                ),
+                (
+                    Arc::new(Field::new("value", DataType::Utf8, true)),
+                    Arc::new(values_array) as ArrayRef,
+                ),
+            ]);
+
+            // Create Map array
+            let map_array = MapArray::try_new(
+                Arc::new(Field::new(
+                    "entries",
+                    DataType::Struct(vec![
+                        Field::new("key", DataType::Utf8, false),
+                        Field::new("value", DataType::Utf8, true),
+                    ].into()),
+                    false,
+                )),
+                OffsetBuffer::new(ScalarBuffer::from(offsets)),
+                struct_array,
+                None,
+                false,
+            ).unwrap();
+
+            arrays.push(Arc::new(map_array));
         }
 
         RecordBatch::try_new(Arc::new(schema.clone()), arrays)

@@ -553,7 +553,7 @@ impl SerializationStrategyOptimizer {
 
         // Timestamp and metadata
         fields.push(Field::new("timestamp", DataType::Int64, false));
-        fields.push(Field::new("metadata_json", DataType::Utf8, true));
+        fields.push(Field::new(super::FIELD_EXTRA_META, DataType::Utf8, true));
 
         // Add fields for each quantization strategy
         for strategy in strategies {

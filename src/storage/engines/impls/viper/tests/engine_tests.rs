@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use crate::utils::StoragePath;
 use arrow_array::{StringArray, Int32Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
@@ -38,13 +39,13 @@ async fn setup_test_assignment(collection_id: &str, base_path: &str) {
     use tokio::fs;
 
     // Create necessary directories
-    let data_dir = format!("{}/{}/data", base_path, collection_id);
+    let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
     fs::create_dir_all(&data_dir)
         .await
         .expect("Failed to create data directory");
 
     // Create temp directory for atomic writes
-    let temp_dir = format!("{}/{}/data/___temp", base_path, collection_id);
+    let temp_dir = StoragePath::data_file_path(base_path, &collection_id, "___temp");
     fs::create_dir_all(&temp_dir)
         .await
         .expect("Failed to create temp directory");
@@ -52,7 +53,7 @@ async fn setup_test_assignment(collection_id: &str, base_path: &str) {
     // Storage assignment is now handled internally by CollectionService
     // when a collection is created. For test purposes, we just ensure
     // the directory structure exists.
-    let data_dir = format!("{}/{}/data", base_path, collection_id);
+    let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
     let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
     fs::create_dir_all(&data_dir)
         .await
@@ -666,7 +667,7 @@ async fn test_persistence_across_restarts() {
 
         // Search for persisted vectors - use collection-specific path
         // VIPER stores files in {base_path}/{collection_id}/data
-        let storage_url = format!("file://{}/{}/data", base_path, collection_id);
+        let storage_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
         let results = engine
             .search_vectors(collection_id, &storage_url, &vec![0.1; 128], 30)
             .await
@@ -913,7 +914,7 @@ async fn test_search_vectors_unified() {
     // Debug: Check the directory structure
     {
         let base_path = temp_dir.path().to_str().unwrap();
-        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
         let wal_dir = format!("{}/{}/write_buffer", base_path, collection_id);
         if tokio::fs::metadata(&data_dir).await.is_ok() {
             debug!("Data directory exists: {}", data_dir);

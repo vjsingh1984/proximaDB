@@ -5,6 +5,7 @@ use crate::core::search::DataFreshnessTier;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
+use crate::utils::StoragePath;
 use crate::storage::persistence::filesystem::FileStorageTier;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -553,7 +554,7 @@ impl UnifiedStorageEngine for SwiftEngine {
             .collection_config
             .as_ref()
             .and_then(|c| c.storage_assignment.as_ref())
-            .map(|s| format!("{}/{}/data", s.base_location, collection_id))
+            .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
             .ok_or_else(|| anyhow!("SWIFT: Collection '{}' has no storage assignment", collection_id))?;
 
         // Storage path already includes collection ID
@@ -669,7 +670,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                 .collection_config
                 .as_ref()
                 .and_then(|c| c.storage_assignment.as_ref())
-                .map(|s| format!("{}/{}/data", s.base_location, collection_id))
+                .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
                 .ok_or_else(|| anyhow!("No storage assignment for collection {}", collection_id))?;
 
             let output_files_paths = vec![format!(
@@ -775,7 +776,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         );
 
         // Construct data directory from base_path and collection_id
-        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
 
         // TODO: Load actual SST files from data_dir
         // For now, return None as placeholder

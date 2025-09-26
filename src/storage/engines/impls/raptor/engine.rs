@@ -1,6 +1,7 @@
 use crate::utils::uuid::Uuid;
 use anyhow::Result;
 use crate::core::errors::ProximaDBError;
+use crate::utils::StoragePath;
 use arrow_array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
@@ -1850,7 +1851,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Find RAPTOR data files for this collection
         // Construct data directory from base_path and collection_id
         // Format is: {baseurl}/{collectionid}/data/
-        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
         tracing::info!("RAPTOR vector_by_id: Constructed data directory path: {}", data_dir);
 
         // Use filesystem API to list files in the directory

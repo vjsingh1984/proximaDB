@@ -124,6 +124,7 @@ mod integration_tests;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::EventLog;
+use crate::utils::StoragePath;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::constants::{ENGINE_HELIX, HELIX_FILE_EXT, HELIX_MAGIC};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
@@ -131,6 +132,7 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
 use self::clustering::{HilbertKey, PCAModel};
 
@@ -349,6 +351,23 @@ impl HelixEngine {
         ).await
     }
 
+    /// Create HELIX engine with specific config and filesystem (for testing)
+    pub async fn new_with_config(
+        config: HelixConfig,
+        filesystem_factory: Arc<FilesystemFactory>,
+        distance_compute: Arc<UnifiedDistanceCompute>,
+    ) -> Result<Self> {
+        Self::new_with_orchestrator_and_filesystem(
+            "placeholder".to_string(),  // collection_id (ignored)
+            config,
+            std::path::PathBuf::from("/tmp"), // data_dir (ignored)
+            None,  // event_log
+            None,  // orchestrator
+            Some(filesystem_factory),
+            Some(distance_compute),
+        ).await
+    }
+
     /// Create a new HELIX engine instance with an explicit Cross-Cache Orchestrator
     pub async fn new_with_orchestrator(
         collection_id: String,
@@ -357,10 +376,35 @@ impl HelixEngine {
         event_log: Option<Arc<EventLog>>,
         orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
     ) -> Result<Self> {
-        // Create filesystem factory
-        let filesystem_config =
-            crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = Arc::new(FilesystemFactory::new(filesystem_config).await?);
+        Self::new_with_orchestrator_and_filesystem(
+            collection_id,
+            config,
+            data_dir,
+            event_log,
+            orchestrator,
+            None,
+            None,
+        ).await
+    }
+
+    /// Create a new HELIX engine instance with explicit filesystem and distance compute
+    pub async fn new_with_orchestrator_and_filesystem(
+        collection_id: String,
+        config: HelixConfig,
+        data_dir: PathBuf,
+        event_log: Option<Arc<EventLog>>,
+        orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
+        filesystem_factory_override: Option<Arc<FilesystemFactory>>,
+        distance_compute_override: Option<Arc<UnifiedDistanceCompute>>,
+    ) -> Result<Self> {
+        // Create or use provided filesystem factory
+        let filesystem_factory = if let Some(factory) = filesystem_factory_override {
+            factory
+        } else {
+            let filesystem_config =
+                crate::storage::persistence::filesystem::FilesystemConfig::default();
+            Arc::new(FilesystemFactory::new(filesystem_config).await?)
+        };
 
         // Get the local filesystem
         let filesystem = filesystem_factory.get_filesystem("file://")?;
@@ -374,9 +418,13 @@ impl HelixEngine {
         }
 
         // Initialize unified components (similar to SST)
-        let distance_compute = Arc::new(
-            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
-        );
+        let distance_compute = if let Some(compute) = distance_compute_override {
+            compute
+        } else {
+            Arc::new(
+                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+            )
+        };
 
         // Initialize dual quantization architecture
         let storage_quantization_engine = if config.storage_quantization {
@@ -1129,7 +1177,7 @@ impl UnifiedStorageEngine for HelixEngine {
         }
 
         // Construct data directory from base_path and collection_id
-        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
 
         // Get filesystem for the data directory
         let fs = self.filesystem_factory.get_filesystem(&data_dir)?;

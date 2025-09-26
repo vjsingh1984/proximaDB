@@ -48,39 +48,54 @@
 //! - **Row Offset Tracking**: Optional offset optimization for ID-less storage
 //! - **Bloom Filter Cache**: Cached bloom filters per row group
 //! - **Index Statistics**: Track hit rates and performance metrics
-//!
-//! ### 4. Schema & Metadata Management
-//! - **ColumnarSchema**: Unified schema creation and validation
-//! - **NativeMetadataHandler**: Efficient metadata filtering and projection
-//! - **FilterableColumnSpec**: Define filterable columns with proper types
-//! - **Schema Evolution**: Support for schema versioning and migration
-//!
-//! ### 5. Batch Operations
-//! - **ColumnarBatchOperations**: Optimized batch read/write operations
-//! - **Memory Pool Integration**: Reuse buffers across operations
-//! - **Parallel Processing**: Multi-threaded batch processing
-//! - **Compression Support**: Per-column compression configuration
-//!
-//! ### 6. Performance Features
-//! - **Footer Cache**: Reduce cloud API calls by 70-90%
-//! - **Streaming Row Groups**: 80% memory reduction for large files
-//! - **Dictionary Encoding**: 60% storage reduction for IDs
-//! - **Bloom Filters**: 95% reduction in metadata scanning
-//! - **Progressive Quantization**: 90% faster similarity search
-//!
-//! ## Key Optimizations Implemented
-//! 1. **Parquet Bloom Filters**: Built-in bloom filters for efficient ID lookups (benefits both engines)
-//! 2. **Streaming Row Groups**: Memory-efficient streaming access to large Parquet files
-//! 3. **ID-Aware Storage**: Keep customer ID column with optional row offset optimizations  
-//! 4. **Progressive Search**: Binary → INT8 → PQ → FP32 quantization pipeline
-//! 5. **Unified Optimization**: Shared caching, statistics, and query planning
-//!
-//! ## Benefits for Both VIPER and NOVA
-//! - 95% reduction in metadata scanning overhead (bloom filters)
-//! - 80% memory reduction during large file processing (streaming)
-//! - Dictionary encoding for efficient ID storage with fast lookups
-//! - 90% faster similarity search with progressive quantization
-//! - Zero code duplication between engines for core columnar operations
+
+// Field name constants for consistent columnar storage - inlined at compile time
+// These MUST be used across all Parquet operations (flush, compact, search, schema)
+pub const FIELD_ID: &str = "id";
+pub const FIELD_VECTOR_FP32: &str = "vector_fp32";
+pub const FIELD_VECTOR_INT8: &str = "vector_int8";
+pub const FIELD_VECTOR_PQ: &str = "vector_pq";
+pub const FIELD_VERSION: &str = "version";
+pub const FIELD_TIMESTAMP: &str = "timestamp";
+pub const FIELD_EXTRA_META: &str = "extra_meta";  // Non-filterable metadata stored as JSON
+// Note: Filterable metadata fields are stored as individual columns with their actual names
+pub const FIELD_ROW_GROUP_OFFSET: &str = "row_group_offset";
+pub const FIELD_ROW_INDEX: &str = "row_index";
+pub const FIELD_INT8_SCALE: &str = "int8_scale";
+pub const FIELD_INT8_ZERO_POINT: &str = "int8_zero_point";
+pub const FIELD_EXPIRES_AT: &str = "expires_at";
+pub const FIELD_IS_DELETED: &str = "is_deleted";
+
+// ### 4. Schema & Metadata Management
+// - **ColumnarSchema**: Unified schema creation and validation
+// - **NativeMetadataHandler**: Efficient metadata filtering and projection
+// - **FilterableColumnSpec**: Define filterable columns with proper types
+// - **Schema Evolution**: Support for schema versioning and migration
+//
+// ### 5. Batch Operations
+// - **ColumnarBatchOperations**: Optimized batch read/write operations
+// - **Memory Pool Integration**: Reuse buffers across operations
+// - **Parallel Processing**: Multi-threaded batch processing
+// - **Compression Support**: Per-column compression configuration
+//
+// ### 6. Performance Features
+// - **Footer Cache**: Reduce cloud API calls by 70-90%
+// - **Streaming Row Groups**: 80% memory reduction for large files
+// - **Dictionary Encoding**: 60% storage reduction for IDs
+// - **Bloom Filters**: 95% reduction in metadata scanning
+// - **Progressive Quantization**: 90% faster similarity search
+// ## Key Optimizations Implemented
+// 1. **Parquet Bloom Filters**: Built-in bloom filters for efficient ID lookups (benefits both engines)
+// 2. **Streaming Row Groups**: Memory-efficient streaming access to large Parquet files
+// 3. **ID-Aware Storage**: Keep customer ID column with optional row offset optimizations
+// 4. **Progressive Search**: Binary → INT8 → PQ → FP32 quantization pipeline
+// 5. **Unified Optimization**: Shared caching, statistics, and query planning
+// ## Benefits for Both VIPER and NOVA
+// - 95% reduction in metadata scanning overhead (bloom filters)
+// - 80% memory reduction during large file processing (streaming)
+// - Dictionary encoding for efficient ID storage with fast lookups
+// - 90% faster similarity search with progressive quantization
+// - Zero code duplication between engines for core columnar operations
 
 pub mod id_index;
 pub mod optimization;

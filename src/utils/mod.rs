@@ -10,6 +10,7 @@ pub mod encoding;
 pub mod glob;
 pub mod hash;
 pub mod skiplist;
+pub mod storage_path;
 pub mod uuid;
 
 // Re-export commonly used items
@@ -21,4 +22,5 @@ pub use self::encoding::{base64_decode, base64_encode};
 pub use self::glob::{GlobMatcher, GlobPattern};
 pub use self::hash::{FastHash, HashBuilder};
 pub use self::skiplist::{SkipList, SkipListIterator};
+pub use self::storage_path::StoragePath;
 pub use self::uuid::{Uuid, UuidGenerator};

@@ -272,10 +272,11 @@ impl RowBasedCompressionConfig {
         };
 
         Self {
-            enabled: proto_config.adaptive, // Use adaptive field as enabled
+            // Enable compression if algorithm is not None (0)
+            enabled: proto_config.algorithm != 0,
             algorithm,
             compression_level: proto_config.level.unwrap_or(3) as u8,
-            compression_ratio_estimate: 1.5, // Default ratio
+            compression_ratio_estimate: proto_config.min_ratio.unwrap_or(0.6),
             vector_compression: VectorCompressionStrategy::default(),
             metadata_compression: MetadataCompressionConfig::default(),
             block_compression: BlockLevelCompressionConfig::default(),
@@ -615,7 +616,7 @@ mod tests {
     #[test]
     fn test_proto_config_conversion() {
         let proto_config = ProtoCompressionConfig {
-            algorithm: 1, // LZ4 algorithm enum value
+            algorithm: 2, // LZ4 algorithm enum value (COMPRESSION_LZ4 = 2)
             level: Some(2),
             adaptive: false,
             min_ratio: None,

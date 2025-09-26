@@ -9,6 +9,7 @@ use crate::proto::proximadb_v1::MetadataItem;
 use crate::storage::engines::impls::viper::ViperEngine;
 use crate::storage::traits::{UnifiedStorageEngine, FlushParameters, CompactionParameters};
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::utils::StoragePath;
 
 /// Create test vector
 fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
@@ -48,7 +49,7 @@ async fn test_minimal_viper_compaction() -> Result<()> {
     // Set up storage assignment
     use tokio::fs;
 use tracing::{debug, error, info};
-    let data_dir = format!("{}/{}/data", base_path, collection_id);
+    let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
     fs::create_dir_all(&data_dir).await?;
     
     // Storage assignment is now handled internally by CollectionService

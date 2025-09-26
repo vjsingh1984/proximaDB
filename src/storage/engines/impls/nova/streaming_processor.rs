@@ -617,13 +617,13 @@ mod tests {
     async fn test_streaming_processor_creation() {
         let config = StreamingConfig::default();
         let processor = StreamingRowGroupProcessor::new(config);
-        assert_eq!(processor.processing_pipeline.len(), 6);
+        assert_eq!(processor.processing_pipeline.len(), 7);
         assert_eq!(
             processor.processing_pipeline[0],
             ProcessingStage::BloomFilter
         );
         assert_eq!(
-            processor.processing_pipeline[5],
+            processor.processing_pipeline[6],
             ProcessingStage::FullPrecision
         );
     }

@@ -5,15 +5,17 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{
-    Collection, CollectionConfig, DistanceMetric as ProtoDistanceMetric, StorageEngine,
+    Collection, CollectionConfig, CollectionStats, DistanceMetric as ProtoDistanceMetric,
+    StorageEngine, StorageAssignment,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
-    CompactionParameters, FlushParameters, StorageQueryContext, StorageQueryMetadata,
+    CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext, StorageQueryMetadata,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tempfile::TempDir;
+use std::sync::Arc;
+use tempfile::tempdir;
 
 /// Test helper to create sample vector records
 fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
@@ -39,9 +41,6 @@ fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
 async fn test_helix_engine_creation() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = HelixConfig::default();
-
     let engine = HelixEngine::new()
     .await
     .unwrap();
@@ -54,14 +53,55 @@ async fn test_helix_engine_creation() {
 async fn test_flush_operation() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = HelixConfig::default();
+    let temp_dir = tempdir().unwrap();
+    let path = temp_dir.path().to_str().unwrap().to_string();
 
-    let engine = HelixEngine::new()
-    .await
-    .unwrap();
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let filesystem_factory = Arc::new(
+        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            .await
+            .unwrap()
+    );
+    let distance_compute = Arc::new(
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
+    );
+
+    let config = HelixConfig::default();
+    let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
+        .await
+        .unwrap();
 
     let records = create_test_records(100, 128);
+
+    // Create collection for the flush
+    let collection_config = CollectionConfig {
+        name: "test_collection".to_string(),
+        dimension: 128,
+        distance_metric: ProtoDistanceMetric::Euclidean as i32,
+        storage_engine: StorageEngine::Helix as i32,
+        ..Default::default()
+    };
+
+    let collection = Collection {
+        id: "test_collection".to_string(),
+        config: Some(collection_config),
+        stats: Some(CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        storage_assignment: Some(StorageAssignment {
+            primary_path: "/tmp/proximadb-data/helix".to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Helix as i32,
+            engine_config: HashMap::new(),
+            base_location: "/tmp/proximadb-data".to_string(),
+            assigned_at: 0,
+        }),
+        ..Default::default()
+    };
 
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
@@ -72,7 +112,7 @@ async fn test_flush_operation() {
         vector_records: records,
         trigger_compaction: false,
         batch_ids: vec![],
-        collection_config: None,
+        collection_config: Some(collection),
         estimated_size: 0,
     };
 
@@ -87,12 +127,53 @@ async fn test_flush_operation() {
 async fn test_vector_search() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = HelixConfig::default();
+    let temp_dir = tempdir().unwrap();
+    let path = temp_dir.path().to_str().unwrap().to_string();
 
-    let engine = HelixEngine::new()
-    .await
-    .unwrap();
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let filesystem_factory = Arc::new(
+        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            .await
+            .unwrap()
+    );
+    let distance_compute = Arc::new(
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
+    );
+
+    let config = HelixConfig::default();
+    let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
+        .await
+        .unwrap();
+
+    // Create collection
+    let collection_config = CollectionConfig {
+        name: "test_collection".to_string(),
+        dimension: 128,
+        distance_metric: ProtoDistanceMetric::Euclidean as i32,
+        storage_engine: StorageEngine::Helix as i32,
+        ..Default::default()
+    };
+
+    let collection = Collection {
+        id: "test_collection".to_string(),
+        config: Some(collection_config.clone()),
+        stats: Some(CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        storage_assignment: Some(StorageAssignment {
+            primary_path: "/tmp/proximadb-data/helix".to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Helix as i32,
+            engine_config: HashMap::new(),
+            base_location: "/tmp/proximadb-data".to_string(),
+            assigned_at: 0,
+        }),
+        ..Default::default()
+    };
 
     // Flush some vectors
     let records = create_test_records(50, 128);
@@ -101,7 +182,7 @@ async fn test_vector_search() {
         vector_records: records,
         force: false,
         synchronous: true,
-        collection_config: None,
+        collection_config: Some(collection.clone()),
         ..Default::default()
     };
 
@@ -109,14 +190,6 @@ async fn test_vector_search() {
 
     // Search for nearest neighbors
     let query_vector = vec![0.5; 128];
-
-    let collection_config = CollectionConfig {
-        name: "test_collection".to_string(),
-        dimension: 128,
-        distance_metric: ProtoDistanceMetric::Euclidean as i32,
-        storage_engine: StorageEngine::Helix as i32,
-        ..Default::default()
-    };
 
     let collection = Arc::new(Collection {
         id: "test_collection".to_string(),
@@ -146,12 +219,53 @@ async fn test_vector_search() {
 async fn test_vector_by_id() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = HelixConfig::default();
+    let temp_dir = tempdir().unwrap();
+    let path = temp_dir.path().to_str().unwrap().to_string();
 
-    let engine = HelixEngine::new()
-    .await
-    .unwrap();
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let filesystem_factory = Arc::new(
+        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            .await
+            .unwrap()
+    );
+    let distance_compute = Arc::new(
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
+    );
+
+    let config = HelixConfig::default();
+    let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
+        .await
+        .unwrap();
+
+    // Create collection
+    let collection_config = CollectionConfig {
+        name: "test_collection".to_string(),
+        dimension: 128,
+        distance_metric: ProtoDistanceMetric::Euclidean as i32,
+        storage_engine: StorageEngine::Helix as i32,
+        ..Default::default()
+    };
+
+    let collection = Collection {
+        id: "test_collection".to_string(),
+        config: Some(collection_config),
+        stats: Some(CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        storage_assignment: Some(StorageAssignment {
+            primary_path: "/tmp/proximadb-data/helix".to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Helix as i32,
+            engine_config: HashMap::new(),
+            base_location: "/tmp/proximadb-data".to_string(),
+            assigned_at: 0,
+        }),
+        ..Default::default()
+    };
 
     // Flush some vectors
     let records = create_test_records(10, 128);
@@ -160,15 +274,15 @@ async fn test_vector_by_id() {
         vector_records: records,
         force: false,
         synchronous: true,
-        collection_config: None,
+        collection_config: Some(collection),
         ..Default::default()
     };
 
     engine.do_flush(&params).await.unwrap();
 
-    // Find specific vector
+    // Find specific vector - use same base_location as in flush
     let result = engine
-        .vector_by_id("test_collection", "/data/test", "vec_5")
+        .vector_by_id("test_collection", "/tmp/proximadb-data", "vec_5")
         .await
         .unwrap();
 
@@ -180,13 +294,55 @@ async fn test_vector_by_id() {
 async fn test_compaction() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = tempfile::tempdir().unwrap();
+    let path = temp_dir.path().to_str().unwrap().to_string();
+
+    // Create filesystem factory with proper config (like SST)
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let filesystem_factory = Arc::new(
+        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            .await
+            .unwrap()
+    );
+    let distance_compute = Arc::new(
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
+    );
+
     let mut config = HelixConfig::default();
     config.level0_file_num_compaction_trigger = 2;
 
-    let engine = HelixEngine::new()
-    .await
-    .unwrap();
+    let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
+        .await
+        .unwrap();
+
+    // Create collection for compaction test
+    let collection_config = CollectionConfig {
+        name: "test_collection".to_string(),
+        dimension: 128,
+        distance_metric: ProtoDistanceMetric::Euclidean as i32,
+        storage_engine: StorageEngine::Helix as i32,
+        ..Default::default()
+    };
+
+    let collection = Collection {
+        id: "test_collection".to_string(),
+        config: Some(collection_config),
+        stats: Some(CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        storage_assignment: Some(StorageAssignment {
+            primary_path: "/tmp/proximadb-data/helix".to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Helix as i32,
+            engine_config: HashMap::new(),
+            base_location: "/tmp/proximadb-data".to_string(),
+            assigned_at: 0,
+        }),
+        ..Default::default()
+    };
 
     // Flush multiple L0 files to trigger compaction
     for i in 0..3 {
@@ -194,11 +350,18 @@ async fn test_compaction() {
         let params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
             vector_records: records,
-            collection_config: None,
-            ..Default::default()
+            collection_config: Some(collection.clone()),
+            force: true,  // Force flush to ensure files are created
+            synchronous: true,  // Wait for completion
+            hints: HashMap::new(),
+            timeout_ms: Some(5000),
+            trigger_compaction: false,  // Don't trigger compaction yet
+            batch_ids: vec![],
+            estimated_size: 50 * 128 * 4,  // 50 vectors * 128 dims * 4 bytes
         };
 
-        engine.do_flush(&params).await.unwrap();
+        let result = engine.do_flush(&params).await.unwrap();
+        println!("Flush {} completed: {:?}", i, result);
     }
 
     // Wait a bit for background compaction
@@ -207,8 +370,13 @@ async fn test_compaction() {
     // Trigger manual compaction
     let compact_params = CompactionParameters {
         collection_id: Some("test_collection".to_string()),
-        collection_config: None,
-        ..Default::default()
+        collection_config: Some(collection),
+        force: true,  // Force compaction
+        synchronous: true,  // Wait for completion
+        hints: HashMap::new(),
+        timeout_ms: Some(5000),
+        priority: OperationPriority::Medium,
+        estimated_input_size: 3 * 50 * 128 * 4,  // 3 flushes * 50 vectors * 128 dims * 4 bytes
     };
 
     let result = engine.do_compact(&compact_params).await.unwrap();
@@ -236,14 +404,20 @@ async fn test_pca_model_training() {
 async fn test_hilbert_key_computation() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let vector1 = vec![0.0, 0.0, 0.0];
-    let vector2 = vec![1.0, 1.0, 1.0];
+    // Use vectors with different patterns (not uniform values)
+    // Uniform vectors like [0,0,0] or [1,1,1] normalize to [0.5,0.5,0.5] and produce same key
+    let vector1 = vec![0.0, 0.5, 1.0];
+    let vector2 = vec![1.0, 0.5, 0.0];
+    let vector3 = vec![0.25, 0.75, 0.5];
 
     let key1 = clustering::compute_hilbert_key(&vector1);
     let key2 = clustering::compute_hilbert_key(&vector2);
+    let key3 = clustering::compute_hilbert_key(&vector3);
 
     // Different vectors should have different keys
-    assert_ne!(key1, key2);
+    assert_ne!(key1, key2, "key1 {} should differ from key2 {}", key1, key2);
+    assert_ne!(key2, key3, "key2 {} should differ from key3 {}", key2, key3);
+    assert_ne!(key1, key3, "key1 {} should differ from key3 {}", key1, key3);
 }
 
 #[tokio::test]
@@ -273,13 +447,14 @@ async fn test_liquid_clustering() {
 async fn test_fastlanes_integration() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
     // Create filesystem factory with proper config
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-    fs_config.default_fs = Some("file:///tmp".to_string());
+    fs_config.default_fs = Some(format!("file://{}", temp_path));
     let factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config).await.unwrap());
-    let filesystem = factory.get_filesystem("file:///tmp").unwrap();
+    let filesystem = factory.get_filesystem(&format!("file://{}", temp_path)).unwrap();
 
     let records = create_test_records(100, 128);
     let path = temp_dir.path().join("test.helix");
@@ -319,18 +494,61 @@ async fn test_fastlanes_integration() {
 async fn test_metrics_collection() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = HelixConfig::default();
+    let temp_dir = tempdir().unwrap();
+    let path = temp_dir.path().to_str().unwrap().to_string();
 
-    let engine = HelixEngine::new()
-    .await
-    .unwrap();
+    // Create filesystem factory with proper config
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", path));
+    let filesystem_factory = Arc::new(
+        crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+            .await
+            .unwrap()
+    );
+    let distance_compute = Arc::new(
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
+    );
+
+    let config = HelixConfig::default();
+    let engine = HelixEngine::new_with_config(config, filesystem_factory, distance_compute)
+        .await
+        .unwrap();
 
     // Perform some operations
     let records = create_test_records(50, 128);
+
+    // Create collection config
+    let collection_config = CollectionConfig {
+        name: "test_collection".to_string(),
+        dimension: 128,
+        distance_metric: ProtoDistanceMetric::Euclidean as i32,
+        storage_engine: StorageEngine::Helix as i32,
+        ..Default::default()
+    };
+
+    let collection = Collection {
+        id: "test_collection".to_string(),
+        config: Some(collection_config),
+        stats: Some(CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        storage_assignment: Some(StorageAssignment {
+            primary_path: "/tmp/proximadb-data/helix".to_string(),
+            backup_paths: vec![],
+            engine: StorageEngine::Helix as i32,
+            engine_config: HashMap::new(),
+            base_location: "/tmp/proximadb-data".to_string(),
+            assigned_at: 0,
+        }),
+        ..Default::default()
+    };
+
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: records,
+        collection_config: Some(collection),
         ..Default::default()
     };
 

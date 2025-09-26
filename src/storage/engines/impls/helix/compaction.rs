@@ -147,6 +147,22 @@ impl LeveledCompactor {
 
             bytes_written += bytes;
 
+            // Generate bloom filter for chunk IDs
+            let bloom_filter = if !chunk.is_empty() {
+                use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+
+                let bloom_config = BloomFilterConfig::for_sstable(chunk.len());
+                let mut bloom = BloomFilterFactory::create(&bloom_config);
+
+                for record in chunk {
+                    bloom.insert(record.id.as_bytes());
+                }
+
+                bloom.serialize().ok()
+            } else {
+                None
+            };
+
             // Create metadata
             let metadata = SStableMetadata {
                 path: file_path,
@@ -166,7 +182,7 @@ impl LeveledCompactor {
                 .into_iter()
                 .map(|h| h.fastlanes_metadata)
                 .collect(),
-                bloom_filter: None,
+                bloom_filter,
             };
 
             new_l1_files.push(metadata);
@@ -278,6 +294,22 @@ impl LeveledCompactor {
 
             bytes_written += bytes;
 
+            // Generate bloom filter for chunk IDs
+            let bloom_filter = if !chunk.is_empty() {
+                use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+
+                let bloom_config = BloomFilterConfig::for_sstable(chunk.len());
+                let mut bloom = BloomFilterFactory::create(&bloom_config);
+
+                for record in chunk {
+                    bloom.insert(record.id.as_bytes());
+                }
+
+                bloom.serialize().ok()
+            } else {
+                None
+            };
+
             let metadata = SStableMetadata {
                 path: file_path,
                 level: 1,
@@ -296,7 +328,7 @@ impl LeveledCompactor {
                 .into_iter()
                 .map(|h| h.fastlanes_metadata)
                 .collect(),
-                bloom_filter: None,
+                bloom_filter,
             };
 
             new_l1_files.push(metadata);
@@ -422,6 +454,22 @@ impl LeveledCompactor {
 
             bytes_written += bytes;
 
+            // Generate bloom filter for chunk IDs
+            let bloom_filter = if !chunk.is_empty() {
+                use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+
+                let bloom_config = BloomFilterConfig::for_sstable(chunk.len());
+                let mut bloom = BloomFilterFactory::create(&bloom_config);
+
+                for record in chunk {
+                    bloom.insert(record.id.as_bytes());
+                }
+
+                bloom.serialize().ok()
+            } else {
+                None
+            };
+
             // Create metadata
             let metadata = SStableMetadata {
                 path: file_path,
@@ -445,7 +493,7 @@ impl LeveledCompactor {
                 .into_iter()
                 .map(|h| h.fastlanes_metadata)
                 .collect(),
-                bloom_filter: None,
+                bloom_filter,
             };
 
             new_files.push(metadata);

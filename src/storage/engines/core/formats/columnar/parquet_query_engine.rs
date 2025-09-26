@@ -35,7 +35,7 @@ use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 // Collection proto handled internally
 use super::footer_cache::{FooterCacheConfig, ParquetFooterCache};
 use super::optimization::{ColumnarOptimizer, FileBloomFilters, StreamingRowGroupIterator};
@@ -1160,23 +1160,40 @@ impl UnifiedParquetReader {
         }
 
         let id = batch
-            .column_by_name("id")
+            .column_by_name(super::FIELD_ID)
             .and_then(|col| col.as_any().downcast_ref::<StringArray>())
             .map(|arr| arr.value(row_index).to_string());
-        // Extract vector (simplified - would need proper handling of FixedSizeBinaryArray)
+
+        // Extract vector - use the standard field name from columnar module
         let vector = batch
-            .column_by_name("vector")
-            .map(|_| vec![0.0f32; 768]) // Placeholder - would extract actual vector
-            .clone();
+            .column_by_name(super::FIELD_VECTOR_FP32)
+            .and_then(|col| {
+                // Vectors are stored as FixedSizeBinary in parquet
+                if let Some(binary_array) = col.as_any().downcast_ref::<arrow_array::FixedSizeBinaryArray>() {
+                    // Get the binary data for this row
+                    let bytes = binary_array.value(row_index);
+                    // Convert bytes back to f32 vector
+                    let vec_data: Vec<f32> = bytes
+                        .chunks_exact(4)
+                        .map(|chunk| {
+                            let arr: [u8; 4] = chunk.try_into().unwrap();
+                            f32::from_le_bytes(arr)
+                        })
+                        .collect();
+                    Some(vec_data)
+                } else {
+                    None
+                }
+            });
         // Extract timestamp
         let timestamp = batch
-            .column_by_name("timestamp")
+            .column_by_name(super::FIELD_TIMESTAMP)
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::Int64Array>())
             .map(|arr| arr.value(row_index) as u32);
 
         // Extract version
         let version = batch
-            .column_by_name("version")
+            .column_by_name(super::FIELD_VERSION)
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::Int64Array>())
             .and_then(|arr| {
                 if row_index >= arr.len() {
@@ -1615,9 +1632,14 @@ impl UnifiedParquetReader {
             );
 
         // Extract query vector from params (support single vector for now)
-        let query_vector = params
-            .first_query_vector()
-            .ok_or_else(|| anyhow!("Query vector is required for search"))?;
+        // Check both vector (single) and query_vectors (batch) fields
+        let query_vector = if let Some(vec) = &params.vector {
+            vec
+        } else {
+            params
+                .first_query_vector()
+                .ok_or_else(|| anyhow!("Query vector is required for search"))?
+        };
 
         debug!("📖 Query vector dimension: {}", query_vector.len());
 
@@ -1625,6 +1647,7 @@ impl UnifiedParquetReader {
 
         // Process each file in the collection
         for file_path in &collection_context.file_paths {
+            debug!("Processing file: {}", file_path);
             // Select reading strategy based on query characteristics
             let strategy = self
                 .select_reading_strategy(
@@ -1636,10 +1659,13 @@ impl UnifiedParquetReader {
 
             // Read vectors using selected strategy
             let batches = self.read_with_strategy(file_path, &strategy, None).await?;
+            trace!("Read {} batches from {}", batches.len(), file_path);
 
             // Convert batches to search results
-            for batch in batches {
+            for (batch_idx, batch) in batches.iter().enumerate() {
+                trace!("Batch {} has {} rows", batch_idx, batch.num_rows());
                 let vectors = self.extract_vectors_from_batch(&batch)?;
+                trace!("Extracted {} vectors from batch {}", vectors.len(), batch_idx);
                 for vector_record in vectors {
                     // Calculate similarity
                     let distance_metric = params
@@ -1718,22 +1744,22 @@ impl UnifiedParquetReader {
     fn extract_vectors_from_batch(&self, batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
         let mut vectors = Vec::new();
 
-        // Find vector column
+        // Find vector column using the standard field name constant
         let vector_col_idx = batch
             .schema()
             .fields()
             .iter()
-            .position(|f| f.name() == "vector")
+            .position(|f| f.name() == super::FIELD_VECTOR_FP32)
             .ok_or_else(|| anyhow!("Vector column not found"))?;
 
         let vector_array = batch.column(vector_col_idx);
 
-        // Find ID column if present
+        // Find ID column if present using the standard field name constant
         let id_col_idx = batch
             .schema()
             .fields()
             .iter()
-            .position(|f| f.name() == "id");
+            .position(|f| f.name() == super::FIELD_ID);
 
         for row_idx in 0..batch.num_rows() {
             let mut record = VectorRecord::default();

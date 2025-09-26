@@ -7,8 +7,8 @@
 
 //! Bloom filter factory for creating appropriate implementations
 
-use anyhow::Result;
 use std::sync::Arc;
+use anyhow::Result;
 
 use super::strategies::{
     BitPackedBloomFilter, ByteAlignedBloomFilter, CompositeBloomFilter, SimpleBloomFilter,
@@ -71,6 +71,34 @@ impl BloomFilterFactory {
     /// Create a thread-safe bloom filter
     pub fn create_concurrent(config: &BloomFilterConfig) -> Arc<dyn BloomFilterStrategy> {
         Arc::from(Self::create(config))
+    }
+
+    /// Deserialize bloom filter from raw bytes using config to determine strategy
+    pub fn deserialize(
+        config: &BloomFilterConfig,
+        data: &[u8],
+    ) -> Result<Box<dyn BloomFilterStrategy>> {
+        if data.is_empty() {
+            return Ok(Box::new(NoOpBloomFilter));
+        }
+
+        // Create filter based on strategy
+        let filter: Box<dyn BloomFilterStrategy> = match config.strategy {
+            BloomStrategy::BitPacked => {
+                Box::new(BitPackedBloomFilter::from_bytes(data)?)
+            }
+            BloomStrategy::ByteAligned => {
+                Box::new(ByteAlignedBloomFilter::from_bytes(data)?)
+            }
+            BloomStrategy::Simple => {
+                Box::new(SimpleBloomFilter::from_bytes(data)?)
+            }
+            BloomStrategy::Composite => {
+                Box::new(CompositeBloomFilter::from_bytes(data)?)
+            }
+        };
+
+        Ok(filter)
     }
 }
 

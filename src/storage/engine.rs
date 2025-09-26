@@ -1,6 +1,7 @@
 use crate::core::{SstConfig, StorageConfig, String, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
+use crate::utils::StoragePath;
 use crate::storage::{
     engines::impls::sst::{Compaction, SstEngine},
     persistence::disk_manager::DiskManager,
@@ -478,9 +479,9 @@ impl StorageEngine {
         tracing::debug!("💾 Creating storage for collection: {}", collection_id);
 
         // Create directory paths based on base_location
-        let data_url = format!("{}/{}/data", base_location, collection_id);
-        let write_buffer_url = format!("{}/{}/write_buffer", base_location, collection_id);
-        let index_url = format!("{}/{}/indexes", base_location, collection_id);
+        let data_url = StoragePath::collection_data_path(&base_location, &collection_id);
+        let write_buffer_url = StoragePath::collection_write_buffer_path(&base_location, &collection_id);
+        let index_url = StoragePath::collection_index_path(&base_location, &collection_id);
 
         // Create all required directories for the collection
         // This ensures directories exist before any writes occur

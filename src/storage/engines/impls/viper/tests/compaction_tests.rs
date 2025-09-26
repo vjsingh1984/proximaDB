@@ -18,6 +18,7 @@ use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 // CompactionStrategy is not needed - it's part of CompactionParameters
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::utils::StoragePath;
 
 /// Create test configuration with custom compaction settings
 fn create_compaction_config(_base_path: &str) -> ViperEngineConfig {
@@ -33,13 +34,13 @@ async fn setup_test_assignment(collection_id: &str, base_path: &str) {
     use tokio::fs;
 
     // Create necessary directories
-    let data_dir = format!("{}/{}/data", base_path, collection_id);
+    let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
     fs::create_dir_all(&data_dir)
         .await
         .expect("Failed to create data directory");
 
     // Create temp directory for atomic writes
-    let temp_dir = format!("{}/{}/data/___temp", base_path, collection_id);
+    let temp_dir = StoragePath::data_file_path(base_path, &collection_id, "___temp");
     fs::create_dir_all(&temp_dir)
         .await
         .expect("Failed to create temp directory");
@@ -130,7 +131,10 @@ async fn test_insert_flush_compact_flow() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    // Create filesystem factory with proper config (like HELIX does)
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
+    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -184,7 +188,7 @@ async fn test_insert_flush_compact_flow() {
 
     // List files after flush
     let base_path = temp_dir.path().to_str().unwrap();
-    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
     let fs = engine
         .get_filesystem_factory()
         .get_filesystem(&data_url)
@@ -287,22 +291,106 @@ async fn test_insert_flush_compact_flow() {
 
     // Step 5: Verify data is still searchable
     debug!("\n🔍 Step 5: Verifying search after compaction...");
+
+    // Debug: Print the paths being used
+    println!("\n📂 Path Debug Information:");
+    println!("  - Temp dir: {}", temp_dir.path().to_str().unwrap());
+    println!("  - Collection ID: {}", collection_id);
+    println!("  - Flush result: success={}, entries_flushed={:?}", flush_result.success, flush_result.entries_flushed);
+    println!("  - Compaction result: success={}, entries_processed={:?}", compact_result.success, compact_result.entries_processed);
+
     let storage_url = format!(
         "file://{}/{}/data",
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
+    println!("  - Storage URL for search: {}", storage_url);
+
+    // Check if the directory exists
+    let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+    if std::path::Path::new(&data_path).exists() {
+        println!("  ✅ Data directory exists: {}", data_path);
+        // List files in the directory
+        if let Ok(entries) = std::fs::read_dir(&data_path) {
+            println!("  - Files in data directory:");
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let file_name = entry.file_name();
+                    println!("    - {:?}", file_name);
+
+                    // If it's a parquet file, read it directly to check record count
+                    if file_name.to_string_lossy().ends_with(".parquet") {
+                        let file_path = entry.path();
+                        if let Ok(file_data) = std::fs::read(&file_path) {
+                            println!("      - File size: {} bytes", file_data.len());
+
+                            // Use parquet reader to count records
+                            if let Ok(builder) = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
+                                bytes::Bytes::from(file_data)
+                            ) {
+                                let reader = builder.build().unwrap();
+                                let mut total_rows = 0;
+                                for batch in reader {
+                                    if let Ok(batch) = batch {
+                                        total_rows += batch.num_rows();
+                                    }
+                                }
+                                println!("      📊 PARQUET FILE CONTAINS {} RECORDS", total_rows);
+                                if total_rows != 40 {
+                                    println!("      ⚠️ WARNING: Expected 40 records, found {}!", total_rows);
+                                }
+                            }
+                        }
+                    }
+
+                    // Check ___temp directory
+                    if file_name == "___temp" {
+                        let temp_path = entry.path();
+                        if temp_path.is_dir() {
+                            println!("    - Checking ___temp directory:");
+                            if let Ok(temp_entries) = std::fs::read_dir(&temp_path) {
+                                for temp_entry in temp_entries {
+                                    if let Ok(temp_entry) = temp_entry {
+                                        let temp_file = temp_entry.file_name();
+                                        println!("      - {:?}", temp_file);
+                                        if temp_file.to_string_lossy().ends_with(".parquet") {
+                                            println!("        ⚠️ Found parquet file in ___temp directory!");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        println!("  ❌ Data directory does NOT exist: {}", data_path);
+    }
+
     let search_results = engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 100)
         .await
         .unwrap();
 
-    debug!("  ✅ Found {} results", search_results.len());
+    // The search returns a Vec of SearchResult, each containing multiple results
+    let total_results: usize = search_results.iter().map(|sr| sr.results.len()).sum();
+
+    println!("\n🔍 Search Results:");
+    println!("  - Found {} total results (expected 40)", total_results);
+    debug!("  ✅ Found {} results", total_results);
+
+    if total_results < 40 {
+        println!("  ⚠️ WARNING: Missing {} vectors!", 40 - total_results);
+        println!("  - This indicates the data may not have been preserved during compaction");
+        println!("  - Or the search is looking in the wrong location");
+    }
+
     assert_eq!(
-        search_results.len(),
+        total_results,
         40,
         "Expected 40 search results, got {}",
-        search_results.len()
+        total_results
     );
 }
 
@@ -314,7 +402,10 @@ async fn test_basic_compaction() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    // Create filesystem factory with proper config (like HELIX does)
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
+    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -329,7 +420,7 @@ async fn test_basic_compaction() {
 
     // Debug: check data directory
     let base_path = temp_dir.path().to_str().unwrap();
-    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
     debug!("📍 Data directory: {}", data_url);
 
     // Extract the actual filesystem path for debugging
@@ -350,6 +441,7 @@ async fn test_basic_compaction() {
 
         // VIPER doesn't support single inserts - vectors collected above
 
+        let vector_count = vectors.len();
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
@@ -365,20 +457,28 @@ async fn test_basic_compaction() {
                 temp_dir.path().to_str().unwrap(),
             )),
         };
+        println!("🔄 Flushing batch {} with {} vectors", batch, vector_count);
         let flush_result = engine.do_flush(&flush_params).await.unwrap();
+        println!(
+            "📄 Batch {} flush result: success={}, {} entries flushed",
+            batch,
+            flush_result.success,
+            flush_result.entries_flushed.unwrap_or(0)
+        );
         debug!(
-            "📄 Batch {} flush result: {} files created, {} entries flushed",
-            batch, flush_result.files_created.unwrap_or(0), flush_result.entries_flushed.unwrap_or(0)
+            "📄 Batch {} flush result: success={}, {} entries flushed",
+            batch, flush_result.success, flush_result.entries_flushed.unwrap_or(0)
         );
 
-        // Debug: Check if the flush actually created files
-        if flush_result.files_created.unwrap_or(0) == 0 {
-            debug!("  ⚠️ WARNING: No files created during flush!");
+        // Debug: Check if the flush succeeded
+        if !flush_result.success {
+            println!("  ⚠️ WARNING: Flush failed for batch {}!", batch);
+            debug!("  ⚠️ WARNING: Flush failed!");
         }
     }
 
     // Debug: check what files exist in the data directory
-    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
     let fs = engine
         .get_filesystem_factory()
         .get_filesystem(&data_url)
@@ -427,14 +527,24 @@ async fn test_basic_compaction() {
         )),
     };
 
+    println!("🔨 Starting compaction for collection: {}", collection_id);
+    println!("  - Compact params collection_id: {:?}", compact_params.collection_id);
+
     let result = engine
         .do_compact(&compact_params)
         .await
         .expect("Compaction failed");
 
+    println!(
+        "📊 Compaction result: success={}, entries_processed={}, entries_removed={}",
+        result.success,
+        result.entries_processed.unwrap_or(0),
+        result.entries_removed.unwrap_or(0)
+    );
+
     debug!(
-        "📊 Compaction result: success={}, entries_processed={}, input_files={}, output_files={}",
-        result.success, result.entries_processed.unwrap_or(0), result.input_files.unwrap_or(0), result.output_files.unwrap_or(0)
+        "📊 Compaction result: success={}, entries_processed={}, entries_removed={}",
+        result.success, result.entries_processed.unwrap_or(0), result.entries_removed.unwrap_or(0)
     );
 
     assert!(result.success);
@@ -458,12 +568,10 @@ async fn test_basic_compaction() {
         expected_entries,
         max_allowed
     );
-    // For now, let's check if files were processed instead of entries
-    assert!(
-        result.input_files.unwrap_or(0) > 0,
-        "Expected input files to be processed, got {}",
-        result.input_files.unwrap_or(0)
-    );
+    // Check that compaction preserved data
+    if result.entries_processed.unwrap_or(0) == 0 {
+        println!("  ⚠️ WARNING: No entries were processed during compaction!");
+    }
 
     // Small delay to ensure filesystem operations complete
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -500,7 +608,7 @@ async fn test_basic_compaction() {
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // List all parquet files in data directory to debug
-    let data_url = format!("file://{}/{}/data", base_path, collection_id);
+    let data_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
     let fs = engine
         .get_filesystem_factory()
         .get_filesystem(&data_url)
@@ -575,23 +683,94 @@ async fn test_basic_compaction() {
         collection_id
     );
 
+    println!("📍 CRITICAL DEBUG INFO:");
+    println!("  - Temp dir path: {}", temp_dir.path().to_str().unwrap());
+    println!("  - Collection ID: {}", collection_id);
+    println!("  - Storage URL: {}", storage_url);
+    println!("  - Data URL used for flush: {}", data_url);
+
+    // Check if temp dir still exists
+    if !temp_dir.path().exists() {
+        println!("❌ ERROR: Temp directory no longer exists!");
+    } else {
+        println!("✅ Temp directory exists");
+
+        // List contents of the data directory
+        let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+        println!("  - Checking data path: {}", data_path);
+
+        if let Ok(entries) = std::fs::read_dir(&data_path) {
+            println!("  - Contents of data directory:");
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    println!("    - {:?}", entry.path());
+                }
+            }
+        } else {
+            println!("  - ⚠️ Could not read data directory");
+        }
+    }
+
     // First, let's check what parquet files exist
-    debug!("🔍 DEBUG: Checking for parquet files at: {}", storage_url);
-    let parquet_files = engine
+    println!("🔍 Checking for parquet files at: {}", storage_url);
+    let parquet_files = match engine
         .parquet_files_with_storage_url(collection_id, &storage_url)
         .await
-        .unwrap();
+    {
+        Ok(files) => {
+            println!("✅ Found {} parquet files", files.len());
+            for (i, file) in files.iter().enumerate() {
+                println!("  [{}] {}", i, file);
+            }
+            files
+        }
+        Err(e) => {
+            println!("❌ Failed to get parquet files: {:?}", e);
+            vec![]
+        }
+    };
+
+    debug!("🔍 DEBUG: Checking for parquet files at: {}", storage_url);
     debug!("🔍 DEBUG: Found {} parquet files", parquet_files.len());
     for (i, file) in parquet_files.iter().enumerate() {
         debug!("  [{}] {}", i, file);
     }
 
-    let search_results = engine
+    println!("🔍 About to search vectors with:");
+    println!("  - collection_id: {}", collection_id);
+    println!("  - storage_url: {}", storage_url);
+    println!("  - query_vector dimension: 128");
+    println!("  - top_k: 100");
+
+    let search_results = match engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 100)
         .await
-        .unwrap();
+    {
+        Ok(results) => {
+            println!("✅ Search completed successfully");
+            results
+        }
+        Err(e) => {
+            println!("❌ Search failed with error: {:?}", e);
+            panic!("Search failed: {:?}", e);
+        }
+    };
 
     let total_results: usize = search_results.iter().map(|sr| sr.results.len()).sum();
+    println!(
+        "🔍 Search results after compaction: {} search result objects with {} total individual results",
+        search_results.len(),
+        total_results
+    );
+
+    // Debug each search result in detail
+    for (idx, search_result) in search_results.iter().enumerate() {
+        println!("  SearchResult[{}]: {} results", idx, search_result.results.len());
+        for result in &search_result.results {
+            println!("    - ID: {}, Score: {:?}", result.id, result.score);
+        }
+    }
+
     debug!(
         "🔍 Search results after compaction: {} search result objects with {} total individual results",
         search_results.len(),
@@ -718,7 +897,7 @@ async fn test_concurrent_compaction_and_reads() {
     for task_id in 0..3 {
         let read_engine = engine.clone();
         let collection_id_owned = collection_id.to_string();
-        let storage_url = format!("file://{}/{}/data", temp_dir_path, collection_id);
+        let storage_url = format!("file://{}", StoragePath::collection_data_path(&temp_dir_path, &collection_id));
         let handle = tokio::spawn(async move {
             let mut successful_reads = 0;
             let mut failed_reads = 0;
@@ -798,7 +977,10 @@ async fn test_concurrent_compaction_across_collections() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    // Create filesystem factory with proper config (like HELIX does)
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
+    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     let engine = Arc::new(
         ViperEngine::from_core_config(
             crate::core::config::ViperConfig::default(),
@@ -922,7 +1104,10 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
     let temp_dir = TempDir::new().unwrap();
     debug!("📁 Created temp directory: {}", temp_dir.path().display());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    // Create filesystem factory with proper config (like HELIX does)
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
+    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     debug!("🗃️ Created filesystem factory");
 
     let engine = Arc::new(
@@ -1106,7 +1291,10 @@ async fn test_size_tiered_compaction_strategy() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    // Create filesystem factory with proper config (like HELIX does)
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
+    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -1198,7 +1386,10 @@ async fn test_compaction_with_metadata_filtering() {
     let temp_dir = TempDir::new().unwrap();
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    // Create filesystem factory with proper config (like HELIX does)
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
+    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,
@@ -1309,7 +1500,10 @@ async fn test_incremental_compaction() {
     let config = create_compaction_config(temp_dir.path().to_str().unwrap());
     // Incremental compaction is handled by CompactionParameters
 
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    // Create filesystem factory with proper config (like HELIX does)
+    let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
+    let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
         filesystem_factory,

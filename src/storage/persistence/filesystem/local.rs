@@ -622,23 +622,61 @@ impl FileSystem for LocalFileSystem {
     }
 
     async fn move_file(&self, from: &str, to: &str) -> FsResult<()> {
+        eprintln!("🔍 DEBUG MOVE_FILE: Called with from: {} to: {}", from, to);
+
         // Extract paths from URLs
         let from_path_str = self.resolve_path(from)?;
         let from_path = PathBuf::from(&from_path_str);
+        eprintln!("🔍 DEBUG MOVE_FILE: Resolved from_path: {:?}", from_path);
 
         let to_path_str = self.resolve_path(to)?;
         let to_path = PathBuf::from(&to_path_str);
+        eprintln!("🔍 DEBUG MOVE_FILE: Resolved to_path: {:?}", to_path);
+
+        // Check if source file exists
+        if !from_path.exists() {
+            eprintln!("🔍 DEBUG MOVE_FILE: ERROR - Source file does not exist: {:?}", from_path);
+            return Err(FilesystemError::NotFound(from_path.display().to_string()));
+        }
+
+        // Check source file size
+        if let Ok(metadata) = std::fs::metadata(&from_path) {
+            eprintln!("🔍 DEBUG MOVE_FILE: Source file size: {} bytes", metadata.len());
+        }
 
         // Create parent directory for destination if needed
         if let Some(parent) = to_path.parent() {
+            eprintln!("🔍 DEBUG MOVE_FILE: Creating parent directory: {:?}", parent);
             fs::create_dir_all(parent)
                 .await
-                .map_err(|e| FilesystemError::Io(e))?;
+                .map_err(|e| {
+                    eprintln!("🔍 DEBUG MOVE_FILE: ERROR creating parent dir: {}", e);
+                    FilesystemError::Io(e)
+                })?;
         }
 
-        fs::rename(&from_path, &to_path)
+        eprintln!("🔍 DEBUG MOVE_FILE: Attempting rename from {:?} to {:?}", from_path, to_path);
+        let result = fs::rename(&from_path, &to_path)
             .await
-            .map_err(FilesystemError::Io)
+            .map_err(|e| {
+                eprintln!("🔍 DEBUG MOVE_FILE: ERROR during rename: {}", e);
+                FilesystemError::Io(e)
+            });
+
+        if result.is_ok() {
+            eprintln!("🔍 DEBUG MOVE_FILE: SUCCESS - File moved successfully");
+
+            // Verify destination exists
+            if to_path.exists() {
+                if let Ok(metadata) = std::fs::metadata(&to_path) {
+                    eprintln!("🔍 DEBUG MOVE_FILE: Verified destination file exists with size: {} bytes", metadata.len());
+                }
+            } else {
+                eprintln!("🔍 DEBUG MOVE_FILE: WARNING - Destination file doesn't exist after move!");
+            }
+        }
+
+        result
     }
 
     fn filesystem_type(&self) -> &'static str {

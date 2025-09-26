@@ -301,7 +301,7 @@ impl StreamingParquetWriter {
 
         // Vector data (FP32)
         fields.push(Field::new(
-            "vector_fp32",
+            super::FIELD_VECTOR_FP32,
             DataType::FixedSizeBinary(dimension as i32 * 4),
             false,
         ));
@@ -339,7 +339,25 @@ impl StreamingParquetWriter {
         // Metadata fields
         fields.push(Field::new("timestamp", DataType::Int64, false));
         fields.push(Field::new("version", DataType::Int64, true));
-        fields.push(Field::new("metadata_json", DataType::Utf8, true));
+
+        // Use native Map type for extra metadata - much faster querying than JSON strings
+        // Map<String, String> for non-filterable metadata
+        let map_field = Field::new(
+            super::FIELD_EXTRA_META,
+            DataType::Map(
+                Arc::new(Field::new(
+                    "entries",
+                    DataType::Struct(vec![
+                        Field::new("key", DataType::Utf8, false),
+                        Field::new("value", DataType::Utf8, true),
+                    ].into()),
+                    false,
+                )),
+                false, // not sorted
+            ),
+            true, // nullable
+        );
+        fields.push(map_field);
 
         Ok(Arc::new(Schema::new(fields)))
     }
@@ -795,18 +813,69 @@ impl StreamingParquetWriter {
                 arrays.push(Arc::new(StringArray::from(metadata)));
             }
         } else {
-            // Use JSON string for metadata (backward compatible)
-            let metadata: Vec<Option<String>> = records
-                .iter()
-                .map(|r| {
-                    if r.metadata.is_empty() {
-                        None
-                    } else {
-                        serde_json::to_string(&r.metadata).ok()
+            // Use native Map type for metadata - much faster than JSON
+            let mut keys_builder = arrow_array::builder::StringBuilder::new();
+            let mut values_builder = arrow_array::builder::StringBuilder::new();
+            let mut offsets = vec![0i32];
+            let mut entry_count = 0i32;
+
+            for r in records.iter() {
+                if !r.metadata.is_empty() {
+                    // Add each metadata entry
+                    for (key, sql_value) in r.metadata.iter() {
+                        keys_builder.append_value(key);
+
+                        // Convert SqlValue to string
+                        let value_str = if let Some(ref v) = sql_value.value {
+                            match v {
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => s.clone(),
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(n) => n.to_string(),
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => n.to_string(),
+                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => b.to_string(),
+                                crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => "null".to_string(),
+                                _ => "".to_string(), // For other types
+                            }
+                        } else {
+                            "null".to_string()
+                        };
+                        values_builder.append_value(&value_str);
+                        entry_count += 1;
                     }
-                })
-                .collect();
-            arrays.push(Arc::new(StringArray::from(metadata)));
+                }
+                offsets.push(entry_count);
+            }
+
+            // Create struct array for Map entries
+            let keys_array = keys_builder.finish();
+            let values_array = values_builder.finish();
+            let struct_array = arrow_array::StructArray::from(vec![
+                (
+                    Arc::new(Field::new("key", DataType::Utf8, false)),
+                    Arc::new(keys_array) as ArrayRef,
+                ),
+                (
+                    Arc::new(Field::new("value", DataType::Utf8, true)),
+                    Arc::new(values_array) as ArrayRef,
+                ),
+            ]);
+
+            // Create Map array
+            let map_array = arrow_array::MapArray::try_new(
+                Arc::new(Field::new(
+                    "entries",
+                    DataType::Struct(vec![
+                        Field::new("key", DataType::Utf8, false),
+                        Field::new("value", DataType::Utf8, true),
+                    ].into()),
+                    false,
+                )),
+                arrow_buffer::OffsetBuffer::new(arrow_buffer::ScalarBuffer::from(offsets)),
+                struct_array,
+                None,
+                false,
+            ).context("Failed to create Map array")?;
+
+            arrays.push(Arc::new(map_array));
         }
 
         RecordBatch::try_new(self.schema.clone(), arrays).context("Failed to create RecordBatch")
@@ -1666,7 +1735,7 @@ mod tests {
 
         // With PQ sorting, compression should be better than random order
         // (This would need actual compression measurement in production)
-        println!(
+        debug!(
             "PQ sorting compression ratio: {:.2}",
             stats.compression_ratio
         );

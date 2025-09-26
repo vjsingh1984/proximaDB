@@ -4,6 +4,7 @@
 use crate::core::compression::StandardCompression;
 use crate::core::search::DataFreshnessTier;
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::utils::StoragePath;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
@@ -1014,7 +1015,7 @@ impl UnifiedStorageEngine for NovaEngine {
             .collection_config
             .as_ref()
             .and_then(|c| c.storage_assignment.as_ref())
-            .map(|s| format!("{}/{}/data", s.base_location, collection_id))
+            .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
             .ok_or_else(|| anyhow!("Collection '{}' has no storage assignment", collection_id))?;
 
         // Create directory if it doesn't exist
@@ -1086,7 +1087,7 @@ impl UnifiedStorageEngine for NovaEngine {
             .collection_config
             .as_ref()
             .and_then(|c| c.storage_assignment.as_ref())
-            .map(|s| format!("{}/{}/data", s.base_location, collection_id))
+            .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
             .ok_or_else(|| anyhow!("Collection '{}' has no storage assignment", collection_id))?;
 
         // List existing Parquet files
@@ -1344,7 +1345,7 @@ impl UnifiedStorageEngine for NovaEngine {
         );
 
         // Construct data directory from base_path and collection_id
-        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
 
         // TODO: Load actual Parquet files from data_dir
         // For now, return None as placeholder

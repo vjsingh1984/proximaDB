@@ -488,6 +488,14 @@ pub mod utils {
             WorkloadType::HighThroughputWrite => {
                 // Optimize for writes
                 config.compression.algorithm = CompressionAlgorithm::Lz4; // Fast compression
+                config.compression.block_compression.compression_stages.push(
+                    compression_config::CompressionStage {
+                        stage_name: "primary".to_string(),
+                        algorithm: CompressionAlgorithm::Lz4,
+                        level: 1,
+                        condition: compression_config::CompressionCondition::Always,
+                    }
+                );
                 config.performance.max_concurrent_operations = 16;
                 config.records_per_block = 4000; // Larger blocks
             }

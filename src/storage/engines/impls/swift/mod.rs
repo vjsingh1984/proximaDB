@@ -762,12 +762,17 @@ impl SwiftFile {
             // Serialize each FastLanes block efficiently
             for block in &superblock.blocks {
                 // FastLanes blocks already have built-in serialization
-                // This provides compression and SIMD-optimized layout
-                let block_bytes = block.serialize()?;
+                // Get serialized block and bloom filter in parallel
+                let (block_bytes, bloom_data) = block.serialize_with_bloom_sync()?;
 
                 // Write block size then data
                 buffer.extend_from_slice(&(block_bytes.len() as u32).to_le_bytes());
                 buffer.extend_from_slice(&block_bytes);
+
+                // Store bloom filter for later aggregation if generated
+                if let Some(bloom) = bloom_data {
+                    debug!("✅ SWIFT: Generated bloom filter for block: {} bytes", bloom.len());
+                }
             }
 
             // ✅ Write aggregated bloom filter from FastLanes blocks

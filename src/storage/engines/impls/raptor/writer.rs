@@ -1522,20 +1522,17 @@ impl IvfClusteringBuilder {
         boundary_vector_ids.sort_unstable();
         boundary_vector_ids.dedup();
 
-        // Create a simple bloom filter representation (simplified for now)
-        // In production, this would use a proper BloomFilter implementation
-        let bloom_size = 2048; // 2KB as specified in design
-        let mut bloom_bits = vec![0u8; bloom_size];
+        // Use unified bloom filter module for consistency
+        use crate::core::bloom::{BloomFilterConfig, factory::BloomFilterFactory};
+
+        let bloom_config = BloomFilterConfig::for_sstable(boundary_vector_ids.len());
+        let mut bloom = BloomFilterFactory::create(&bloom_config);
 
         for &vector_idx in &boundary_vector_ids {
-            let hash1 = vector_idx % (bloom_size as u32 * 8);
-            let hash2 = (vector_idx * 31) % (bloom_size as u32 * 8);
-
-            bloom_bits[(hash1 / 8) as usize] |= 1 << (hash1 % 8);
-            bloom_bits[(hash2 / 8) as usize] |= 1 << (hash2 % 8);
+            bloom.insert(&vector_idx.to_le_bytes());
         }
 
-        bloom_bits
+        bloom.serialize().unwrap_or_else(|_| vec![0u8; 2048])
     }
 
     /// Helper to get vector data by ID from stored vectors

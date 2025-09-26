@@ -347,7 +347,7 @@ pub async fn nova_optimization_example() -> Result<()> {
                 Some(vec![
                     "vector_pq".to_string(),     // Use PQ for initial filtering
                     "vector_fp32".to_string(),   // FP32 for final results
-                    "metadata_json".to_string(), // Metadata for filtering
+                    super::FIELD_EXTRA_META.to_string(), // Non-filterable metadata
                 ]),
             )
             .await?;

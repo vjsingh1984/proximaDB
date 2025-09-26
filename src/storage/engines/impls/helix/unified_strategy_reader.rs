@@ -363,9 +363,18 @@ mod tests {
         assert!(matches!(search_strategy, HelixSearchStrategy::LiquidClustering { .. }));
     }
 
-    #[test]
-    fn test_helix_reader_creation() {
-        let factory = Arc::new(FilesystemFactory::default());
+    #[tokio::test]
+    async fn test_helix_reader_creation() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap().to_string();
+
+        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        fs_config.default_fs = Some(format!("file://{}", path));
+        let factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+                .await
+                .unwrap()
+        );
 
         // Compaction should use DirectStream
         let compaction_reader = UnifiedHELIXReader::for_compaction(
@@ -384,9 +393,18 @@ mod tests {
         assert!(search_reader.is_using_cache());
     }
 
-    #[test]
-    fn test_strategy_updates() {
-        let factory = Arc::new(FilesystemFactory::default());
+    #[tokio::test]
+    async fn test_strategy_updates() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().to_str().unwrap().to_string();
+
+        let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        fs_config.default_fs = Some(format!("file://{}", path));
+        let factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+                .await
+                .unwrap()
+        );
         let mut reader = UnifiedHELIXReader::for_search(
             factory,
             "test".to_string(),

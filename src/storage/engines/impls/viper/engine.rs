@@ -48,6 +48,7 @@ use super::utilities::ViperUtilities;
 // Unified search engine removed - using IntegratedSearchOptimizer
 use super::types::CollectionMetadata;
 use anyhow::Context;
+use crate::utils::StoragePath;
 // VIPER-specific optimization structures removed - now using universal module
 
 // Using unified quantization engine directly from compute module
@@ -865,7 +866,7 @@ impl ViperEngine {
             vector_id, collection_id, base_path
         );
         // Get all Parquet files from {base_path}/{collection_id}/data
-        let data_dir = format!("{}/{}/data", base_path, collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
         let parquet_files = self.list_parquet_files_in_dir(&data_dir).await?;
         if parquet_files.is_empty() {
             debug!("📁 No Parquet files found for collection {}", collection_id);
@@ -1281,7 +1282,14 @@ impl ViperEngine {
             stats: None,
             created_at: 0,
             updated_at: 0,
-            storage_assignment: None,
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                base_location: storage_url.to_string(),
+                primary_path: storage_url.to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
+                engine_config: Default::default(),
+                assigned_at: 0,
+            }),
         });
 
         let ctx = StorageQueryContext {
@@ -1291,11 +1299,13 @@ impl ViperEngine {
                 collection_id: collection_id.to_string(),
                 use_axis_indexes: false,
                 has_quantization: false,
+                storage_path: storage_url.to_string(),
                 ..Default::default()
             },
         };
 
         let internal_results = self.search_vectors_unified(&ctx).await?;
+        debug!("search_vectors_unified returned {} results", internal_results.len());
 
         // Convert OptimizedSearchRecord to SearchVectorRecord and wrap in SearchResult
         let search_records: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = internal_results
@@ -1799,9 +1809,12 @@ impl UnifiedStorageEngine for ViperEngine {
 
         // Extract parameters from context
         let collection_id = ctx.collection_id();
+        // Use storage_url directly to avoid double-appending collection ID
         let storage_url = ctx
-            .collection_storage_path()
+            .storage_url()
             .ok_or_else(|| anyhow::anyhow!("No storage URL in context"))?;
+
+        debug!("search_vectors_unified: collection_id={}, storage_url={}", collection_id, storage_url);
         let query_vector = ctx
             .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
@@ -2093,9 +2106,11 @@ impl UnifiedStorageEngine for ViperEngine {
         };
 
         // Perform search using the reader's search_vectors method
+        debug!("Calling parquet_reader.search_vectors with {} files", collection_context.file_paths.len());
         let search_results = parquet_reader
             .search_vectors(&search_params, &collection_context)
             .await?;
+        debug!("parquet_reader.search_vectors returned {} results", search_results.len());
 
         // Convert SearchVectorRecord to OptimizedSearchRecord directly
         let all_results: Vec<OptimizedSearchRecord> = search_results

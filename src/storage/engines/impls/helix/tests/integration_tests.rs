@@ -141,11 +141,37 @@ async fn test_flush_and_compaction() {
     // Create and flush test vectors
     let vectors = create_test_vectors(500, 64);
 
+    // Create collection config for all flushes
+    let collection = crate::proto::proximadb_v1::Collection {
+        id: "test_collection".to_string(),
+        config: Some(crate::proto::proximadb_v1::CollectionConfig {
+            name: "test_collection".to_string(),
+            dimension: 64,
+            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32,
+            storage_engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
+            ..Default::default()
+        }),
+        stats: Some(crate::proto::proximadb_v1::CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+            primary_path: "/tmp/proximadb-data/helix".to_string(),
+            backup_paths: vec![],
+            engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
+            engine_config: HashMap::new(),
+            base_location: "/tmp/proximadb-data".to_string(),
+            assigned_at: 0,
+        }),
+        ..Default::default()
+    };
+
     // Flush batch 1
     let flush_params1 = FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: vectors[..250].to_vec(),
-        collection_config: None,
+        collection_config: Some(collection.clone()),
         force: false,
         synchronous: true,
         batch_ids: vec![],
@@ -163,7 +189,7 @@ async fn test_flush_and_compaction() {
     let flush_params2 = FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: vectors[250..].to_vec(),
-        collection_config: None,
+        collection_config: Some(collection.clone()),
         force: false,
         synchronous: true,
         batch_ids: vec![],
@@ -369,11 +395,11 @@ async fn test_zone_maps() {
 
     // Test pruning with query vector
     let query_vector = vec![5.0; 32]; // Middle range query
-    let selected_blocks = index.prune_blocks(&query_vector, 10);
+    let selected_blocks = index.prune_blocks(&query_vector, 2); // Small k to ensure pruning
 
-    // Should select some but not all blocks
+    // Should select some but not all blocks (with k=2, expects ~3 blocks)
     assert!(!selected_blocks.is_empty());
-    assert!(selected_blocks.len() < 5);
+    assert!(selected_blocks.len() <= 3); // At most 1.5 * k blocks
 
     // Test selectivity estimation
     let selectivity = index.estimate_query_selectivity(&query_vector, 10.0);
@@ -405,10 +431,38 @@ async fn test_end_to_end_search() {
 
     // Flush test vectors
     let vectors = create_test_vectors(1000, 64);
+    // Create collection config for flush
+    let collection_config = crate::proto::proximadb_v1::CollectionConfig {
+        name: "test_collection".to_string(),
+        dimension: 64,
+        distance_metric: crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32,
+        storage_engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
+        ..Default::default()
+    };
+
+    let collection = crate::proto::proximadb_v1::Collection {
+        id: "test_collection".to_string(),
+        config: Some(collection_config),
+        stats: Some(crate::proto::proximadb_v1::CollectionStats {
+            vector_count: 0,
+            index_size_bytes: 0,
+            data_size_bytes: 0,
+        }),
+        storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+            primary_path: "/tmp/helix".to_string(),
+            backup_paths: vec![],
+            engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
+            engine_config: HashMap::new(),
+            base_location: "/tmp".to_string(),
+            assigned_at: 0,
+        }),
+        ..Default::default()
+    };
+
     let flush_params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: vectors.clone(),
-        collection_config: None,
+        collection_config: Some(collection),
         force: false,
         synchronous: true,
         batch_ids: vec![],
@@ -435,7 +489,7 @@ async fn test_end_to_end_search() {
         id: "test_collection".to_string(),
         config: Some(crate::proto::proximadb_v1::CollectionConfig {
             name: "test_collection".to_string(),
-            dimension: 768,
+            dimension: 64,
             distance_metric: crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32,
             storage_engine: crate::proto::proximadb_v1::StorageEngine::Helix as i32,
             ..Default::default()
