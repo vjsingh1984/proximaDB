@@ -114,6 +114,7 @@ pub mod parquet_io_layer; // Low-level I/O operations (formerly shared_parquet_r
 pub mod parquet_metadata; // NEW: Zero-copy metadata serialization for Parquet
 pub mod utilities; // NEW: Zero-copy metadata serialization for NOVA
 pub mod metadata_collector; // NEW: Trait for engine-specific metadata collection during writes
+pub mod unified_compaction; // Unified Parquet compaction using StreamingParquetWriter
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure
@@ -136,6 +137,9 @@ pub use common::map_core_to_parquet_compression;
 // Re-exports for convenience
 pub use id_index::{ColumnarIdIndex, IndexStats, ParquetLocation};
 pub use optimization::{ColumnarOptimizer, ProgressiveSearchConfig, StreamingRowGroupIterator};
+pub use unified_compaction::{
+    UnifiedColumnarCompaction, ColumnarCompactionResult, VersionContinuityMode,
+};
 pub use parquet_query_engine::{
     CollectionContext,
     FilterValue,

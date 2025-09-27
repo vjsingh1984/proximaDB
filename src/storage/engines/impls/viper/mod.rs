@@ -272,7 +272,7 @@ pub use types::{
     ViperEngineConfig, // Internal engine config
 };
 // Schema is handled by columnar module
-pub use compaction::Compaction;
+pub use compaction::ViperCompactionService;
 pub use engine::ViperEngine;
 pub use eventlog_flush::ViperFlushNotifier;
 pub use flush::Flush;

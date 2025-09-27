@@ -264,8 +264,8 @@ impl ZeroCopyIOSystem {
         // Import all engine serializers
         use crate::storage::engines::core::formats::columnar::nova_metadata::NovaMetadataSerializer;
         use crate::storage::engines::core::formats::columnar::parquet_metadata::ParquetMetadataSerializer;
-        use crate::storage::engines::core::formats::fastlanes_blocks::sst_metadata::SstMetadataSerializer;
-        use crate::storage::engines::core::formats::fastlanes_blocks::swift_metadata::SwiftMetadataSerializer;
+        use crate::storage::engines::core::formats::proximablocks::sst_metadata::SstMetadataSerializer;
+        use crate::storage::engines::core::formats::proximablocks::swift_metadata::SwiftMetadataSerializer;
 
         // Create all engine serializers
         let serializers: Vec<Box<dyn MetadataSerializer>> = vec![

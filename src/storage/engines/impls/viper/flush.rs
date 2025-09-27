@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
 use crate::storage::engines::core::formats::columnar::{
     ParquetWriterConfig, StreamingParquetWriter,
+    FIELD_ID, FIELD_VECTOR_FP32
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -598,7 +599,7 @@ impl Flush {
             // For quantized vectors (INT8/INT16 or custom bit-width via bytemuck)
             // Use BIT_PACKED encoding for maximum compression
             props_builder = props_builder.set_column_encoding(
-                parquet::schema::types::ColumnPath::from("vector"),
+                parquet::schema::types::ColumnPath::from(FIELD_VECTOR_FP32),
                 parquet::basic::Encoding::RLE,
             );
             debug!("🔧 VIPER: Using BIT_PACKED encoding for quantized vectors");
@@ -606,7 +607,7 @@ impl Flush {
             // For full precision f32 vectors
             // BYTE_STREAM_SPLIT splits floating point bytes for better compression
             props_builder = props_builder.set_column_encoding(
-                parquet::schema::types::ColumnPath::from("vector"),
+                parquet::schema::types::ColumnPath::from(FIELD_VECTOR_FP32),
                 parquet::basic::Encoding::BYTE_STREAM_SPLIT,
             );
             debug!("🔧 VIPER: Using BYTE_STREAM_SPLIT encoding for f32 vectors");
@@ -618,7 +619,7 @@ impl Flush {
             true,
         );
         props_builder = props_builder
-            .set_column_dictionary_enabled(parquet::schema::types::ColumnPath::from("id"), true);
+            .set_column_dictionary_enabled(parquet::schema::types::ColumnPath::from(FIELD_ID), true);
 
         // Apply column-specific encodings from filterable metadata
         // TODO: Re-enable when encoding_hint is available in proto v1
@@ -650,7 +651,7 @@ impl Flush {
 
         // Configure ParquetWriterConfig from VIPER settings
         // Include filterable columns in bloom filters for fast filtering
-        let mut bloom_columns = vec!["id".to_string()];
+        let mut bloom_columns = vec![FIELD_ID.to_string()];
         // Add filterable columns that were extracted earlier
         bloom_columns.extend(filterable_columns.clone());
 
@@ -716,13 +717,30 @@ impl Flush {
         // Extract filterable columns from collection config
         let filterable_columns = collection_config.as_ref()
             .and_then(|c| c.config.as_ref())
-            .and_then(|cfg| if cfg.filterable_columns.is_empty() {
-                None
-            } else {
-                Some(cfg.filterable_columns.as_slice())
+            .and_then(|cfg| {
+                if cfg.filterable_columns.is_empty() {
+                    None
+                } else {
+                    Some(cfg.filterable_columns.as_slice())
+                }
             });
 
         // Create StreamingParquetWriter with temp file and filterable columns
+        debug!("Creating StreamingParquetWriter with {} filterable columns", filterable_columns.map(|cols| cols.len()).unwrap_or(0));
+        if let Some(cols) = filterable_columns {
+            for col in cols {
+                debug!("  Filterable column: {} (type: {:?})", col.name, col.data_type);
+            }
+        }
+
+        // Debug: Check first few records for metadata
+        for (i, record) in records.iter().take(3).enumerate() {
+            debug!("Record {}: id={}, metadata keys={:?}", i, record.id, record.metadata.keys().collect::<Vec<_>>());
+            if let Some(category) = record.metadata.get("category") {
+                debug!("  category value: {:?}", category);
+            }
+        }
+
         let mut writer = StreamingParquetWriter::new(&temp_file_path, dimension, writer_config, filterable_columns)?;
 
         // Write all records using the columnar writer's optimized batching

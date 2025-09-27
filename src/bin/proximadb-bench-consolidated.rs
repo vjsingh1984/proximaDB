@@ -21,11 +21,11 @@ use proximadb::index::axis::indexes::{
     lsh_index::{AxisLshConfig, AxisLshIndex},
 };
 use proximadb::index::axis::index_factory::AxisVectorIndex;
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    FastLanesDataBlock, BlockCompressionConfig, VectorEncodingLayout,
+use proximadb::storage::engines::core::formats::proximablocks::{
+    ProximaDataBlock, BlockCompressionConfig, VectorEncodingLayout,
 };
-use proximadb::storage::engines::core::ops::fastlanes_encoding::{
-    FastLanesEncoder, FastLanesDecoder, FastLanesScheme,
+use proximadb::storage::engines::core::ops::proximaencoder::{
+    ProximaEncoder, ProximaDecoder, ProximaScheme,
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use rand::{thread_rng, Rng};
@@ -683,7 +683,7 @@ fn benchmark_encoding_configuration(
         vector_layout: VectorEncodingLayout::Auto, // Will be overridden below
     };
 
-    let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+    let encoder = ProximaEncoder::new(ProximaScheme::Delta { base: 0 });
 
     // Benchmark columnar encoding
     let mut columnar_encode_times = Vec::with_capacity(iterations);
@@ -705,7 +705,7 @@ fn benchmark_encoding_configuration(
 
     // Benchmark columnar serialization
     compression_config.vector_layout = VectorEncodingLayout::Columnar;
-    let columnar_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+    let columnar_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
 
     let mut columnar_serialize_times = Vec::with_capacity(iterations);
     let mut columnar_serialized = vec![];
@@ -718,7 +718,7 @@ fn benchmark_encoding_configuration(
 
     // Benchmark FullVector serialization
     compression_config.vector_layout = VectorEncodingLayout::FullVector;
-    let fullvector_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+    let fullvector_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
 
     let mut fullvector_serialize_times = Vec::with_capacity(iterations);
     let mut fullvector_serialized = vec![];
@@ -731,7 +731,7 @@ fn benchmark_encoding_configuration(
 
     // Benchmark GroupedFieldEncodedAndCompressedVector serialization (new strategy)
     compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
-    let grouped_block = FastLanesDataBlock::new(records, compression_config.clone());
+    let grouped_block = ProximaDataBlock::new(records, compression_config.clone());
 
     let mut grouped_serialize_times = Vec::with_capacity(iterations);
     let mut grouped_serialized = vec![];
@@ -2158,7 +2158,7 @@ fn benchmark_storage_encoding(
 
         // Benchmark encoding
         let start = Instant::now();
-        let _block = FastLanesDataBlock::new(
+        let _block = ProximaDataBlock::new(
             records,
             config.clone(),
         );
@@ -2578,7 +2578,7 @@ fn serialize_columnar_simple(encoded: &proximadb::storage::engines::core::ops::f
 }
 
 // Simple columnar deserialization for benchmarking
-fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::core::ops::fastlanes_encoding::FastLanesDecoder) -> Result<Vec<Vec<f32>>> {
+fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::core::ops::fastlanes_encoding::ProximaDecoder) -> Result<Vec<Vec<f32>>> {
     use std::io::Read;
     let mut cursor = std::io::Cursor::new(data);
     let mut buf = [0u8; 4];
@@ -2676,7 +2676,7 @@ fn decode_rowwise_simple(data: &[u8]) -> Result<Vec<Vec<f32>>> {
         // Check if data is FastLanes encoded (has 0x80 marker) or raw bytes
         let floats = if !vec_data.is_empty() && vec_data[0] == 0x80 {
             // FastLanes encoded data
-            let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+            let decoder = ProximaDecoder::new(ProximaScheme::Delta { base: 0 });
             decoder.decode_f32(&vec_data, Some(dimension))?
         } else {
             // Raw bytes - cast directly to f32
@@ -2827,7 +2827,7 @@ fn benchmark_encoding_statistical_with_compression(
     let vectors = generate_test_vectors_for_encoding_2(vector_count, dimension);
     let records = create_vector_records_from_vecs_2(vectors.clone());
 
-    // Use FastLanesDataBlock's built-in writer/reader interface
+    // Use ProximaDataBlock's built-in writer/reader interface
     // This gives us combined metrics (serialization + compression + encoding)
     let mut compression_config = BlockCompressionConfig {
         algorithm: compression_algorithm,
@@ -2842,7 +2842,7 @@ fn benchmark_encoding_statistical_with_compression(
 
     // ============ TRANSPOSE FIELD-COMPRESSED (Field-Level Compression) ============
     compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
-    let transpose_field_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+    let transpose_field_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
 
     let transpose_field_encode_times = measure_function(
         || transpose_field_block.serialize_with_config(&compression_config).unwrap(),
@@ -2850,7 +2850,7 @@ fn benchmark_encoding_statistical_with_compression(
     );
     let transpose_field_serialized = transpose_field_block.serialize_with_config(&compression_config)?;
     let transpose_field_decode_times = measure_function(
-        || FastLanesDataBlock::deserialize(&transpose_field_serialized).unwrap(),
+        || ProximaDataBlock::deserialize(&transpose_field_serialized).unwrap(),
         sample_size,
     );
 
@@ -2861,7 +2861,7 @@ fn benchmark_encoding_statistical_with_compression(
 
     // ============ TRANSPOSE BLOCK-COMPRESSED (Block-Level Compression) ============
     compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector;
-    let transpose_block_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+    let transpose_block_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
 
     let transpose_block_encode_times = measure_function(
         || transpose_block_block.serialize_with_config(&compression_config).unwrap(),
@@ -2869,7 +2869,7 @@ fn benchmark_encoding_statistical_with_compression(
     );
     let transpose_block_serialized = transpose_block_block.serialize_with_config(&compression_config)?;
     let transpose_block_decode_times = measure_function(
-        || FastLanesDataBlock::deserialize(&transpose_block_serialized).unwrap(),
+        || ProximaDataBlock::deserialize(&transpose_block_serialized).unwrap(),
         sample_size,
     );
 
@@ -2880,7 +2880,7 @@ fn benchmark_encoding_statistical_with_compression(
 
     // ============ ROW-WISE ENCODING (FullVector) ============
     compression_config.vector_layout = VectorEncodingLayout::FullVector;
-    let rowwise_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+    let rowwise_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
 
     // Measure combined serialization + compression + encoding time
     let rowwise_encode_times = measure_function(
@@ -2893,7 +2893,7 @@ fn benchmark_encoding_statistical_with_compression(
 
     // Measure row-wise deserialization (decompression + decoding)
     let rowwise_decode_times = measure_function(
-        || FastLanesDataBlock::deserialize(&rowwise_serialized).unwrap(),
+        || ProximaDataBlock::deserialize(&rowwise_serialized).unwrap(),
         sample_size,
     );
 
@@ -2909,7 +2909,7 @@ fn benchmark_encoding_statistical_with_compression(
 
     if dimension > 128 {
         compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
-        let grouped_field_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+        let grouped_field_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
 
         grouped_field_encode_times = measure_function(
             || grouped_field_block.serialize_with_config(&compression_config).unwrap(),
@@ -2917,7 +2917,7 @@ fn benchmark_encoding_statistical_with_compression(
         );
         grouped_field_serialized = grouped_field_block.serialize_with_config(&compression_config)?;
         grouped_field_decode_times = measure_function(
-            || FastLanesDataBlock::deserialize(&grouped_field_serialized).unwrap(),
+            || ProximaDataBlock::deserialize(&grouped_field_serialized).unwrap(),
             sample_size,
         );
 
@@ -2938,7 +2938,7 @@ fn benchmark_encoding_statistical_with_compression(
 
     if dimension > 128 {
         compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector;
-        let grouped_block_block = FastLanesDataBlock::new(records.clone(), compression_config.clone());
+        let grouped_block_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
 
         grouped_block_encode_times = measure_function(
             || grouped_block_block.serialize_with_config(&compression_config).unwrap(),
@@ -2946,7 +2946,7 @@ fn benchmark_encoding_statistical_with_compression(
         );
         grouped_block_serialized = grouped_block_block.serialize_with_config(&compression_config)?;
         grouped_block_decode_times = measure_function(
-            || FastLanesDataBlock::deserialize(&grouped_block_serialized).unwrap(),
+            || ProximaDataBlock::deserialize(&grouped_block_serialized).unwrap(),
             sample_size,
         );
 
@@ -3133,7 +3133,7 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
         (CompressionAlgorithm::Brotli, "Brotli"),
     ];
 
-    let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+    let encoder = ProximaEncoder::new(ProximaScheme::Delta { base: 0 });
     let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.vector.clone()).collect();
 
     // Encode data in both layouts

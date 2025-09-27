@@ -19,6 +19,8 @@ use crate::storage::traits::{CompactionParameters, FlushParameters, UnifiedStora
 // CompactionStrategy is not needed - it's part of CompactionParameters
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::utils::StoragePath;
+// Import column constants from columnar module
+use crate::storage::engines::core::formats::columnar::FIELD_ID;
 
 /// Create test configuration with custom compaction settings
 fn create_compaction_config(_base_path: &str) -> ViperEngineConfig {
@@ -659,7 +661,7 @@ async fn test_basic_compaction() {
                         total_rows += batch.num_rows();
 
                         // Print first few IDs
-                        if let Some(id_column) = batch.column_by_name("id") {
+                        if let Some(id_column) = batch.column_by_name(FIELD_ID) {
                             use arrow_array::Array;
                             let id_array = id_column
                                 .as_any()
@@ -1313,7 +1315,7 @@ async fn test_size_tiered_compaction_strategy() {
     for (idx, size) in file_sizes.iter().enumerate() {
         let mut vectors = Vec::new();
         for i in 0..*size {
-            vectors.push(create_test_vector(&format!("tier_{}_vec_{}", idx, i), 64));
+            vectors.push(create_test_vector(&format!("tier_{}_vec_{}", idx, i), 128));
         }
 
         // VIPER is columnar - vectors will be flushed below
@@ -1369,7 +1371,7 @@ async fn test_size_tiered_compaction_strategy() {
         .search_vectors(
             collection_id,
             &storage_url,
-            &vec![0.5; 64],
+            &vec![0.5; 128],
             total_vectors + 10,
         )
         .await
@@ -1417,6 +1419,23 @@ async fn test_compaction_with_metadata_filtering() {
         }
 
         // Flush each category separately
+        // Create collection config with "category" as a filterable column
+        let mut collection = create_test_collection(
+            collection_id,
+            temp_dir.path().to_str().unwrap(),
+        );
+        if let Some(ref mut config) = collection.config {
+            config.filterable_columns = vec![
+                crate::proto::proximadb_v1::FilterableColumnSpec {
+                    name: "category".to_string(),
+                    data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                    indexed: false,
+                    supports_range: false,
+                    estimated_cardinality: None,
+                }
+            ];
+        }
+
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
@@ -1427,15 +1446,29 @@ async fn test_compaction_with_metadata_filtering() {
             timeout_ms: None,
             trigger_compaction: false,
             estimated_size: 1024 * 1024, // 1MB estimated
-            collection_config: Some(create_test_collection(
-                collection_id,
-                temp_dir.path().to_str().unwrap(),
-            )),
+            collection_config: Some(collection),
         };
         engine.do_flush(&flush_params).await.unwrap();
     }
 
     // Run compaction
+    // Use same collection config with "category" as filterable
+    let mut compact_collection = create_test_collection(
+        collection_id,
+        temp_dir.path().to_str().unwrap(),
+    );
+    if let Some(ref mut config) = compact_collection.config {
+        config.filterable_columns = vec![
+            crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "category".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                indexed: false,
+                supports_range: false,
+                estimated_cardinality: None,
+            }
+        ];
+    }
+
     let compact_params = CompactionParameters {
         collection_id: Some(collection_id.to_string()),
         force: true,
@@ -1444,10 +1477,7 @@ async fn test_compaction_with_metadata_filtering() {
         timeout_ms: None,
         priority: crate::storage::traits::OperationPriority::Medium,
         estimated_input_size: 1024 * 1024, // 1MB estimated
-        collection_config: Some(create_test_collection(
-            collection_id,
-            temp_dir.path().to_str().unwrap(),
-        )),
+        collection_config: Some(compact_collection),
     };
 
     engine
@@ -1461,15 +1491,80 @@ async fn test_compaction_with_metadata_filtering() {
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
+
+    // Create search context with proper collection config that includes filterable columns
+    // This is the same collection config used during compaction
+    let search_collection = {
+        let mut col = create_test_collection(collection_id, temp_dir.path().to_str().unwrap());
+        if let Some(ref mut config) = col.config {
+            config.filterable_columns = vec![
+                crate::proto::proximadb_v1::FilterableColumnSpec {
+                    name: "category".to_string(),
+                    data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                    indexed: false,
+                    supports_range: false,
+                    estimated_cardinality: None,
+                }
+            ];
+        }
+        col.storage_assignment = Some(crate::proto::proximadb_v1::StorageAssignment {
+            base_location: storage_url.clone(),
+            primary_path: storage_url.clone(),
+            backup_paths: vec![],
+            engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
+            engine_config: Default::default(),
+            assigned_at: 0,
+        });
+        Arc::new(col)
+    };
+
+    // Create search context for unified search
+    use crate::core::search::SearchParams;
+    use crate::storage::traits::{StorageQueryContext, StorageQueryMetadata};
+
+    let search_params = Arc::new(SearchParams {
+        vector: Some(vec![0.5; 128]),
+        top_k: Some(100),
+        ..SearchParams::default()
+    });
+
+    let ctx = StorageQueryContext {
+        search_params: search_params.clone(),
+        collection: search_collection.clone(),
+        metadata: StorageQueryMetadata {
+            collection_id: collection_id.to_string(),
+            storage_path: storage_url.clone(),
+            ..Default::default()
+        },
+    };
+
+    // Debug: check if ANY vectors are returned using unified search
+    let all_search_results = engine
+        .search_vectors_unified(&ctx)
+        .await
+        .unwrap();
+
+    let total_results = all_search_results.len();
+    println!("Total search results after compaction: {}", total_results);
+
+    // Debug: print a sample of metadata from results
+    for (idx, result) in all_search_results.iter().take(5).enumerate() {
+        println!("Result {}: id={}, metadata keys={:?}",
+            idx, result.id, result.metadata.keys().collect::<Vec<_>>());
+        if let Some(cat) = result.metadata.get("category") {
+            println!("  Has category: {:?}", cat.value);
+        }
+    }
+
     for category in &["A", "B", "C"] {
+        // Use unified search with proper context
         let search_results = engine
-            .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 100)
+            .search_vectors_unified(&ctx)
             .await
             .unwrap();
 
         let category_count = search_results
             .iter()
-            .flat_map(|sr| sr.results.iter())
             .filter(|r| {
                 if let Some(sql_value) = r.metadata.get("category") {
                     if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) = sql_value.value {
@@ -1483,10 +1578,11 @@ async fn test_compaction_with_metadata_filtering() {
             })
             .count();
 
+        println!("Category {} found {} vectors (expected 20)", category, category_count);
         assert_eq!(
             category_count, 20,
-            "Category {} vectors missing after compaction",
-            category
+            "Category {} vectors missing after compaction (found {} of {} total results)",
+            category, category_count, total_results
         );
     }
 }
@@ -1520,7 +1616,7 @@ async fn test_incremental_compaction() {
     for batch in 0..6 {
         let mut vectors = Vec::new();
         for i in 0..5 {
-            vectors.push(create_test_vector(&format!("inc_{}_vec_{}", batch, i), 64));
+            vectors.push(create_test_vector(&format!("inc_{}_vec_{}", batch, i), 128));
         }
 
         // VIPER is columnar - vectors will be flushed below
@@ -1572,7 +1668,7 @@ async fn test_incremental_compaction() {
         collection_id
     );
     let search_results = engine
-        .search_vectors(collection_id, &storage_url, &vec![0.5; 64], 100)
+        .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 100)
         .await
         .unwrap();
 

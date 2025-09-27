@@ -103,7 +103,7 @@ use tracing::{debug, info, warn};
 pub mod clustering;
 pub mod compaction;
 pub mod eventlog_integration;
-pub mod fastlane;
+pub mod proxima;
 pub mod hilbert_curve;
 pub mod liquid_clustering;
 pub mod pca_impl;

@@ -1,5 +1,5 @@
 // =============================================================================
-use arrow_array::{Float32Array, RecordBatch, StringArray}; // HIGH-LEVEL PARQUET BUSINESS LOGIC READER (parquet_reader.rs)
+use arrow_array::{Array, Float32Array, RecordBatch, StringArray}; // HIGH-LEVEL PARQUET BUSINESS LOGIC READER (parquet_reader.rs)
 // =============================================================================
 //
 // PURPOSE: High-level business logic and query operations for Parquet files
@@ -1983,6 +1983,120 @@ impl UnifiedParquetReader {
                 let end = start + vector_dim;
                 record.vector = (start..end).map(|i| float_array.value(i)).collect();
             }
+
+            // Extract metadata from the batch
+            let mut metadata = std::collections::HashMap::new();
+
+            // Debug: Log available columns
+            debug!("Available columns in batch: {:?}",
+                batch.schema().fields().iter().map(|f| f.name()).collect::<Vec<_>>());
+
+            // First, check all columns for filterable metadata fields
+            // Skip known system columns
+            for field in batch.schema().fields() {
+                let field_name = field.name();
+
+                // Skip known non-metadata columns
+                if field_name == super::FIELD_ID ||
+                   field_name == super::FIELD_VECTOR_FP32 ||
+                   field_name == "timestamp" ||
+                   field_name == "version" ||
+                   field_name == super::FIELD_EXTRA_META ||
+                   field_name == "row_group_offset" ||
+                   field_name == "row_index" ||
+                   field_name.starts_with("vector_") {
+                    continue;
+                }
+
+                // This could be a filterable metadata column
+                if let Some(col) = batch.column_by_name(field_name) {
+                    debug!("Processing potential metadata column: {}", field_name);
+                    // Extract value based on column type - preserve appropriate SQL datatypes
+                    if let Some(str_array) = col.as_any().downcast_ref::<StringArray>() {
+                        if str_array.is_valid(row_idx) {
+                            let value = str_array.value(row_idx).to_string();
+                            debug!("Extracted filterable metadata: {} = {} for row {}", field_name, value, row_idx);
+                            metadata.insert(
+                                field_name.to_string(),
+                                crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value)),
+                                },
+                            );
+                        }
+                    } else if let Some(int_array) = col.as_any().downcast_ref::<arrow_array::Int64Array>() {
+                        if int_array.is_valid(row_idx) {
+                            metadata.insert(
+                                field_name.to_string(),
+                                crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                                        int_array.value(row_idx)
+                                    )),
+                                },
+                            );
+                        }
+                    } else if let Some(float_array) = col.as_any().downcast_ref::<arrow_array::Float64Array>() {
+                        if float_array.is_valid(row_idx) {
+                            metadata.insert(
+                                field_name.to_string(),
+                                crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        float_array.value(row_idx)
+                                    )),
+                                },
+                            );
+                        }
+                    } else if let Some(bool_array) = col.as_any().downcast_ref::<arrow_array::BooleanArray>() {
+                        if bool_array.is_valid(row_idx) {
+                            metadata.insert(
+                                field_name.to_string(),
+                                crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
+                                        bool_array.value(row_idx)
+                                    )),
+                                },
+                            );
+                        }
+                    }
+                    // Note: List types would need special handling
+                }
+            }
+
+            // Then check extra_meta Map column for non-filterable metadata
+            if let Some(extra_meta_col) = batch.column_by_name(super::FIELD_EXTRA_META) {
+                if let Some(map_array) = extra_meta_col.as_any().downcast_ref::<arrow_array::MapArray>() {
+                    // Extract Map entries for this row
+                    let start = map_array.value_offsets()[row_idx] as usize;
+                    let end = map_array.value_offsets()[row_idx + 1] as usize;
+
+                    if start < end {
+                        let entries = map_array.values();
+                        if let Some(struct_array) = entries.as_any().downcast_ref::<arrow_array::StructArray>() {
+                            let keys = struct_array.column(0).as_any().downcast_ref::<StringArray>();
+                            let values = struct_array.column(1).as_any().downcast_ref::<StringArray>();
+
+                            if let (Some(keys), Some(values)) = (keys, values) {
+                                for i in start..end {
+                                    let key = keys.value(i);
+                                    let value = values.value(i);
+                                    // Only add if not already present from filterable columns
+                                    if !metadata.contains_key(key) {
+                                        metadata.insert(
+                                            key.to_string(),
+                                            crate::proto::proximadb_v1::SqlValue {
+                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                                    value.to_string()
+                                                )),
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            record.metadata = metadata;
 
             vectors.push(record);
         }

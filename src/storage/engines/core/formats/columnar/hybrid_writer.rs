@@ -361,7 +361,7 @@ impl HybridParquetWriter {
         info!("Flushing {} records to disk", records.len());
 
         // Use batch writer for flush
-        let writer = BatchParquetWriter::new(
+        let mut writer = BatchParquetWriter::new(
             &self.file_path,
             self.dimension,
             self.config.base_config.clone(),

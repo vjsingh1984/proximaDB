@@ -158,7 +158,7 @@
 //!
 //! ## Integration with Common Infrastructure
 //!
-//! ### Row-Based Format Module (`core/formats/fastlanes_blocks/`)
+//! ### Row-Based Format Module (`core/formats/proximablocks/`)
 //! - Shared block structures with SWIFT engine
 //! - Common compression configuration
 //! - Unified batch operations
@@ -291,11 +291,11 @@ use crate::storage::engines::core::ops::{
 use crate::core::search::smart_execution_strategy::ExecutionStrategy;
 
 // Import FastLanes common structures (shared with SWIFT)
-use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{
-    BlockCompressionConfig, BlockStatistics, ColumnStatistics, FastLanesBlockMetadata,
-    FastLanesDataBlock,
+use crate::storage::engines::core::formats::proximablocks::block_structures::{
+    BlockCompressionConfig, BlockStatistics, ColumnStatistics, ProximaBlockMetadata,
+    ProximaDataBlock,
 };
-use crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout;
+use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
 // SST filename operations are handled by unified FilenameCodec from compaction_orchestrator
 
@@ -923,7 +923,7 @@ struct HierarchicalBlockMetadata {
     pub block_id: u32,
     pub record_count: u32,
     pub uncompressed_size: u32,
-    pub metadata_stats: FastLanesBlockMetadata,
+    pub metadata_stats: ProximaBlockMetadata,
     pub block_bloom_filter: Option<Vec<u8>>,
     pub has_deletes: bool,
 }
@@ -1020,7 +1020,7 @@ mod compression_helpers {
             enable_metadata_compression: true,
             compression_threshold_bytes: 1024, // 1KB threshold for testing
             dictionary_compression: false,
-            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             metadata_algorithm: None, // Use main algorithm for metadata
         }
     }
@@ -1126,7 +1126,7 @@ mod compression_helpers {
                 enable_metadata_compression: true,
                 compression_threshold_bytes: block_size / 1000, // Use 0.1% of block size as threshold
                 dictionary_compression: false,
-                vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+                vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
                 metadata_algorithm: None, // Use main algorithm for metadata
             }
         } else {
@@ -1154,17 +1154,17 @@ pub fn optimal_block_size(vector_dim: usize) -> usize {
 
 // Import centralized compression markers and helper functions
 
-// SST uses FastLanesDataBlock directly from the shared module
+// SST uses ProximaDataBlock directly from the shared module
 // Additional SST-specific methods are implemented as utility functions
 
-// SST-specific utility functions for FastLanesDataBlock
+// SST-specific utility functions for ProximaDataBlock
 mod block_utils {
     use super::*;
-    use crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout;
+    use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
-    /// Create a new FastLanesDataBlock for SST usage
-    pub fn create_sst_block(records: Vec<VectorRecord>, block_id: u32) -> FastLanesDataBlock {
-        FastLanesDataBlock {
+    /// Create a new ProximaDataBlock for SST usage
+    pub fn create_sst_block(records: Vec<VectorRecord>, block_id: u32) -> ProximaDataBlock {
+        ProximaDataBlock {
             encoding_marker: 0x00, // Will be set based on encoding
             encoding_metadata: None,
             block_id,
@@ -1174,7 +1174,7 @@ mod block_utils {
             encoded_vectors: None,
             vector_layout: VectorEncodingLayout::FullVector,
             quantized_section: None,
-            metadata: FastLanesBlockMetadata::default(),
+            metadata: ProximaBlockMetadata::default(),
             compression_config: BlockCompressionConfig::default(),
             compression_algorithm: CompressionAlgorithm::None,
             uncompressed_size: 0,
@@ -1189,8 +1189,8 @@ mod block_utils {
     }
 
     /// Encode vectors using FastLanes SIMD-optimized encoding
-    pub fn encode_with_fastlanes(block: &FastLanesDataBlock) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{
+    pub fn encode_with_fastlanes(block: &ProximaDataBlock) -> anyhow::Result<Vec<u8>> {
+        use crate::storage::engines::core::ops::proximaencoder::{
             FastLanesEncoder, FastLanesScheme,
         };
         use std::io::Write;
@@ -1240,7 +1240,7 @@ mod block_utils {
 
     /// Decode vectors from FastLanes format
     pub fn decode_with_fastlanes(data: &[u8], marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{
+        use crate::storage::engines::core::ops::proximaencoder::{
             FastLanesDecoder, FastLanesScheme,
         };
         use std::io::Read;
@@ -1322,8 +1322,8 @@ mod block_utils {
     }
 
     /// Calculate metadata statistics for intelligent block filtering
-    pub fn calculate_metadata_stats(records: &[VectorRecord]) -> FastLanesBlockMetadata {
-        let mut stats = FastLanesBlockMetadata::default();
+    pub fn calculate_metadata_stats(records: &[VectorRecord]) -> ProximaBlockMetadata {
+        let mut stats = ProximaBlockMetadata::default();
 
         if records.is_empty() {
             return stats;
@@ -1490,28 +1490,28 @@ mod block_utils {
 
 // Local marker functions removed - now using centralized functions from unified_compression::markers
 
-// Remove unnecessary wrapper functions - callers should use FastLanesDataBlock methods directly
-// FastLanesDataBlock::serialize()
-// FastLanesDataBlock::serialize_with_config()
-// FastLanesDataBlock::deserialize()
+// Remove unnecessary wrapper functions - callers should use ProximaDataBlock methods directly
+// ProximaDataBlock::serialize()
+// ProximaDataBlock::serialize_with_config()
+// ProximaDataBlock::deserialize()
 
-// Old deserialization helper functions removed - now handled by FastLanesDataBlock internally
-// FastLanesDataBlock handles all serialization/deserialization with compression support
+// Old deserialization helper functions removed - now handled by ProximaDataBlock internally
+// ProximaDataBlock handles all serialization/deserialization with compression support
 
-/// Delegates to FastLanesDataBlock for proper deserialization
+/// Delegates to ProximaDataBlock for proper deserialization
 /// This eliminates duplication and ensures consistent block handling
-fn deserialize_uncompressed_block(data: &[u8]) -> anyhow::Result<FastLanesDataBlock> {
-    // FIXED: Delegate directly to FastLanesDataBlock instead of duplicating logic
-    FastLanesDataBlock::deserialize(data)
+fn deserialize_uncompressed_block(data: &[u8]) -> anyhow::Result<ProximaDataBlock> {
+    // FIXED: Delegate directly to ProximaDataBlock instead of duplicating logic
+    ProximaDataBlock::deserialize(data)
 }
 
-// Utility functions for FastLanesDataBlock operations in SST
+// Utility functions for ProximaDataBlock operations in SST
 mod block_operations {
     use super::*;
 
     /// Get compression statistics
     /// Returns (is_compressed, uncompressed_size)
-    pub fn compression_stats(block: &FastLanesDataBlock) -> (bool, usize) {
+    pub fn compression_stats(block: &ProximaDataBlock) -> (bool, usize) {
         (
             block.compression_algorithm != CompressionAlgorithm::None,
             block.uncompressed_size as usize,
@@ -1520,7 +1520,7 @@ mod block_operations {
 
     /// Generate or update quantized section for this block
     pub fn update_quantization(
-        block: &mut FastLanesDataBlock,
+        block: &mut ProximaDataBlock,
         codebook: Option<&crate::compute::quantization::Codebook>,
         enable_int8: bool,
     ) -> Result<()> {
@@ -1548,7 +1548,7 @@ mod block_operations {
 
     /// Filter candidates using binary sketches (Stage 1: 95% reduction)
     pub fn filter_by_sketch(
-        block: &FastLanesDataBlock,
+        block: &ProximaDataBlock,
         query_sketch: &[u8], // Binary sketch is just a byte array
         threshold: f32,
     ) -> Vec<usize> {
@@ -1563,7 +1563,7 @@ mod block_operations {
 
     /// Rank candidates using PQ codes (Stage 2: Further refinement)
     pub fn rank_by_pq(
-        block: &FastLanesDataBlock,
+        block: &ProximaDataBlock,
         query: &[f32],
         codebook: &crate::compute::quantization::Codebook,
         candidate_indices: &[usize],
@@ -1579,7 +1579,7 @@ mod block_operations {
 
     /// Get full vectors for final reranking (Stage 3: 100% accuracy)
     pub fn vectors_by_indices(
-        block: &FastLanesDataBlock,
+        block: &ProximaDataBlock,
         indices: &[usize],
     ) -> Vec<(usize, Vec<f32>)> {
         indices
@@ -1589,7 +1589,7 @@ mod block_operations {
     }
 
     /// Check if block has valid quantization data
-    pub fn has_quantization(block: &FastLanesDataBlock) -> bool {
+    pub fn has_quantization(block: &ProximaDataBlock) -> bool {
         // Check if quantized vectors exist and are not empty
         block
             .quantized_vectors
@@ -1598,7 +1598,7 @@ mod block_operations {
     }
 
     /// Get memory savings from quantization
-    pub fn quantization_memory_savings(block: &FastLanesDataBlock) -> f32 {
+    pub fn quantization_memory_savings(block: &ProximaDataBlock) -> f32 {
         // Calculate original memory usage
         let original_size = block
             .records
@@ -4348,7 +4348,7 @@ impl SstEngine {
             expected_items: records.len(),
             ..Default::default()
         };
-        let mut metadata_builder = crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::strategies::composite::CompositeBloomFilterBuilder::new(metadata_config);
+        let mut metadata_builder = crate::storage::engines::core::formats::proximablocks::bloom_filter::strategies::composite::CompositeBloomFilterBuilder::new(metadata_config);
 
         // Add all keys and metadata to filters
         for record in records {
@@ -4546,14 +4546,14 @@ impl SstEngine {
         records: &[VectorRecord], // OPTIMIZED: Accept VectorRecord directly
         block_size: usize,
         compression_config: Option<&crate::proto::proximadb_v1::CompressionConfig>,
-    ) -> Result<Vec<FastLanesDataBlock>> {
+    ) -> Result<Vec<ProximaDataBlock>> {
         let mut blocks = Vec::new();
         let mut current_block_records = Vec::new();
         let mut current_block_size = 0;
         let mut block_id = 0;
 
         // Use centralized compression config conversion from FastLanes
-        use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
+        use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
 
         let block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config);
 
@@ -4567,7 +4567,7 @@ impl SstEngine {
             if current_block_size + record_size > block_size && !current_block_records.is_empty() {
                 let records = std::mem::take(&mut current_block_records);
                 let compression_config = block_compression_config.clone();
-                let block = FastLanesDataBlock {
+                let block = ProximaDataBlock {
                     encoding_marker: 0x00,
                     encoding_metadata: None,
                     block_id,
@@ -4577,7 +4577,7 @@ impl SstEngine {
                     encoded_vectors: None,
                     vector_layout: VectorEncodingLayout::FullVector,
                     quantized_section: None,
-                    metadata: FastLanesBlockMetadata::default(),
+                    metadata: ProximaBlockMetadata::default(),
                     compression_config,
                     compression_algorithm: CompressionAlgorithm::None,
                     uncompressed_size: 0,
@@ -4601,7 +4601,7 @@ impl SstEngine {
         // Add final block if not empty
         if !current_block_records.is_empty() {
             let compression_config = block_compression_config.clone();
-            let block = FastLanesDataBlock {
+            let block = ProximaDataBlock {
                 encoding_marker: 0x00,
                 encoding_metadata: None,
                 block_id,
@@ -4611,7 +4611,7 @@ impl SstEngine {
                 encoded_vectors: None,
                 vector_layout: VectorEncodingLayout::FullVector,
                 quantized_section: None,
-                metadata: FastLanesBlockMetadata::default(),
+                metadata: ProximaBlockMetadata::default(),
                 compression_config,
                 compression_algorithm: CompressionAlgorithm::None,
                 uncompressed_size: 0,
@@ -4643,7 +4643,7 @@ impl SstEngine {
     /// Build optimized index and compress data blocks
     async fn build_optimized_index_and_compress_blocks(
         &self,
-        data_blocks: &[FastLanesDataBlock],
+        data_blocks: &[ProximaDataBlock],
     ) -> Result<(Vec<IndexEntry>, Vec<Vec<u8>>)> {
         let mut index_entries = Vec::new();
         let mut compressed_blocks = Vec::new();

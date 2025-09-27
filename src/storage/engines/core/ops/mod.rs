@@ -41,13 +41,13 @@ pub enum ColumnData {
 /// Zero-copy reader integration examples and utilities
 pub mod zero_copy_reader_integration;
 
-/// FastLanes SIMD-optimized encoding for columnar data within blocks
+/// Proxima SIMD-optimized encoding for columnar data within blocks
 /// Used by SST, SWIFT, RAPTOR, and PRISM for efficient vector storage
-pub mod fastlanes_encoding;
+pub mod proximaencoder;
 
-/// Unified FastLanes SIMD optimization module for HELIX, SST, and SWIFT engines
+/// Unified Proxima SIMD optimization module for HELIX, SST, and SWIFT engines
 /// Provides hardware-accelerated encoding/decoding with engine-specific optimizations
-pub mod unified_fastlanes_simd;
+pub mod unified_proxima_simd;
 
 /// SIMD configuration system for fine-tuning optimization behavior
 pub mod simd_config;
@@ -96,8 +96,8 @@ pub fn estimate_vector_storage_size(
 }
 
 /// Tensor-specific encoding operations (sparse tensors, quantization, transpose)
-/// Re-exported through fastlanes_encoding for consolidated access
-pub mod fastlanes_tensor_encoding;
+/// Re-exported through proximaencoder for consolidated access
+pub mod proxima_tensor_encoding;
 
 // Zero-copy I/O system moved to core/io/zero_copy
 // Import from there: use crate::storage::engines::core::io::zero_copy::*;

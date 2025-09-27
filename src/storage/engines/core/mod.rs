@@ -20,7 +20,7 @@ pub use filter_evaluator::{
 };
 pub use formats::{
     columnar::{ColumnarSchema, ParquetIOLayer, ParquetQueryEngine},
-    fastlanes_blocks::{FastLanesBlockMetadata, FastLanesDataBlock, RowBasedUtilities},
+    proximablocks::{ProximaBlockMetadata, ProximaDataBlock, RowBasedUtilities},
 };
 pub use io::zero_copy::ZeroCopyIOSystem;
 pub use search::{ProgressiveSearchEngine, SearchContext};

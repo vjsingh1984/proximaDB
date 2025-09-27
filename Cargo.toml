@@ -79,11 +79,14 @@ rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v56+ for improved performance
 parquet = { version = "56.1", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
 # Arrow dependencies matching parquet v56
+arrow = { version = "56.1", features = ["prettyprint"] }
 arrow-array = { version = "56.1", default-features = false }
 arrow-buffer = { version = "56.1", default-features = false }
 arrow-schema = { version = "56.1", default-features = false }
 arrow-data = { version = "56.1", default-features = false }
 arrow-ipc = { version = "56.1", default-features = false }
+arrow-select = { version = "56.1", default-features = false }
+arrow-ord = { version = "56.1", default-features = false }
 
 # Advanced compression for recovery-optimized WAL
 lz4_flex = "0.11"        # Faster LZ4 implementation
@@ -93,7 +96,7 @@ flate2 = { version = "1.0", default-features = true }  # Gzip/Deflate/Zlib compr
 brotli = "6.0"           # Brotli compression - Updated from 3.5
 bzip2 = "0.5"            # Bzip2 compression - Updated from 0.4
 xz2 = "0.1"              # XZ/LZMA2 compression
-fastlanes = "0.2"        # FastLanes compression for columnar data
+# fastlanes = "0.2"        # Removed - replaced with internal ProximaDB encoding
 
 # System monitoring
 sysinfo = "0.30"

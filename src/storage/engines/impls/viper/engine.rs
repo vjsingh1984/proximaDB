@@ -29,6 +29,12 @@ use tracing::{debug, info, trace, warn};
 // Import UnifiedQuantizationLevel
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 
+// Import column constants from columnar module
+use crate::storage::engines::core::formats::columnar::{
+    FIELD_ID, FIELD_VECTOR_FP32, FIELD_VERSION, FIELD_TIMESTAMP,
+    FIELD_EXPIRES_AT, FIELD_IS_DELETED
+};
+
 // Universal performance optimization imports
 use crate::storage::engines::core::ops::performance_optimization::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
@@ -41,7 +47,7 @@ use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
 // Schema now uses shared ColumnarSchema from columnar module
-use super::compaction::Compaction;
+use super::compaction::ViperCompactionService;
 use super::flush::Flush;
 // use super::ml_clustering::MLClusteringEngine; // Moved to AXIS
 use super::utilities::ViperUtilities;
@@ -105,7 +111,7 @@ pub struct ViperEngine {
     schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema,
     /// Handles row group reorganization and file merging
     /// Optimizes storage layout for better compression and query performance
-    compaction: Compaction,
+    compaction: ViperCompactionService,
 
     /// Manages batch writes and Parquet file creation
     /// Coordinates quantization, compression, and row group formation
@@ -394,7 +400,7 @@ impl ViperEngine {
         .await?;
         // Create managers with async constructors
         let compaction =
-            Compaction::new(collection_service.clone(), filesystem_factory.clone(), None).await?;
+            ViperCompactionService::new(filesystem_factory.clone());
         let flush_manager = Flush::new(collection_service.clone(), filesystem_factory.clone()).await?;
         
         // Register VIPER cache providers with global orchestrator
@@ -906,7 +912,7 @@ impl ViperEngine {
 
                 // Get ID column
                 let id_array = batch
-                    .column_by_name("id")
+                    .column_by_name(FIELD_ID)
                     .and_then(|col| col.as_any().downcast_ref::<StringArray>())
                     .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'id' column"))?;
                 // Find matching ID
@@ -914,22 +920,22 @@ impl ViperEngine {
                     if id_array.value(row_idx) == vector_id {
                         // Found a match! Extract the full record
                         let vector_array = batch
-                            .column_by_name("vector")
+                            .column_by_name(FIELD_VECTOR_FP32)
                             .and_then(|col| col.as_any().downcast_ref::<ListArray>())
-                            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'vector' column"))?;
+                            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'vector_fp32' column"))?;
 
                         let timestamp = batch
-                            .column_by_name("timestamp")
+                            .column_by_name(FIELD_TIMESTAMP)
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
                             .unwrap_or(0);
                         let version = batch
-                            .column_by_name("version")
+                            .column_by_name(FIELD_VERSION)
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .map(|arr| arr.value(row_idx))
                             .unwrap_or(0);
                         let expires_at = batch
-                            .column_by_name("expires_at")
+                            .column_by_name(FIELD_EXPIRES_AT)
                             .and_then(|col| col.as_any().downcast_ref::<Int64Array>())
                             .and_then(|arr| {
                                 if arr.is_null(row_idx) {
@@ -1008,13 +1014,13 @@ impl ViperEngine {
                             // Skip core fields - only process filterable metadata columns
                             if !matches!(
                                 field_name.as_str(),
-                                "id" | "collection_id"
-                                    | "vector"
-                                    | "timestamp"
+                                FIELD_ID | "collection_id"
+                                    | FIELD_VECTOR_FP32
+                                    | FIELD_TIMESTAMP
                                     | "created_at"
                                     | "updated_at"
-                                    | "version"
-                                    | "expires_at"
+                                    | FIELD_VERSION
+                                    | FIELD_EXPIRES_AT
                                     | "extra_meta"
                             ) {
                                 if let Some(column) = batch.column_by_name(field_name) {
@@ -1270,7 +1276,10 @@ impl ViperEngine {
             ..SearchParams::default()
         });
 
-        let collection = Arc::new(crate::proto::proximadb_v1::Collection {
+        // For testing, create a minimal collection config
+        // This avoids the need for collection service in tests
+        // Note: In production, use search_vectors_unified with proper context
+        let collection = crate::proto::proximadb_v1::Collection {
             id: collection_id.to_string(),
             config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 name: collection_id.to_string(),
@@ -1279,9 +1288,6 @@ impl ViperEngine {
                 storage_engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
                 ..Default::default()
             }),
-            stats: None,
-            created_at: 0,
-            updated_at: 0,
             storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
                 base_location: storage_url.to_string(),
                 primary_path: storage_url.to_string(),
@@ -1290,7 +1296,10 @@ impl ViperEngine {
                 engine_config: Default::default(),
                 assigned_at: 0,
             }),
-        });
+            ..Default::default()
+        };
+
+        let collection = Arc::new(collection);
 
         let ctx = StorageQueryContext {
             search_params,
@@ -1313,28 +1322,12 @@ impl ViperEngine {
             .map(|r| {
                 // Convert OptimizedSearchRecord vector (Arc<Vec<f32>>) to Vec<f32>
                 let vector = r.vector.as_ref().map(|arc| (**arc).clone()).unwrap_or_default();
-                // Convert metadata HashMap to proto format
-                let metadata_json = r.metadata.iter()
-                    .map(|(k, v)| (k.clone(), serde_json::Value::String("TODO".to_string())))
-                    .collect::<std::collections::HashMap<String, serde_json::Value>>();
+                // Use metadata directly - it's already HashMap<String, SqlValue>
                 crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id,
                     score: r.score as f64,
                     vector,
-                    metadata: {
-                        let mut map = std::collections::HashMap::new();
-                        for (k, v) in metadata_json {
-                            map.insert(k, crate::proto::proximadb_v1::SqlValue {
-                                value: Some(match v {
-                                    serde_json::Value::String(s) => crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
-                                    serde_json::Value::Number(n) => crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0)),
-                                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
-                                    _ => crate::proto::proximadb_v1::sql_value::Value::StringValue(v.to_string()),
-                                })
-                            });
-                        }
-                        map
-                    },
+                    metadata: r.metadata.clone(),
                     version: None,
                     similarity: r.similarity,
                     timestamp: None,
@@ -1979,9 +1972,12 @@ impl UnifiedStorageEngine for ViperEngine {
             collection_id
         );
         let collection_opt = Some(ctx.collection.clone());
-        // Get parquet files for the collection using the provided storage URL
+        // Get parquet files for the collection - construct the full data path
+        // The storage_url is the base location, we need to add collection_id/data
+        let data_path = crate::utils::StoragePath::collection_data_path(&storage_url, collection_id);
+        debug!("VIPER search: storage_url={}, data_path={}", storage_url, data_path);
         let parquet_files = self
-            .parquet_files_with_storage_url(collection_id, &storage_url)
+            .parquet_files_with_storage_url(collection_id, &data_path)
             .await?;
         debug!(
             "Found {} parquet files for collection {}",
@@ -2070,10 +2066,17 @@ impl UnifiedStorageEngine for ViperEngine {
         ).await?;
 
         // Create collection context for the reader
+        // Get filterable columns from collection config if available
+        let filterable_column_specs = collection_opt
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.filterable_columns.clone())
+            .unwrap_or_else(Vec::new);
+
         let collection_context = crate::storage::engines::core::formats::columnar::parquet_query_engine::CollectionContext {
             collection_id: collection_id.to_string(),
             file_paths: parquet_files.clone(),
-            filterable_columns: vec![], // TODO: Get from collection config
+            filterable_columns: filterable_column_specs,
             quantization_columns: vec![],
             estimated_size_mb: 0.0,
             estimated_document_count: 0,

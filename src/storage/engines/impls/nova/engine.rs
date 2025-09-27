@@ -5,6 +5,8 @@ use crate::core::compression::StandardCompression;
 use crate::core::search::DataFreshnessTier;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::utils::StoragePath;
+// Import column constants from columnar module
+use crate::storage::engines::core::formats::columnar::FIELD_ID;
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
@@ -567,7 +569,7 @@ impl NovaEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.filterable_columns.clone())
             .unwrap_or_else(|| vec![crate::proto::proximadb_v1::FilterableColumnSpec {
-                name: "id".to_string(),
+                name: FIELD_ID.to_string(),
                 data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
                 indexed: true,
                 supports_range: false,
@@ -576,7 +578,7 @@ impl NovaEngine {
 
         // Configure writer with NOVA-specific settings
         // Include both ID and filterable columns in bloom filters
-        let mut bloom_columns = vec!["id".to_string()];
+        let mut bloom_columns = vec![FIELD_ID.to_string()];
         bloom_columns.extend(filterable_columns.iter().map(|c| c.name.clone()));
 
         let writer_config = ParquetWriterConfig {
@@ -1130,7 +1132,7 @@ impl UnifiedStorageEngine for NovaEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.filterable_columns.clone())
             .unwrap_or_else(|| vec![crate::proto::proximadb_v1::FilterableColumnSpec {
-                name: "id".to_string(),
+                name: FIELD_ID.to_string(),
                 data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
                 indexed: true,
                 supports_range: false,

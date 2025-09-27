@@ -14,6 +14,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
 use tokio;
+// Import column constants
+use super::{FIELD_ID, FIELD_VECTOR_FP32};
 
 #[tokio::test]
 async fn test_id_column_always_preserved() {
@@ -42,12 +44,12 @@ async fn test_id_column_always_preserved() {
     // Verify Parquet file has ID column
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
     assert!(
-        parquet_schema.field_with_name("id").is_ok(),
+        parquet_schema.field_with_name(FIELD_ID).is_ok(),
         "ID column must be present"
     );
 
     // Verify ID column is NOT NULL
-    let id_field = parquet_schema.field_with_name("id").unwrap();
+    let id_field = parquet_schema.field_with_name(FIELD_ID).unwrap();
     assert!(
         !id_field.is_nullable(),
         "ID column should be NOT NULL for customer APIs"
@@ -77,7 +79,7 @@ async fn test_id_less_storage_warning() {
     // Even with id_less_storage = true, ID column should still be present
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
     assert!(
-        parquet_schema.field_with_name("id").is_ok(),
+        parquet_schema.field_with_name(FIELD_ID).is_ok(),
         "ID column must ALWAYS be present for customer APIs, even with id_less_storage=true"
     );
 }
@@ -454,7 +456,7 @@ async fn test_row_group_offset_optimization() {
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
 
     // ID column should ALWAYS be present
-    assert!(parquet_schema.field_with_name("id").is_ok());
+    assert!(parquet_schema.field_with_name(FIELD_ID).is_ok());
 
     // Row group offset columns should be present when optimization is enabled
     assert!(parquet_schema.field_with_name("row_group_offset").is_ok());
@@ -550,13 +552,13 @@ async fn test_schema_evolution_with_id_column() {
 
         // ID column must always be present regardless of quantization config
         assert!(
-            schema.field_with_name("id").is_ok(),
+            schema.field_with_name(FIELD_ID).is_ok(),
             "ID column missing in schema variation {}",
             i
         );
 
         // ID column must be NOT NULL
-        let id_field = schema.field_with_name("id").unwrap();
+        let id_field = schema.field_with_name(FIELD_ID).unwrap();
         assert!(
             !id_field.is_nullable(),
             "ID column must be NOT NULL in schema variation {}",
@@ -565,7 +567,7 @@ async fn test_schema_evolution_with_id_column() {
 
         // Vector column must be present
         assert!(
-            schema.field_with_name("vector").is_ok(),
+            schema.field_with_name(FIELD_VECTOR_FP32).is_ok(),
             "Vector column missing in schema variation {}",
             i
         );
@@ -654,7 +656,7 @@ fn test_optimization_recommendations_preserve_id_column() {
 
         // ID column must ALWAYS be present
         assert!(
-            schema.field_with_name("id").is_ok(),
+            schema.field_with_name(FIELD_ID).is_ok(),
             "ID column missing for dataset: {} vectors, {} dim, {:?} pattern, {:?} budget",
             num_vectors,
             dimension,

@@ -800,6 +800,8 @@ impl StreamingParquetWriter {
         for col in &self.filterable_columns {
             use super::schema::FilterableData;
 
+            debug!("Writing filterable column: {} (type: {:?})", col.name, col.data_type);
+
             // Extract values for this column from records
             let array: ArrayRef = match col.data_type {
                 FilterableData::String => {
@@ -811,6 +813,7 @@ impl StreamingParquetWriter {
                                 _ => None,
                             })
                     }).collect();
+                    debug!("Column {} has {} non-null values out of {}", col.name, values.iter().filter(|v| v.is_some()).count(), values.len());
                     Arc::new(StringArray::from(values))
                 },
                 FilterableData::Integer => {
@@ -1756,11 +1759,35 @@ pub struct StreamingParquetWriterStats {
     pub bloom_filter_count: usize,
 }
 
+/// Result from compaction operation
+#[derive(Debug)]
+pub struct ColumnarCompactionResult {
+    pub output_file: String,
+    pub records_written: usize,
+    pub files_compacted: usize,
+    pub size_before: u64,
+    pub size_after: u64,
+    pub compression_ratio: f32,
+}
+
+/// Version continuity enforcement mode for compaction
+#[derive(Debug, Clone, Copy)]
+pub enum VersionContinuityMode {
+    /// Versions must be exactly contiguous (default)
+    Strict,
+    /// Allow gaps up to max_jump
+    Relaxed { max_jump: i64 },
+    /// No version continuity checking
+    Disabled,
+}
+
 /// Batch Parquet writer for bulk operations
 pub struct BatchParquetWriter {
     config: ParquetWriterConfig,
     file_path: String,
     dimension: usize,
+    filterable_columns: Option<Vec<crate::proto::proximadb_v1::FilterableColumnSpec>>,
+    metadata_collector: Option<Box<dyn super::metadata_collector::MetadataCollector>>,
 }
 
 impl BatchParquetWriter {
@@ -1774,19 +1801,43 @@ impl BatchParquetWriter {
             config,
             file_path: file_path.as_ref().to_string_lossy().to_string(),
             dimension,
+            filterable_columns: None,
+            metadata_collector: None,
         }
     }
 
-    /// Write all records at once (optimized for bulk inserts)
-    pub async fn write_all(&self, records: &[VectorRecord]) -> Result<StreamingParquetWriterStats> {
+    /// Set filterable columns for the writer
+    pub fn with_filterable_columns(mut self, columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec>) -> Self {
+        self.filterable_columns = Some(columns);
+        self
+    }
+
+    /// Set metadata collector for hierarchical metadata (NOVA engine)
+    pub fn with_metadata_collector(mut self, collector: Box<dyn super::metadata_collector::MetadataCollector>) -> Self {
+        self.metadata_collector = Some(collector);
+        self
+    }
+
+    /// Write all records at once with optional metadata collection
+    pub async fn write_all(&mut self, records: &[VectorRecord]) -> Result<(StreamingParquetWriterStats, Option<Box<dyn super::metadata_collector::MetadataCollector>>)> {
         info!(
             "Batch writing {} records to {}",
             records.len(),
             self.file_path
         );
 
-        let mut writer =
-            StreamingParquetWriter::new(&self.file_path, self.dimension, self.config.clone(), None)?;
+        let filterable_cols = self.filterable_columns.as_ref().map(|v| v.as_slice());
+        let mut writer = StreamingParquetWriter::new(
+            &self.file_path,
+            self.dimension,
+            self.config.clone(),
+            filterable_cols
+        )?;
+
+        // Transfer metadata collector ownership if provided
+        if let Some(collector) = self.metadata_collector.take() {
+            writer.set_metadata_collector(collector);
+        }
 
         // Write in optimized batches
         let batch_size = self.config.write_batch_size;
@@ -1794,8 +1845,8 @@ impl BatchParquetWriter {
             writer.write_batch(chunk).await?;
         }
 
-        let (stats, _collector) = writer.finalize().await?;
-        Ok(stats)
+        let (stats, collector) = writer.finalize().await?;
+        Ok((stats, collector))
     }
 }
 
@@ -1909,7 +1960,7 @@ mod tests {
         let file_path = dir.path().join("test_batch.parquet");
 
         let config = ParquetWriterConfig::default();
-        let writer = BatchParquetWriter::new(&file_path, 256, config);
+        let mut writer = BatchParquetWriter::new(&file_path, 256, config);
 
         let records: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
@@ -1925,7 +1976,7 @@ mod tests {
             })
             .collect();
 
-        let stats = writer.write_all(&records).await.unwrap();
+        let (stats, _collector) = writer.write_all(&records).await.unwrap();
 
         assert_eq!(stats.total_records, 100);
         assert!(stats.file_size > 0);
