@@ -6,8 +6,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-// Re-export FastLanesScheme for use in RAPTOR modules
-pub use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
+// Re-export ProximaScheme for use in RAPTOR modules
+pub use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
@@ -163,8 +163,8 @@ pub struct ColumnarBlock {
     pub vector_ids: Vec<String>,
     /// Transposed vectors - each dimension is a separate array for SIMD
     pub transposed_vectors: Option<TransposedVectors>,
-    /// FastLanes encoded data for compression
-    pub fastlanes_data: Option<FastLanesEncodedData>,
+    /// Proxima encoded data for compression
+    pub proxima_data: Option<ProximaEncodedData>,
     /// Quantized vectors if quantization is enabled
     pub quantized_data: Option<QuantizedColumnarData>,
     /// Metadata for each vector
@@ -176,7 +176,7 @@ impl Default for ColumnarBlock {
         Self {
             vector_ids: Vec::new(),
             transposed_vectors: None,
-            fastlanes_data: None,
+            proxima_data: None,
             quantized_data: None,
             metadata_columns: MetadataColumns {
                 string_columns: HashMap::new(),
@@ -199,13 +199,13 @@ pub struct TransposedVectors {
     pub vector_count: usize,
 }
 
-/// FastLanes encoded columnar data
+/// Proxima encoded columnar data
 #[derive(Debug, Clone)]
-pub struct FastLanesEncodedData {
-    /// Encoded dimensions using FastLanes compression
+pub struct ProximaEncodedData {
+    /// Encoded dimensions using Proxima compression
     pub encoded_dimensions: Vec<Vec<u8>>,
     /// Encoding scheme used for each dimension
-    pub encoding_schemes: Vec<FastLanesScheme>,
+    pub encoding_schemes: Vec<ProximaScheme>,
     /// Compression ratio achieved
     pub compression_ratio: f32,
 }
@@ -252,7 +252,7 @@ pub struct ColumnPageMetadata {
     pub compressed_size: u64,   // Compressed size in bytes
     pub uncompressed_size: u64, // Original size
     pub compression: CompressionAlgorithm,
-    pub encoding: Option<FastLanesScheme>, // None for metadata/source content
+    pub encoding: Option<ProximaScheme>, // None for metadata/source content
     pub null_count: u32,
     pub min_value: Option<Vec<u8>>, // For pruning
     pub max_value: Option<Vec<u8>>, // For pruning
@@ -457,8 +457,8 @@ pub enum VectorEncoding {
         zero_point: f32,
     },
     Binary,
-    FastLanes {
-        scheme: FastLanesScheme,
+    Proxima {
+        scheme: ProximaScheme,
     },
 }
 
@@ -488,7 +488,7 @@ pub enum ColumnEncoding {
     Float,
     Boolean,
     String,
-    FastLanes { scheme: FastLanesScheme },
+    Proxima { scheme: ProximaScheme },
 }
 
 // ====== Metadata Column (unified from reader.rs and writer.rs) ======
@@ -519,9 +519,9 @@ pub use crate::proto::proximadb_v1::SqlValue as MetadataValue;
 
 // PartialOrd for SqlValue is handled by proto-generated implementation
 
-// ====== FastLanes Encoding Schemes (shared) ======
+// ====== Proxima Encoding Schemes (shared) ======
 
-// FastLanesScheme moved to crate::storage::engines::core::ops::fastlanes_encoding
+// ProximaScheme moved to crate::storage::engines::core::ops::proxima_encoding
 // Use that unified implementation instead of this duplicate
 
 // ====== Compaction Configuration (moved from config.rs duplicate) ======
@@ -985,12 +985,12 @@ pub struct LocalityCluster {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaptorFooter {
     /// All centroids sorted by rowgroup_id for O(1) indexing
-    /// Stored using FastLanes columnar encoding for compression
+    /// Stored using Proxima columnar encoding for compression
     pub centroids: ColumnarCentroids,
 
     /// K×K inter-centroid distance matrix for O(1) cluster-to-cluster distance lookup
     /// Essential for d₂ component in 5-component boosting formula
-    /// Size: k×k×4 bytes (4MB for k=1000, compressed ~2MB with FastLanes)
+    /// Size: k×k×4 bytes (4MB for k=1000, compressed ~2MB with Proxima)
     pub inter_centroid_distances: InterCentroidMatrix,
 
     /// P×K vector-to-centroid distance matrices per rowgroup
@@ -1014,7 +1014,7 @@ pub struct RaptorFooter {
     pub file_metadata: RaptorFileMetadata,
 }
 
-/// Columnar-encoded centroids using FastLanes
+/// Columnar-encoded centroids using Proxima
 /// Vectors are transposed for better compression and SIMD operations
 ///
 /// ENCODING STRATEGY:
@@ -1039,8 +1039,8 @@ pub struct ColumnarCentroids {
     /// Size: k * d * 4 bytes (before compression)
     pub transposed_data: Vec<f32>,
 
-    /// FastLanes encoding metadata for each dimension
-    pub encoding_metadata: Vec<FastLanesMetadata>,
+    /// Proxima encoding metadata for each dimension
+    pub encoding_metadata: Vec<ProximaMetadata>,
 }
 
 impl ColumnarCentroids {
@@ -1132,7 +1132,7 @@ pub fn predict_search_latency(k: usize, dimension: usize) -> f64 {
 }
 
 /// K×K Inter-centroid distance matrix for O(1) cluster navigation
-/// Heavily optimized storage using upper triangle + quantization + FastLanes
+/// Heavily optimized storage using upper triangle + quantization + Proxima
 ///
 /// STORAGE OPTIMIZATIONS (4-stage compression pipeline):
 /// 1. **Upper Triangle Only**: Store only [i][j] where j > i (exactly 50% savings)
@@ -1143,12 +1143,12 @@ pub fn predict_search_latency(k: usize, dimension: usize) -> f64 {
 ///    - Scale factor: (max_dist - min_dist) / 65535
 ///    - Accuracy loss: <0.1% for typical centroid distances
 /// 3. **Delta Encoding**: From minimum distance (additional compression)
-/// 4. **FastLanes Bit-packing**: Based on actual value distribution (future)
+/// 4. **Proxima Bit-packing**: Based on actual value distribution (future)
 ///
 /// FINAL SIZE CALCULATION:
 /// - Original: k×k×4 bytes = 1000×1000×4 = 4MB
 /// - Upper triangle: k×(k-1)/2×2 = 1000×999/2×2 = 999KB  
-/// - With FastLanes: ~500KB (estimated 50% additional compression)
+/// - With Proxima: ~500KB (estimated 50% additional compression)
 /// - **Total compression: 4MB → 500KB (87.5% space savings)**
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InterCentroidMatrix {
@@ -1156,7 +1156,7 @@ pub struct InterCentroidMatrix {
     pub num_centroids: u32,
 
     /// Compressed upper triangle matrix data
-    /// Layout: FastLanes-encoded distances in row-major upper triangle order
+    /// Layout: Proxima-encoded distances in row-major upper triangle order
     pub compressed_data: Vec<u8>,
 
     /// Compression metadata for reconstruction
@@ -1309,7 +1309,7 @@ impl InterCentroidMatrix {
         compression_metadata.max_distance = max_dist;
         compression_metadata.scale_factor = (max_dist - min_dist) / 65535.0; // 16-bit quantization
 
-        // Compress using FastLanes (placeholder - actual implementation would compress)
+        // Compress using Proxima (placeholder - actual implementation would compress)
         let compressed_data =
             Self::compress_upper_triangle(&upper_triangle_data, &compression_metadata);
 
@@ -1328,7 +1328,7 @@ impl InterCentroidMatrix {
     }
 
     /// Decompress single distance value at specific linear index in upper triangle
-    /// Uses FastLanes bit-unpacking with 16-bit quantization reconstruction
+    /// Uses Proxima bit-unpacking with 16-bit quantization reconstruction
     fn decompress_single_distance_at_index(&self, linear_index: usize) -> f32 {
         if linear_index * 2 >= self.compressed_data.len() {
             return 0.0; // Out of bounds
@@ -1346,7 +1346,7 @@ impl InterCentroidMatrix {
             + (quantized as f32 * self.compression_metadata.scale_factor)
     }
 
-    /// Compress upper triangle data using 16-bit quantization + optional FastLanes
+    /// Compress upper triangle data using 16-bit quantization + optional Proxima
     fn compress_upper_triangle(
         data: &[f32],
         metadata: &InterCentroidCompressionMetadata,
@@ -1360,7 +1360,7 @@ impl InterCentroidMatrix {
             compressed.extend(&quantized.to_le_bytes());
         }
 
-        // TODO: Apply FastLanes bit-packing for further compression
+        // TODO: Apply Proxima bit-packing for further compression
         // For now, return 16-bit quantized data (already 50% space savings)
         compressed
     }
@@ -1420,8 +1420,8 @@ pub struct InterCentroidCompressionMetadata {
     /// Compression type used for quantization
     pub compression_type: CompressionType,
 
-    /// FastLanes encoding scheme per row (may vary based on distance distribution)
-    pub row_encodings: Vec<FastLanesScheme>,
+    /// Proxima encoding scheme per row (may vary based on distance distribution)
+    pub row_encodings: Vec<ProximaScheme>,
 
     /// Compressed size per row for offset calculation
     pub row_compressed_sizes: Vec<u16>,
@@ -1444,7 +1444,7 @@ impl InterCentroidCompressionMetadata {
     /// Calculate memory footprint of compression metadata
     pub fn memory_footprint(&self) -> usize {
         std::mem::size_of::<Self>()
-            + self.row_encodings.len() * std::mem::size_of::<FastLanesScheme>()
+            + self.row_encodings.len() * std::mem::size_of::<ProximaScheme>()
             + self.row_compressed_sizes.len() * std::mem::size_of::<u16>()
     }
 }
@@ -1679,7 +1679,7 @@ pub struct VectorCentroidMatrixRef {
     /// Compression algorithm used
     pub compression_algorithm: String,
 
-    /// FastLanes encoding metadata for efficient decompression
+    /// Proxima encoding metadata for efficient decompression
     pub encoding_metadata: VectorCentroidCompressionMetadata,
 }
 
@@ -1697,7 +1697,7 @@ pub struct VectorCentroidCompressionMetadata {
     pub global_mean_distance: f32,
 
     /// Per-centroid encoding schemes (adaptive based on distribution)
-    pub centroid_encodings: Vec<FastLanesScheme>,
+    pub centroid_encodings: Vec<ProximaScheme>,
 }
 
 /// Per-centroid distance statistics for adaptive compression
@@ -1717,9 +1717,9 @@ pub struct CentroidDistanceStats {
     pub quantization_offset: f32,
 }
 
-/// FastLanes encoding metadata for a dimension
+/// Proxima encoding metadata for a dimension
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FastLanesMetadata {
+pub struct ProximaMetadata {
     /// Min value in this dimension (for delta encoding)
     pub min_value: f32,
 
@@ -1727,13 +1727,13 @@ pub struct FastLanesMetadata {
     pub max_value: f32,
 
     /// Encoding scheme used
-    pub encoding: FastLanesScheme,
+    pub encoding: ProximaScheme,
 
     /// Compressed size in bytes
     pub compressed_size: u32,
 }
 
-// FastLanesScheme now imported from common::fastlanes_encoding module for code reuse
+// ProximaScheme now imported from common::proxima_encoding module for code reuse
 
 /// Sparse entry in P×K matrix for boundary vectors only
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1793,7 +1793,7 @@ pub struct P2Matrix {
     pub max_distance: f32,
 
     /// Compression strategy used
-    pub compression: FastLanesScheme,
+    pub compression: ProximaScheme,
 
     /// Size after compression
     pub compressed_size: u32,
@@ -1968,7 +1968,7 @@ pub struct K2Matrix {
     pub max_distance: f32,
 
     /// Compression strategy used
-    pub compression: FastLanesScheme,
+    pub compression: ProximaScheme,
 
     /// Size after compression
     pub compressed_size: u32,

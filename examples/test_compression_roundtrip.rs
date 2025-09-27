@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -60,7 +60,7 @@ fn main() {
     println!("Testing with realistic random vectors (not pattern data)...\n");
 
     // Create block
-    let original_block = FastLanesDataBlock::new(vectors.clone(), config_no_compression.clone());
+    let original_block = ProximaDataBlock::new(vectors.clone(), config_no_compression.clone());
 
     // Test WITHOUT compression
     match original_block.serialize_with_config(&config_no_compression) {
@@ -72,7 +72,7 @@ fn main() {
             println!("   Compression ratio: {:.2}x", ratio_no_compression);
 
             // Test round-trip deserialization
-            match FastLanesDataBlock::deserialize(&encoded_no_compression) {
+            match ProximaDataBlock::deserialize(&encoded_no_compression) {
                 Ok(decoded_block) => {
                     println!("   ✅ Round-trip deserialization successful");
                     println!("   📊 Decoded {} vectors", decoded_block.records.len());
@@ -95,7 +95,7 @@ fn main() {
             println!("   Compression ratio: {:.2}x", ratio_with_compression);
 
             // Test round-trip deserialization
-            match FastLanesDataBlock::deserialize(&encoded_with_compression) {
+            match ProximaDataBlock::deserialize(&encoded_with_compression) {
                 Ok(decoded_block) => {
                     println!("   ✅ Round-trip deserialization successful");
                     println!("   📊 Decoded {} vectors", decoded_block.records.len());

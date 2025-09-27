@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -78,7 +78,7 @@ fn test_configuration(
         metadata_algorithm: None,
     };
 
-    let block = FastLanesDataBlock::new(vectors.to_vec(), config.clone());
+    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
 
     // Test encoding
     let encoded = block.serialize_with_config(&config)?;
@@ -90,7 +90,7 @@ fn test_configuration(
     println!("   Ratio:    {:.2}x", compression_ratio);
 
     // Test round-trip decoding
-    let decoded_block = FastLanesDataBlock::deserialize(&encoded)?;
+    let decoded_block = ProximaDataBlock::deserialize(&encoded)?;
     let round_trip_success = decoded_block.records.len() == vectors.len();
 
     if round_trip_success {
@@ -133,7 +133,7 @@ fn test_configuration(
 }
 
 fn main() -> anyhow::Result<()> {
-    println!("🚀 Comprehensive FastLanes Strategy Testing");
+    println!("🚀 Comprehensive Proxima Strategy Testing");
     println!("===========================================");
     println!("📊 Test Data: 64 vectors × 32 dimensions (static patterns)");
 

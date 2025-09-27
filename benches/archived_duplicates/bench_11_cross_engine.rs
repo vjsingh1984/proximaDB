@@ -12,7 +12,7 @@
 //! - SST: Row-based storage optimized for real-time queries
 //! - VIPER: Columnar Parquet format with compression
 //! - NOVA: Progressive columnar with multi-level quantization
-//! - SWIFT: High-speed row-based with FastLanes encoding
+//! - SWIFT: High-speed row-based with Proxima encoding
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use std::sync::{Arc, Once};

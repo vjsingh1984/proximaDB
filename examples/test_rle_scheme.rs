@@ -1,4 +1,4 @@
-use proximadb::storage::engines::core::ops::fastlanes_encoding::*;
+use proximadb::storage::engines::core::ops::proxima_encoding::*;
 
 fn main() {
     println!("Testing RLE Scheme Selection\n");
@@ -25,19 +25,19 @@ fn main() {
     // Test encoding sizes
     println!("\nEncoding sizes:");
     
-    let encoder1 = FastLanesEncoder::new(scheme.clone());
+    let encoder1 = ProximaEncoder::new(scheme.clone());
     let encoded1 = encoder1.encode_f32(&sparse, None).unwrap();
     println!("Sparse: {} floats -> {} bytes (compression: {:.1}x)", 
              sparse.len(), encoded1.len(), 
              (sparse.len() * 4) as f64 / encoded1.len() as f64);
     
-    let encoder2 = FastLanesEncoder::new(scheme2.clone());
+    let encoder2 = ProximaEncoder::new(scheme2.clone());
     let encoded2 = encoder2.encode_f32(&constant, None).unwrap();
     println!("Constant: {} floats -> {} bytes (compression: {:.1}x)", 
              constant.len(), encoded2.len(),
              (constant.len() * 4) as f64 / encoded2.len() as f64);
     
-    let encoder3 = FastLanesEncoder::new(scheme3.clone());
+    let encoder3 = ProximaEncoder::new(scheme3.clone());
     let encoded3 = encoder3.encode_f32(&sequential, None).unwrap();
     println!("Sequential: {} floats -> {} bytes (compression: {:.1}x)", 
              sequential.len(), encoded3.len(),

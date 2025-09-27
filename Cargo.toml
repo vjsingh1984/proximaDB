@@ -96,7 +96,7 @@ flate2 = { version = "1.0", default-features = true }  # Gzip/Deflate/Zlib compr
 brotli = "6.0"           # Brotli compression - Updated from 3.5
 bzip2 = "0.5"            # Bzip2 compression - Updated from 0.4
 xz2 = "0.1"              # XZ/LZMA2 compression
-# fastlanes = "0.2"        # Removed - replaced with internal ProximaDB encoding
+# proxima = "0.2"        # Removed - replaced with internal ProximaDB encoding
 
 # System monitoring
 sysinfo = "0.30"

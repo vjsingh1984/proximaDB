@@ -4,7 +4,7 @@
 // functionality that is reused across all storage engines (SST, SWIFT, RAPTOR, PRISM)
 // to eliminate code duplication and ensure consistency.
 
-use super::fastlanes_encoding::{FastLanesDecoder, FastLanesEncoder, FastLanesScheme};
+use super::proxima_encoding::{ProximaDecoder, ProximaEncoder, ProximaScheme};
 use anyhow::Result;
 use std::io::{Read, Write};
 
@@ -70,8 +70,8 @@ pub fn encode_sparse_tensor(
                 output.write_all(&col.to_le_bytes())?;
             }
 
-            // Encode values using FastLanes
-            let encoder = FastLanesEncoder::new(FastLanesScheme::FrameOfReference {
+            // Encode values using Proxima
+            let encoder = ProximaEncoder::new(ProximaScheme::FrameOfReference {
                 reference: 0,
                 bits: 16,
             });
@@ -100,7 +100,7 @@ pub fn encode_sparse_tensor(
             }
 
             // Encode values
-            let encoder = FastLanesEncoder::new(FastLanesScheme::FrameOfReference {
+            let encoder = ProximaEncoder::new(ProximaScheme::FrameOfReference {
                 reference: 0,
                 bits: 16,
             });
@@ -172,7 +172,7 @@ pub fn decode_sparse_tensor(
         let mut val_data = vec![0u8; val_len];
         cursor.read_exact(&mut val_data)?;
 
-        let decoder = FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
+        let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
             reference: 0,
             bits: 16,
         });
@@ -212,7 +212,7 @@ pub fn decode_sparse_tensor(
         let mut val_data = vec![0u8; val_len];
         cursor.read_exact(&mut val_data)?;
 
-        let decoder = FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
+        let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
             reference: 0,
             bits: 16,
         });
@@ -549,7 +549,7 @@ pub fn choose_optimal_tensor_encoding(
     vectors: &[f32],
     num_vectors: usize,
     dimension: usize,
-) -> FastLanesScheme {
+) -> ProximaScheme {
     // Calculate statistics
     let mut min_val = f32::MAX;
     let mut max_val = f32::MIN;
@@ -576,25 +576,25 @@ pub fn choose_optimal_tensor_encoding(
     // Choose encoding based on characteristics
     if sparsity > 0.9 {
         // Very sparse - use run-length
-        FastLanesScheme::RunLength
+        ProximaScheme::RunLength
     } else if range < 1e-6 {
         // Constant or near-constant - use run-length
-        FastLanesScheme::RunLength
+        ProximaScheme::RunLength
     } else if variance < range * range / 100.0 {
         // Low variance relative to range - use delta
-        FastLanesScheme::Delta {
+        ProximaScheme::Delta {
             base: min_val as i64,
         }
     } else if range < 100.0 && min_val.abs() < 1000.0 {
         // Limited range - use frame of reference
         let bits = ((range.log2().ceil() as u8) + 1).clamp(8, 24);
-        FastLanesScheme::FrameOfReference {
+        ProximaScheme::FrameOfReference {
             reference: min_val as i64,
             bits,
         }
     } else {
         // Default to bit packing
-        FastLanesScheme::BitPacked { bits: 16 }
+        ProximaScheme::BitPacked { bits: 16 }
     }
 }
 

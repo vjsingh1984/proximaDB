@@ -130,7 +130,7 @@ enum Commands {
         num_vectors: usize,
     },
 
-    /// [07] FastLanes encoding strategies (columnar vs row-wise)
+    /// [07] Proxima encoding strategies (columnar vs row-wise)
     #[command(name = "bench_07", alias = "encoding")]
     Bench07Encoding {
         /// Vector counts to test (realistic rowgroup sizes)
@@ -248,7 +248,7 @@ enum CriterionSuite {
     #[value(name = "bench_06", alias = "index")]
     IndexOps,
 
-    /// [07] FastLanes encoding benchmarks (columnar vs row-wise)
+    /// [07] Proxima encoding benchmarks (columnar vs row-wise)
     #[value(name = "bench_07", alias = "encoding")]
     Encoding,
 
@@ -550,7 +550,7 @@ async fn main() -> Result<()> {
         println!("  bench_04 (storage)      - Storage unified benchmarks");
         println!("  bench_05 (vectors)      - Vector operations benchmarks");
         println!("  bench_06 (index)        - Index operations benchmarks (HNSW, LSH)");
-        println!("  bench_07 (encoding)     - FastLanes encoding benchmarks");
+        println!("  bench_07 (encoding)     - Proxima encoding benchmarks");
         println!("  bench_08 (compression)  - Compression algorithms benchmarks");
         println!("  bench_09 (quantization) - Quantization SST benchmarks");
         println!("  bench_10 (viper)        - Columnar VIPER benchmarks");
@@ -644,7 +644,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// ============= FastLanes Encoding Benchmarks =============
+// ============= Proxima Encoding Benchmarks =============
 
 // Old encoding benchmark structures removed - using statistical framework
 /*
@@ -2556,7 +2556,7 @@ fn create_vector_records_from_vecs_2(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord
 }
 
 // Simple columnar serialization for benchmarking
-fn serialize_columnar_simple(encoded: &proximadb::storage::engines::core::ops::fastlanes_encoding::ColumnarEncodedVectors) -> Result<Vec<u8>> {
+fn serialize_columnar_simple(encoded: &proximadb::storage::engines::core::ops::proxima_encoding::ColumnarEncodedVectors) -> Result<Vec<u8>> {
     use std::io::Write;
     let mut bytes = Vec::new();
 
@@ -2578,7 +2578,7 @@ fn serialize_columnar_simple(encoded: &proximadb::storage::engines::core::ops::f
 }
 
 // Simple columnar deserialization for benchmarking
-fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::core::ops::fastlanes_encoding::ProximaDecoder) -> Result<Vec<Vec<f32>>> {
+fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::core::ops::proxima_encoding::ProximaDecoder) -> Result<Vec<Vec<f32>>> {
     use std::io::Read;
     let mut cursor = std::io::Cursor::new(data);
     let mut buf = [0u8; 4];
@@ -2629,7 +2629,7 @@ fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::co
 }
 
 // Simple row-wise serialization for benchmarking
-fn serialize_rowwise_simple(encoded: &proximadb::storage::engines::core::ops::fastlanes_encoding::RowWiseEncodedVectors) -> Result<Vec<u8>> {
+fn serialize_rowwise_simple(encoded: &proximadb::storage::engines::core::ops::proxima_encoding::RowWiseEncodedVectors) -> Result<Vec<u8>> {
     use std::io::Write;
     let mut bytes = Vec::new();
 
@@ -2673,9 +2673,9 @@ fn decode_rowwise_simple(data: &[u8]) -> Result<Vec<Vec<f32>>> {
         let mut vec_data = vec![0u8; vec_len];
         cursor.read_exact(&mut vec_data)?;
 
-        // Check if data is FastLanes encoded (has 0x80 marker) or raw bytes
+        // Check if data is Proxima encoded (has 0x80 marker) or raw bytes
         let floats = if !vec_data.is_empty() && vec_data[0] == 0x80 {
-            // FastLanes encoded data
+            // Proxima encoded data
             let decoder = ProximaDecoder::new(ProximaScheme::Delta { base: 0 });
             decoder.decode_f32(&vec_data, Some(dimension))?
         } else {
@@ -2691,7 +2691,7 @@ fn decode_rowwise_simple(data: &[u8]) -> Result<Vec<Vec<f32>>> {
 }
 
 // Helper function to serialize columnar encoded vectors
-fn serialize_columnar_encoded(encoded: &proximadb::storage::engines::core::ops::fastlanes_encoding::ColumnarEncodedVectors) -> Result<Vec<u8>> {
+fn serialize_columnar_encoded(encoded: &proximadb::storage::engines::core::ops::proxima_encoding::ColumnarEncodedVectors) -> Result<Vec<u8>> {
     use std::io::Write;
     use proximadb::core::compression::CompressionAlgorithm;
 
@@ -2732,7 +2732,7 @@ fn serialize_columnar_encoded(encoded: &proximadb::storage::engines::core::ops::
 }
 
 // Helper function to serialize row-wise encoded vectors
-fn serialize_rowwise_encoded(encoded: &proximadb::storage::engines::core::ops::fastlanes_encoding::RowWiseEncodedVectors) -> Result<Vec<u8>> {
+fn serialize_rowwise_encoded(encoded: &proximadb::storage::engines::core::ops::proxima_encoding::RowWiseEncodedVectors) -> Result<Vec<u8>> {
     use std::io::Write;
     let mut bytes = Vec::new();
 

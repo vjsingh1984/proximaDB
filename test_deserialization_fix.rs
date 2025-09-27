@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -54,7 +54,7 @@ fn test_round_trip(
         dictionary_compression: false,
     };
 
-    let block = FastLanesDataBlock::new(vectors.to_vec(), config.clone());
+    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
 
     // Test encoding
     println!("🔄 Encoding...");
@@ -63,7 +63,7 @@ fn test_round_trip(
 
     // Test decoding
     println!("🔄 Decoding...");
-    let decoded_block = FastLanesDataBlock::deserialize(&encoded)?;
+    let decoded_block = ProximaDataBlock::deserialize(&encoded)?;
     println!("✅ Decoded successfully: {} vectors", decoded_block.records.len());
 
     // Verify data integrity
@@ -77,7 +77,7 @@ fn test_round_trip(
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 FastLanes Deserialization Fix Test");
+    println!("🚀 Proxima Deserialization Fix Test");
     println!("=====================================");
 
     let vectors = create_test_vectors();

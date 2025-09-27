@@ -1,6 +1,6 @@
-//! FastLane integration for HELIX engine
+//! Proxima integration for HELIX engine
 //!
-//! This module bridges HELIX-specific clustering with the shared FastLanes
+//! This module bridges HELIX-specific clustering with the shared Proxima
 //! block structures used across SST, SWIFT, and other engines.
 
 use anyhow::Result;
@@ -11,24 +11,24 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-// Reuse existing FastLanes structures
+// Reuse existing Proxima structures
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
-    BlockCompressionConfig, FastLanesBlockMetadata, FastLanesDataBlock, QuantizationStatistics,
+    BlockCompressionConfig, ProximaBlockMetadata, ProximaDataBlock, QuantizationStatistics,
 };
 
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::persistence::filesystem::FileSystem;
 
-// NEW: Import the unified SIMD module (now integrated into FastLanesDataBlock)
-use crate::storage::engines::core::ops::unified_fastlanes_simd::{
-    UnifiedFastLanesSIMD, EngineProfile, SIMDConfig,
+// NEW: Import the unified SIMD module (now integrated into ProximaDataBlock)
+use crate::storage::engines::core::ops::unified_proxima_simd::{
+    UnifiedProximaSIMD, EngineProfile, SIMDConfig,
 };
 
 // Re-export for convenience
-pub use crate::storage::engines::core::formats::proximablocks::block_structures::ProximaMetadata as FastLaneMetadata;
+pub use crate::storage::engines::core::formats::proximablocks::block_structures::ProximaMetadata as ProximaMetadata;
 
 /// HELIX Spatial Block Writer
-/// Uses FastLanesDataBlock's internal SIMD encoding with spatial clustering
+/// Uses ProximaDataBlock's internal SIMD encoding with spatial clustering
 pub struct HelixSIMDWriter {
     hilbert_curve_size: usize,
     spatial_grouping_enabled: bool,
@@ -46,14 +46,14 @@ impl HelixSIMDWriter {
         })
     }
 
-    /// Create SIMD-optimized FastLanes block with spatial clustering awareness
-    /// Now uses FastLanesDataBlock's internal SIMD encoding
+    /// Create SIMD-optimized Proxima block with spatial clustering awareness
+    /// Now uses ProximaDataBlock's internal SIMD encoding
     pub async fn create_simd_block(
         &self,
         records: &[VectorRecord],
         hilbert_keys: Option<&[u64]>,
         block_id: u32,
-    ) -> Result<(FastLanesDataBlock, HelixBlockMetadata)> {
+    ) -> Result<(ProximaDataBlock, HelixBlockMetadata)> {
         debug!("🧬 HELIX: Creating spatial-optimized block {} with {} vectors",
                block_id, records.len());
 
@@ -76,9 +76,9 @@ impl HelixSIMDWriter {
             metadata_algorithm: None,
         };
 
-        // Create FastLanes block with HELIX engine profile
+        // Create Proxima block with HELIX engine profile
         // The block will internally apply SIMD encoding based on the layout
-        let mut block = FastLanesDataBlock::new_with_engine_profile(
+        let mut block = ProximaDataBlock::new_with_engine_profile(
             records.to_vec(),
             compression_config,
             EngineProfile::Helix
@@ -116,7 +116,7 @@ impl HelixSIMDWriter {
 
         // Create HELIX metadata with spatial information
         let helix_metadata = HelixBlockMetadata {
-            fastlanes_metadata: block.metadata.clone(),
+            proxima_metadata: block.metadata.clone(),
             hilbert_range,
             pca_stats: None, // Could be added later for advanced PCA integration
             clustering_hints: Some(clustering_hints),
@@ -336,8 +336,8 @@ pub async fn write_helix_sstable_simd(
 /// HELIX-specific SSTable metadata with clustering information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelixBlockMetadata {
-    /// Base FastLanes metadata
-    pub fastlanes_metadata: FastLanesBlockMetadata,
+    /// Base Proxima metadata
+    pub proxima_metadata: ProximaBlockMetadata,
     /// Hilbert key range for this block
     pub hilbert_range: Option<(u64, u64)>,
     /// PCA projection statistics
@@ -362,7 +362,7 @@ pub struct ClusteringHints {
     pub query_selectivity: f32,
 }
 
-/// Write a HELIX SSTable using FastLanes encoding with SST-style optimizations
+/// Write a HELIX SSTable using Proxima encoding with SST-style optimizations
 pub async fn write_helix_sstable(
     filesystem: &Arc<dyn FileSystem>,
     path: &Path,
@@ -419,8 +419,8 @@ pub async fn write_helix_sstable(
             metadata_algorithm: None, // Use main algorithm for metadata
         };
 
-        // Create FastLanes block with HELIX engine profile for SIMD encoding
-        let mut block = FastLanesDataBlock::new_with_engine_profile(
+        // Create Proxima block with HELIX engine profile for SIMD encoding
+        let mut block = ProximaDataBlock::new_with_engine_profile(
             chunk.to_vec(),
             compression_config,
             EngineProfile::Helix
@@ -448,7 +448,7 @@ pub async fn write_helix_sstable(
             None
         };
 
-        // Hilbert range will be stored in HelixBlockMetadata, not in FastLanes metadata
+        // Hilbert range will be stored in HelixBlockMetadata, not in Proxima metadata
 
         // Serialize block before creating metadata (to get compressed size)
         let (block_bytes, _bloom_data) = block.serialize_with_bloom_sync()?;
@@ -458,7 +458,7 @@ pub async fn write_helix_sstable(
 
         // Create HELIX metadata with enhanced statistics
         let helix_meta = HelixBlockMetadata {
-            fastlanes_metadata: block.metadata.clone(),
+            proxima_metadata: block.metadata.clone(),
             hilbert_range,
             pca_stats: None,
             clustering_hints: Some(ClusteringHints {
@@ -599,7 +599,7 @@ pub async fn search_helix_sstable(
         std::io::Read::read_exact(&mut cursor, &mut block_data)?;
 
         // Deserialize block
-        let block = FastLanesDataBlock::deserialize(&block_data)?;
+        let block = ProximaDataBlock::deserialize(&block_data)?;
 
         // Search within block
         for record in &block.records {
@@ -644,8 +644,8 @@ pub fn extract_helix_metadata(
         .chunks(block_size)
         .enumerate()
         .map(|(idx, chunk)| {
-            // Create base FastLanes metadata
-            let base_metadata = FastLanesBlockMetadata {
+            // Create base Proxima metadata
+            let base_metadata = ProximaBlockMetadata {
                 record_count: chunk.len() as u32,
                 size_bytes: (chunk.len() * std::mem::size_of::<VectorRecord>()) as u64,
                 compressed_size: 0, // Will be set during compression
@@ -678,7 +678,7 @@ pub fn extract_helix_metadata(
             };
 
             HelixBlockMetadata {
-                fastlanes_metadata: base_metadata,
+                proxima_metadata: base_metadata,
                 hilbert_range,
                 pca_stats: None,
                 clustering_hints: None,

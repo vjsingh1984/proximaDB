@@ -206,7 +206,7 @@ xychart-beta
 **Write Performance Characteristics**:
 
 - **VIPER Engine**: Highest batch write performance (50K/sec) due to columnar format
-- **SWIFT Engine**: Balanced performance (25K/sec) with FastLanes encoding
+- **SWIFT Engine**: Balanced performance (25K/sec) with Proxima encoding
 - **SST Engine**: Optimized for real-time writes (20K/sec) with immediate search availability
 - **RAPTOR Engine**: Adaptive performance (18K/sec) that scales with workload patterns
 
@@ -398,19 +398,19 @@ Recent systematic optimization resolved multiple performance bottlenecks:
    - Before: Engine-specific implementations
    - After: Unified quantization with hardware acceleration
 
-== FastLanes Encoding Performance Analysis (December 2024)
+== Proxima Encoding Performance Analysis (December 2024)
 
 === Optimized Field-Level Compression Results
 
 **Test Configuration**: 256 vectors × 256 dimensions (256 KB raw data)
 
-Following comprehensive optimization of FastLanes encoding strategies, we achieved significant improvements in metadata overhead and compression ratios:
+Following comprehensive optimization of Proxima encoding strategies, we achieved significant improvements in metadata overhead and compression ratios:
 
 [source,mermaid]
 ----
 %%{init: {"theme": "neutral"}}%%
 xychart-beta
-    title "FastLanes Compression Ratios by Strategy"
+    title "Proxima Compression Ratios by Strategy"
     x-axis ["None", "LZ4", "Zstd", "Snappy"]
     y-axis "Compression Ratio" 0.9 --> 1.7
     line [0.96, 1.25, 1.45, 1.30] "FullVector"
@@ -496,7 +496,7 @@ xychart-beta
 - **1536D Embeddings**: 24 groups × 64D = excellent parallelization
 
 ```toml
-[storage.sst.fastlanes]
+[storage.sst.proxima]
 strategy = "GroupedVector"
 algorithm = "LZ4"
 compression_level = 1
@@ -519,7 +519,7 @@ enable_vector_compression = true
 - **1536D Embeddings**: 24 groups with parallel decompression
 
 ```toml
-[storage.swift.fastlanes]
+[storage.swift.proxima]
 strategy = "GroupedVector"
 algorithm = "LZ4"          # For balanced mode
 # algorithm = "None"       # For maximum speed mode
@@ -543,7 +543,7 @@ compression_threshold_bytes = 1024
 - **1536D Embeddings**: 24 groups optimize for range queries
 
 ```toml
-[storage.helix.fastlanes]
+[storage.helix.proxima]
 strategy = "GroupedVector"
 algorithm = "Zstd"
 compression_level = 3        # Higher compression for archival
@@ -564,7 +564,7 @@ dictionary_compression = true
 
 **Optimal Configuration**:
 ```toml
-[storage.fastlanes.bert_768d]
+[storage.proxima.bert_768d]
 strategy = "GroupedVector"    # 12 groups × 64D
 algorithm = "LZ4"            # Balanced performance
 groups_per_dimension = 64    # Optimal cache line utilization
@@ -582,7 +582,7 @@ enable_simd_acceleration = true
 
 **Optimal Configuration**:
 ```toml
-[storage.fastlanes.openai_1536d]
+[storage.proxima.openai_1536d]
 strategy = "GroupedVector"    # 24 groups × 64D
 algorithm = "Zstd"           # Better compression for large vectors
 compression_level = 1        # Balanced speed/compression
@@ -603,7 +603,7 @@ parallel_groups = 8          # Parallel compression
 **Use Case**: Streaming data, ETL pipelines, batch processing
 
 ```toml
-[storage.fastlanes.high_throughput]
+[storage.proxima.high_throughput]
 strategy = "GroupedVector"
 algorithm = "LZ4"           # Speed priority
 compression_threshold_bytes = 4096  # Compress larger blocks
@@ -615,7 +615,7 @@ enable_background_compression = true
 **Use Case**: Long-term storage, backup, compliance retention
 
 ```toml
-[storage.fastlanes.archive]
+[storage.proxima.archive]
 strategy = "GroupedVector"
 algorithm = "Zstd"
 compression_level = 6       # Maximum compression
@@ -627,7 +627,7 @@ metadata_algorithm = "Zstd" # Compress metadata too
 **Use Case**: Live dashboards, streaming analytics, monitoring
 
 ```toml
-[storage.fastlanes.analytics]
+[storage.proxima.analytics]
 strategy = "TransposeVector"  # Columnar access
 algorithm = "Snappy"         # Streaming-friendly
 enable_partial_decompression = true

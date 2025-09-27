@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -52,8 +52,8 @@ fn main() {
         metadata_algorithm: None,
     };
 
-    // Create FastLanes block
-    let block = FastLanesDataBlock::new(vectors, config_no_compression.clone());
+    // Create Proxima block
+    let block = ProximaDataBlock::new(vectors, config_no_compression.clone());
 
     // Test without compression
     match block.serialize_with_config(&config_no_compression) {

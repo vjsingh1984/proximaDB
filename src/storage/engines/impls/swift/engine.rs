@@ -36,8 +36,8 @@ use crate::core::compression::StandardCompression;
 
 use super::{SwiftFile, optimized_operations::OptimizedSwiftOperations, progressive_search};
 
-// Import FastLanes structures for SWIFT's hierarchical operations
-use crate::storage::engines::core::formats::fastlanes_blocks::SuperBlock;
+// Import Proxima structures for SWIFT's hierarchical operations
+use crate::storage::engines::core::formats::proximablocks::SuperBlock;
 
 // SWIFT-specific optimization structures removed - now using universal module
 
@@ -817,7 +817,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         //
         // The AdvancedSearchOptimizer provides significant value for SWIFT engine:
         // 1. **Ultra-low latency routing**: Chooses fastest path based on data locality
-        // 2. **FastLanes optimization**: Leverages SWIFT's columnar blocks intelligently
+        // 2. **Proxima optimization**: Leverages SWIFT's columnar blocks intelligently
         // 3. **SIMD acceleration**: Routes to hardware-optimized paths automatically
         // 4. **Memory-mapped I/O**: Optimizes based on available memory and cache
         // 5. **Predictive prefetching**: Uses access patterns for zero-copy operations
@@ -836,13 +836,13 @@ impl UnifiedStorageEngine for SwiftEngine {
         // let strategy = orchestrator.select_optimal_strategy().await?;
         // match strategy {
         //     ExecutionStrategy::IndexFirst { .. } => // Use memory-mapped index
-        //     ExecutionStrategy::DirectFP32 { .. } => // FastLanes direct scan
+        //     ExecutionStrategy::DirectFP32 { .. } => // Proxima direct scan
         //     ExecutionStrategy::ProgressiveQuantization { .. } => // Multi-resolution
         // }
         // ```
         //
         // SWIFT-specific benefits:
-        // - Leverage FastLanes encoding for 10x faster scans
+        // - Leverage Proxima encoding for 10x faster scans
         // - Zero-copy operations with SharedSstFormatReader
         // - Hardware-aware SIMD path selection
         //
@@ -852,7 +852,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         let use_orchestration = _ctx.metadata.use_axis_indexes || _ctx.metadata.has_quantization;
 
         if use_orchestration {
-            info!("🎯 SWIFT: Orchestration requested - using direct FastLanes search until AdvancedSearchOptimizer integrated");
+            info!("🎯 SWIFT: Orchestration requested - using direct Proxima search until AdvancedSearchOptimizer integrated");
             // TODO: Implement proper orchestration when the API is ready
             // For now, fall back to direct search
             return self

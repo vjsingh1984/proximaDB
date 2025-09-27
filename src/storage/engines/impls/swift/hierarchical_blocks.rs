@@ -4,7 +4,7 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, SuperBlock};
+use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, SuperBlock};
 use crate::proto::proximadb_v1::VectorRecord;
 
 /// Metadata index for efficient filtering
@@ -287,7 +287,7 @@ impl MetadataIndex {
         &mut self,
         sb_idx: usize,
         b_idx: usize,
-        block: &FastLanesDataBlock,
+        block: &ProximaDataBlock,
     ) -> Result<()> {
         let block_id = sb_idx * 64 + b_idx;
 
@@ -575,12 +575,12 @@ mod tests {
         index.filterable_columns.insert("price".to_string());
 
         // Create test block
-        let block = FastLanesDataBlock {
+        let block = ProximaDataBlock {
             encoding_marker: 0x00,
             encoding_metadata: None,
             block_id: 0,
             encoded_vectors: None,
-            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             records: vec![VectorRecord {
                 id: "1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
@@ -604,7 +604,7 @@ mod tests {
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,
-            metadata: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata {
+            metadata: crate::storage::engines::core::formats::proximablocks::block_structures::ProximaBlockMetadata {
                 record_count: 1,
                 size_bytes: 0,
                 compressed_size: 0,
@@ -614,18 +614,18 @@ mod tests {
                 has_updates: false,
                 version_range: (0, 0),
                 column_stats: std::collections::HashMap::new(),
-                quantization_stats: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::QuantizationStatistics::default(),
+                quantization_stats: crate::storage::engines::core::formats::proximablocks::block_structures::QuantizationStatistics::default(),
                 data_checksum: 0,
                 metadata_checksum: 0,
             },
-            compression_config: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig {
+            compression_config: crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig {
                 algorithm: crate::core::compression::CompressionAlgorithm::Lz4,
                 compression_level: 1,
                 enable_vector_compression: true,
                 enable_metadata_compression: true,
                 compression_threshold_bytes: 8192,
                 dictionary_compression: false,
-                vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+                vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
                 metadata_algorithm: None,
             },
             compression_algorithm: crate::core::compression::CompressionAlgorithm::Lz4,
@@ -634,7 +634,7 @@ mod tests {
             block_bloom_filter: None,
             id_range: ("1".to_string(), "1".to_string()),
             timestamp_range: (0, 0),
-            statistics: crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockStatistics {
+            statistics: crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics {
                 read_count: 0,
                 write_count: 0,
                 search_count: 0,

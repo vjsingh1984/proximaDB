@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, FastLanesDataBlock, VectorEncodingLayout,
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -167,7 +167,7 @@ fn test_round_trip(
     };
 
     // Create block and serialize
-    let block = FastLanesDataBlock::new(records.clone(), config.clone());
+    let block = ProximaDataBlock::new(records.clone(), config.clone());
     let serialized = block
         .serialize_with_config(&config)
         .map_err(|e| format!("Serialization failed: {}", e))?;
@@ -177,7 +177,7 @@ fn test_round_trip(
     let compression_ratio = original_size as f64 / serialized_size as f64;
 
     // Deserialize
-    let deserialized_block = FastLanesDataBlock::deserialize(&serialized)
+    let deserialized_block = ProximaDataBlock::deserialize(&serialized)
         .map_err(|e| format!("Deserialization failed: {}", e))?;
 
     // Verify
@@ -208,7 +208,7 @@ fn test_round_trip(
 }
 
 fn main() {
-    println!("🚀 FastLanes Pattern-Based Round-Trip Testing");
+    println!("🚀 Proxima Pattern-Based Round-Trip Testing");
     println!("{}", "=".repeat(80));
 
     // Test configuration

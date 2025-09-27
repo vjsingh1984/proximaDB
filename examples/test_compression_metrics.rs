@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -92,7 +92,7 @@ fn test_compression(
     let original_size = vectors.len() * dimension * 4; // 4 bytes per f32
 
     // Measure encoding time
-    let block = FastLanesDataBlock::new(vectors.to_vec(), config.clone());
+    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
     let encode_start = Instant::now();
     let encoded = block.serialize_with_config(&config)?;
     let encode_time_ms = encode_start.elapsed().as_secs_f64() * 1000.0;
@@ -102,7 +102,7 @@ fn test_compression(
 
     // Measure decoding time
     let decode_start = Instant::now();
-    let _decoded_block = FastLanesDataBlock::deserialize(&encoded)?;
+    let _decoded_block = ProximaDataBlock::deserialize(&encoded)?;
     let decode_time_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
 
     Ok(CompressionResult {
@@ -117,7 +117,7 @@ fn test_compression(
 }
 
 fn main() -> anyhow::Result<()> {
-    println!("📊 FastLanes Compression Metrics Analysis");
+    println!("📊 Proxima Compression Metrics Analysis");
     println!("===========================================");
 
     const NUM_VECTORS: usize = 256;

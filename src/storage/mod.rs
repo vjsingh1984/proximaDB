@@ -27,7 +27,7 @@
 //! - **VIPER**: Columnar Parquet for analytics
 //! - **NOVA**: Hybrid quantized columnar
 //! - **SWIFT**: High-speed hierarchical blocks
-//! - **PRISM**: Tree-based with FastLanes
+//! - **PRISM**: Tree-based with Proxima
 //! - **RAPTOR**: Matrix-optimized with adaptive PXK
 //!
 //! ### 2. **Write-Ahead Log** (`persistence/write_ahead_log/`)

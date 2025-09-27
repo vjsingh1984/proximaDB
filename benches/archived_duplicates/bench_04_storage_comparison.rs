@@ -119,7 +119,7 @@ fn create_engine(engine_type: &str, dimension: usize) -> Arc<dyn UnifiedStorageE
             StorageEngineFactory::create_helix().unwrap()
         },
         "swift" => {
-            // SWIFT Engine: High-speed row-based with FastLanes encoding
+            // SWIFT Engine: High-speed row-based with Proxima encoding
             // APPROACH: Use factory method
             // WHY: Swift constructor needs specific dependencies (distance_compute, axis_manager)
             // ISSUE: Swift factory method is simpler than manual construction

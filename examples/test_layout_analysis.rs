@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -24,7 +24,7 @@ fn create_simple_vectors() -> Vec<VectorRecord> {
 }
 
 fn analyze_layout() -> anyhow::Result<()> {
-    println!("🔍 FASTLANES LAYOUT ANALYSIS");
+    println!("🔍 PROXIMA LAYOUT ANALYSIS");
     println!("============================");
 
     let vectors = create_simple_vectors();
@@ -41,7 +41,7 @@ fn analyze_layout() -> anyhow::Result<()> {
         metadata_algorithm: None,
     };
 
-    let block = FastLanesDataBlock::new(vectors, config.clone());
+    let block = ProximaDataBlock::new(vectors, config.clone());
     let encoded = block.serialize_with_config(&config)?;
 
     println!("\n📏 SERIALIZATION ANALYSIS:");

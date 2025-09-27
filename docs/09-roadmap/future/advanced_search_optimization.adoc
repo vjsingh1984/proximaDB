@@ -148,7 +148,7 @@ flowchart LR
 ==== SWIFT Engine Integration
 
 **Ultra-Low Latency Optimization**:
-- FastLanes encoding optimization
+- Proxima encoding optimization
 - Hardware-aware SIMD path selection
 - Zero-copy memory operations
 - Predictive prefetching

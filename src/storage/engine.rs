@@ -8,7 +8,7 @@ use crate::storage::{
     traits::InternalCollectionProvider,
 };
 // Import CollectionMetadata from the appropriate location
-use crate::storage::engines::core::formats::fastlanes_blocks::header_metadata::CollectionMetadata;
+use crate::storage::engines::core::formats::proximablocks::header_metadata::CollectionMetadata;
 use dashmap::DashMap;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;

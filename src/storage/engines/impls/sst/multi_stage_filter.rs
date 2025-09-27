@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::impls::sst::IndexEntry;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::ReadStrategy;
 use crate::storage::engines::impls::sst::row_filter::{
@@ -68,7 +68,7 @@ impl ThreeStageFilterPipeline {
         filter_expr: &FilterExpression,
         bloom_filter: Option<&SstableBloomFilter>,
         index_entries: &[IndexEntry],
-        data_blocks: &[FastLanesDataBlock],
+        data_blocks: &[ProximaDataBlock],
     ) -> Result<FilterResult> {
         let mut stats = FilterStageStats::new();
 
@@ -224,9 +224,9 @@ impl ThreeStageFilterPipeline {
         &self,
         filter_expr: &FilterExpression,
         index_entries: &[IndexEntry],
-        data_blocks: &[FastLanesDataBlock],
+        data_blocks: &[ProximaDataBlock],
         stats: &mut FilterStageStats,
-    ) -> Result<Vec<FastLanesDataBlock>> {
+    ) -> Result<Vec<ProximaDataBlock>> {
         let stage_start = std::time::Instant::now();
         let mut qualifying_blocks = Vec::new();
 
@@ -412,7 +412,7 @@ impl ThreeStageFilterPipeline {
     async fn stage3_row_filtering(
         &mut self,
         filter_expr: &FilterExpression,
-        qualifying_blocks: &[FastLanesDataBlock],
+        qualifying_blocks: &[ProximaDataBlock],
         stats: &mut FilterStageStats,
     ) -> Result<Vec<GlobalRowIndex>> {
         let stage_start = std::time::Instant::now();
@@ -582,13 +582,13 @@ mod tests {
         );
     }
 
-    fn create_test_data_blocks() -> Vec<FastLanesDataBlock> {
-        vec![FastLanesDataBlock {
+    fn create_test_data_blocks() -> Vec<ProximaDataBlock> {
+        vec![ProximaDataBlock {
             encoding_marker: 0,
             encoding_metadata: None,
             block_id: 0,
             encoded_vectors: None,
-            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             records: vec![
                 crate::proto::proximadb_v1::VectorRecord {
                     id: "vec1".to_string(),
@@ -660,7 +660,7 @@ mod tests {
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,
-            metadata: crate::storage::engines::core::formats::fastlanes_blocks::FastLanesBlockMetadata {
+            metadata: crate::storage::engines::core::formats::proximablocks::ProximaBlockMetadata {
                 record_count: 3,
                 size_bytes: 1024,
                 compressed_size: 1024,
@@ -670,7 +670,7 @@ mod tests {
                 has_updates: false,
                 version_range: (1, 1),
                 column_stats: HashMap::new(),
-                quantization_stats: crate::storage::engines::core::formats::fastlanes_blocks::QuantizationStatistics::default(),
+                quantization_stats: crate::storage::engines::core::formats::proximablocks::QuantizationStatistics::default(),
                 data_checksum: 0,
                 metadata_checksum: 0,
             },
@@ -682,7 +682,7 @@ mod tests {
             id_range: ("vec1".to_string(), "vec3".to_string()),
             timestamp_range: (1000, 1002),
             statistics: Default::default(),
-            metadata_stats: Some(crate::storage::engines::core::formats::fastlanes_blocks::BlockMetadataStats {
+            metadata_stats: Some(crate::storage::engines::core::formats::proximablocks::BlockMetadataStats {
                 unique_keys: 1,
                 null_values: 0,
                 avg_value_size: 10.0,

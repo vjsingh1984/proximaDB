@@ -518,7 +518,7 @@ GroupedFieldEncoded's 32-dimension groups (32 × 4 bytes = 128 bytes) provide op
 
 [source,rust]
 ----
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
+use proximadb::storage::engines::core::formats::proxima_blocks::{
     BlockCompressionConfig, VectorEncodingLayout
 };
 use proximadb::core::compression::CompressionAlgorithm;

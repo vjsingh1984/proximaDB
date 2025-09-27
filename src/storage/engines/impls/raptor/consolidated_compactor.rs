@@ -17,7 +17,7 @@ use crate::index::axis::clustering::{
     ReusableClusteringEngine,
 };
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+use crate::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -28,7 +28,7 @@ pub struct RaptorCompactor {
 
     // DIRECT references to unified modules
     distance_compute: Arc<UnifiedDistanceCompute>,
-    fastlanes_encoder: FastLanesEncoder,
+    proxima_encoder: ProximaEncoder,
     filesystem: Arc<dyn FileSystem>,
     transaction_coordinator: Arc<TransactionCoordinator>,
 }
@@ -40,17 +40,17 @@ impl RaptorCompactor {
         filesystem: Arc<dyn FileSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
-        let fastlanes_scheme = if config.use_fastlanes_encoding {
-            FastLanesScheme::BitPacked { bits: 32 }
+        let proxima_scheme = if config.use_proxima_encoding {
+            ProximaScheme::BitPacked { bits: 32 }
         } else {
-            FastLanesScheme::BitPacked { bits: 32 }
+            ProximaScheme::BitPacked { bits: 32 }
         };
 
         Self {
             config,
             reader,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
-            fastlanes_encoder: FastLanesEncoder::new(fastlanes_scheme),
+            proxima_encoder: ProximaEncoder::new(proxima_scheme),
             filesystem,
             transaction_coordinator,
         }
@@ -432,7 +432,7 @@ impl RaptorCompactor {
                 writer.finish()?;
             }
 
-            // FastLanes encoding is applied to individual columns during write,
+            // Proxima encoding is applied to individual columns during write,
             // not to the entire Arrow IPC buffer
             let encoded = buffer;
 

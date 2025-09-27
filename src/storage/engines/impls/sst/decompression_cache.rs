@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::cache::orchestrator::{CacheStatsProvider, UsageStats};
 
 /// Cache key for decompressed blocks
@@ -29,7 +29,7 @@ pub struct BlockCacheKey {
 #[derive(Debug, Clone)]
 pub struct CachedBlock {
     /// Decompressed block data
-    pub data: FastLanesDataBlock,
+    pub data: ProximaDataBlock,
     /// Size in bytes
     pub size_bytes: usize,
     /// Timestamp when cached
@@ -267,7 +267,7 @@ impl DecompressionCache {
     }
 
     /// Get a decompressed block from cache
-    pub async fn get(&self, key: &BlockCacheKey) -> Option<FastLanesDataBlock> {
+    pub async fn get(&self, key: &BlockCacheKey) -> Option<ProximaDataBlock> {
         let mut cache = self.block_cache.write().await;
         let mut stats = self.stats.write().await;
 
@@ -304,7 +304,7 @@ impl DecompressionCache {
     pub async fn put(
         &self,
         key: BlockCacheKey,
-        data: FastLanesDataBlock,
+        data: ProximaDataBlock,
         compression_algorithm: Option<crate::core::compression::CompressionAlgorithm>,
     ) -> Result<()> {
         // Calculate block size
@@ -407,7 +407,7 @@ impl DecompressionCache {
     }
 
     /// Calculate the size of a data block
-    fn calculate_block_size(block: &FastLanesDataBlock) -> usize {
+    fn calculate_block_size(block: &ProximaDataBlock) -> usize {
         // Estimate based on VectorRecords in the block
         block
             .records
@@ -480,7 +480,7 @@ impl DecompressionCache {
         file_path: &str,
         blocks: Vec<(
             u32,
-            FastLanesDataBlock,
+            ProximaDataBlock,
             Option<crate::core::compression::CompressionAlgorithm>,
         )>,
     ) -> Result<()> {
@@ -620,7 +620,7 @@ mod tests {
         assert!(cache.get(&key).await.is_none());
 
         // Test put and hit
-        let block = FastLanesDataBlock::new(vec![], crate::storage::engines::core::formats::fastlanes_blocks::BlockCompressionConfig::default());
+        let block = ProximaDataBlock::new(vec![], crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig::default());
         cache
             .put(
                 key.clone(),
@@ -676,7 +676,7 @@ mod tests {
                 });
             }
 
-            let block = FastLanesDataBlock::new(records, crate::storage::engines::core::formats::fastlanes_blocks::BlockCompressionConfig::default());
+            let block = ProximaDataBlock::new(records, crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig::default());
             cache.put(key, block, None).await.unwrap();
         }
 

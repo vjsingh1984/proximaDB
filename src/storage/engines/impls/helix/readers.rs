@@ -1,7 +1,7 @@
 //! Query execution readers for HELIX engine
 //!
 //! This module provides efficient reading and searching of HELIX SSTables
-//! with Hilbert-based pruning and FastLanes decoding.
+//! with Hilbert-based pruning and Proxima decoding.
 
 use anyhow::Result;
 use futures::future::join_all;
@@ -16,7 +16,7 @@ use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
 // Filter evaluator now uses unified module from core
-use crate::storage::engines::core::formats::fastlanes_blocks::bloom_filter::{
+use crate::storage::engines::core::formats::proximablocks::bloom_filter::{
     SerializedBloomFilter, factory::BloomFilterFactory,
 };
 
@@ -85,8 +85,8 @@ pub async fn search_sstable(
         sstable.level, sstable.num_vectors
     );
 
-    // Use fastlane search instead of the old format reader
-    let search_results = super::fastlane::search_helix_sstable(
+    // Use proxima search instead of the old format reader
+    let search_results = super::proxima::search_helix_sstable(
         filesystem,
         &sstable.path,
         query_vector,
@@ -165,8 +165,8 @@ pub async fn find_vector_by_id(
         std::io::Read::read_exact(&mut cursor, &mut block_data)?;
 
         // Deserialize block
-        use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
-        let block = FastLanesDataBlock::deserialize(&block_data)?;
+        use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+        let block = ProximaDataBlock::deserialize(&block_data)?;
 
         let current_time = chrono::Utc::now().timestamp() as u64;
         for record in block.records {
@@ -188,7 +188,7 @@ pub async fn find_vector_by_id(
 
 /// Check if a block should be pruned based on statistics
 fn should_prune_block(
-    metadata: &crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata,
+    metadata: &crate::storage::engines::core::formats::proximablocks::block_structures::ProximaBlockMetadata,
     _query_vector: &[f32],
 ) -> bool {
     // Simple pruning based on Hilbert range

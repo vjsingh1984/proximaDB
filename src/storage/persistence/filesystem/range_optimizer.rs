@@ -135,7 +135,7 @@ impl RangeOptimizer {
                 self.merge_ranges(ranges)
             }
             "swift" => {
-                // SWIFT uses FastLanes encoding with superblocks
+                // SWIFT uses Proxima encoding with superblocks
                 // Need header and potentially specific superblocks
                 ranges.push(OptimizedRange {
                     start: 0,

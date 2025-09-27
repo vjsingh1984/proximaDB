@@ -77,7 +77,7 @@ pca_retrain_interval_hours = 24         # How often to retrain PCA model
 enable_liquid_clustering = true         # Adaptive query-based clustering
 
 # Performance settings
-fastlane_block_size = 128               # FastLanes block size
+proxima_block_size = 128               # Proxima block size
 block_cache_size_mb = 1024              # Block cache for hot data
 bloom_filter_bits_per_key = 10         # Bloom filter precision
 

@@ -8,7 +8,7 @@
 //! 1. **Three-Tier Architecture**: Revolutionary SuperBlock → DataBlock → Records hierarchy
 //! 2. **Hierarchical Indexing**: Multi-level navigation with O(log n) access patterns
 //! 3. **Large-Scale Support**: Optimized for datasets from millions to billions of vectors
-//! 4. **FastLanes Integration**: SIMD-optimized encoding with intelligent compression
+//! 4. **Proxima Integration**: SIMD-optimized encoding with intelligent compression
 //! 5. **Incremental Operations**: Non-disruptive updates and expansions
 //! 6. **Production Validation**: Battle-tested hierarchical storage with enterprise features
 //!
@@ -90,7 +90,7 @@
 //!
 //! ### **DataBlock Level (Mid Tier)**
 //! - **Purpose**: Fine-grained organization within SuperBlocks (projects, versions, categories)
-//! - **Optimization**: Mid-level indexing with FastLanes compression
+//! - **Optimization**: Mid-level indexing with Proxima compression
 //! - **Benefit**: Balanced granularity for most query patterns
 //!
 //! ### **Record Level (Bottom Tier)**
@@ -109,14 +109,14 @@
 //!
 //! - **Query Performance**: Excellent (hierarchical pruning reduces search space)
 //! - **Write Performance**: Good (batch operations at SuperBlock level)
-//! - **Storage Efficiency**: Good (FastLanes compression + hierarchical organization)
+//! - **Storage Efficiency**: Good (Proxima compression + hierarchical organization)
 //! - **Memory Usage**: Moderate (intelligent tier-based loading)
 //! - **Scalability**: Outstanding (linear scaling with proper hierarchy design)
 //!
 //! ## How SWIFT Leverages Common Modules
 //!
-//! ### 1. Row-Based Module Integration (`fastlanes_blocks::`)
-//! - **Hierarchical Blocks**: Uses `SuperBlock` and `DataBlock` from fastlanes_blocks for
+//! ### 1. Row-Based Module Integration (`proximablocks::`)
+//! - **Hierarchical Blocks**: Uses `SuperBlock` and `DataBlock` from proximablocks for
 //!   its unique three-tier hierarchy (SuperBlock → DataBlock → Records)
 //! - **Index Structures**: Leverages `HierarchicalIndex` and `MultiLevelIndex` for
 //!   efficient navigation of its deep block structure
@@ -177,33 +177,33 @@ use crate::proto::proximadb_v1::VectorRecord;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
 use crate::core::bloom::SstableBloomFilter;
-// FastLanes encoding for columnar vector optimization
+// Proxima encoding for columnar vector optimization
 
 // NEW: SIMD optimization for SWIFT low-latency requirements
-use crate::storage::engines::core::ops::unified_fastlanes_simd::{
-    UnifiedFastLanesSIMD, EngineProfile, SIMDConfig,
+use crate::storage::engines::core::ops::unified_proxima_simd::{
+    UnifiedProximaSIMD, EngineProfile, SIMDConfig,
 };
-use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
+use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
 // NOTE: Quantization now uses unified engine from compute module
 
-// Import FastLanes common structures (SWIFT uses hierarchical structure)
-// Note: FastLanesDataBlock provides the block structure with encoding support
-use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::{FastLanesDataBlock, FastLanesBlockMetadata};
+// Import Proxima common structures (SWIFT uses hierarchical structure)
+// Note: ProximaDataBlock provides the block structure with encoding support
+use crate::storage::engines::core::formats::proximablocks::block_structures::{ProximaDataBlock, ProximaBlockMetadata};
 
-/// ✅ SWIFT-specific metadata using FastLanes composition pattern (like HELIX and SST)
+/// ✅ SWIFT-specific metadata using Proxima composition pattern (like HELIX and SST)
 /// This follows the same pattern as HelixBlockMetadata and SstBlockMetadata but for SWIFT SuperBlock optimizations
 #[derive(Debug, Clone)]
 pub struct SwiftSuperBlockMetadata {
-    /// ✅ Base FastLanes metadata - REUSE all auto-generated features!
+    /// ✅ Base Proxima metadata - REUSE all auto-generated features!
     /// This includes: bloom filters, metadata statistics, range tracking, delete detection,
     /// SIMD encoding, compression, and all other automatic capabilities
-    pub fastlanes_metadata: FastLanesBlockMetadata,
+    pub proxima_metadata: ProximaBlockMetadata,
 
     /// ✅ SWIFT-specific hierarchical additions only
     pub swift_specific_data: SwiftSpecificData,
 }
 
-/// SWIFT engine-specific hierarchical optimizations that complement FastLanes capabilities
+/// SWIFT engine-specific hierarchical optimizations that complement Proxima capabilities
 #[derive(Debug, Clone)]
 pub struct SwiftSpecificData {
     /// Three-tier hierarchical structure (SuperBlock → DataBlock → Records)
@@ -221,7 +221,7 @@ pub struct SwiftSpecificData {
 pub struct SuperBlock {
     pub superblock_id: usize,
     pub name: String,
-    pub blocks: Vec<FastLanesDataBlock>,
+    pub blocks: Vec<ProximaDataBlock>,
     pub superblock_encoding_marker: u8,
     pub centroid: Option<Vec<f32>>,
     pub quantized_signature: Vec<u8>,
@@ -231,13 +231,13 @@ pub struct SuperBlock {
 }
 
 impl SuperBlock {
-    /// ✅ REFACTORED: Create SuperBlock using FastLanes composition pattern
+    /// ✅ REFACTORED: Create SuperBlock using Proxima composition pattern
     pub fn new(id: usize, name: String) -> Self {
-        // ✅ Initialize with FastLanes capabilities (will be set when blocks are added)
-        let default_fastlanes_metadata = FastLanesBlockMetadata::default();
+        // ✅ Initialize with Proxima capabilities (will be set when blocks are added)
+        let default_proxima_metadata = ProximaBlockMetadata::default();
 
         let swift_metadata = SwiftSuperBlockMetadata {
-            fastlanes_metadata: default_fastlanes_metadata,
+            proxima_metadata: default_proxima_metadata,
             swift_specific_data: SwiftSpecificData {
                 hierarchical_structure: true,
                 large_scale_optimization: true,
@@ -258,16 +258,16 @@ impl SuperBlock {
         }
     }
 
-    /// ✅ REFACTORED: Add block and aggregate FastLanes metadata automatically
-    pub fn add_block(&mut self, block: FastLanesDataBlock) {
-        // ✅ Update SuperBlock metadata using FastLanes auto-generated metadata
+    /// ✅ REFACTORED: Add block and aggregate Proxima metadata automatically
+    pub fn add_block(&mut self, block: ProximaDataBlock) {
+        // ✅ Update SuperBlock metadata using Proxima auto-generated metadata
         self.record_count += block.metadata.record_count;
 
-        // ✅ Aggregate FastLanes metadata from all blocks
+        // ✅ Aggregate Proxima metadata from all blocks
         if !self.blocks.is_empty() {
             // Merge column statistics
             for (column, block_stats) in &block.metadata.column_stats {
-                if let Some(existing_stats) = self.swift_metadata.fastlanes_metadata.column_stats.get_mut(column) {
+                if let Some(existing_stats) = self.swift_metadata.proxima_metadata.column_stats.get_mut(column) {
                     // Update min/max values
                     if let (Some(block_min), Some(existing_min)) = (&block_stats.min_value, &existing_stats.min_value) {
                         // Use JSON comparison for consistency
@@ -287,17 +287,17 @@ impl SuperBlock {
                     existing_stats.null_count += block_stats.null_count;
                 } else {
                     // Add new column statistics
-                    self.swift_metadata.fastlanes_metadata.column_stats.insert(column.clone(), block_stats.clone());
+                    self.swift_metadata.proxima_metadata.column_stats.insert(column.clone(), block_stats.clone());
                 }
             }
 
             // Update aggregate metadata
-            self.swift_metadata.fastlanes_metadata.record_count += block.metadata.record_count;
-            self.swift_metadata.fastlanes_metadata.size_bytes += block.metadata.size_bytes;
-            self.swift_metadata.fastlanes_metadata.compressed_size += block.metadata.compressed_size;
+            self.swift_metadata.proxima_metadata.record_count += block.metadata.record_count;
+            self.swift_metadata.proxima_metadata.size_bytes += block.metadata.size_bytes;
+            self.swift_metadata.proxima_metadata.compressed_size += block.metadata.compressed_size;
         } else {
             // First block - initialize metadata
-            self.swift_metadata.fastlanes_metadata = block.metadata.clone();
+            self.swift_metadata.proxima_metadata = block.metadata.clone();
         }
 
         self.blocks.push(block);
@@ -333,8 +333,8 @@ pub struct SwiftFile {
     /// Memory management
     memory_manager: Arc<MemoryManager>,
 
-    /// SIMD-optimized FastLanes encoder for low-latency operations
-    simd_encoder: UnifiedFastLanesSIMD,
+    /// SIMD-optimized Proxima encoder for low-latency operations
+    simd_encoder: UnifiedProximaSIMD,
 }
 
 /// Magic constant for SWIFT files (4 bytes)
@@ -457,7 +457,7 @@ pub struct Codebook {
     pub distance_table: Vec<Vec<f32>>,
 }
 
-// SuperBlock and DataBlock are now imported from fastlanes_blocks common module
+// SuperBlock and DataBlock are now imported from proximablocks common module
 // Additional SWIFT-specific fields can be added via composition if needed
 
 /// Column statistics for metadata filtering
@@ -478,8 +478,8 @@ pub struct MemoryManager {
 }
 
 impl SwiftFile {
-    /// ✅ REFACTORED: Build blocks using FastLanes composition pattern (like HELIX and SST)
-    /// FastLanes automatically handles quantization, encoding, bloom filters, and metadata statistics!
+    /// ✅ REFACTORED: Build blocks using Proxima composition pattern (like HELIX and SST)
+    /// Proxima automatically handles quantization, encoding, bloom filters, and metadata statistics!
     pub fn build_blocks_from_records_with_adapters(
         &mut self,
         records: Vec<VectorRecord>,
@@ -499,7 +499,7 @@ impl SwiftFile {
         let mut block_id = 0;
 
         for chunk in records.chunks(records_per_block) {
-            // ✅ FastLanes automatically provides:
+            // ✅ Proxima automatically provides:
             // - 🔍 Automatic Bloom Filter Generation
             // - 📊 Automatic Metadata Statistics
             // - 📝 Automatic Range Tracking
@@ -507,23 +507,23 @@ impl SwiftFile {
             // - ⚡ Automatic SIMD Encoding
             // - 🗜️ Automatic Compression
             // - 🚀 Automatic Quantization (if enabled)
-            // Use centralized compression config conversion from FastLanes
-            use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
+            // Use centralized compression config conversion from Proxima
+            use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
             let mut compression_config = RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
 
             // Enable SIMD optimization for SWIFT (low-latency focus)
-            compression_config.vector_layout = crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
+            compression_config.vector_layout = crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
 
             // Create block with SWIFT engine profile for optimized SIMD encoding
-            let block = FastLanesDataBlock::new_with_engine_profile(
+            let block = ProximaDataBlock::new_with_engine_profile(
                 chunk.to_vec(),
                 compression_config,
                 EngineProfile::Swift
             );
 
-            // ❌ REMOVED: Manual quantization processing - FastLanes handles this automatically!
-            // ❌ REMOVED: Manual FastLanes encoding - FastLanes does this during construction!
-            // ❌ REMOVED: Manual bloom filter building - FastLanes generates optimal bloom filters!
+            // ❌ REMOVED: Manual quantization processing - Proxima handles this automatically!
+            // ❌ REMOVED: Manual Proxima encoding - Proxima does this during construction!
+            // ❌ REMOVED: Manual bloom filter building - Proxima generates optimal bloom filters!
 
             // Update ID index
             for (idx, record) in chunk.iter().enumerate() {
@@ -535,23 +535,23 @@ impl SwiftFile {
             // Group blocks into superblocks (64 blocks per superblock)
             let superblock_id = block_id / 64;
             if self.superblocks.len() <= superblock_id {
-                // ✅ Create SuperBlock using FastLanes composition pattern
+                // ✅ Create SuperBlock using Proxima composition pattern
                 let mut superblock =
                     SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
 
-                // FASTLANES: Set SuperBlock-level encoding for hierarchical compression
+                // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
                 superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
 
                 // Initialize SWIFT-specific fields
                 superblock.centroid = Some(vec![0.0; self.header.dimension]);
                 superblock.quantized_signature = Vec::new();
 
-                // ✅ FastLanes will automatically provide bloom filters when blocks are added!
+                // ✅ Proxima will automatically provide bloom filters when blocks are added!
 
                 self.superblocks.push(superblock);
             }
 
-            // ✅ Use the new add_block method that leverages FastLanes metadata
+            // ✅ Use the new add_block method that leverages Proxima metadata
             self.superblocks[superblock_id].add_block(block);
 
             block_id += 1;
@@ -573,7 +573,7 @@ impl SwiftFile {
         self.build_blocks_from_records_with_compression(records, None)
     }
 
-    /// ✅ REFACTORED: Build blocks with compression using FastLanes composition pattern
+    /// ✅ REFACTORED: Build blocks with compression using Proxima composition pattern
     pub fn build_blocks_from_records_with_compression(
         &mut self,
         records: Vec<VectorRecord>,
@@ -588,24 +588,24 @@ impl SwiftFile {
         let mut block_id = 0;
 
         for chunk in records.chunks(records_per_block) {
-            // Use centralized compression config conversion from FastLanes
-            use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
+            // Use centralized compression config conversion from Proxima
+            use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
             let mut block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config.as_ref());
 
             // Enable SIMD optimization for SWIFT (hierarchical low-latency focus)
-            block_compression_config.vector_layout = crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
+            block_compression_config.vector_layout = crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
 
-            // ✅ FastLanes automatically handles quantization, bloom filters, and metadata statistics
+            // ✅ Proxima automatically handles quantization, bloom filters, and metadata statistics
             // Now with SIMD-optimized encoding!
-            let block = FastLanesDataBlock::new_with_engine_profile(
+            let block = ProximaDataBlock::new_with_engine_profile(
                 chunk.to_vec(),
                 block_compression_config,
                 EngineProfile::Swift
             );
 
-            // ❌ REMOVED: Manual quantization processing - FastLanes handles this automatically!
-            // ❌ REMOVED: Manual vector collection - unnecessary with FastLanes
-            debug!("Stored {} records in block {} using FastLanes auto-capabilities", chunk.len(), block_id);
+            // ❌ REMOVED: Manual quantization processing - Proxima handles this automatically!
+            // ❌ REMOVED: Manual vector collection - unnecessary with Proxima
+            debug!("Stored {} records in block {} using Proxima auto-capabilities", chunk.len(), block_id);
 
             // Update ID index
             for (idx, record) in chunk.iter().enumerate() {
@@ -621,7 +621,7 @@ impl SwiftFile {
                 let mut superblock =
                     SuperBlock::new(superblock_id, format!("swift_sb_{}", superblock_id));
 
-                // FASTLANES: Set SuperBlock-level encoding for hierarchical compression
+                // PROXIMA: Set SuperBlock-level encoding for hierarchical compression
                 // SWIFT benefits from encoding 10K vectors together for better compression
                 superblock.superblock_encoding_marker = 0x80; // SWIFT SuperBlock encoding
 
@@ -629,12 +629,12 @@ impl SwiftFile {
                 superblock.centroid = Some(vec![0.0; self.header.dimension]);
                 superblock.quantized_signature = Vec::new();
 
-                // ✅ FastLanes will automatically provide bloom filters when blocks are added!
+                // ✅ Proxima will automatically provide bloom filters when blocks are added!
 
                 self.superblocks.push(superblock);
             }
 
-            // ✅ Use the new add_block method that leverages FastLanes metadata
+            // ✅ Use the new add_block method that leverages Proxima metadata
             self.superblocks[superblock_id].add_block(block);
 
             block_id += 1;
@@ -714,7 +714,7 @@ impl SwiftFile {
                 max_memory_bytes: 4 * 1024 * 1024 * 1024, // 4GB
                 current_usage: std::sync::atomic::AtomicUsize::new(0),
             }),
-            simd_encoder: UnifiedFastLanesSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder"),
+            simd_encoder: UnifiedProximaSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder"),
         }
     }
 
@@ -734,10 +734,10 @@ impl SwiftFile {
     }
 
     /// Serialize SwiftFile to bytes for disk persistence
-    /// Uses FastLanes block serialization similar to SST for optimal performance
+    /// Uses Proxima block serialization similar to SST for optimal performance
     pub fn serialize(&self) -> Result<Vec<u8>> {
         use bytes::BytesMut;
-        use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::BlockCompressionConfig;
+        use crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig;
         use crate::core::compression::CompressionAlgorithm;
 
         let mut buffer = BytesMut::new();
@@ -752,16 +752,16 @@ impl SwiftFile {
         buffer.extend_from_slice(&self.header.total_records.to_le_bytes());
         buffer.extend_from_slice(&(self.superblocks.len() as u32).to_le_bytes());
 
-        // Write superblocks with FastLanes optimization
+        // Write superblocks with Proxima optimization
         for superblock in &self.superblocks {
             // Write superblock metadata
             buffer.extend_from_slice(&(superblock.superblock_id as u32).to_le_bytes());
             buffer.extend_from_slice(&superblock.record_count.to_le_bytes());
             buffer.extend_from_slice(&(superblock.blocks.len() as u32).to_le_bytes());
 
-            // Serialize each FastLanes block efficiently
+            // Serialize each Proxima block efficiently
             for block in &superblock.blocks {
-                // FastLanes blocks already have built-in serialization
+                // Proxima blocks already have built-in serialization
                 // Get serialized block and bloom filter in parallel
                 let (block_bytes, bloom_data) = block.serialize_with_bloom_sync()?;
 
@@ -775,7 +775,7 @@ impl SwiftFile {
                 }
             }
 
-            // ✅ Write aggregated bloom filter from FastLanes blocks
+            // ✅ Write aggregated bloom filter from Proxima blocks
             // Aggregate bloom filters from all blocks in superblock
             let mut has_bloom = false;
             for block in &superblock.blocks {
@@ -898,14 +898,14 @@ impl SwiftFile {
             let mut superblock = SuperBlock::new(superblock_id, format!("sb_{}", superblock_id));
             superblock.record_count = record_count;
 
-            // Read FastLanes blocks
+            // Read Proxima blocks
             for _ in 0..block_count {
                 let block_size = cursor.get_u32_le() as usize;
                 let mut block_data = vec![0u8; block_size];
                 cursor.read_exact(&mut block_data)?;
 
-                // Deserialize FastLanes block
-                let block = FastLanesDataBlock::deserialize(&block_data)?;
+                // Deserialize Proxima block
+                let block = ProximaDataBlock::deserialize(&block_data)?;
                 superblock.blocks.push(block);
             }
 
@@ -915,7 +915,7 @@ impl SwiftFile {
                 let bloom_size = cursor.get_u32_le() as usize;
                 let mut bloom_data = vec![0u8; bloom_size];
                 cursor.read_exact(&mut bloom_data)?;
-                // ✅ Bloom filters are now stored in FastLanes blocks, skip legacy bloom data
+                // ✅ Bloom filters are now stored in Proxima blocks, skip legacy bloom data
                 // The blocks already have their bloom filters from deserialization
             }
 
@@ -932,7 +932,7 @@ impl SwiftFile {
                 max_memory_bytes: 4 * 1024 * 1024 * 1024,
                 current_usage: std::sync::atomic::AtomicUsize::new(0),
             }),
-            simd_encoder: UnifiedFastLanesSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder"),
+            simd_encoder: UnifiedProximaSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder"),
         })
     }
 
@@ -983,10 +983,10 @@ impl SwiftFile {
         Self::deserialize(&data)
     }
 
-    /// FASTLANES: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression
+    /// PROXIMA: Optimize SuperBlock encoding for columnar SIMD and hierarchical compression
     /// Uses columnar layout for maximum SIMD efficiency and optimized I/O
     fn finalize_superblock_encoding(&mut self) {
-        use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesMetadata;
+        use crate::storage::engines::core::formats::proximablocks::block_structures::ProximaMetadata;
         // use crate::core::hardware_capabilities::HardwareCapabilities; // Unused import
 
         let hw_caps = crate::core::hardware_capabilities::get_hardware_capabilities();
@@ -1051,7 +1051,7 @@ impl SwiftFile {
             );
 
             superblock.superblock_encoding_marker = marker;
-            // ✅ Update FastLanes metadata in the new composition structure
+            // ✅ Update Proxima metadata in the new composition structure
             // This metadata will be aggregated from blocks automatically via add_block()
 
             // Update child blocks to inherit SuperBlock columnar encoding
@@ -1069,19 +1069,19 @@ impl SwiftFile {
     fn select_avx512_scheme(
         stats: &[(f32, f32, f32, f32)],
         vector_count: usize,
-    ) -> (u8, FastLanesScheme) {
+    ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
         let avg_delta =
             stats.iter().map(|(_, _, _, delta)| *delta).sum::<f32>() / stats.len() as f32;
 
         if avg_range < 1e-6 {
-            (0x96, FastLanesScheme::RunLength) // AVX-512 run-length
+            (0x96, ProximaScheme::RunLength) // AVX-512 run-length
         } else if avg_delta < avg_range / 16.0 {
             // Excellent delta compression for AVX-512
             (
                 0x92,
-                FastLanesScheme::Delta {
+                ProximaScheme::Delta {
                     base: stats[0].0 as i64,
                 },
             )
@@ -1089,7 +1089,7 @@ impl SwiftFile {
             // Frame-of-reference for 16-wide SIMD
             (
                 0x93,
-                FastLanesScheme::FrameOfReference {
+                ProximaScheme::FrameOfReference {
                     reference: stats[0].0 as i64,
                     bits: (avg_range.log2().ceil() as u8).max(6), // Optimized for AVX-512
                 },
@@ -1098,7 +1098,7 @@ impl SwiftFile {
             // High-precision BitPacking for AVX-512
             (
                 0x91,
-                FastLanesScheme::BitPacked {
+                ProximaScheme::BitPacked {
                     bits: (avg_range.log2().ceil() as u8).max(10),
                 },
             )
@@ -1109,19 +1109,19 @@ impl SwiftFile {
     fn select_avx2_scheme(
         stats: &[(f32, f32, f32, f32)],
         vector_count: usize,
-    ) -> (u8, FastLanesScheme) {
+    ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
         let avg_delta =
             stats.iter().map(|(_, _, _, delta)| *delta).sum::<f32>() / stats.len() as f32;
 
         if avg_range < 1e-6 {
-            (0x86, FastLanesScheme::RunLength) // AVX2 run-length
+            (0x86, ProximaScheme::RunLength) // AVX2 run-length
         } else if avg_delta < avg_range / 8.0 {
             // Good delta compression for AVX2
             (
                 0x82,
-                FastLanesScheme::Delta {
+                ProximaScheme::Delta {
                     base: stats[0].0 as i64,
                 },
             )
@@ -1129,7 +1129,7 @@ impl SwiftFile {
             // Frame-of-reference for 8-wide SIMD
             (
                 0x83,
-                FastLanesScheme::FrameOfReference {
+                ProximaScheme::FrameOfReference {
                     reference: stats[0].0 as i64,
                     bits: (avg_range.log2().ceil() as u8).max(8),
                 },
@@ -1138,7 +1138,7 @@ impl SwiftFile {
             // Standard BitPacking for AVX2
             (
                 0x81,
-                FastLanesScheme::BitPacked {
+                ProximaScheme::BitPacked {
                     bits: (avg_range.log2().ceil() as u8).max(12),
                 },
             )
@@ -1149,19 +1149,19 @@ impl SwiftFile {
     fn select_sse_scheme(
         stats: &[(f32, f32, f32, f32)],
         vector_count: usize,
-    ) -> (u8, FastLanesScheme) {
+    ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
         let avg_delta =
             stats.iter().map(|(_, _, _, delta)| *delta).sum::<f32>() / stats.len() as f32;
 
         if avg_range < 1e-6 {
-            (0x76, FastLanesScheme::RunLength) // SSE run-length
+            (0x76, ProximaScheme::RunLength) // SSE run-length
         } else if avg_delta < avg_range / 4.0 {
             // Modest delta compression for SSE
             (
                 0x72,
-                FastLanesScheme::Delta {
+                ProximaScheme::Delta {
                     base: stats[0].0 as i64,
                 },
             )
@@ -1169,7 +1169,7 @@ impl SwiftFile {
             // Conservative frame-of-reference for 4-wide SIMD
             (
                 0x73,
-                FastLanesScheme::FrameOfReference {
+                ProximaScheme::FrameOfReference {
                     reference: stats[0].0 as i64,
                     bits: (avg_range.log2().ceil() as u8).max(10),
                 },
@@ -1178,7 +1178,7 @@ impl SwiftFile {
             // Basic BitPacking for SSE
             (
                 0x71,
-                FastLanesScheme::BitPacked {
+                ProximaScheme::BitPacked {
                     bits: (avg_range.log2().ceil() as u8).max(14),
                 },
             )
@@ -1189,19 +1189,19 @@ impl SwiftFile {
     fn select_scalar_scheme(
         stats: &[(f32, f32, f32, f32)],
         vector_count: usize,
-    ) -> (u8, FastLanesScheme) {
+    ) -> (u8, ProximaScheme) {
         let avg_range =
             stats.iter().map(|(_, _, range, _)| *range).sum::<f32>() / stats.len() as f32;
         let avg_delta =
             stats.iter().map(|(_, _, _, delta)| *delta).sum::<f32>() / stats.len() as f32;
 
         if avg_range < 1e-6 {
-            (0x66, FastLanesScheme::RunLength) // Scalar run-length
+            (0x66, ProximaScheme::RunLength) // Scalar run-length
         } else if avg_delta < avg_range / 2.0 {
             // Simple delta compression
             (
                 0x62,
-                FastLanesScheme::Delta {
+                ProximaScheme::Delta {
                     base: stats[0].0 as i64,
                 },
             )
@@ -1209,7 +1209,7 @@ impl SwiftFile {
             // Basic frame-of-reference
             (
                 0x63,
-                FastLanesScheme::FrameOfReference {
+                ProximaScheme::FrameOfReference {
                     reference: stats[0].0 as i64,
                     bits: (avg_range.log2().ceil() as u8).max(12),
                 },
@@ -1218,7 +1218,7 @@ impl SwiftFile {
             // Conservative BitPacking
             (
                 0x61,
-                FastLanesScheme::BitPacked {
+                ProximaScheme::BitPacked {
                     bits: (avg_range.log2().ceil() as u8).max(16),
                 },
             )

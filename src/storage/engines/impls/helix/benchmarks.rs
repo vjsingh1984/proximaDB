@@ -171,7 +171,7 @@ mod benchmarks {
         
         let temp_dir = TempDir::new().unwrap();
         let mut config = HelixConfig::default();
-        config.fastlane_block_size = 50;
+        config.proxima_block_size = 50;
         
         let engine = HelixEngine::new(
             "bench_collection".to_string(),
@@ -400,7 +400,7 @@ mod benchmarks {
         // Create metadata
         let metadata: Vec<HelixBlockMetadata> = (0..num_blocks)
             .map(|i| HelixBlockMetadata {
-                fastlanes_metadata: FastLanesBlockMetadata {
+                proxima_metadata: ProximaBlockMetadata {
                     block_id: i as u32,
                     block_size: num_vectors_per_block,
                     uncompressed_size: num_vectors_per_block * 1536, // 384 dims * 4 bytes

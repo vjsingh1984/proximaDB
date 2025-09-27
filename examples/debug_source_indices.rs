@@ -1,4 +1,4 @@
-use proximadb::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+use proximadb::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaScheme};
 
 fn main() {
     println!("🔍 Debug: Source Indices Encoding/Decoding");
@@ -8,16 +8,16 @@ fn main() {
     let source_indices = vec![0i64, 1i64];
     println!("Original source indices: {:?}", source_indices);
 
-    // Encode using FastLanes with Delta scheme (base 0)
-    let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+    // Encode using Proxima with Delta scheme (base 0)
+    let encoder = ProximaEncoder::new(ProximaScheme::Delta { base: 0 });
     match encoder.encode_i64(&source_indices, None) {
         Ok(encoded_data) => {
             println!("✅ Encoded: {} bytes", encoded_data.len());
             println!("Encoded bytes: {:?}", &encoded_data[..std::cmp::min(20, encoded_data.len())]);
 
             // Decode back
-            use proximadb::storage::engines::core::ops::fastlanes_encoding::FastLanesDecoder;
-            let decoder = FastLanesDecoder::new_from_data(&encoded_data);
+            use proximadb::storage::engines::core::ops::proxima_encoding::ProximaDecoder;
+            let decoder = ProximaDecoder::new_from_data(&encoded_data);
             match decoder.decode_i64(&encoded_data, None) {
                 Ok(decoded) => {
                     println!("✅ Decoded: {} elements", decoded.len());

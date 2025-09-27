@@ -33,7 +33,7 @@ This approach provides:
 * *Smart sizing*: 256-8192 vectors per rowgroup (auto-configured)
 * *1:1 mapping*: Each rowgroup has exactly one centroid
 * *Columnar storage*: Vectors stored in columnar format within rowgroups
-* *FastLanes encoding*: Efficient compression for vector data
+* *Proxima encoding*: Efficient compression for vector data
 
 === Advanced Search Features
 
@@ -236,7 +236,7 @@ RAPTOR uses a level-based compaction strategy optimized for the Matrix Trinity:
 
 === Hardware Optimization
 * SIMD acceleration for distance calculations
-* Vectorized FastLanes encoding/decoding
+* Vectorized Proxima encoding/decoding
 * Cache-aligned data structures
 
 == Configuration Options

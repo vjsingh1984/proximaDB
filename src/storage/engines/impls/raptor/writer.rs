@@ -61,7 +61,7 @@ use crate::core::hardware_capabilities::get_hardware_capabilities;
 
 // Import bloom filter types from common
 use super::common::{
-    CentroidStats, ColumnarCentroids, DistanceBounds, FastLanesMetadata, NeighborType,
+    CentroidStats, ColumnarCentroids, DistanceBounds, ProximaMetadata, NeighborType,
     RaptorFooter, RowGroupBloomFilter, RowGroupNeighbor,
 };
 use super::matrix_builder::MatrixBuilder;
@@ -71,7 +71,7 @@ use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+use crate::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 
 // Import AXIS clustering for reuse
@@ -1446,7 +1446,7 @@ impl IvfClusteringBuilder {
             }
         }
 
-        // Step 3: Apply FastLanes compression to sparse entries
+        // Step 3: Apply Proxima compression to sparse entries
         let distances_only: Vec<f32> = sparse_entries
             .iter()
             .map(|entry| entry.quantized_distance as f32 / 255.0 * max_distance)
@@ -1467,11 +1467,11 @@ impl IvfClusteringBuilder {
             .map(|&d| ((d - q_min) * scale).round() as u8)
             .collect();
 
-        // Apply FastLanes encoding for SIMD optimization
-        use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
-        let scheme = FastLanesScheme::BitPacked { bits: 8 }; // Efficient for sparse data
-        let fastlanes_encoder = FastLanesEncoder::new(scheme);
-        let compressed_data = fastlanes_encoder
+        // Apply Proxima encoding for SIMD optimization
+        use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
+        let scheme = ProximaScheme::BitPacked { bits: 8 }; // Efficient for sparse data
+        let proxima_encoder = ProximaEncoder::new(scheme);
+        let compressed_data = proxima_encoder
             .encode_binary(&quantized_u8)
             .unwrap_or_else(|_| quantized_u8.clone()); // Fallback to uncompressed if encoding fails
 
@@ -1590,28 +1590,28 @@ impl RaptorWriter {
             })
             .collect();
 
-        // Apply FastLanes encoding using unified encoder
-        use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
+        // Apply Proxima encoding using unified encoder
+        use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
         let scheme = if max_distance - min_distance < 0.1 {
             // Small range - use delta encoding
-            FastLanesScheme::Delta {
+            ProximaScheme::Delta {
                 base: (min_distance * 1000.0) as i64,
             }
         } else if distances.len() > 10000 {
             // Large dataset - use bit packing
-            FastLanesScheme::BitPacked { bits: 8 }
+            ProximaScheme::BitPacked { bits: 8 }
         } else {
             // Default to frame-of-reference
-            FastLanesScheme::FrameOfReference {
+            ProximaScheme::FrameOfReference {
                 reference: (min_distance * 1000.0) as i64,
                 bits: 8,
             }
         };
 
-        let fastlanes_encoder = FastLanesEncoder::new(scheme);
+        let proxima_encoder = ProximaEncoder::new(scheme);
 
-        // Encode with FastLanes
-        let encoded = fastlanes_encoder.encode_binary(&quantized)?;
+        // Encode with Proxima
+        let encoded = proxima_encoder.encode_binary(&quantized)?;
         let compressed_size = encoded.len() as u32;
 
         Ok(P2Matrix {
@@ -1670,11 +1670,11 @@ impl RaptorWriter {
             })
             .collect();
 
-        // Apply FastLanes encoding
-        use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
-        let scheme = FastLanesScheme::BitPacked { bits: 8 };
-        let fastlanes_encoder = FastLanesEncoder::new(scheme);
-        let encoded = fastlanes_encoder.encode_binary(&quantized_distances)?;
+        // Apply Proxima encoding
+        use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
+        let scheme = ProximaScheme::BitPacked { bits: 8 };
+        let proxima_encoder = ProximaEncoder::new(scheme);
+        let encoded = proxima_encoder.encode_binary(&quantized_distances)?;
         let encoded_len = encoded.len();
 
         tracing::info!(
@@ -2163,8 +2163,8 @@ impl MetadataColumn {
 #[derive(Debug, Clone, Copy)]
 enum MetadataEncoding {
     Dictionary, // Low cardinality strings
-    Integer,    // Integer values with FastLanes
-    Float,      // Float values with FastLanes
+    Integer,    // Integer values with Proxima
+    Float,      // Float values with Proxima
     Boolean,    // Boolean values as bits
     String,     // High cardinality strings
     RunLength,  // All values the same
@@ -2742,7 +2742,7 @@ impl RaptorWriter {
                     compressed_size: vector_compressed.len() as u64,
                     uncompressed_size: vector_data.len() as u64,
                     compression: CompressionAlgorithm::Lz4,
-                    encoding: Some(FastLanesScheme::BitPacked { bits: 16 }),
+                    encoding: Some(ProximaScheme::BitPacked { bits: 16 }),
                     null_count: 0,
                     min_value: None,
                     max_value: None,
@@ -2909,11 +2909,11 @@ impl RaptorWriter {
         Ok(())
     }
 
-    /// Helper: Encode vector column with FastLanes
+    /// Helper: Encode vector column with Proxima
     fn encode_vector_column(&self, page: &RowPageBuffer) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
         let num_rows = page.rows.len();
-        let fastlanes_encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
+        let proxima_encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
 
         // Transpose vectors to columnar format
         let mut columns: Vec<Vec<f32>> = vec![Vec::with_capacity(num_rows); self.dimension];
@@ -2927,7 +2927,7 @@ impl RaptorWriter {
 
         // Encode each dimension column
         for column in columns {
-            let encoded_column = fastlanes_encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
+            let encoded_column = proxima_encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
             encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
             encoded.extend(&encoded_column);
         }
@@ -3028,7 +3028,7 @@ impl RaptorWriter {
         Ok(encoded)
     }
 
-    /// Encode row page using TRUE columnar layout with FastLanes
+    /// Encode row page using TRUE columnar layout with Proxima
     /// Stores all VectorRecord fields in columnar format for optimal compression
     fn encode_row_page(&self, page: &RowPageBuffer) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
@@ -3044,7 +3044,7 @@ impl RaptorWriter {
             return Ok(encoded);
         }
 
-        let fastlanes_encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
+        let proxima_encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
         let num_rows = page.rows.len();
 
         // === SECTION 1: IDs (columnar string storage) ===
@@ -3067,9 +3067,9 @@ impl RaptorWriter {
             }
         }
 
-        // Encode each dimension column with FastLanes
+        // Encode each dimension column with Proxima
         for column in fp32_columns {
-            let encoded_column = fastlanes_encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
+            let encoded_column = proxima_encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
             encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
             encoded.extend(&encoded_column);
         }
@@ -3108,7 +3108,7 @@ impl RaptorWriter {
                                 column.push(row.quantized_vector[dim_byte]);
                             }
                         }
-                        let encoded_column = fastlanes_encoder.encode_binary(&column)?;
+                        let encoded_column = proxima_encoder.encode_binary(&column)?;
                         encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
                         encoded.extend(&encoded_column);
                     }
@@ -3125,7 +3125,7 @@ impl RaptorWriter {
                         }
                     }
                     for column in int8_columns {
-                        let encoded_column = fastlanes_encoder.encode_int8(&column)?;
+                        let encoded_column = proxima_encoder.encode_int8(&column)?;
                         encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
                         encoded.extend(&encoded_column);
                     }
@@ -3238,7 +3238,7 @@ impl RaptorWriter {
 
         // Timestamp column (always present)
         let timestamps: Vec<u32> = page.rows.iter().map(|r| r.timestamp).collect();
-        let encoded_timestamps = fastlanes_encoder.encode_u32(&timestamps)?;
+        let encoded_timestamps = proxima_encoder.encode_u32(&timestamps)?;
         encoded.extend(&encoded_timestamps);
 
         // Updated_at column (optional)
@@ -3259,7 +3259,7 @@ impl RaptorWriter {
                     }
                 }
             }
-            let encoded_updated = fastlanes_encoder.encode_u32(&updated_values)?;
+            let encoded_updated = proxima_encoder.encode_u32(&updated_values)?;
             encoded.extend(&encoded_updated);
         }
 
@@ -3280,7 +3280,7 @@ impl RaptorWriter {
                     }
                 }
             }
-            let encoded_expires = fastlanes_encoder.encode_u32(&expires_values)?;
+            let encoded_expires = proxima_encoder.encode_u32(&expires_values)?;
             encoded.extend(&encoded_expires);
         }
 
@@ -3301,7 +3301,7 @@ impl RaptorWriter {
                     }
                 }
             }
-            let encoded_versions = fastlanes_encoder.encode_u32(&version_values)?;
+            let encoded_versions = proxima_encoder.encode_u32(&version_values)?;
             encoded.extend(&encoded_versions);
         }
 
@@ -3723,23 +3723,23 @@ impl RaptorWriter {
     }
 
     async fn compress_rowgroup(&self, batch: &RecordBatch) -> Result<Vec<u8>> {
-        // FASTLANES: Always encode RecordBatch using FastLanes for tensor optimization
+        // PROXIMA: Always encode RecordBatch using Proxima for tensor optimization
         // First byte is the encoding marker (RAPTOR uses 0xA0-0xAF range)
         let mut result = Vec::new();
 
-        // Always use FastLanes tensor encoding for best performance
-        let encoding_marker = 0xA1; // FastLanes tensor encoding
+        // Always use Proxima tensor encoding for best performance
+        let encoding_marker = 0xA1; // Proxima tensor encoding
         result.push(encoding_marker);
 
-        // Use FastLanes encoding for tensor optimization
-        let encoded = self.encode_batch_with_fastlanes(batch, encoding_marker)?;
+        // Use Proxima encoding for tensor optimization
+        let encoded = self.encode_batch_with_proxima(batch, encoding_marker)?;
         result.extend(encoded);
 
         Ok(result)
     }
 
-    fn encode_batch_with_fastlanes(&self, batch: &RecordBatch, marker: u8) -> Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesEncoder;
+    fn encode_batch_with_proxima(&self, batch: &RecordBatch, marker: u8) -> Result<Vec<u8>> {
+        use crate::storage::engines::core::ops::proxima_encoding::ProximaEncoder;
         use std::io::Write;
 
         // Extract vectors from RecordBatch
@@ -3775,17 +3775,17 @@ impl RaptorWriter {
 
         // Choose optimal encoding for tensor data
         let scheme = if range < 1e-6 {
-            FastLanesScheme::RunLength
+            ProximaScheme::RunLength
         } else if range < 100.0 {
-            FastLanesScheme::FrameOfReference {
+            ProximaScheme::FrameOfReference {
                 reference: min_val as i64,
                 bits: (range.log2().ceil() as u8).max(8),
             }
         } else {
-            FastLanesScheme::BitPacked { bits: 16 } // Good for dense tensors
+            ProximaScheme::BitPacked { bits: 16 } // Good for dense tensors
         };
 
-        let encoder = FastLanesEncoder::new(scheme);
+        let encoder = ProximaEncoder::new(scheme);
         let mut encoded_data = Vec::new();
 
         // Write metadata
@@ -3794,7 +3794,7 @@ impl RaptorWriter {
 
         // Encode each dimension column
         for column in columns {
-            // Use FastLanes float encoding with full fidelity
+            // Use Proxima float encoding with full fidelity
             let encoded_column = encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;
@@ -4089,8 +4089,8 @@ impl RaptorWriter {
             ivf_data.extend(&centroid.mean_distance.to_le_bytes());
             ivf_data.extend(&centroid.std_deviation.to_le_bytes());
 
-            // Write centroid vector using FastLanes
-            let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 32 });
+            // Write centroid vector using Proxima
+            let encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 32 });
             let encoded = encoder.encode_f32(&centroid.vector, None)?; // Single centroid, no expected count
             ivf_data.extend(&(encoded.len() as u32).to_le_bytes());
             ivf_data.extend(&encoded);
@@ -4257,7 +4257,7 @@ impl RaptorWriter {
             }
         }
 
-        // Step 3: Compute FastLanes encoding metadata for each dimension
+        // Step 3: Compute Proxima encoding metadata for each dimension
         let mut encoding_metadata = Vec::with_capacity(dimension);
 
         for dim_idx in 0..dimension {
@@ -4273,16 +4273,16 @@ impl RaptorWriter {
             // Choose encoding based on range
             let encoding = if range < 0.001 {
                 // Very small range, use run-length encoding
-                FastLanesScheme::RunLength
+                ProximaScheme::RunLength
             } else if range < 10.0 {
                 // Small range, use delta encoding
-                FastLanesScheme::Delta { base: 0 }
+                ProximaScheme::Delta { base: 0 }
             } else {
                 // Larger range, use bit packing
-                FastLanesScheme::BitPacked { bits: 24 }
+                ProximaScheme::BitPacked { bits: 24 }
             };
 
-            encoding_metadata.push(FastLanesMetadata {
+            encoding_metadata.push(ProximaMetadata {
                 min_value: min_val,
                 max_value: max_val,
                 encoding,
@@ -4812,7 +4812,7 @@ impl RaptorWriter {
                     encoded.extend(&packed);
                 }
                 MetadataEncoding::Integer => {
-                    // Parse as integers and use FastLanes
+                    // Parse as integers and use Proxima
                     let integers: Vec<i64> = column
                         .values
                         .iter()
@@ -4824,12 +4824,12 @@ impl RaptorWriter {
                     let range = max - min;
 
                     // Use frame of reference encoding
-                    let scheme = FastLanesScheme::FrameOfReference {
+                    let scheme = ProximaScheme::FrameOfReference {
                         reference: min,
                         bits: ((range as f64).log2().ceil() as u8 + 1).min(32),
                     };
 
-                    let encoder = FastLanesEncoder::new(scheme);
+                    let encoder = ProximaEncoder::new(scheme);
                     let encoded_ints = encoder.encode_i64(&integers, None)?; // TODO: Pass expected count for optimization
 
                     encoded.extend(&min.to_le_bytes());
@@ -4850,14 +4850,14 @@ impl RaptorWriter {
                     encoded.extend(&packed);
                 }
                 MetadataEncoding::Float => {
-                    // Parse as floats and use FastLanes
+                    // Parse as floats and use Proxima
                     let floats: Vec<f32> = column
                         .values
                         .iter()
                         .map(|v| v.parse::<f32>().unwrap_or(0.0))
                         .collect();
 
-                    let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
+                    let encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
                     let encoded_floats = encoder.encode_f32(&floats, None)?; // TODO: Pass expected count for optimization
 
                     encoded.extend(&(encoded_floats.len() as u32).to_le_bytes());

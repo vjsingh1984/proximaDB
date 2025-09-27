@@ -71,7 +71,7 @@ ProximaDB supports the following compression algorithms, each with distinct perf
 === Test Configuration
 * *Hardware*: Apple M-series Silicon (14 cores, 48GB RAM)
 * *Data*: 1024 vectors × 768 dimensions (3MB uncompressed)
-* *Encoding*: FastLanes Delta encoding with both columnar and row-wise layouts
+* *Encoding*: Proxima Delta encoding with both columnar and row-wise layouts
 
 === Compression Performance Results
 
@@ -97,8 +97,8 @@ Brotli       |   0.15M    1.2x    3.8ms    0.9ms |   0.15M    1.2x    3.7ms    0
 === Key Findings
 
 . **Minimal Layout Impact**: At dimension 768, columnar and row-wise layouts show similar compression performance
-. **FastLanes Pre-compression**: The FastLanes encoding already reduces data from 3MB to ~0.19MB (15x reduction)
-. **Additional Compression**: General-purpose algorithms add only 10-20% further reduction on top of FastLanes
+. **Proxima Pre-compression**: The Proxima encoding already reduces data from 3MB to ~0.19MB (15x reduction)
+. **Additional Compression**: General-purpose algorithms add only 10-20% further reduction on top of Proxima
 . **Speed vs Ratio Tradeoff**: LZ4/Snappy offer sub-millisecond compression with 10% savings; Zstd/Brotli achieve 20% savings but are 2-10x slower
 
 == Workload-Specific Recommendations
@@ -113,7 +113,7 @@ recommendation:
   level: 3
 
 rationale:
-  - Best compression ratio (1.2-1.3x on top of FastLanes)
+  - Best compression ratio (1.2-1.3x on top of Proxima)
   - Slow writes acceptable for WORM pattern
   - Fast decompression (0.1ms) for repeated reads
   - Minimizes storage costs
@@ -290,21 +290,21 @@ let collection_config = CollectionConfig {
 
 === Storage Savings
 
-For typical workloads with FastLanes encoding:
+For typical workloads with Proxima encoding:
 
 * **Raw vectors**: 3MB (1024 × 768 × 4 bytes)
-* **FastLanes encoded**: 0.19MB (15x reduction)
+* **Proxima encoded**: 0.19MB (15x reduction)
 * **+ LZ4/Snappy**: 0.17MB (17x total reduction)
 * **+ Zstd**: 0.15MB (20x total reduction)
 
-NOTE: FastLanes encoding provides the majority of compression (15x). General-purpose algorithms add incremental benefits (10-20% additional).
+NOTE: Proxima encoding provides the majority of compression (15x). General-purpose algorithms add incremental benefits (10-20% additional).
 
 == Best Practices
 
 === DO ✅
 
 * **Profile first**: Benchmark with your actual data and workload
-* **Consider total pipeline**: FastLanes + compression together
+* **Consider total pipeline**: Proxima + compression together
 * **Monitor latency**: Track P50/P99 compression times in production
 * **Use workload-specific configs**: Different algorithms for different collections
 * **Enable context-aware selection**: Let ProximaDB choose based on data characteristics
@@ -379,7 +379,7 @@ proximadb_compression_cpu_usage_percent{algorithm="snappy"}
 
 ProximaDB's compression infrastructure provides flexible options for different workloads. Key takeaways:
 
-1. **FastLanes does the heavy lifting**: 15x compression from encoding alone
+1. **Proxima does the heavy lifting**: 15x compression from encoding alone
 2. **General compression adds value**: Additional 10-20% savings with minimal overhead
 3. **Snappy is the sweet spot**: Best balance for most workloads
 4. **Workload matters**: Choose algorithm based on read/write patterns

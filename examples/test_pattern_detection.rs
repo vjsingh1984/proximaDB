@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -145,7 +145,7 @@ fn test_pattern(pattern_name: &str, vectors: Vec<VectorRecord>) {
         };
 
         // Test serialization and compression
-        let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
+        let block = ProximaDataBlock::new(vectors.clone(), config.clone());
         match block.serialize_with_config(&config) {
             Ok(serialized) => {
                 let original_size = vectors.len() *
@@ -156,7 +156,7 @@ fn test_pattern(pattern_name: &str, vectors: Vec<VectorRecord>) {
                 println!("     → {} bytes ({:.1}x compression)", serialized.len(), compression_ratio);
 
                 // Test deserialization
-                match FastLanesDataBlock::deserialize(&serialized) {
+                match ProximaDataBlock::deserialize(&serialized) {
                     Ok(_) => {
                         println!("     ✅ Round-trip successful");
                     }
@@ -173,7 +173,7 @@ fn test_pattern(pattern_name: &str, vectors: Vec<VectorRecord>) {
 }
 
 fn main() {
-    println!("🚀 FastLanes Pattern Detection Test");
+    println!("🚀 Proxima Pattern Detection Test");
     println!("{}", "=".repeat(60));
 
     const NUM_VECTORS: usize = 100;

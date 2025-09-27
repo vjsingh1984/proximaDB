@@ -29,8 +29,8 @@ use proximadb::compute::distance_computation::engine::{
 use proximadb::storage::engines::impls::sst::{
     SstEntry, SstableWriter,
 };
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    FastLanesDataBlock,
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    ProximaDataBlock,
 };
 use proximadb::storage::persistence::filesystem::{
     FilesystemFactory, FilesystemConfig,

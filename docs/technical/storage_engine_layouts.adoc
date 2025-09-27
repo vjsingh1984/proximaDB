@@ -43,7 +43,7 @@ For performance metrics and benchmarks, see link:../PERFORMANCE.adoc[Performance
 |**SWIFT Engine**
 |Ultra-low Latency
 |Real-time applications, minimal overhead
-|101μs flush, FastLanes encoding, sub-1ms queries
+|101μs flush, Proxima encoding, sub-1ms queries
 
 |**RAPTOR Engine**
 |Adaptive Optimization
@@ -92,7 +92,7 @@ flowchart TD
     B -->|Research/ML| E{Memory Constraints?}
     B -->|Time-series| F[HELIX Engine<br/>Temporal optimization]
 
-    C -->|Ultra-low <1ms| G[SWIFT Engine<br/>FastLanes deep hierarchy]
+    C -->|Ultra-low <1ms| G[SWIFT Engine<br/>Proxima deep hierarchy]
     C -->|Standard 5ms| H[SST Engine<br/>Linear sequential]
 
     D -->|Maximum compression| I[VIPER Engine<br/>Parquet columnar]
@@ -117,7 +117,7 @@ flowchart TD
 graph TB
     subgraph "SHARED INFRASTRUCTURE"
         A[Unified Quantization Engine<br/>Binary • INT8 • PQ4/8/16/32]
-        B[FastLanes SIMD Encoding<br/>AVX2 • AVX512 • NEON]
+        B[Proxima SIMD Encoding<br/>AVX2 • AVX512 • NEON]
         C[Protocol Buffer Foundation<br/>VectorRecord Native Format]
     end
 
@@ -490,7 +490,7 @@ graph TB
     end
 
     subgraph "OPTIMIZATION ENGINES"
-        G[FastLanes SIMD<br/>Transposed vector storage]
+        G[Proxima SIMD<br/>Transposed vector storage]
         H[Multi-Level Bloom Filters<br/>10% coverage floor]
         I[Boundary Detection<br/>Smart spillover management]
     end
@@ -538,7 +538,7 @@ sequenceDiagram
 
 **P² Matrix (Intra-RowGroup Local Navigation):**
 - **Purpose**: Pairwise distances within row groups for efficient local search
-- **Implementation**: SIMD-accelerated symmetric matrix with FastLanes compression
+- **Implementation**: SIMD-accelerated symmetric matrix with Proxima compression
 - **Optimization**: Delta encoding and sparse storage for distant vectors
 - **Performance**: O(1) neighbor lookup within clusters
 
@@ -568,7 +568,7 @@ RAPTOR Matrix Trinity File Format:
 │ ┌─────────────────────────────────────────────────────────┐ │
 │ │ P² Matrix (Intra-RowGroup Local Search)                │ │
 │ │ ┌─────┬─────┬─────┬─────┐  SIMD-Optimized Storage:      │ │
-│ │ │ V₁↔₂│ V₁↔₃│ V₁↔₄│ ... │  • FastLanes compression      │ │
+│ │ │ V₁↔₂│ V₁↔₃│ V₁↔₄│ ... │  • Proxima compression      │ │
 │ │ │ V₂↔₃│ V₂↔₄│ V₂↔₅│ ... │  • Delta encoding             │ │
 │ │ │ V₃↔₄│ V₃↔₅│ V₃↔₆│ ... │  • Symmetric matrix layout    │ │
 │ │ └─────┴─────┴─────┴─────┘                               │ │
@@ -589,7 +589,7 @@ RAPTOR Matrix Trinity File Format:
 │ │ │ V₃→C│ V₃→C│ V₃→C│ ... │ ... │  • Boundary detection    │ │
 │ │ └─────┴─────┴─────┴─────┴─────┘                         │ │
 │ └─────────────────────────────────────────────────────────┘ │
-│ FastLanes Vector Storage (SIMD-Optimized)                  │
+│ Proxima Vector Storage (SIMD-Optimized)                  │
 │ Multi-Level Bloom Filters (95% elimination)                │
 │ Adaptive Metadata (Performance tracking)                   │
 └─────────────────────────────────────────────────────────────┘
@@ -631,7 +631,7 @@ Research evolution → Continuous tuning → Performance improvement over time
 **Memory Efficiency:**
 - Intelligent matrix storage with compression
 - Adaptive sparsity to reduce memory footprint
-- FastLanes encoding for SIMD optimization
+- Proxima encoding for SIMD optimization
 
 **Query Performance:**
 - O(1) local navigation through P² matrix
@@ -761,7 +761,7 @@ xychart-beta
 graph TB
     subgraph "REAL-TIME ENGINES"
         A[SST: Linear Sequential<br/>✓ Simple format<br/>✓ Fast writes<br/>✓ Good read performance<br/>⚠ Higher memory usage]
-        B[SWIFT: Deep Hierarchical<br/>✓ Ultra-low latency<br/>✓ FastLanes encoding<br/>✓ Sub-1ms queries<br/>⚠ Complex format]
+        B[SWIFT: Deep Hierarchical<br/>✓ Ultra-low latency<br/>✓ Proxima encoding<br/>✓ Sub-1ms queries<br/>⚠ Complex format]
     end
 
     subgraph "ANALYTICS ENGINES"
@@ -824,7 +824,7 @@ sidecar_metadata = true
 [source,toml]
 ----
 [storage.engines.swift]
-enable_fastlanes_encoding = true
+enable_proxima_encoding = true
 memory_pool_size_mb = 128
 prefetch_buffer_size_kb = 64
 ultra_low_latency = true

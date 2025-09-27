@@ -2,7 +2,7 @@
 //!
 //! Adapts SWIFT's existing metadata serialization to work with
 //! the new EngineMetadataSerializer trait for engine-owned serialization.
-//! SWIFT uses hierarchical blocks with FastLanes encoding for instant traversal.
+//! SWIFT uses hierarchical blocks with Proxima encoding for instant traversal.
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -30,8 +30,8 @@ pub struct SwiftCachedMetadata {
     pub superblock_metadata: Vec<SuperBlockMetadata>,
     /// Tree navigation hints for instant traversal
     pub navigation_hints: NavigationHints,
-    /// FastLanes encoding configuration
-    pub fastlanes_config: FastLanesConfig,
+    /// Proxima encoding configuration
+    pub proxima_config: ProximaConfig,
     /// Bloom filter configuration
     pub bloom_config: BloomConfig,
     /// Progressive quantization levels
@@ -74,7 +74,7 @@ pub struct TreePath {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FastLanesConfig {
+pub struct ProximaConfig {
     pub encoding_scheme: String, // "BitPacked", "DeltaEncoded", etc.
     pub bits_per_value: u8,
     pub block_size: usize,
@@ -123,7 +123,7 @@ impl EngineMetadataSerializer for SwiftUnifiedMetadataSerializer {
         // For SWIFT files, extract the hierarchical index which contains:
         // - SuperBlock metadata for navigation
         // - Tree structure information
-        // - FastLanes encoding metadata
+        // - Proxima encoding metadata
         // - Bloom filter data
 
         if !file_path.ends_with(".swift") && !file_path.contains("/swift/") {
@@ -179,7 +179,7 @@ impl EngineMetadataSerializer for SwiftUnifiedMetadataSerializer {
         file_path.contains("_swift_") ||
         file_path.contains("/superblocks/") ||
         file_path.contains("/hierarchical/") ||
-        file_path.contains("/fastlanes/")
+        file_path.contains("/proxima/")
     }
 }
 
@@ -222,7 +222,7 @@ mod tests {
                 cache_priorities: HashMap::from([(0, 10), (1, 8), (2, 6)]),
                 access_frequencies: HashMap::from([(0, 1000), (1, 800), (2, 600)]),
             },
-            fastlanes_config: FastLanesConfig {
+            proxima_config: ProximaConfig {
                 encoding_scheme: "BitPacked".to_string(),
                 bits_per_value: 16,
                 block_size: 1024,
@@ -298,7 +298,7 @@ mod tests {
         assert!(serializer.should_cache_metadata("/collections/test_swift_data.bin"));
         assert!(serializer.should_cache_metadata("/superblocks/sb_001.dat"));
         assert!(serializer.should_cache_metadata("/hierarchical/tree.swift"));
-        assert!(serializer.should_cache_metadata("/fastlanes/encoded.bin"));
+        assert!(serializer.should_cache_metadata("/proxima/encoded.bin"));
         assert!(!serializer.should_cache_metadata("/tmp/random.txt"));
     }
 }

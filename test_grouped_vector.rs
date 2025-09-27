@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::block_structures::{
-    FastLanesDataBlock, VectorEncodingLayout,
+use proximadb::storage::engines::core::formats::proxima_blocks::block_structures::{
+    ProximaDataBlock, VectorEncodingLayout,
 };
 use proximadb::proto::proximadb_v1::VectorRecord;
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ fn main() {
         let vectors = create_test_vectors(count, dimension);
 
         // Test with Auto strategy (should pick GroupedVector for D > 128)
-        let block_auto = FastLanesDataBlock::from_vectors(
+        let block_auto = ProximaDataBlock::from_vectors(
             vectors.clone(),
             VectorEncodingLayout::Auto,
         ).unwrap();
@@ -52,7 +52,7 @@ fn main() {
         let serialized = block_auto.serialize().unwrap();
         println!("📦 Serialized size: {} bytes", serialized.len());
 
-        let deserialized = FastLanesDataBlock::deserialize(&serialized).unwrap();
+        let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
         println!("✅ Block deserialized successfully");
 
         // Verify vectors match
@@ -70,7 +70,7 @@ fn main() {
         println!("✅ All vectors validated successfully!");
 
         // Test explicitly with GroupedVector strategy
-        let block_grouped = FastLanesDataBlock::from_vectors(
+        let block_grouped = ProximaDataBlock::from_vectors(
             vectors.clone(),
             VectorEncodingLayout::GroupedVector,
         ).unwrap();
@@ -79,7 +79,7 @@ fn main() {
         let serialized_grouped = block_grouped.serialize().unwrap();
         println!("📦 Grouped serialized size: {} bytes", serialized_grouped.len());
 
-        let deserialized_grouped = FastLanesDataBlock::deserialize(&serialized_grouped).unwrap();
+        let deserialized_grouped = ProximaDataBlock::deserialize(&serialized_grouped).unwrap();
         println!("✅ Grouped block deserialized successfully");
 
         // Verify grouped vectors match

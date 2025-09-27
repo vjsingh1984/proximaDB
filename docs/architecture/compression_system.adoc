@@ -7,7 +7,7 @@
 :imagesdir: ../images
 
 [.lead]
-Deep dive into ProximaDB's adaptive compression architecture, featuring FastLanes encoding, quantization integration, and multi-level optimization strategies.
+Deep dive into ProximaDB's adaptive compression architecture, featuring Proxima encoding, quantization integration, and multi-level optimization strategies.
 
 == System Overview
 
@@ -23,7 +23,7 @@ graph TB
         E[Storage<br/>Optimized blocks]
     end
 
-    subgraph "FastLanes Encoding"
+    subgraph "Proxima Encoding"
         F[Bit Packing<br/>Variable bits]
         G[Delta Encoding<br/>Temporal patterns]
         H[Run Length<br/>Repeated values]
@@ -43,9 +43,9 @@ graph TB
     style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
 ----
 
-== FastLanes Encoding Framework
+== Proxima Encoding Framework
 
-The FastLanes encoding system provides SIMD-optimized columnar compression with multiple schemes:
+The Proxima encoding system provides SIMD-optimized columnar compression with multiple schemes:
 
 === Encoding Schemes
 
@@ -78,7 +78,7 @@ flowchart TB
 
 [TIP]
 ====
-**32-Dimension Groups**: FastLanes uses 32-dimension groups that align perfectly with CPU cache lines (128 bytes), providing:
+**32-Dimension Groups**: Proxima uses 32-dimension groups that align perfectly with CPU cache lines (128 bytes), providing:
 
 * **2-3x SIMD performance improvement**
 * **Reduced memory bandwidth usage**
@@ -275,18 +275,18 @@ graph TB
 
 == Implementation Details
 
-=== FastLanes Encoder Structure
+=== Proxima Encoder Structure
 
 [source,rust]
 ----
-use proximadb::storage::engines::core::ops::fastlanes_encoding::*;
+use proximadb::storage::engines::core::ops::proxima_encoding::*;
 
 // Example usage of adaptive encoding
-let encoder = FastLanesEncoder::new_adaptive();
+let encoder = ProximaEncoder::new_adaptive();
 let compressed = encoder.encode_f32(&vectors, None)?;
 
 // Decoder automatically detects scheme
-let decoder = FastLanesDecoder::new_from_data(&compressed);
+let decoder = ProximaDecoder::new_from_data(&compressed);
 let restored = decoder.decode_f32(&compressed, Some(vector_count))?;
 ----
 
@@ -294,7 +294,7 @@ let restored = decoder.decode_f32(&compressed, Some(vector_count))?;
 
 [source,toml]
 ----
-[compression.fastlanes]
+[compression.proxima]
 # Enable adaptive scheme selection
 adaptive = true
 
@@ -388,7 +388,7 @@ Cross-Block Optimization:: Dictionary sharing across blocks
 === Research Areas
 
 * **Learned Indices**: ML-based compression scheme selection
-* **Hardware Co-design**: Custom ASICs for FastLanes operations
+* **Hardware Co-design**: Custom ASICs for Proxima operations
 * **Quantum-Safe**: Post-quantum cryptographic compression
 * **Edge Computing**: Ultra-low latency compression for IoT
 
@@ -402,7 +402,7 @@ ProximaDB's compression system delivers industry-leading efficiency through:
 **Cache Alignment**:: 32D groups for zero-waste memory access
 **Multi-Level Storage**:: Hierarchical compression based on access patterns
 
-The combination of FastLanes encoding with quantization integration provides both superior compression ratios (2.10x average) and excellent performance (≪100ms decode latency).
+The combination of Proxima encoding with quantization integration provides both superior compression ratios (2.10x average) and excellent performance (≪100ms decode latency).
 
 ---
 

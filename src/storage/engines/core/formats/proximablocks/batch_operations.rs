@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
-use super::block_structures::FastLanesDataBlock;
+use super::block_structures::ProximaDataBlock;
 use super::index_structures::RowBasedIdIndex;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
@@ -172,7 +172,7 @@ impl RowBasedBatchOperations {
     pub async fn batch_read_by_ids(
         &self,
         ids: Vec<String>,
-        blocks: &[FastLanesDataBlock],
+        blocks: &[ProximaDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_read_{}", Uuid::new_v4());
@@ -274,7 +274,7 @@ impl RowBasedBatchOperations {
     pub async fn batch_write_records(
         &self,
         records: Vec<VectorRecord>,
-        blocks: &mut Vec<FastLanesDataBlock>,
+        blocks: &mut Vec<ProximaDataBlock>,
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_write_{}", Uuid::new_v4());
@@ -336,7 +336,7 @@ impl RowBasedBatchOperations {
     pub async fn batch_update_records(
         &self,
         updates: Vec<(String, VectorRecord)>,
-        blocks: &mut [FastLanesDataBlock],
+        blocks: &mut [ProximaDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_update_{}", Uuid::new_v4());
@@ -419,7 +419,7 @@ impl RowBasedBatchOperations {
     pub async fn batch_delete_records(
         &self,
         ids: Vec<String>,
-        blocks: &mut [FastLanesDataBlock],
+        blocks: &mut [ProximaDataBlock],
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let operation_id = format!("batch_delete_{}", Uuid::new_v4());
@@ -552,12 +552,12 @@ impl RowBasedBatchOperations {
     async fn process_batches_parallel<F, Fut>(
         &self,
         batches: Vec<Vec<String>>,
-        blocks: &[FastLanesDataBlock],
+        blocks: &[ProximaDataBlock],
         index: &RowBasedIdIndex,
         processor: F,
     ) -> Result<Vec<BatchResult>>
     where
-        F: Fn(Vec<String>, &[FastLanesDataBlock], &RowBasedIdIndex) -> Fut,
+        F: Fn(Vec<String>, &[ProximaDataBlock], &RowBasedIdIndex) -> Fut,
         Fut: std::future::Future<Output = Result<BatchResult>>,
     {
         use futures::future::join_all;
@@ -582,7 +582,7 @@ impl RowBasedBatchOperations {
     async fn process_read_batch(
         &self,
         ids: Vec<String>,
-        blocks: &[FastLanesDataBlock],
+        blocks: &[ProximaDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
         let start_time = std::time::Instant::now();
@@ -662,7 +662,7 @@ impl RowBasedBatchOperations {
     async fn process_write_batch(
         &self,
         records: Vec<VectorRecord>,
-        blocks: &mut Vec<FastLanesDataBlock>,
+        blocks: &mut Vec<ProximaDataBlock>,
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
         // Implementation would write records to appropriate blocks
@@ -688,7 +688,7 @@ impl RowBasedBatchOperations {
         &self,
         id: &str,
         updated_record: VectorRecord,
-        blocks: &mut [FastLanesDataBlock],
+        blocks: &mut [ProximaDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<Option<VectorRecord>> {
         if let Some(location) = index.lookup(id).await {
@@ -707,7 +707,7 @@ impl RowBasedBatchOperations {
     async fn delete_single_record(
         &self,
         id: &str,
-        blocks: &mut [FastLanesDataBlock],
+        blocks: &mut [ProximaDataBlock],
         index: &mut RowBasedIdIndex,
     ) -> Result<bool> {
         // Implementation would mark record as deleted or remove it
@@ -788,7 +788,7 @@ impl Default for BatchOperationStats {
 mod tests {
     use super::*;
     // IndexConfiguration moved to a different module or is no longer needed
-    // use crate::storage::engines::core::formats::fastlanes_blocks::IndexConfiguration;
+    // use crate::storage::engines::core::formats::proximablocks::IndexConfiguration;
 
     #[tokio::test]
     async fn test_batch_operations_creation() {

@@ -377,7 +377,7 @@ ProximaDB is a unified vector database with 6 specialized storage engines that a
   - Best for: Mixed workloads, progressive search
   - Location: `src/storage/engines/impls/nova/`
 
-- **SWIFT Engine**: High-speed row-based with FastLanes encoding
+- **SWIFT Engine**: High-speed row-based with Proxima encoding
   - Best for: Low-latency operations
   - Location: `src/storage/engines/impls/swift/`
 

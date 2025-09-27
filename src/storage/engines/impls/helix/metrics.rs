@@ -38,9 +38,9 @@ lazy_static! {
         &["collection"]
     ).unwrap();
     
-    static ref FASTLANE_BLOCKS_SCANNED: HistogramVec = register_histogram_vec!(
-        "helix_fastlane_blocks_scanned",
-        "Number of FastLane blocks scanned per query",
+    static ref PROXIMA_BLOCKS_SCANNED: HistogramVec = register_histogram_vec!(
+        "helix_proximablocks_scanned",
+        "Number of Proxima blocks scanned per query",
         &["collection"]
     ).unwrap();
     
@@ -184,7 +184,7 @@ impl HelixMetrics {
             .with_label_values(&[&self.collection])
             .observe(pruning_ratio as f64);
         
-        FASTLANE_BLOCKS_SCANNED
+        PROXIMA_BLOCKS_SCANNED
             .with_label_values(&[&self.collection])
             .observe(blocks_scanned as f64);
         

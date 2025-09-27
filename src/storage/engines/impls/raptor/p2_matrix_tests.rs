@@ -6,7 +6,7 @@ mod tests {
     use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
     // P2Matrix not available in infrastructure module
     // use crate::infrastructure::P2Matrix;
-    use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
+    use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
     use anyhow::Result;
     use tempfile::TempDir;
 
@@ -17,7 +17,7 @@ mod tests {
         pub distances: Vec<u16>,
         pub min_distance: f32,
         pub max_distance: f32,
-        pub compression: FastLanesScheme,
+        pub compression: ProximaScheme,
         pub compressed_size: usize,
     }
 
@@ -81,7 +81,7 @@ mod tests {
             distances: vec![10, 20, 30], // Quantized distances: (0,1)=10, (0,2)=20, (1,2)=30
             min_distance: 0.0,
             max_distance: 1.0,
-            compression: FastLanesScheme::Dictionary,
+            compression: ProximaScheme::Dictionary,
             compressed_size: 3,
         };
 
@@ -140,12 +140,12 @@ mod tests {
         Ok(())
     }
 
-    /// Test P² matrix with FastLanes encoding
+    /// Test P² matrix with Proxima encoding
     #[tokio::test]
-    async fn test_p2_matrix_fastlanes_encoding() -> Result<()> {
+    async fn test_p2_matrix_proxima_encoding() -> Result<()> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesEncoder;
+        use crate::storage::engines::core::ops::proxima_encoding::ProximaEncoder;
 
         // Create larger set of vectors to test compression
         let mut vectors = Vec::new();
@@ -172,12 +172,12 @@ mod tests {
         let quantization_engine = StorageQuantizationEngine::new_default();
         let (quantized, min_dist, max_dist) = quantization_engine.quantize_to_u8(&distances);
 
-        // Apply FastLanes encoding
-        let fastlanes_encoder = FastLanesEncoder::new(FastLanesScheme::Dictionary);
+        // Apply Proxima encoding
+        let proxima_encoder = ProximaEncoder::new(ProximaScheme::Dictionary);
         let quantized_i64: Vec<i64> = quantized.iter().map(|&v| v as i64).collect();
-        let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme(&quantized_i64);
+        let scheme = crate::storage::engines::core::ops::proxima_encoding::analyze_and_choose_scheme(&quantized_i64);
         let quantized_i8: Vec<i8> = quantized.iter().map(|&v| v as i8).collect();
-        let encoded = fastlanes_encoder.encode_int8(&quantized_i8)?;
+        let encoded = proxima_encoder.encode_int8(&quantized_i8)?;
 
         // Verify compression
         let uncompressed_size = 32 * 31 / 2; // Upper triangle size
@@ -186,7 +186,7 @@ mod tests {
 
         // Check that we achieved some compression
         println!(
-            "FastLanes compression: {} -> {} bytes ({:.2}x)",
+            "Proxima compression: {} -> {} bytes ({:.2}x)",
             quantized.len(),
             encoded.len(),
             quantized.len() as f32 / encoded.len() as f32
@@ -234,7 +234,7 @@ mod tests {
             distances: vec![50, 100, 150, 50, 100, 50], // Some test distances
             min_distance: 0.0,
             max_distance: 1.0,
-            compression: FastLanesScheme::Dictionary,
+            compression: ProximaScheme::Dictionary,
             compressed_size: 6,
         };
 

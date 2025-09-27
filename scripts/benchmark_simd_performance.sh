@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # ProximaDB SIMD Performance Benchmarking Script
-# This script runs comprehensive benchmarks for FastLanes SIMD optimizations
+# This script runs comprehensive benchmarks for Proxima SIMD optimizations
 
 set -e
 
 echo "==============================================="
-echo "ProximaDB FastLanes SIMD Performance Benchmark"
+echo "ProximaDB Proxima SIMD Performance Benchmark"
 echo "==============================================="
 echo
 
@@ -32,7 +32,7 @@ run_benchmark() {
     echo -e "${YELLOW}Running: $description${NC}"
 
     # Run the benchmark
-    cargo bench --bench bench_16_fastlanes_simd -- "$bench_name" \
+    cargo bench --bench bench_16_proxima_simd -- "$bench_name" \
         --save-baseline simd_baseline \
         --output-format bencher \
         | tee "$RESULTS_DIR/${bench_name}.txt"
@@ -47,7 +47,7 @@ compare_with_baseline() {
 
     if [ -d "target/criterion/simd_baseline" ]; then
         echo -e "${BLUE}Comparing with baseline...${NC}"
-        cargo bench --bench bench_16_fastlanes_simd -- "$bench_name" \
+        cargo bench --bench bench_16_proxima_simd -- "$bench_name" \
             --baseline simd_baseline \
             | tee -a "$RESULTS_DIR/${bench_name}_comparison.txt"
     fi
@@ -55,16 +55,16 @@ compare_with_baseline() {
 
 # Build in release mode first
 echo -e "${YELLOW}Building in release mode...${NC}"
-cargo build --release --bench bench_16_fastlanes_simd
+cargo build --release --bench bench_16_proxima_simd
 echo -e "${GREEN}✓ Build complete${NC}"
 echo
 
 # Run individual benchmark groups
 echo -e "${BLUE}=== Phase 1: Baseline Performance ===${NC}"
-run_benchmark "fastlanes_baseline" "FastLanes without SIMD optimization"
+run_benchmark "proxima_baseline" "Proxima without SIMD optimization"
 
 echo -e "${BLUE}=== Phase 2: SIMD Layout Comparison ===${NC}"
-run_benchmark "fastlanes_simd_layouts" "Different SIMD encoding layouts"
+run_benchmark "proxima_simd_layouts" "Different SIMD encoding layouts"
 
 echo -e "${BLUE}=== Phase 3: Engine Profile Performance ===${NC}"
 run_benchmark "engine_profiles" "Engine-specific optimizations (HELIX/SST/SWIFT)"
@@ -89,7 +89,7 @@ run_benchmark "large_scale_simd" "Large-scale vector processing"
 echo -e "${BLUE}=== Generating Summary Report ===${NC}"
 
 cat > "$RESULTS_DIR/summary.md" << EOF
-# FastLanes SIMD Performance Benchmark Summary
+# Proxima SIMD Performance Benchmark Summary
 
 **Date**: $(date)
 **System**: $(uname -a)
@@ -99,7 +99,7 @@ cat > "$RESULTS_DIR/summary.md" << EOF
 ## Key Metrics
 
 ### Baseline vs SIMD Performance
-$(grep -h "time:" "$RESULTS_DIR/fastlanes_baseline.txt" | head -5)
+$(grep -h "time:" "$RESULTS_DIR/proxima_baseline.txt" | head -5)
 
 ### Compression Ratios Achieved
 $(grep -h "ratio" "$RESULTS_DIR/compression_ratios.txt" | head -5)
@@ -157,7 +157,7 @@ echo "2. Individual results in $RESULTS_DIR/*.txt"
 echo "3. CSV data in $RESULTS_DIR/results.csv"
 echo
 echo "To visualize results:"
-echo "  cargo criterion --bench bench_16_fastlanes_simd"
+echo "  cargo criterion --bench bench_16_proxima_simd"
 echo
 echo "To compare with future runs:"
-echo "  cargo bench --bench bench_16_fastlanes_simd -- --baseline simd_baseline"
+echo "  cargo bench --bench bench_16_proxima_simd -- --baseline simd_baseline"

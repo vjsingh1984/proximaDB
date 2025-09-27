@@ -1,4 +1,4 @@
-// Clean FastLanes Encoding Design
+// Clean Proxima Encoding Design
 // One marker per method, self-describing format
 
 use anyhow::Result;
@@ -27,20 +27,20 @@ pub mod markers {
 }
 
 // Clean encoder - ONE method for each data type
-impl FastLanesEncoder {
+impl ProximaEncoder {
     /// Encode any i64 data - marker tells decoder everything
     pub fn encode(&self, data: &[i64]) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
 
         match self.scheme {
-            FastLanesScheme::Delta { base } => {
+            ProximaScheme::Delta { base } => {
                 encoded.push(markers::I64_DELTA);
                 // Store element count for proper decoding
                 encoded.extend(&(data.len() as u32).to_le_bytes());
                 encoded.extend(&base.to_le_bytes());
                 // ... delta encoding logic
             },
-            FastLanesScheme::BitPacked { bits } => {
+            ProximaScheme::BitPacked { bits } => {
                 encoded.push(markers::I64_BITPACKED);
                 encoded.extend(&(data.len() as u32).to_le_bytes());
                 encoded.push(bits);
@@ -57,8 +57,8 @@ impl FastLanesEncoder {
 }
 
 // Clean decoder - ONE method that reads marker and decodes appropriately
-impl FastLanesDecoder {
-    /// Decode any FastLanes data - marker tells us how
+impl ProximaDecoder {
+    /// Decode any Proxima data - marker tells us how
     pub fn decode(&self, data: &[u8]) -> Result<DecodedData> {
         if data.is_empty() {
             return Err(anyhow::anyhow!("Empty data"));
@@ -102,14 +102,14 @@ pub enum DecodedData {
 }
 
 // For the block structures, it becomes super clean:
-impl FastLanesDataBlock {
+impl ProximaDataBlock {
     pub fn encode_column(&self, data: &[i64]) -> Result<Vec<u8>> {
-        let encoder = FastLanesEncoder::new(self.select_optimal_scheme(data));
+        let encoder = ProximaEncoder::new(self.select_optimal_scheme(data));
         encoder.encode(data) // That's it! Marker included, self-describing
     }
 
     pub fn decode_column(&self, data: &[u8]) -> Result<Vec<i64>> {
-        let decoder = FastLanesDecoder::new();
+        let decoder = ProximaDecoder::new();
         match decoder.decode(data)? {
             DecodedData::I64(values) => Ok(values),
             _ => Err(anyhow::anyhow!("Expected i64 data"))

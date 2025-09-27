@@ -17,7 +17,7 @@ use crate::compute::quantization::storage_engine::{
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
 /// Helper function to compute L2 distance squared for INT8 vectors
 fn compute_l2_distance_squared_i8(a: &[i8], b: &[i8]) -> Result<f32> {
@@ -588,7 +588,7 @@ fn bytes_to_bits(bytes: &[u8]) -> Vec<u64> {
     bits
 }
 
-fn block_matches_filter(block: &FastLanesDataBlock, filter: &MetadataFilter) -> bool {
+fn block_matches_filter(block: &ProximaDataBlock, filter: &MetadataFilter) -> bool {
     // Check block-level statistics against filter if available
     if let Some(ref stats) = block.metadata_stats {
         // Convert BlockMetadataStats to expected format

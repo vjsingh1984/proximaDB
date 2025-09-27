@@ -302,10 +302,10 @@ impl RaptorToArrowConverter {
 #[async_trait]
 impl EngineToArrowConverter for RaptorToArrowConverter {
     async fn convert_to_arrow(&self, file_path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
-        // RAPTOR uses FastLanes columnar encoding
+        // RAPTOR uses Proxima columnar encoding
         // Convert rowgroups to Arrow batches
         
-        // TODO: Implement RAPTOR FastLanes decoding
+        // TODO: Implement RAPTOR Proxima decoding
         Ok(Vec::new())
     }
     
@@ -331,7 +331,7 @@ impl PrismToArrowConverter {
 #[async_trait]
 impl EngineToArrowConverter for PrismToArrowConverter {
     async fn convert_to_arrow(&self, file_path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
-        // PRISM uses tree structure with FastLanes
+        // PRISM uses tree structure with Proxima
         // Traverse tree and collect into batches
         
         // TODO: Implement PRISM tree traversal

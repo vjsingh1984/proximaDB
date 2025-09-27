@@ -140,7 +140,7 @@ graph TB
 
 |**SWIFT**
 |Low-latency operations
-|FastLanes encoding, 16.4% compression
+|Proxima encoding, 16.4% compression
 
 |**RAPTOR**
 |Dynamic workloads

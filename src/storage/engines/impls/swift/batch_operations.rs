@@ -10,7 +10,7 @@ use tracing::{debug, info, warn};
 use super::SwiftFile;
 use super::id_index::BlockLocation;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
 /// Configuration for batch operations
 #[derive(Debug, Clone)]
@@ -42,7 +42,7 @@ impl Default for BatchConfig {
 /// Block cache for recently accessed blocks
 #[derive(Clone)]
 struct BlockCache {
-    cache: Arc<RwLock<crate::utils::cache::LruCache<(u32, u32), Arc<FastLanesDataBlock>>>>,
+    cache: Arc<RwLock<crate::utils::cache::LruCache<(u32, u32), Arc<ProximaDataBlock>>>>,
     current_size: Arc<RwLock<usize>>,
     max_size: usize,
 }
@@ -58,11 +58,11 @@ impl BlockCache {
         }
     }
 
-    async fn get(&self, key: &(u32, u32)) -> Option<Arc<FastLanesDataBlock>> {
+    async fn get(&self, key: &(u32, u32)) -> Option<Arc<ProximaDataBlock>> {
         self.cache.write().await.get(key).cloned()
     }
 
-    async fn put(&self, key: (u32, u32), block: Arc<FastLanesDataBlock>) {
+    async fn put(&self, key: (u32, u32), block: Arc<ProximaDataBlock>) {
         let block_size = estimate_block_size(&block);
 
         let mut cache = self.cache.write().await;
@@ -214,7 +214,7 @@ async fn load_and_extract_records(
 }
 
 /// Load a block from disk (simulated)
-async fn load_block_from_disk(superblock_idx: u32, block_idx: u32) -> Result<FastLanesDataBlock> {
+async fn load_block_from_disk(superblock_idx: u32, block_idx: u32) -> Result<ProximaDataBlock> {
     // In real implementation, this would:
     // 1. Calculate file offset using superblock and block indices
     // 2. Seek to that position in the file
@@ -223,7 +223,7 @@ async fn load_block_from_disk(superblock_idx: u32, block_idx: u32) -> Result<Fas
 
     // For now, return a mock block using the correct constructor
     use crate::core::compression::CompressionAlgorithm;
-    use crate::storage::engines::core::formats::fastlanes_blocks::BlockCompressionConfig;
+    use crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig;
 
     let compression_config = BlockCompressionConfig {
         algorithm: CompressionAlgorithm::Zstd,
@@ -232,20 +232,20 @@ async fn load_block_from_disk(superblock_idx: u32, block_idx: u32) -> Result<Fas
         enable_metadata_compression: true,
         compression_threshold_bytes: 1024,
         dictionary_compression: false,
-        vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+        vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
         metadata_algorithm: None, // Use main algorithm for metadata
     };
 
-    Ok(FastLanesDataBlock::new(Vec::new(), compression_config))
+    Ok(ProximaDataBlock::new(Vec::new(), compression_config))
 }
 
 /// Extract a record from a block at the given offset
-fn extract_record_from_block(block: &FastLanesDataBlock, offset: u32) -> Option<VectorRecord> {
+fn extract_record_from_block(block: &ProximaDataBlock, offset: u32) -> Option<VectorRecord> {
     block.records.get(offset as usize).cloned()
 }
 
 /// Estimate memory size of a block
-fn estimate_block_size(block: &FastLanesDataBlock) -> usize {
+fn estimate_block_size(block: &ProximaDataBlock) -> usize {
     // Rough estimate: records + quantized data + metadata
     let record_size = block.records.len() * (std::mem::size_of::<VectorRecord>() + 768 * 4); // Assume 768-dim vectors
 
@@ -395,12 +395,12 @@ mod tests {
     async fn test_block_cache() {
         let cache = BlockCache::new(1024 * 1024); // 1MB cache
 
-        let block = Arc::new(FastLanesDataBlock {
+        let block = Arc::new(ProximaDataBlock {
             encoding_marker: 0x00,
             encoding_metadata: None,
             block_id: 0,
             encoded_vectors: None,
-            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             records: vec![VectorRecord {
                 id: "test".to_string(),
                 vector: vec![1.0; 768],

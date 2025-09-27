@@ -10,9 +10,9 @@
 //! Creates optimized SSTable files with bloom filters, indexes, and block-based storage.
 //! Uses unified atomic write strategies for cross-cloud compatibility.
 //!
-//! FASTLANES ENCODING INTEGRATION:
+//! PROXIMA ENCODING INTEGRATION:
 //! ================================
-//! This writer intelligently chooses encoding schemes per FastLanesDataBlock based on data analysis:
+//! This writer intelligently chooses encoding schemes per ProximaDataBlock based on data analysis:
 //!
 //! 1. ENCODING DECISION PROCESS:
 //!    - Analyze vector statistics (range, deltas, patterns)
@@ -32,12 +32,12 @@
 //!
 //! 3. ENCODING MARKERS (1 byte):
 //!    0x00: Raw/Uncompressed (backward compatible)
-//!    0x10: FastLanes BitPacked
-//!    0x20: FastLanes Delta
-//!    0x30: FastLanes FrameOfReference
-//!    0x40: FastLanes PatchedBase (for outliers)
-//!    0x50: FastLanes Dictionary
-//!    0x60: FastLanes RunLength
+//!    0x10: Proxima BitPacked
+//!    0x20: Proxima Delta
+//!    0x30: Proxima FrameOfReference
+//!    0x40: Proxima PatchedBase (for outliers)
+//!    0x50: Proxima Dictionary
+//!    0x60: Proxima RunLength
 //!    0xF0-0xFF: Reserved for future encodings
 //!
 //! 4. METADATA ENCODING:
@@ -62,27 +62,27 @@ use crate::storage::persistence::filesystem::{
 use super::IndexEntry;
 use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, HashAlgorithm};
-use crate::storage::engines::core::formats::fastlanes_blocks::{FastLanesDataBlock, FastLanesBlockMetadata};
+use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, ProximaBlockMetadata};
 
 // NEW: Import unified SIMD module for SST optimization
-use crate::storage::engines::core::ops::unified_fastlanes_simd::{
-    UnifiedFastLanesSIMD, EngineProfile, SIMDConfig,
+use crate::storage::engines::core::ops::unified_proxima_simd::{
+    UnifiedProximaSIMD, EngineProfile, SIMDConfig,
 };
 
-/// ✅ SST-specific metadata using FastLanes composition pattern (like HELIX)
+/// ✅ SST-specific metadata using Proxima composition pattern (like HELIX)
 /// This follows the same pattern as HelixBlockMetadata but for SST engine optimizations
 #[derive(Debug, Clone)]
 pub struct SstBlockMetadata {
-    /// ✅ Base FastLanes metadata - REUSE all auto-generated features!
+    /// ✅ Base Proxima metadata - REUSE all auto-generated features!
     /// This includes: bloom filters, metadata statistics, range tracking, delete detection,
     /// SIMD encoding, compression, and all other automatic capabilities
-    pub fastlanes_metadata: FastLanesBlockMetadata,
+    pub proxima_metadata: ProximaBlockMetadata,
 
     /// ✅ SST-specific additions only
     pub sst_specific_data: SstSpecificData,
 }
 
-/// SST engine-specific optimizations that complement FastLanes capabilities
+/// SST engine-specific optimizations that complement Proxima capabilities
 #[derive(Debug, Clone)]
 pub struct SstSpecificData {
     /// Three-stage filtering support (Bloom → Quantized → Full precision)
@@ -97,7 +97,7 @@ pub struct SstSpecificData {
 //     BloomFilterConfig, BloomStrategy, BloomFilterStrategy, HashAlgorithm,
 //     factory::BloomFilterFactory,
 // };
-// ✅ REMOVED: CompositeBloomFilterBuilder - FastLanes provides bloom filters automatically
+// ✅ REMOVED: CompositeBloomFilterBuilder - Proxima provides bloom filters automatically
 use crate::proto::proximadb_v1::CompressionConfig;
 
 // Use core compression directly instead of adapter
@@ -105,18 +105,18 @@ use crate::core::compression::{
     CompressionContext, CompressionProvider, StandardCompression,
 };
 
-// FastLanes encoding delegation
-use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+// Proxima encoding delegation
+use crate::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaScheme};
 
-/// FastLanes encoding markers as constants
+/// Proxima encoding markers as constants
 mod encoding_markers {
     pub const RAW: u8 = 0x00;           // Raw/Uncompressed
-    pub const BITPACKED: u8 = 0x10;     // FastLanes BitPacked
-    pub const DELTA: u8 = 0x20;         // FastLanes Delta encoding
-    pub const FRAME_OF_REF: u8 = 0x30;  // FastLanes FrameOfReference
-    pub const PATCHED_BASE: u8 = 0x40;  // FastLanes PatchedBase
-    pub const DICTIONARY: u8 = 0x50;    // FastLanes Dictionary
-    pub const RUN_LENGTH: u8 = 0x60;    // FastLanes RunLength
+    pub const BITPACKED: u8 = 0x10;     // Proxima BitPacked
+    pub const DELTA: u8 = 0x20;         // Proxima Delta encoding
+    pub const FRAME_OF_REF: u8 = 0x30;  // Proxima FrameOfReference
+    pub const PATCHED_BASE: u8 = 0x40;  // Proxima PatchedBase
+    pub const DICTIONARY: u8 = 0x50;    // Proxima Dictionary
+    pub const RUN_LENGTH: u8 = 0x60;    // Proxima RunLength
 }
 
 /// Cache alignment constant
@@ -151,7 +151,7 @@ pub struct SstableWriter {
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
     /// Compression configuration from flush parameters
     compression_config: Option<CompressionConfig>,
-    // SIMD encoding now handled internally by FastLanesDataBlock
+    // SIMD encoding now handled internally by ProximaDataBlock
 }
 
 impl SstableWriter {
@@ -223,7 +223,7 @@ impl SstableWriter {
         );
 
         // Compression configuration can be added here if needed
-        // SIMD encoding now handled internally by FastLanesDataBlock
+        // SIMD encoding now handled internally by ProximaDataBlock
 
         Self {
             path: path.as_ref().to_path_buf(),
@@ -257,7 +257,7 @@ impl SstableWriter {
     /// This eliminates duplicate compression logic and provides adaptive selection
     fn compress_block_streaming(
         &self,
-        data_block: &FastLanesDataBlock,
+        data_block: &ProximaDataBlock,
         algorithm: crate::core::compression::CompressionAlgorithm,
         level: u8,
     ) -> Result<Vec<u8>> {
@@ -266,8 +266,8 @@ impl SstableWriter {
         debug!("   Level: {}", level);
         debug!("   Block records: {}", data_block.records.len());
 
-        // FASTLANES: Apply encoding and generate bloom filter in parallel
-        let encoded_data_block = self.encode_block_with_fastlanes(data_block)?;
+        // PROXIMA: Apply encoding and generate bloom filter in parallel
+        let encoded_data_block = self.encode_block_with_proxima(data_block)?;
         let (serialized, bloom_filter_data) = encoded_data_block.serialize_with_bloom_sync()?;
 
         // Store bloom filter data for later use if generated
@@ -410,8 +410,8 @@ impl SstableWriter {
         let fs = self.filesystem.get_filesystem(&fs_url)?;
         let atomic_writer = AtomicWriteExecutorFactory::create_production_executor();
 
-        // ✅ STEP 1: FastLanes will automatically generate bloom filters during block creation!
-        // No need for manual bloom filter building - FastLanes provides this automatically
+        // ✅ STEP 1: Proxima will automatically generate bloom filters during block creation!
+        // No need for manual bloom filter building - Proxima provides this automatically
 
         // Step 2: Stream VectorRecords directly into blocks (NO CONVERSIONS)
         let estimated_blocks = (record_count / (self.block_size / 256)).max(1);
@@ -427,9 +427,9 @@ impl SstableWriter {
         let min_key = sorted_records_vec.first().map(|(k, _)| k.clone()).unwrap_or_default();
         let max_key = sorted_records_vec.last().map(|(k, _)| k.clone()).unwrap_or_default();
 
-        // ✅ STEP 2: Process VectorRecords in streaming fashion - FastLanes handles bloom filters!
+        // ✅ STEP 2: Process VectorRecords in streaming fashion - Proxima handles bloom filters!
         for (key, vector_record) in sorted_records_vec.into_iter() {
-            // ✅ No manual bloom filter updates needed - FastLanes automatically handles this!
+            // ✅ No manual bloom filter updates needed - Proxima automatically handles this!
 
             // FASTEST: Use existing protobuf serialization (already optimized)
             use prost::Message;
@@ -468,7 +468,7 @@ impl SstableWriter {
         }
 
         debug!(
-            "🔍 Streamed {} VectorRecords into {} blocks using FastLanes auto-capabilities",
+            "🔍 Streamed {} VectorRecords into {} blocks using Proxima auto-capabilities",
             processed_count,
             data_blocks.len()
         );
@@ -532,8 +532,8 @@ impl SstableWriter {
             )
         };
 
-        // Use shared SST metadata serializer from fastlanes_blocks module
-        use crate::storage::engines::core::formats::fastlanes_blocks::sst_metadata::{
+        // Use shared SST metadata serializer from proximablocks module
+        use crate::storage::engines::core::formats::proximablocks::sst_metadata::{
             SstBlockHeader, SstGlobalHeader,
         };
 
@@ -651,8 +651,8 @@ impl SstableWriter {
         output_data.extend_from_slice(&(index_data.len() as u32).to_le_bytes());
         output_data.extend_from_slice(&index_data);
         debug!("✅ Wrote block index: {} bytes for {} blocks", index_data.len(), data_blocks.len());
-        // Use shared FastLanes serialization for data blocks with optimizations
-        debug!("📦 Writing {} data blocks using FastLanes serialization", data_blocks.len());
+        // Use shared Proxima serialization for data blocks with optimizations
+        debug!("📦 Writing {} data blocks using Proxima serialization", data_blocks.len());
 
         // Use the constant defined at module level
 
@@ -673,7 +673,7 @@ impl SstableWriter {
                 }
             }
 
-            // Serialize the block using the shared FastLanes format
+            // Serialize the block using the shared Proxima format
             let (serialized_block, _bloom_data) = optimized_block.serialize_with_bloom_sync()?;
 
             // Align to cache line boundaries for better CPU performance
@@ -692,7 +692,7 @@ impl SstableWriter {
             }
         }
         let data_blocks_size = output_data.len();
-        debug!("✅ Wrote {} bytes of FastLanes-encoded vector data", data_blocks_size);
+        debug!("✅ Wrote {} bytes of Proxima-encoded vector data", data_blocks_size);
 
         // Write index entries
         for entry in &index_entries {
@@ -756,28 +756,28 @@ impl SstableWriter {
         Ok(())
     }
 
-    /// ✅ REFACTORED: Finalize VectorRecord block using FastLanes composition pattern
-    /// Like HELIX, this now leverages ALL FastLanes auto-generated capabilities instead of manual implementation
+    /// ✅ REFACTORED: Finalize VectorRecord block using Proxima composition pattern
+    /// Like HELIX, this now leverages ALL Proxima auto-generated capabilities instead of manual implementation
     #[inline(always)]
     fn finalize_vector_block(
         &self,
-        data_blocks: &mut Vec<FastLanesDataBlock>,
+        data_blocks: &mut Vec<ProximaDataBlock>,
         index_entries: &mut Vec<IndexEntry>,
         current_block: &[VectorRecord],
         block_id: u32,
         _current_block_size: usize,
     ) -> Result<()> {
-        // ✅ STEP 1: Create FastLanesDataBlock - this automatically generates ALL capabilities!
-        // Use centralized compression config conversion from FastLanes
-        use crate::storage::engines::core::formats::fastlanes_blocks::compression_config::RowBasedCompressionConfig;
+        // ✅ STEP 1: Create ProximaDataBlock - this automatically generates ALL capabilities!
+        // Use centralized compression config conversion from Proxima
+        use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
 
         let mut block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(self.compression_config.as_ref());
 
         // Enable SIMD optimization for SST (maximum compression focus)
         block_compression_config.vector_layout =
-            crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
+            crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
 
-        // ✅ FastLanes automatically provides:
+        // ✅ Proxima automatically provides:
         // - 🔍 Automatic Bloom Filter Generation
         // - 📊 Automatic Metadata Statistics
         // - 📝 Automatic Range Tracking
@@ -786,22 +786,22 @@ impl SstableWriter {
         // - 🗜️ Automatic Compression
         // NEW: SIMD-Enhanced Block Creation for Maximum SST Compression
         // Always use SIMD-optimized block creation with SST engine profile
-        let mut data_block = FastLanesDataBlock::new_with_engine_profile(
+        let mut data_block = ProximaDataBlock::new_with_engine_profile(
             current_block.to_vec(),
             block_compression_config,
             EngineProfile::SST
         );
         data_block.block_id = block_id;
 
-        // ✅ STEP 2: Reuse FastLanes auto-generated metadata (like HELIX pattern)
-        let fastlanes_metadata = &data_block.metadata;
+        // ✅ STEP 2: Reuse Proxima auto-generated metadata (like HELIX pattern)
+        let proxima_metadata = &data_block.metadata;
 
         let block_size = data_block.serialize().map(|v| v.len()).unwrap_or(0) as u32;
 
-        // ✅ STEP 3: Add only SST-specific enhancements to FastLanes capabilities
-        // Create SST-specific metadata that composes with FastLanes
+        // ✅ STEP 3: Add only SST-specific enhancements to Proxima capabilities
+        // Create SST-specific metadata that composes with Proxima
         let sst_metadata = SstBlockMetadata {
-            fastlanes_metadata: fastlanes_metadata.clone(), // ✅ Reuse ALL auto-generated stats!
+            proxima_metadata: proxima_metadata.clone(), // ✅ Reuse ALL auto-generated stats!
             sst_specific_data: SstSpecificData {
                 three_stage_filtering: true,
                 row_based_optimization: true,
@@ -809,10 +809,10 @@ impl SstableWriter {
             },
         };
 
-        // ✅ STEP 4: Use FastLanes auto-generated bloom filters and statistics
+        // ✅ STEP 4: Use Proxima auto-generated bloom filters and statistics
         let vector_format = self.analyze_vector_block_format(current_block);
 
-        // Add enhanced index entry leveraging FastLanes capabilities
+        // Add enhanced index entry leveraging Proxima capabilities
         if let Some(first_record) = current_block.first() {
             let first_id = first_record.id.clone();
             index_entries.push(IndexEntry {
@@ -822,17 +822,17 @@ impl SstableWriter {
                 block_id,
                 block_offset: 0,
                 compressed: false,
-                // ✅ Use FastLanes auto-generated column stats instead of manual calculation!
-                metadata_min_values: fastlanes_metadata.column_stats.iter()
+                // ✅ Use Proxima auto-generated column stats instead of manual calculation!
+                metadata_min_values: proxima_metadata.column_stats.iter()
                     .map(|(k, stats)| (k.clone(), stats.min_value.clone().unwrap_or(serde_json::Value::Null)))
                     .collect(),
-                metadata_max_values: fastlanes_metadata.column_stats.iter()
+                metadata_max_values: proxima_metadata.column_stats.iter()
                     .map(|(k, stats)| (k.clone(), stats.max_value.clone().unwrap_or(serde_json::Value::Null)))
                     .collect(),
-                metadata_null_counts: fastlanes_metadata.column_stats.iter()
+                metadata_null_counts: proxima_metadata.column_stats.iter()
                     .map(|(k, stats)| (k.clone(), stats.null_count))
                     .collect(),
-                // ✅ Use FastLanes auto-generated bloom filters!
+                // ✅ Use Proxima auto-generated bloom filters!
                 block_key_bloom: data_block.bloom_filter.as_ref().map(|f| f.serialize().unwrap_or_default()),
                 block_metadata_bloom: data_block.block_bloom_filter.as_ref().and_then(|f| f.serialize().ok()),
                 vector_format,
@@ -843,13 +843,13 @@ impl SstableWriter {
         Ok(())
     }
 
-    /// ❌ REMOVED: Manual bloom filter building - FastLanes provides this automatically!
-    /// FastLanes automatically generates optimized bloom filters for every block.
+    /// ❌ REMOVED: Manual bloom filter building - Proxima provides this automatically!
+    /// Proxima automatically generates optimized bloom filters for every block.
     /// No need for manual implementation - just use block.bloom_filter and block.block_bloom_filter
 
-    /// ❌ REMOVED: Manual key bloom filter - FastLanes generates optimal bloom filters automatically!
+    /// ❌ REMOVED: Manual key bloom filter - Proxima generates optimal bloom filters automatically!
 
-    /// ❌ REMOVED: Manual metadata bloom filter - FastLanes generates comprehensive metadata bloom filters automatically!
+    /// ❌ REMOVED: Manual metadata bloom filter - Proxima generates comprehensive metadata bloom filters automatically!
 
     /// Analyze vector format for VectorRecord block
     fn analyze_vector_block_format(&self, block_records: &[VectorRecord]) -> super::VectorFormat {
@@ -890,7 +890,7 @@ impl SstableWriter {
 
     // Quantization methods removed - now handled by unified compute module directly
 
-    /// ❌ REMOVED: Duplicate finalize_block method - using finalize_vector_block with FastLanes composition pattern!
+    /// ❌ REMOVED: Duplicate finalize_block method - using finalize_vector_block with Proxima composition pattern!
 
     /// Set bloom filter configuration
     pub fn with_bloom_config(mut self, config: BloomFilterConfig) -> Self {
@@ -1092,16 +1092,16 @@ impl SstableWriter {
         }
     }
 
-    /// ❌ REMOVED: Manual block bloom filters - FastLanes generates optimized bloom filters automatically!
+    /// ❌ REMOVED: Manual block bloom filters - Proxima generates optimized bloom filters automatically!
 
-    /// ❌ REMOVED: Manual key bloom filter building - FastLanes provides optimal bloom filters automatically!
+    /// ❌ REMOVED: Manual key bloom filter building - Proxima provides optimal bloom filters automatically!
 
-    /// ❌ REMOVED: Manual metadata bloom filter building - FastLanes provides comprehensive metadata bloom filters automatically!
+    /// ❌ REMOVED: Manual metadata bloom filter building - Proxima provides comprehensive metadata bloom filters automatically!
 
     /// NEW: Analyze vector format across the entire file
     fn analyze_file_vector_format(
         &self,
-        data_blocks: &[super::FastLanesDataBlock],
+        data_blocks: &[super::ProximaDataBlock],
     ) -> super::VectorFormat {
         if data_blocks.is_empty() {
             return super::VectorFormat::Variable;
@@ -1150,7 +1150,7 @@ impl SstableWriter {
     // Overall compression ratio is now stored only in SstableHeader
 
     /// Count unique metadata columns across all blocks
-    fn count_metadata_columns(&self, data_blocks: &[super::FastLanesDataBlock]) -> u32 {
+    fn count_metadata_columns(&self, data_blocks: &[super::ProximaDataBlock]) -> u32 {
         let mut metadata_columns = std::collections::HashSet::new();
 
         for block in data_blocks {
@@ -1180,22 +1180,22 @@ impl SstableWriter {
         }
     }
 
-    /// Encode FastLanesDataBlock using FastLanes with intelligent scheme selection
-    fn encode_block_with_fastlanes(
+    /// Encode ProximaDataBlock using Proxima with intelligent scheme selection
+    fn encode_block_with_proxima(
         &self,
-        data_block: &FastLanesDataBlock,
-    ) -> Result<FastLanesDataBlock> {
+        data_block: &ProximaDataBlock,
+    ) -> Result<ProximaDataBlock> {
         if data_block.records.is_empty() {
             return Ok(data_block.clone());
         }
 
-        // Analyze vectors to choose optimal FastLanes scheme
+        // Analyze vectors to choose optimal Proxima scheme
         let scheme = self.analyze_vector_patterns(&data_block.records)?;
 
         // Create encoder with chosen scheme
-        let encoder = FastLanesEncoder::new(scheme);
+        let encoder = ProximaEncoder::new(scheme);
 
-        // Clone the block and encode vector data using FastLanes
+        // Clone the block and encode vector data using Proxima
         let encoded_block = data_block.clone();
 
         // SST can handle multiple quantization levels in the same block
@@ -1205,10 +1205,10 @@ impl SstableWriter {
         Ok(encoded_block)
     }
 
-    /// Analyze vector patterns to choose optimal FastLanes encoding scheme
-    fn analyze_vector_patterns(&self, records: &[VectorRecord]) -> Result<FastLanesScheme> {
+    /// Analyze vector patterns to choose optimal Proxima encoding scheme
+    fn analyze_vector_patterns(&self, records: &[VectorRecord]) -> Result<ProximaScheme> {
         if records.is_empty() {
-            return Ok(FastLanesScheme::BitPacked { bits: 16 });
+            return Ok(ProximaScheme::BitPacked { bits: 16 });
         }
 
         // Sample vectors for analysis (first 10 or all if fewer)
@@ -1259,24 +1259,24 @@ impl SstableWriter {
 
         // Choose scheme based on analysis
         let scheme = if has_constants {
-            FastLanesScheme::RunLength
+            ProximaScheme::RunLength
         } else if has_small_range {
-            FastLanesScheme::FrameOfReference {
+            ProximaScheme::FrameOfReference {
                 reference: overall_min_val as i64,
                 bits: 16, // Use 16 bits for small ranges
             }
         } else if has_deltas {
-            FastLanesScheme::Delta {
+            ProximaScheme::Delta {
                 base: first_value as i64,
             }
         } else {
             // Default to bit packing for dense data
-            FastLanesScheme::BitPacked {
+            ProximaScheme::BitPacked {
                 bits: 32, // Default to 32 bits
             }
         };
 
-        debug!("🔍 FastLanes scheme selected: {:?}", scheme);
+        debug!("🔍 Proxima scheme selected: {:?}", scheme);
         Ok(scheme)
     }
 
@@ -1297,8 +1297,8 @@ impl SstableWriter {
         }
     }
 
-    // Method removed: FastLanesDataBlock now handles SIMD encoding internally
-    // Use FastLanesDataBlock::new_with_engine_profile(records, config, EngineProfile::SST) instead
+    // Method removed: ProximaDataBlock now handles SIMD encoding internally
+    // Use ProximaDataBlock::new_with_engine_profile(records, config, EngineProfile::SST) instead
 }
 
 #[cfg(test)]

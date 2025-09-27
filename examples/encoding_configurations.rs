@@ -1,4 +1,4 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
+use proximadb::storage::engines::core::formats::proxima_blocks::{
     BlockCompressionConfig, VectorEncodingLayout
 };
 use proximadb::core::compression::CompressionAlgorithm;

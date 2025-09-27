@@ -160,7 +160,7 @@ pub struct BlockMetadataStats {
 /// **See module documentation for complete usage examples and best practices!**
 #[derive(Debug, Clone)]
 pub struct ProximaDataBlock {
-    /// FASTLANES ENCODING MARKER (1 byte) - First byte of serialized block
+    /// PROXIMA ENCODING MARKER (1 byte) - First byte of serialized block
     ///
     /// This marker identifies the encoding scheme used for the block.
     /// Format: [7:4] Major encoding type | [3:0] Sub-variant
@@ -372,7 +372,7 @@ pub struct SuperBlock {
     /// 0xFF: Inherit from child blocks (mixed encoding)
     pub superblock_encoding_marker: u8,
 
-    /// SuperBlock-level FastLanes metadata (when using unified encoding)
+    /// SuperBlock-level Proxima metadata (when using unified encoding)
     pub superblock_encoding_metadata: Option<ProximaMetadata>,
 
     /// SuperBlock identification
@@ -630,7 +630,7 @@ impl ProximaDataBlock {
         format!("General(range:{:.1}, min:{:.1}, max:{:.1})", range, min, max)
     }
 
-    /// **🚀 Create a new FastLanes data block with AUTOMATIC optimization capabilities**
+    /// **🚀 Create a new Proxima data block with AUTOMATIC optimization capabilities**
     ///
     /// **This method automatically generates ALL the features that storage engines typically implement manually:**
     ///
@@ -685,15 +685,15 @@ impl ProximaDataBlock {
     ///
     /// ### **Engine Integration (Follow HELIX Pattern)**
     /// ```rust
-    /// // ✅ Wrap FastLanes capabilities in your engine-specific metadata
+    /// // ✅ Wrap Proxima capabilities in your engine-specific metadata
     /// pub struct MyEngineBlockMetadata {
-    ///     pub fastlanes_metadata: ProximaBlockMetadata,  // <- All the auto-generated goodness
+    ///     pub proxima_metadata: ProximaBlockMetadata,  // <- All the auto-generated goodness
     ///     pub my_engine_data: MySpecificData,              // <- Your additions only
     /// }
     ///
     /// let block = ProximaDataBlock::new(records, compression_config);
     /// let my_metadata = MyEngineBlockMetadata {
-    ///     fastlanes_metadata: block.metadata.clone(),      // ✅ Reuse everything FastLanes calculated
+    ///     proxima_metadata: block.metadata.clone(),      // ✅ Reuse everything Proxima calculated
     ///     my_engine_data: calculate_my_specific_stuff(),   // ✅ Add only what's unique to your engine
     /// };
     /// ```
@@ -709,7 +709,7 @@ impl ProximaDataBlock {
     /// * `compression_config` - Compression settings (algorithm, level, thresholds)
     ///
     /// # Returns
-    /// A fully-optimized FastLanes data block with all automatic features enabled
+    /// A fully-optimized Proxima data block with all automatic features enabled
     pub fn new(records: Vec<VectorRecord>, compression_config: BlockCompressionConfig) -> Self {
         let record_count = records.len() as u32;
         // Use a simple counter or provided ID - will be set properly by the writer
@@ -853,7 +853,7 @@ impl ProximaDataBlock {
         }
     }
 
-    /// Create a new FastLanes data block with specific engine profile
+    /// Create a new Proxima data block with specific engine profile
     /// This allows engines to pass their profile for optimized SIMD encoding
     pub fn new_with_engine_profile(
         records: Vec<VectorRecord>,
@@ -967,7 +967,7 @@ impl ProximaDataBlock {
 
     /// **🔍 Check if block contains ID using automatic bloom filter optimization**
     ///
-    /// **This method demonstrates FastLanes' automatic bloom filter capabilities that eliminate
+    /// **This method demonstrates Proxima' automatic bloom filter capabilities that eliminate
     /// the need for manual bloom filter implementation in storage engines.**
     ///
     /// ## **✅ Automatic Optimization Features:**
@@ -1173,21 +1173,21 @@ impl ProximaDataBlock {
 
         // Determine scheme from marker
         let scheme = match marker & 0xF0 {
-            0x10 => FastLanesScheme::BitPacked { bits: range_bits },
-            0x20 => FastLanesScheme::Delta {
+            0x10 => ProximaScheme::BitPacked { bits: range_bits },
+            0x20 => ProximaScheme::Delta {
                 base: min_val as i64,
             },
-            0x30 => FastLanesScheme::FrameOfReference {
+            0x30 => ProximaScheme::FrameOfReference {
                 reference: min_val as i64,
                 bits: range_bits,
             },
-            0x40 => FastLanesScheme::PatchedBase {
+            0x40 => ProximaScheme::PatchedBase {
                 base: ((min_val + max_val) / 2.0) as i64,
                 patch_bits: 8,
             },
-            0x50 => FastLanesScheme::Dictionary,
-            0x60 => FastLanesScheme::RunLength,
-            _ => FastLanesScheme::BitPacked { bits: 8 }, // Default to 8-bit packing
+            0x50 => ProximaScheme::Dictionary,
+            0x60 => ProximaScheme::RunLength,
+            _ => ProximaScheme::BitPacked { bits: 8 }, // Default to 8-bit packing
         };
 
         ProximaMetadata {
@@ -1206,7 +1206,7 @@ impl ProximaDataBlock {
     }
 
     /// Serialize the block with optional compression
-    /// Delegates encoding to the fastlanes module
+    /// Delegates encoding to the proxima module
     pub fn serialize(&self) -> anyhow::Result<Vec<u8>> {
         self.serialize_with_config(&self.compression_config)
     }
@@ -1245,7 +1245,7 @@ impl ProximaDataBlock {
     fn serialize_to_buffer(&self, buffer: &mut Vec<u8>) -> anyhow::Result<()> {
         use crate::core::compression::CompressionAlgorithm;
         use crate::core::compression::{CompressionContext, compress};
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, markers};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, markers};
         use std::collections::{HashMap, HashSet};
         use std::io::Write;
 
@@ -1358,7 +1358,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         use crate::core::compression::CompressionAlgorithm;
         use crate::core::compression::{CompressionContext, compress};
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, markers};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, markers};
         use std::collections::{HashMap, HashSet};
         use std::io::Write;
 
@@ -1384,18 +1384,18 @@ impl ProximaDataBlock {
         result.write_all(&(dimension as u32).to_le_bytes())?;
         trace!("[ENCODE] Position {}: Wrote record count {} + dimension {}", result.len(), self.records.len(), dimension);
 
-        // ============ STEP 1: Encode vectors using FastLanes dual-mode encoding ============
-        // Initialize encoder - delegate to fastlanes_encoding module
+        // ============ STEP 1: Encode vectors using Proxima dual-mode encoding ============
+        // Initialize encoder - delegate to proximaencoder module
         let encoder = if self.encoding_marker != 0x00 {
-            FastLanesEncoder::new(markers::to_scheme(self.encoding_marker).unwrap_or(
-                crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::Delta {
+            ProximaEncoder::new(markers::to_scheme(self.encoding_marker).unwrap_or(
+                crate::storage::engines::core::ops::proximaencoder::ProximaScheme::Delta {
                     base: 0,
                 },
             ))
         } else {
             // Default to delta encoding for better compression
-            FastLanesEncoder::new(
-                crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::Delta {
+            ProximaEncoder::new(
+                crate::storage::engines::core::ops::proximaencoder::ProximaScheme::Delta {
                     base: 0,
                 },
             )
@@ -1506,7 +1506,7 @@ impl ProximaDataBlock {
         trace!("ID indices to encode: {} values", id_indices.len());
         debug!("[ENCODE] ID indices (first 5): {:?}", &id_indices[..std::cmp::min(5, id_indices.len())]);
 
-        // Encode indices using FastLanes (good for sequential patterns)
+        // Encode indices using Proxima (good for sequential patterns)
         // Smart encoding: since this is a required field with count = record_count,
         // we pass expected_count to avoid storing redundant count
         let encoded_ids = encoder.encode_integers(&id_indices, Some(self.records.len()))?;
@@ -1599,7 +1599,7 @@ impl ProximaDataBlock {
 
         debug!("[ENCODE] Timestamps (first 5): {:?}", &timestamps[..std::cmp::min(5, timestamps.len())]);
 
-        // FastLanes delta encoding is perfect for sequential timestamps
+        // Proxima delta encoding is perfect for sequential timestamps
         let encoded_timestamps = encoder.encode_i64(&timestamps, Some(self.records.len()))?;
         result.write_all(&(encoded_timestamps.len() as u32).to_le_bytes())?;
         result.write_all(&encoded_timestamps)?;
@@ -1649,7 +1649,7 @@ impl ProximaDataBlock {
         // Encode source indices using adaptive selection (content varies, dictionary indices may have patterns)
         // Smart encoding: since this is a required field with count = record_count,
         // we pass expected_count to avoid storing redundant count
-        let encoded_sources = encoder.encode_integers(&source_indices, Some(self.records.len()))?; // FastLanes will auto-detect best scheme
+        let encoded_sources = encoder.encode_integers(&source_indices, Some(self.records.len()))?; // Proxima will auto-detect best scheme
         result.write_all(&(encoded_sources.len() as u32).to_le_bytes())?; // Data length only
         result.write_all(&encoded_sources)?;
         debug!("[ENCODE] Encoded {} source indices to {} bytes", source_indices.len(), encoded_sources.len());
@@ -1823,10 +1823,10 @@ impl ProximaDataBlock {
     }
 
     /// Deserialize a block
-    /// Delegates decoding to the fastlanes module
+    /// Delegates decoding to the proxima module
     pub fn deserialize(data: &[u8]) -> anyhow::Result<Self> {
         use crate::core::compression::{CompressionContext, CompressionAlgorithm, decompress};
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, markers};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, markers};
         use std::io::Read;
 
         trace!("[DECODE] Starting deserialization, data size: {} bytes", data.len());
@@ -2016,9 +2016,9 @@ impl ProximaDataBlock {
         cursor.read_exact(&mut encoded_id_data)?;
         trace!("[DECODE] Position {}: Finished reading entire ID section (dictionary + indices)", cursor.position());
 
-        // Decode the ID indices using FastLanes decoder with record_count from header
+        // Decode the ID indices using Proxima decoder with record_count from header
         trace!("Decoding ID indices: record_count={}, data_len={}", record_count, encoded_id_data.len());
-        let decoder = FastLanesDecoder::new_from_data(&encoded_id_data);
+        let decoder = ProximaDecoder::new_from_data(&encoded_id_data);
         let decoded_id_indices = match decoder.decode_integers(&encoded_id_data, Some(record_count)) {
             Ok(indices) => {
                 if indices.len() != record_count {
@@ -2128,7 +2128,7 @@ impl ProximaDataBlock {
         cursor.read_exact(&mut encoded_source_data)?;
 
         // Use record_count from header instead of storing redundant count
-        let source_decoder = FastLanesDecoder::new_from_data(&encoded_source_data);
+        let source_decoder = ProximaDecoder::new_from_data(&encoded_source_data);
         let decoded_source_indices = match source_decoder.decode_integers(&encoded_source_data, Some(record_count)) {
             Ok(indices) => {
                 debug!("✅ [DECODE] Successfully decoded {} source indices", indices.len());
@@ -2157,7 +2157,7 @@ impl ProximaDataBlock {
                 let data_len = u32::from_le_bytes(len_bytes) as usize;
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
-                let decoder = FastLanesDecoder::new_from_data(&data);
+                let decoder = ProximaDecoder::new_from_data(&data);
                 match decoder.decode_i64(&data, Some(record_count)) {
                     Ok(values) => values.into_iter().map(Some).collect(),
                     Err(_) => vec![None; record_count],
@@ -2177,7 +2177,7 @@ impl ProximaDataBlock {
                 let mut values_data = vec![0u8; values_len];
                 cursor.read_exact(&mut values_data)?;
 
-                let decoder = FastLanesDecoder::new_from_data(&values_data);
+                let decoder = ProximaDecoder::new_from_data(&values_data);
                 let values = decoder.decode_i64(&values_data, None).unwrap_or_default(); // Sparse, count is in data
 
                 let mut result = Vec::new();
@@ -2216,7 +2216,7 @@ impl ProximaDataBlock {
             let mut values_data = vec![0u8; values_len];
             cursor.read_exact(&mut values_data)?;
 
-            let decoder = FastLanesDecoder::new_from_data(&values_data);
+            let decoder = ProximaDecoder::new_from_data(&values_data);
             let values = decoder.decode_i64(&values_data, None).unwrap_or_default(); // Sparse, count is in data
 
             let mut result = Vec::new();
@@ -2253,7 +2253,7 @@ impl ProximaDataBlock {
             let mut values_data = vec![0u8; values_len];
             cursor.read_exact(&mut values_data)?;
 
-            let decoder = FastLanesDecoder::new_from_data(&values_data);
+            let decoder = ProximaDecoder::new_from_data(&values_data);
             let values = decoder.decode_i64(&values_data, None).unwrap_or_default(); // Sparse, count is in data
 
             let mut result = Vec::new();
@@ -2382,7 +2382,7 @@ impl ProximaDataBlock {
     /// Encode vectors using FullVector strategy with field-level compression
     /// Each field (vectors, IDs, metadata) is compressed separately
     fn encode_full_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
         use crate::core::compression::{compress, CompressionContext};
 
         let mut field_data = Vec::new();
@@ -2416,7 +2416,7 @@ impl ProximaDataBlock {
         debug!("🔍 [ENCODE_FULL_VECTOR] Raw bytes: {} | Values: {} | Dimension: {} | Sample: {:?}",
                raw_bytes, all_floats.len(), dimension, sample_values);
 
-        let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&all_floats);
+        let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32(&all_floats);
         let pattern_info = Self::analyze_pattern_f32(&all_floats);
 
         // Print algorithm selection with more detail
@@ -2426,7 +2426,7 @@ impl ProximaDataBlock {
                all_floats.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
                all_floats.iter().sum::<f32>() / all_floats.len() as f32);
 
-        let encoder = FastLanesEncoder::new(scheme.clone());
+        let encoder = ProximaEncoder::new(scheme.clone());
 
         // Enhanced error handling for encoding
         let encoded_vectors = match encoder.encode_f32(&all_floats, Some(all_floats.len())) {
@@ -2451,10 +2451,10 @@ impl ProximaDataBlock {
         debug!("📊 [ENCODE_FULL_VECTOR] Encoded: {} bytes | Compression: {:.2}x (Raw {} -> Encoded {})",
                encoded_bytes, compression_ratio, raw_bytes, encoded_bytes);
 
-        // Compress vector field if enabled AND FastLanes didn't already compress well
+        // Compress vector field if enabled AND Proxima didn't already compress well
         let final_vector_data = if config.enable_vector_compression
             && config.algorithm != crate::core::compression::CompressionAlgorithm::None
-            && compression_ratio < 2.0  // Only apply additional compression if FastLanes achieved < 2x
+            && compression_ratio < 2.0  // Only apply additional compression if Proxima achieved < 2x
         {
             let compressed = compress(
                 &encoded_vectors,
@@ -2492,7 +2492,7 @@ impl ProximaDataBlock {
                 uncompressed_field
             }
         } else {
-            debug!("[ENCODE] Bypassing compression (FastLanes already compressed {:.2}x)", compression_ratio);
+            debug!("[ENCODE] Bypassing compression (Proxima already compressed {:.2}x)", compression_ratio);
             // Uncompressed vector field: [0x00][data] (no size overhead)
             let mut uncompressed_field = Vec::new();
             uncompressed_field.push(0x00); // no compression marker
@@ -2511,7 +2511,7 @@ impl ProximaDataBlock {
     /// Encode vectors using GroupedFieldEncodedAndCompressedVector strategy with compression-friendly encoding
     /// Divides vectors into 32D groups for better cache locality and compression
     fn encode_grouped_field_encoded_and_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
         use crate::core::compression::{compress, CompressionContext};
 
         const GROUP_SIZE: usize = 32;
@@ -2550,15 +2550,15 @@ impl ProximaDataBlock {
             .collect();
 
         let (scheme, pattern_info) = if !sample_group.is_empty() {
-            let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&sample_group);
+            let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32(&sample_group);
             let pattern = Self::analyze_pattern_f32(&sample_group);
             (scheme, pattern)
         } else {
-            (FastLanesScheme::Delta { base: 0 }, "Empty".to_string())
+            (ProximaScheme::Delta { base: 0 }, "Empty".to_string())
         };
 
         debug!("[ENCODE_GV] GroupedFieldEncoded | Pattern: {} | Selected: {:?} | Reason: Better cache locality for grouped access", pattern_info, scheme);
-        let encoder = FastLanesEncoder::new(scheme);
+        let encoder = ProximaEncoder::new(scheme);
 
         // Process each 64D group
         for group_idx in 0..num_groups {
@@ -2580,7 +2580,7 @@ impl ProximaDataBlock {
                 }
             }
 
-            // Encode the group using FastLanes for better compression
+            // Encode the group using Proxima for better compression
             let encoded_group = encoder.encode_f32(&group_floats, Some(group_floats.len()))?;
 
             // Apply compression uniformly based on header setting
@@ -2617,9 +2617,9 @@ impl ProximaDataBlock {
     }
 
     /// Encode vectors using GroupedFieldEncodedBlockCompressedVector strategy with block-level compression
-    /// Divides vectors into 32D groups, applies FastLanes encoding to each group, then compresses entire block
+    /// Divides vectors into 32D groups, applies Proxima encoding to each group, then compresses entire block
     fn encode_grouped_field_encoded_block_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
         use crate::core::compression::{compress, CompressionContext};
 
         const GROUP_SIZE: usize = 32;
@@ -2658,7 +2658,7 @@ impl ProximaDataBlock {
             }
 
             // Analyze this group's pattern and choose scheme
-            let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&group_floats);
+            let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32(&group_floats);
             let pattern = Self::analyze_pattern_f32(&group_floats);
 
             // Track patterns for summary
@@ -2668,7 +2668,7 @@ impl ProximaDataBlock {
                    group_idx, start_dim, end_dim - 1, pattern, scheme);
 
             // Use group-specific encoder with group-specific scheme
-            let encoder = FastLanesEncoder::new(scheme);
+            let encoder = ProximaEncoder::new(scheme);
 
             // Collect group data: transpose group dimensions
             let mut group_data = Vec::new();
@@ -2677,9 +2677,9 @@ impl ProximaDataBlock {
                     .map(|v| v.get(dim).copied().unwrap_or(0.0))
                     .collect();
 
-                // Apply FastLanes encoding to this dimension
+                // Apply Proxima encoding to this dimension
                 let encoded_dim = encoder.encode_f32(&dim_values, Some(vectors.len()))
-                    .map_err(|e| anyhow::anyhow!("FastLanes encoding failed for group {} dim {}: {}", group_idx, dim, e))?;
+                    .map_err(|e| anyhow::anyhow!("Proxima encoding failed for group {} dim {}: {}", group_idx, dim, e))?;
 
                 // Write dimension size and data within the group
                 group_data.extend(&(encoded_dim.len() as u32).to_le_bytes());
@@ -2728,9 +2728,9 @@ impl ProximaDataBlock {
     }
 
     /// Encode vectors using TransposeFieldEncodedBlockCompressedVector strategy with block-level compression
-    /// Transposes RxD → DxR, applies FastLanes encoding to each dimension, then compresses entire block
+    /// Transposes RxD → DxR, applies Proxima encoding to each dimension, then compresses entire block
     fn encode_transpose_field_encoded_block_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
         use crate::core::compression::{compress, CompressionContext};
 
         let mut field_data = Vec::new();
@@ -2754,15 +2754,15 @@ impl ProximaDataBlock {
             .collect();
 
         let (scheme, pattern_info) = if !sample_data.is_empty() {
-            let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&sample_data);
+            let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32(&sample_data);
             let pattern = Self::analyze_pattern_f32(&sample_data);
             (scheme, pattern)
         } else {
-            (FastLanesScheme::Delta { base: 0 }, "Empty".to_string())
+            (ProximaScheme::Delta { base: 0 }, "Empty".to_string())
         };
 
         debug!("[ENCODE_GB] GroupedBlockCompressed | Pattern: {} | Selected: {:?} | Reason: Block-level compression for better ratios", pattern_info, scheme);
-        let encoder = FastLanesEncoder::new(scheme);
+        let encoder = ProximaEncoder::new(scheme);
 
         // Transpose and encode each dimension (no per-dimension compression)
         let mut uncompressed_block = Vec::new();
@@ -2775,9 +2775,9 @@ impl ProximaDataBlock {
 
             trace!(" [ENCODE_TB] Encoding dimension {} with {} values", dim_idx, dim_values.len());
 
-            // Apply FastLanes delta encoding (no compression yet)
+            // Apply Proxima delta encoding (no compression yet)
             let encoded_dim = encoder.encode_f32(&dim_values, Some(dim_values.len()))
-                .map_err(|e| anyhow::anyhow!("FastLanes encoding failed for dimension {}: {}", dim_idx, e))?;
+                .map_err(|e| anyhow::anyhow!("Proxima encoding failed for dimension {}: {}", dim_idx, e))?;
 
             // Write dimension size and encoded data
             uncompressed_block.extend(&(encoded_dim.len() as u32).to_le_bytes());
@@ -2822,7 +2822,7 @@ impl ProximaDataBlock {
     /// Encode vectors using TransposeFieldEncodedAndCompressedVector strategy with per-dimension field compression
     /// Transposes RxD → DxR and compresses each dimension field separately
     fn encode_transpose_field_encoded_and_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesEncoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
         use crate::core::compression::{compress, CompressionContext};
 
         let mut field_data = Vec::new();
@@ -2856,11 +2856,11 @@ impl ProximaDataBlock {
                 dimension_values.push(vector[dim_idx]);
             }
 
-            // Encode dimension data with adaptive FastLanes encoding
-            let scheme = crate::storage::engines::core::ops::fastlanes_encoding::analyze_and_choose_scheme_f32(&dimension_values);
+            // Encode dimension data with adaptive Proxima encoding
+            let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32(&dimension_values);
             let pattern = Self::analyze_pattern_f32(&dimension_values);
             trace!("[ENCODE_DIM] Dimension {}: Pattern: {} | Selected: {:?}", dim_idx, pattern, scheme);
-            let encoder = FastLanesEncoder::new(scheme);
+            let encoder = ProximaEncoder::new(scheme);
             let encoded_dimension = encoder.encode_f32(&dimension_values, Some(vectors.len()))?;
 
             // Compress dimension field if enabled
@@ -2947,7 +2947,7 @@ impl ProximaDataBlock {
 
         if encoding_version == 0x01 {
             // Field-level compression with delta encoding
-            use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+            use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
             use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
 
             // ===== DECODE VECTOR FIELD =====
@@ -2979,7 +2979,7 @@ impl ProximaDataBlock {
                 vector_data
             };
 
-            // Decode FastLanes encoded data with fallback handling
+            // Decode Proxima encoded data with fallback handling
             let decoded_floats = if vector_data.len() >= 2 && vector_data[0] == 0xFF && vector_data[1] == 0xFB {
                 // Fallback marker detected - decode raw f32 data
                 debug!("🔧 [DECODE_FV] Fallback marker detected, using raw f32 decoding");
@@ -2997,24 +2997,24 @@ impl ProximaDataBlock {
                 debug!("🔧 [DECODE_FV] Fallback decoded {} floats", decoded.len());
                 decoded
             } else {
-                // Normal FastLanes decoding with enhanced error handling
-                debug!("🔍 [DECODE_FV] Using FastLanes decoding, data size: {} bytes", vector_data.len());
-                let decoder = FastLanesDecoder::new_from_data(&vector_data);
+                // Normal Proxima decoding with enhanced error handling
+                debug!("🔍 [DECODE_FV] Using Proxima decoding, data size: {} bytes", vector_data.len());
+                let decoder = ProximaDecoder::new_from_data(&vector_data);
 
                 match decoder.decode_f32(&vector_data, Some(vector_count * dimension)) {
                     Ok(floats) => {
-                        debug!("✅ [DECODE_FV] FastLanes decoded {} floats successfully", floats.len());
+                        debug!("✅ [DECODE_FV] Proxima decoded {} floats successfully", floats.len());
                         floats
                     }
                     Err(e) => {
-                        warn!("❌ [DECODE_FV] FastLanes decoding failed: {}", e);
+                        warn!("❌ [DECODE_FV] Proxima decoding failed: {}", e);
                         debug!("   Vector data preview: {:?}", &vector_data[..std::cmp::min(20, vector_data.len())]);
-                        return Err(anyhow::anyhow!("FastLanes decoding failed: {}", e));
+                        return Err(anyhow::anyhow!("Proxima decoding failed: {}", e));
                     }
                 }
             };
 
-            trace!(" [DECODE_FV] Decoded {} floats from FastLanes", decoded_floats.len());
+            trace!(" [DECODE_FV] Decoded {} floats from Proxima", decoded_floats.len());
 
             // NEW: Vectors are now encoded directly without manual delta
             if decoded_floats.len() != vector_count * dimension {
@@ -3029,7 +3029,7 @@ impl ProximaDataBlock {
                 let vector = decoded_floats[start_idx..end_idx].to_vec();
 
                 let temp_id = format!("fv_vec_{:06}", i);
-                debug!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from FastLanes data", i, temp_id);
+                debug!("🔧 [DECODE_FV] Creating vector {} with temp ID: '{}' from Proxima data", i, temp_id);
 
                 records.push(VectorRecord {
                     id: temp_id,
@@ -3071,10 +3071,10 @@ impl ProximaDataBlock {
         Ok(records)
     }
 
-    /// Decode GroupedFieldEncodedAndCompressedVector format data with FastLanes encoding and per-group compression
+    /// Decode GroupedFieldEncodedAndCompressedVector format data with Proxima encoding and per-group compression
     fn decode_grouped_field_encoded_and_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
         use std::io::{Cursor, Read};
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
         use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
         const GROUP_SIZE: usize = 32;
 
@@ -3220,7 +3220,7 @@ impl ProximaDataBlock {
                      group_idx, start_dim, group_dims, group_data.len());
 
             // Auto-detect encoding scheme from group data and decode
-            let decoder = FastLanesDecoder::new_from_data(&group_data);
+            let decoder = ProximaDecoder::new_from_data(&group_data);
             let group_floats = decoder.decode_f32(&group_data, Some(vector_count * group_dims))?;
 
             // Distribute the decoded floats to vectors
@@ -3259,7 +3259,7 @@ impl ProximaDataBlock {
     /// Decode TransposeFieldEncodedAndCompressedVector format data with per-dimension field compression
     fn decode_transpose_field_encoded_and_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
         use std::io::{Cursor, Read};
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
         use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
 
         trace!(" [DECODE_TV] Starting TransposeFieldEncodedAndCompressed decode, data size: {} bytes", data.len());
@@ -3329,9 +3329,9 @@ impl ProximaDataBlock {
                 dimension_data
             };
 
-            // Decode FastLanes encoded dimension data
+            // Decode Proxima encoded dimension data
             // Create a decoder for this dimension's data
-            let dim_decoder = FastLanesDecoder::new_from_data(&dimension_data);
+            let dim_decoder = ProximaDecoder::new_from_data(&dimension_data);
             let dimension_floats = dim_decoder.decode_f32(&dimension_data, Some(vector_count))?;
 
             trace!(" [DECODE_TV] Decoded dimension {}: {} floats", dim_idx, dimension_floats.len());
@@ -3370,7 +3370,7 @@ impl ProximaDataBlock {
 
     /// Decode existing TransposeFieldEncodedAndCompressed (columnar) format
     fn decode_existing_columnar_format(data: &[u8], encoding_marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, markers};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, markers};
         use std::io::{Cursor, Read};
 
         let mut cursor = Cursor::new(data);
@@ -3384,10 +3384,10 @@ impl ProximaDataBlock {
         cursor.read_exact(&mut count_bytes)?;
         let vector_count = u32::from_le_bytes(count_bytes) as usize;
 
-        // Decode using existing FastLanes columnar logic
-        let decoder = FastLanesDecoder::new(
+        // Decode using existing Proxima columnar logic
+        let decoder = ProximaDecoder::new(
             markers::to_scheme(encoding_marker).unwrap_or(
-                crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::BitPacked { bits: 16 }
+                crate::storage::engines::core::ops::proximaencoder::ProximaScheme::BitPacked { bits: 16 }
             )
         );
 
@@ -3436,7 +3436,7 @@ impl ProximaDataBlock {
     /// Decode GroupedFieldEncodedBlockCompressedVector format data with block-level compression
     fn decode_grouped_field_encoded_block_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
         use std::io::{Cursor, Read};
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
         use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
         const GROUP_SIZE: usize = 32;
 
@@ -3531,9 +3531,9 @@ impl ProximaDataBlock {
                 group_cursor.read_exact(&mut dim_data)?;
 
                 // Decode this dimension's values with auto-detected scheme
-                let dim_decoder = FastLanesDecoder::new_from_data(&dim_data);
+                let dim_decoder = ProximaDecoder::new_from_data(&dim_data);
                 let decoded_values = dim_decoder.decode_f32(&dim_data, Some(num_groups * GROUP_SIZE))
-                    .map_err(|e| anyhow::anyhow!("FastLanes decoding failed for group {} dim {}: {}", group_idx, dim, e))?;
+                    .map_err(|e| anyhow::anyhow!("Proxima decoding failed for group {} dim {}: {}", group_idx, dim, e))?;
 
                 // Copy values to vectors
                 for (row_idx, &value) in decoded_values.iter().enumerate() {
@@ -3567,7 +3567,7 @@ impl ProximaDataBlock {
     /// Decode TransposeFieldEncodedBlockCompressedVector format data with block-level compression
     fn decode_transpose_field_encoded_block_compressed_vector(data: &[u8], dimension: usize, vector_count: usize) -> anyhow::Result<Vec<VectorRecord>> {
         use std::io::{Cursor, Read};
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
         use crate::core::compression::{decompress, CompressionContext, CompressionAlgorithm};
 
         trace!(" [DECODE_TB] Starting TransposeFieldEncodedBlockCompressed decode, data size: {} bytes", data.len());
@@ -3640,11 +3640,11 @@ impl ProximaDataBlock {
             block_cursor.read_exact(&mut dim_data)?;
 
             // Create decoder for this dimension's data
-            let dim_decoder = FastLanesDecoder::new_from_data(&dim_data);
+            let dim_decoder = ProximaDecoder::new_from_data(&dim_data);
 
             // Decode this dimension's values
             let decoded_values = dim_decoder.decode_f32(&dim_data, Some(vector_count))
-                .map_err(|e| anyhow::anyhow!("FastLanes decoding failed for dimension {}: {}", dim_idx, e))?;
+                .map_err(|e| anyhow::anyhow!("Proxima decoding failed for dimension {}: {}", dim_idx, e))?;
 
             // Copy values to vectors
             for (row_idx, &value) in decoded_values.iter().enumerate() {

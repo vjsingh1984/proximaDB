@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -43,11 +43,11 @@ fn main() -> anyhow::Result<()> {
     };
 
     println!("\nTest 1: GroupedField + None");
-    let block = FastLanesDataBlock::new(records.clone(), config_none.clone());
+    let block = ProximaDataBlock::new(records.clone(), config_none.clone());
     let serialized = block.serialize_with_config(&config_none)?;
     println!("  Serialized size: {} bytes", serialized.len());
 
-    let deserialized = FastLanesDataBlock::deserialize(&serialized)?;
+    let deserialized = ProximaDataBlock::deserialize(&serialized)?;
     if deserialized.records.len() == count {
         println!("  ✅ Deserialization successful");
     } else {
@@ -67,11 +67,11 @@ fn main() -> anyhow::Result<()> {
     };
 
     println!("\nTest 2: GroupedField + LZ4");
-    let block = FastLanesDataBlock::new(records.clone(), config_lz4.clone());
+    let block = ProximaDataBlock::new(records.clone(), config_lz4.clone());
     let serialized = block.serialize_with_config(&config_lz4)?;
     println!("  Serialized size: {} bytes", serialized.len());
 
-    match FastLanesDataBlock::deserialize(&serialized) {
+    match ProximaDataBlock::deserialize(&serialized) {
         Ok(deserialized) => {
             if deserialized.records.len() == count {
                 println!("  ✅ Deserialization successful");

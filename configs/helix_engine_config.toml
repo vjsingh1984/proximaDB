@@ -10,7 +10,7 @@ size_ratio = 10.0                          # Size ratio between adjacent levels
 # Clustering settings
 pca_dimensions = 16                       # Dimensions after PCA reduction (default: 16)
 hilbert_bits_per_dimension = 16           # Resolution of Hilbert curve (default: 16, range: 8-21)
-fastlane_block_size = 128                 # Vectors per FastLane block (default: 128)
+proxima_block_size = 128                  # Vectors per Proxima block (default: 128)
 enable_liquid_clustering = true           # Adaptive clustering based on query patterns
 
 # Quantization settings
@@ -49,4 +49,4 @@ hilbert_bits_per_dimension = 20           # Higher precision for better clusteri
 collection_name = "small_vectors"
 pca_dimensions = 8                        # Fewer dimensions for simple data
 hilbert_bits_per_dimension = 12           # Lower precision for faster processing
-fastlane_block_size = 256                 # Larger blocks for small vectors
+proxima_block_size = 256                  # Larger blocks for small vectors

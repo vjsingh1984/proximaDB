@@ -1,6 +1,6 @@
 // Proxima-Style SIMD Encoding Module
 // Common encoding module for optimized columnar data encoding
-// Based on the FastLanes paper: https://www.vldb.org/pvldb/vol16/p2132-afroozeh.pdf
+// Based on the Proxima paper: https://www.vldb.org/pvldb/vol16/p2132-afroozeh.pdf
 //
 // Key features:
 // - Auto-vectorization friendly loop structures
@@ -111,7 +111,7 @@ pub mod markers {
     pub const SPARSE_CSR: u8 = 0x76;
     pub const SPARSE_CSC: u8 = 0x77;
 
-    /// Get marker for a FastLanes scheme
+    /// Get marker for a Proxima scheme
     pub fn from_scheme(scheme: &super::ProximaScheme) -> u8 {
         match scheme {
             super::ProximaScheme::BitPacked { .. } => PROXIMA_BITPACKED,
@@ -166,7 +166,7 @@ pub mod markers {
     }
 }
 
-/// FastLanes encoding schemes
+/// Proxima encoding schemes
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum ProximaScheme {
     /// Bit-packing with configurable bit width
@@ -287,7 +287,7 @@ pub enum EncodedVectors {
     RowWise(RowWiseEncodedVectors),
 }
 
-/// FastLanes encoder optimized for columnar data
+/// Proxima encoder optimized for columnar data
 pub struct ProximaEncoder {
     scheme: ProximaScheme,
     block_size: usize, // Typically 128 or 256 for SIMD alignment
@@ -707,7 +707,7 @@ impl ProximaEncoder {
                 // Transpose: collect values for this dimension
                 let dim_values: Vec<f32> = vectors.iter().map(|v| v[dim]).collect();
 
-                // Apply FastLanes SIMD encoding only
+                // Apply Proxima SIMD encoding only
                 let simd_encoded = self.encode_f32(&dim_values, Some(vectors.len()))?;
 
                 dimensions.push(EncodedDimension {
@@ -756,8 +756,8 @@ impl ProximaEncoder {
         let padded_dimension = ((dimension + SIMD_ALIGNMENT - 1) / SIMD_ALIGNMENT) * SIMD_ALIGNMENT;
 
         if apply_simd_encoding {
-            // ============ INDIVIDUAL VECTOR ENCODING (Original FastLanes approach) ============
-            // Process each vector with FastLanes SIMD encoding
+            // ============ INDIVIDUAL VECTOR ENCODING (Original Proxima approach) ============
+            // Process each vector with Proxima SIMD encoding
             let mut encoded_vectors = Vec::with_capacity(vectors.len());
 
             for vector in vectors {
@@ -765,7 +765,7 @@ impl ProximaEncoder {
                 let mut aligned_vector = vec![0.0f32; padded_dimension];
                 aligned_vector[..dimension].copy_from_slice(&vector[..]);
 
-                // Apply FastLanes SIMD encoding to the entire vector
+                // Apply Proxima SIMD encoding to the entire vector
                 let encoded = self.encode_f32(&aligned_vector, None)?;
                 encoded_vectors.push(encoded);
             }
@@ -832,7 +832,7 @@ impl ProximaEncoder {
     }
 }
 
-/// FastLanes decoder
+/// Proxima decoder
 pub struct ProximaDecoder {
     scheme: ProximaScheme,
     block_size: usize,
@@ -898,7 +898,7 @@ impl ProximaDecoder {
     }
 
     /// Decode vectors from columnar layout with layered decompression
-    /// Pipeline: Columnar decompression → FastLanes SIMD decoding → Un-transpose
+    /// Pipeline: Columnar decompression → Proxima SIMD decoding → Un-transpose
     pub fn decode_vectors_columnar(&self, data: &[u8]) -> Result<Vec<Vec<f32>>> {
         use crate::core::compression::{CompressionAlgorithm, decompress};
         let mut cursor = std::io::Cursor::new(data);
@@ -972,7 +972,7 @@ impl ProximaDecoder {
                     compressed_data
                 };
 
-                // Step 2: Decode FastLanes SIMD encoding
+                // Step 2: Decode Proxima SIMD encoding
                 let decoded = self.decode_f32(&simd_encoded, Some(num_vectors))?;
 
                 // Step 3: Store in dimension column
@@ -1637,7 +1637,7 @@ pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
 }
 
 // Re-export everything from tensor encoding for consolidated access
-pub use super::fastlanes_tensor_encoding::*;
+pub use super::proxima_tensor_encoding::*;
 
 #[cfg(test)]
 mod tests {

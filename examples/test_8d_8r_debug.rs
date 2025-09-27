@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -53,7 +53,7 @@ fn test_strategy(vectors: &[VectorRecord], layout: VectorEncodingLayout, strateg
         metadata_algorithm: None,
     };
 
-    let block = FastLanesDataBlock::new(vectors.to_vec(), config.clone());
+    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
     match block.serialize_with_config(&config) {
         Ok(encoded) => {
             let original_size = 8 * 8 * 4; // 8 dimensions × 8 rows × 4 bytes per f32
@@ -62,7 +62,7 @@ fn test_strategy(vectors: &[VectorRecord], layout: VectorEncodingLayout, strateg
             println!("   ✅ Success: {} bytes ({:.2}x compression)", encoded.len(), compression_ratio);
 
             // Test round-trip
-            match FastLanesDataBlock::deserialize(&encoded) {
+            match ProximaDataBlock::deserialize(&encoded) {
                 Ok(decoded_block) => {
                     if decoded_block.records.len() == vectors.len() {
                         println!("   ✅ Round-trip: {} vectors decoded successfully", decoded_block.records.len());
@@ -78,7 +78,7 @@ fn test_strategy(vectors: &[VectorRecord], layout: VectorEncodingLayout, strateg
 }
 
 fn main() {
-    println!("🚀 FastLanes 8D×8R Debug Test");
+    println!("🚀 Proxima 8D×8R Debug Test");
     println!("=============================");
 
     println!("📊 Test Data (8 dimensions × 8 rows):");

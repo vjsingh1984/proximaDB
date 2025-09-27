@@ -48,7 +48,7 @@ enum Advice {
 
 use super::SwiftFile;
 use super::progressive_search::ProgressiveSearchConfig;
-use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
 /// Optimized SST operations using existing infrastructure
 pub struct OptimizedSwiftOperations {
@@ -271,7 +271,7 @@ impl OptimizedSwiftOperations {
         sst_path: &str,
         superblock_idx: u32,
         block_idx: u32,
-    ) -> Result<FastLanesDataBlock> {
+    ) -> Result<ProximaDataBlock> {
         // Get memory-mapped file from pool
         let mmap = self.mmap_pool.get(sst_path)?;
 
@@ -283,7 +283,7 @@ impl OptimizedSwiftOperations {
         let block_data = mmap.slice(block_offset..block_offset + block_size)?;
 
         // Deserialize block (placeholder)
-        let block = FastLanesDataBlock::deserialize(block_data)?;
+        let block = ProximaDataBlock::deserialize(block_data)?;
 
         Ok(block)
     }
@@ -307,7 +307,7 @@ impl OptimizedSwiftOperations {
     }
 }
 
-// Removed wrapper - use FastLanesDataBlock::deserialize() directly
+// Removed wrapper - use ProximaDataBlock::deserialize() directly
 
 /// Performance statistics for monitoring
 #[derive(Debug, Clone)]

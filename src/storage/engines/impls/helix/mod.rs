@@ -15,7 +15,7 @@
 //! ### ✅ PRODUCTION-READY ARCHITECTURE:
 //! - **Disk-Only LSM**: No memtable/WAL overhead, uses global infrastructure
 //! - **PCA + Hilbert Curve**: Physically co-locates similar vectors on disk for efficient pruning
-//! - **FastLane Columnar Blocks**: SIMD optimization for vector processing
+//! - **Proxima Columnar Blocks**: SIMD optimization for vector processing
 //! - **Liquid Clustering**: Real-time adaptation based on query patterns
 //! - **Aggressive Pruning**: Hilbert range filtering provides excellent query performance
 //! - **Spatial Locality**: Automatic clustering of similar vectors for efficient access
@@ -88,7 +88,7 @@
 //!
 //! - **Query Performance**: Excellent (90%+ pruning with good clustering)
 //! - **Write Performance**: Moderate (PCA computation overhead)
-//! - **Storage Efficiency**: Good (FastLane compression + clustering)
+//! - **Storage Efficiency**: Good (Proxima compression + clustering)
 //! - **Memory Usage**: Low (disk-only LSM design)
 
 use anyhow::Result;
@@ -138,7 +138,7 @@ use self::clustering::{HilbertKey, PCAModel};
 
 use self::compaction::LeveledCompactor;
 use self::query_optimization::QueryOptimizer;
-use crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesBlockMetadata;
+use crate::storage::engines::core::formats::proximablocks::block_structures::ProximaBlockMetadata;
 
 /// HELIX engine configuration
 #[derive(Debug, Clone)]
@@ -151,8 +151,8 @@ pub struct HelixConfig {
     pub size_ratio: f64,
     /// PCA dimensions for clustering
     pub pca_dimensions: usize,
-    /// FastLane block size (number of vectors per block)
-    pub fastlane_block_size: usize,
+    /// Proxima block size (number of vectors per block)
+    pub proxima_block_size: usize,
     /// Enable liquid clustering
     pub enable_liquid_clustering: bool,
     /// Storage quantization settings
@@ -188,7 +188,7 @@ impl Default for HelixConfig {
             max_levels: 7,
             size_ratio: 10.0,
             pca_dimensions: 16,
-            fastlane_block_size: 128,
+            proxima_block_size: 128,
             enable_liquid_clustering: true,
             storage_quantization: false,
             bloom_filter_bits_per_key: 10,
@@ -220,8 +220,8 @@ pub struct SStableMetadata {
     pub size_bytes: u64,
     /// Creation timestamp
     pub created_at: chrono::DateTime<chrono::Utc>,
-    /// FastLane block metadata
-    pub blocks: Vec<FastLanesBlockMetadata>,
+    /// Proxima block metadata
+    pub blocks: Vec<ProximaBlockMetadata>,
     /// Bloom filter (serialized)
     pub bloom_filter: Option<Vec<u8>>,
 }
@@ -300,13 +300,13 @@ impl HelixEngine {
         path: &Path,
         records: &[VectorRecord],
     ) -> Result<u64> {
-        // Use SIMD-enhanced fastlane writer for optimal compression even in fast path
+        // Use SIMD-enhanced proxima writer for optimal compression even in fast path
         // SIMD provides 2-8x speedup and 25-50% compression without expensive PCA
-        let bytes_written = fastlane::write_helix_sstable_simd(
+        let bytes_written = proxima::write_helix_sstable_simd(
             &self.filesystem,
             path,
             records,
-            self.config.fastlane_block_size,
+            self.config.proxima_block_size,
             HELIX_MAGIC,
             None, // No Hilbert keys for fast path
             Some(256), // Default curve size for spatial optimization
@@ -817,13 +817,13 @@ impl UnifiedStorageEngine for HelixEngine {
 
         let file_path = std::path::Path::new(&data_dir).join(&filename);
 
-        // Write SIMD-enhanced FastLane blocks with Hilbert keys for maximum spatial optimization
+        // Write SIMD-enhanced Proxima blocks with Hilbert keys for maximum spatial optimization
         let hilbert_keys_for_write: Vec<u64> = indexed_records.iter().map(|(k, _)| *k).collect();
-        let bytes_written = fastlane::write_helix_sstable_simd(
+        let bytes_written = proxima::write_helix_sstable_simd(
             &self.filesystem,
             &file_path,
             &sorted_records,
-            self.config.fastlane_block_size,
+            self.config.proxima_block_size,
             HELIX_MAGIC,
             Some(&hilbert_keys_for_write),
             Some(16), // Default Hilbert curve bits
@@ -840,13 +840,13 @@ impl UnifiedStorageEngine for HelixEngine {
                 num_vectors: num_records,
                 size_bytes: bytes_written,
                 created_at: chrono::Utc::now(),
-                blocks: fastlane::extract_helix_metadata(
+                blocks: proxima::extract_helix_metadata(
                     &sorted_records,
-                    self.config.fastlane_block_size,
+                    self.config.proxima_block_size,
                     Some(&hilbert_keys_for_write),
                 )
                 .into_iter()
-                .map(|h| h.fastlanes_metadata)
+                .map(|h| h.proxima_metadata)
                 .collect(),
                 bloom_filter: None,
             };

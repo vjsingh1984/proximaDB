@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -55,13 +55,13 @@ fn main() {
     };
 
     println!("\n🔬 Testing Round-trip...");
-    let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
+    let block = ProximaDataBlock::new(vectors.clone(), config.clone());
 
     match block.serialize_with_config(&config) {
         Ok(encoded) => {
             println!("✅ Serialized: {} bytes", encoded.len());
 
-            match FastLanesDataBlock::deserialize(&encoded) {
+            match ProximaDataBlock::deserialize(&encoded) {
                 Ok(decoded_block) => {
                     println!("✅ Deserialized: {} vectors", decoded_block.records.len());
 

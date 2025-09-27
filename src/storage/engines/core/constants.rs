@@ -92,8 +92,8 @@ pub mod swift {
     /// Default superblock size
     pub const DEFAULT_SUPERBLOCK_SIZE: usize = 256;
 
-    /// FastLanes encoding bits
-    pub const DEFAULT_FASTLANES_BITS: u8 = 16;
+    /// Proxima encoding bits
+    pub const DEFAULT_PROXIMA_BITS: u8 = 16;
 }
 
 /// RAPTOR engine specific constants

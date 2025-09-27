@@ -1,7 +1,7 @@
 //! Integration tests for SST engine with compression
 //!
 //! Tests cover:
-//! - SST FastLanesDataBlock compression with ZSTD
+//! - SST ProximaDataBlock compression with ZSTD
 //! - Flush operations with compressed blocks
 //! - Compaction with compressed data
 //! - Search on compressed SST files
@@ -89,7 +89,7 @@ fn create_compressible_test_vectors(
         .collect()
 }
 
-/// Test SST FastLanesDataBlock ZSTD compression and decompression roundtrip
+/// Test SST ProximaDataBlock ZSTD compression and decompression roundtrip
 ///
 /// Validates that SST DataBlocks can be compressed with ZSTD, achieve reasonable
 /// compression ratios, and can be decompressed back to identical data.
@@ -152,7 +152,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
         compression_ratio
     );
 
-    info!("FastLanesDataBlock compression ratio: {:.2}", compression_ratio);
+    info!("ProximaDataBlock compression ratio: {:.2}", compression_ratio);
     Ok(())
 }
 

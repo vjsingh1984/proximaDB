@@ -19,7 +19,7 @@ use super::SStableMetadata;
 /// HELIX specializes in:
 /// - Spatial locality optimization with Hilbert curve clustering
 /// - PCA-based clustering for dimensional reduction
-/// - FastLane columnar blocks for SIMD optimization
+/// - Proxima columnar blocks for SIMD optimization
 /// - Liquid clustering for adaptive query patterns
 pub struct UnifiedHELIXReader {
     /// Filesystem factory for direct reads
@@ -154,8 +154,8 @@ impl UnifiedHELIXReader {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let _data = fs.read(file_path).await?;
 
-        // TODO: Parse HELIX FastLane format directly without caching
-        // Use FastLane blocks for SIMD optimization
+        // TODO: Parse HELIX Proxima format directly without caching
+        // Use Proxima blocks for SIMD optimization
         Ok(vec![])
     }
 
@@ -170,7 +170,7 @@ impl UnifiedHELIXReader {
 
         let _data = cached_fs.read(file_path).await?;
 
-        // TODO: Use cached FastLane metadata and Hilbert ranges for pruning
+        // TODO: Use cached Proxima metadata and Hilbert ranges for pruning
         // Apply zone map pruning based on search strategy
         match self.search_strategy {
             HelixSearchStrategy::NoPruning => {
@@ -218,7 +218,7 @@ impl StrategyAwareReader for UnifiedHELIXReader {
     }
 }
 
-/// Direct HELIX Reader (bypasses cache, streams FastLane blocks)
+/// Direct HELIX Reader (bypasses cache, streams Proxima blocks)
 ///
 /// Use this for:
 /// - Compaction operations
@@ -235,12 +235,12 @@ impl DirectHELIXReader {
         Self { filesystem_factory, collection_id }
     }
 
-    /// Stream FastLane blocks directly for compaction
-    pub async fn stream_fastlane_blocks(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    /// Stream Proxima blocks directly for compaction
+    pub async fn stream_proximablocks(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let _data = fs.read(file_path).await?;
 
-        // TODO: Use FastLane block streaming for direct access
+        // TODO: Use Proxima block streaming for direct access
         Ok(vec![])
     }
 
@@ -251,8 +251,8 @@ impl DirectHELIXReader {
 
         for sstable in sstables {
             let _data = fs.read(&sstable.path.to_string_lossy()).await?;
-            // TODO: Read FastLane blocks and extract records
-            // For now, return empty vec - actual implementation would parse FastLane format
+            // TODO: Read Proxima blocks and extract records
+            // For now, return empty vec - actual implementation would parse Proxima format
         }
 
         // TODO: Sort by Hilbert key for optimal compaction
@@ -265,7 +265,7 @@ impl DirectHELIXReader {
     }
 }
 
-/// Cached HELIX Reader (uses zone maps and FastLane metadata caching)
+/// Cached HELIX Reader (uses zone maps and Proxima metadata caching)
 ///
 /// Use this for:
 /// - Spatial locality queries with range filtering

@@ -17,7 +17,7 @@ use crate::storage::persistence::filesystem::FileSystem;
 use super::clustering::{
     HilbertKey, LiquidClusteringConfig, PCAModel, QueryPatternTracker, sort_by_hilbert,
 };
-use super::fastlane::{extract_helix_metadata, write_helix_sstable};
+use super::proxima::{extract_helix_metadata, write_helix_sstable};
 use super::liquid_clustering::LiquidClusteringCoordinator;
 use super::{HelixConfig, SStableMetadata};
 
@@ -180,7 +180,7 @@ impl LeveledCompactor {
                     Some(chunk_keys),
                 )
                 .into_iter()
-                .map(|h| h.fastlanes_metadata)
+                .map(|h| h.proxima_metadata)
                 .collect(),
                 bloom_filter,
             };
@@ -326,7 +326,7 @@ impl LeveledCompactor {
                     Some(chunk_keys),
                 )
                 .into_iter()
-                .map(|h| h.fastlanes_metadata)
+                .map(|h| h.proxima_metadata)
                 .collect(),
                 bloom_filter,
             };
@@ -491,7 +491,7 @@ impl LeveledCompactor {
                     Some(chunk_keys),
                 )
                 .into_iter()
-                .map(|h| h.fastlanes_metadata)
+                .map(|h| h.proxima_metadata)
                 .collect(),
                 bloom_filter,
             };
@@ -640,8 +640,8 @@ impl LeveledCompactor {
             std::io::Read::read_exact(&mut cursor, &mut block_data)?;
 
             // Deserialize block
-            use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
-            let block = FastLanesDataBlock::deserialize(&block_data)?;
+            use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+            let block = ProximaDataBlock::deserialize(&block_data)?;
 
             // Filter out expired records (physical delete during compaction)
             for record in block.records {

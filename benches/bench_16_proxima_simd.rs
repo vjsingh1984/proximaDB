@@ -1,9 +1,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    FastLanesDataBlock, BlockCompressionConfig, VectorEncodingLayout,
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    ProximaDataBlock, BlockCompressionConfig, VectorEncodingLayout,
 };
-use proximadb::storage::engines::core::ops::unified_fastlanes_simd::{
-    UnifiedFastLanesSIMD, EngineProfile,
+use proximadb::storage::engines::core::ops::unified_proxima_simd::{
+    UnifiedProximaSIMD, EngineProfile,
 };
 use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::core::compression::CompressionAlgorithm;
@@ -75,9 +75,9 @@ fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec
     records
 }
 
-/// Benchmark FastLanes encoding without SIMD
-fn bench_fastlanes_baseline(c: &mut Criterion) {
-    let mut group = c.benchmark_group("fastlanes_baseline");
+/// Benchmark Proxima encoding without SIMD
+fn bench_proxima_baseline(c: &mut Criterion) {
+    let mut group = c.benchmark_group("proxima_baseline");
 
     let dimensions = vec![128, 384, 768, 1536];
     let record_counts = vec![100, 1000, 10000];
@@ -102,7 +102,7 @@ fn bench_fastlanes_baseline(c: &mut Criterion) {
                             metadata_algorithm: None,
                         };
 
-                        let block = FastLanesDataBlock::new(
+                        let block = ProximaDataBlock::new(
                             black_box(records.clone()),
                             config
                         );
@@ -117,9 +117,9 @@ fn bench_fastlanes_baseline(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark SIMD-optimized FastLanes encoding with different layouts
-fn bench_fastlanes_simd_layouts(c: &mut Criterion) {
-    let mut group = c.benchmark_group("fastlanes_simd_layouts");
+/// Benchmark SIMD-optimized Proxima encoding with different layouts
+fn bench_proxima_simd_layouts(c: &mut Criterion) {
+    let mut group = c.benchmark_group("proxima_simd_layouts");
 
     let layouts = vec![
         ("transpose", VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
@@ -148,7 +148,7 @@ fn bench_fastlanes_simd_layouts(c: &mut Criterion) {
                         metadata_algorithm: None,
                     };
 
-                    let block = FastLanesDataBlock::new_with_engine_profile(
+                    let block = ProximaDataBlock::new_with_engine_profile(
                         black_box(records.clone()),
                         config,
                         EngineProfile::SST
@@ -194,7 +194,7 @@ fn bench_engine_profiles(c: &mut Criterion) {
                         metadata_algorithm: None,
                     };
 
-                    let block = FastLanesDataBlock::new_with_engine_profile(
+                    let block = ProximaDataBlock::new_with_engine_profile(
                         black_box(records.clone()),
                         config,
                         profile
@@ -236,7 +236,7 @@ fn bench_data_patterns(c: &mut Criterion) {
                         metadata_algorithm: None,
                     };
 
-                    let block = FastLanesDataBlock::new_with_engine_profile(
+                    let block = ProximaDataBlock::new_with_engine_profile(
                         black_box(records.clone()),
                         config,
                         EngineProfile::SST
@@ -278,7 +278,7 @@ fn bench_compression_ratios(c: &mut Criterion) {
                         metadata_algorithm: None,
                     };
 
-                    let block = FastLanesDataBlock::new_with_engine_profile(
+                    let block = ProximaDataBlock::new_with_engine_profile(
                         records.clone(),
                         config,
                         EngineProfile::SST
@@ -333,7 +333,7 @@ fn bench_large_scale(c: &mut Criterion) {
                         metadata_algorithm: None,
                     };
 
-                    let block = FastLanesDataBlock::new_with_engine_profile(
+                    let block = ProximaDataBlock::new_with_engine_profile(
                         black_box(records.clone()),
                         config,
                         EngineProfile::Swift // Swift for hierarchical data
@@ -364,7 +364,7 @@ fn bench_simd_transpose(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::from_parameter(format!("{}x{}", count, dim)),
             |b| {
-                let simd_encoder = UnifiedFastLanesSIMD::new(EngineProfile::SST).unwrap();
+                let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST).unwrap();
 
                 b.iter(|| {
                     let transposed = simd_encoder.simd_transpose_vectors(&vectors).unwrap();
@@ -409,7 +409,7 @@ fn bench_encoding_algorithms(c: &mut Criterion) {
                         metadata_algorithm: None,
                     };
 
-                    let block = FastLanesDataBlock::new_with_engine_profile(
+                    let block = ProximaDataBlock::new_with_engine_profile(
                         black_box(records.clone()),
                         config,
                         EngineProfile::SST
@@ -426,8 +426,8 @@ fn bench_encoding_algorithms(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_fastlanes_baseline,
-    bench_fastlanes_simd_layouts,
+    bench_proxima_baseline,
+    bench_proxima_simd_layouts,
     bench_engine_profiles,
     bench_data_patterns,
     bench_compression_ratios,

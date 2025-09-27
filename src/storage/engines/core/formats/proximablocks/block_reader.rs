@@ -1,13 +1,13 @@
-//! ✅ Unified FastLanes Block Reader with Strategy Pattern
+//! ✅ Unified Proxima Block Reader with Strategy Pattern
 //!
 //! This module provides a centralized block reading implementation that all storage engines
-//! (SST, SWIFT, HELIX, etc.) can delegate to. It leverages FastLanes automatic capabilities
+//! (SST, SWIFT, HELIX, etc.) can delegate to. It leverages Proxima automatic capabilities
 //! and provides different reading strategies optimized for various access patterns.
 //!
 //! ## Key Benefits
 //! - **Unified Implementation**: Single source of truth for block reading logic
 //! - **Strategy Pattern**: Different strategies for different access patterns
-//! - **FastLanes Integration**: Leverages all automatic capabilities (bloom filters, metadata stats, etc.)
+//! - **Proxima Integration**: Leverages all automatic capabilities (bloom filters, metadata stats, etc.)
 //! - **Engine Delegation**: SST, SWIFT, and other engines delegate here instead of reimplementing
 
 use anyhow::Result;
@@ -20,7 +20,7 @@ use crate::storage::engines::core::formats::proximablocks::block_structures::{Pr
 
 /// ✅ Reading strategy for different access patterns
 #[derive(Debug, Clone)]
-pub enum FastLanesReadStrategy {
+pub enum ProximaReadStrategy {
     /// Full scan for compaction - reads all blocks sequentially
     /// Optimized for: Compaction, full table scans, bulk exports
     FullScan {
@@ -64,14 +64,14 @@ pub enum FastLanesReadStrategy {
     },
 }
 
-/// ✅ Unified FastLanes Block Reader
+/// ✅ Unified Proxima Block Reader
 /// All storage engines delegate to this reader for consistent block access
-pub struct FastLanesBlockReader {
+pub struct ProximaBlockReader {
     filesystem: Arc<UnifiedCachingFilesystem>,
     collection_id: String,
 }
 
-impl FastLanesBlockReader {
+impl ProximaBlockReader {
     pub fn new(
         filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
@@ -86,10 +86,10 @@ impl FastLanesBlockReader {
     pub async fn read_blocks(
         &self,
         file_path: &str,
-        strategy: &FastLanesReadStrategy,
+        strategy: &ProximaReadStrategy,
     ) -> Result<Vec<ProximaDataBlock>> {
         match strategy {
-            FastLanesReadStrategy::FullScan {
+            ProximaReadStrategy::FullScan {
                 sequential_io,
                 use_block_cache,
                 prefetch_ahead,
@@ -97,7 +97,7 @@ impl FastLanesBlockReader {
                 self.read_full_scan(file_path, *sequential_io, *use_block_cache, *prefetch_ahead).await
             }
 
-            FastLanesReadStrategy::SelectiveRead {
+            ProximaReadStrategy::SelectiveRead {
                 use_bloom_filters,
                 use_metadata_stats,
                 enable_cache,
@@ -112,7 +112,7 @@ impl FastLanesBlockReader {
                 ).await
             }
 
-            FastLanesReadStrategy::RangeRead {
+            ProximaReadStrategy::RangeRead {
                 start_block,
                 end_block,
                 use_bloom_filters,
@@ -127,7 +127,7 @@ impl FastLanesBlockReader {
                 ).await
             }
 
-            FastLanesReadStrategy::PointLookup {
+            ProximaReadStrategy::PointLookup {
                 target_keys,
                 use_bloom_filters,
                 early_termination,
@@ -140,7 +140,7 @@ impl FastLanesBlockReader {
                 ).await
             }
 
-            FastLanesReadStrategy::StreamingRead {
+            ProximaReadStrategy::StreamingRead {
                 batch_size,
                 parallel_streams,
                 memory_budget_mb,
@@ -391,7 +391,7 @@ impl FastLanesBlockReader {
             return true;
         };
 
-        // Use FastLanes auto-generated column statistics for pruning
+        // Use Proxima auto-generated column statistics for pruning
         match filter_expr {
             FilterExpression::Comparison { field, operator, value } => {
                 // Special handling for ID field
@@ -510,15 +510,15 @@ impl FastLanesBlockReader {
     }
 }
 
-/// ✅ SST-specific reader that delegates to FastLanesBlockReader
+/// ✅ SST-specific reader that delegates to ProximaBlockReader
 pub struct SstBlockReader {
-    inner: FastLanesBlockReader,
+    inner: ProximaBlockReader,
 }
 
 impl SstBlockReader {
     pub fn new(filesystem: Arc<UnifiedCachingFilesystem>, collection_id: String) -> Self {
         Self {
-            inner: FastLanesBlockReader::new(filesystem, collection_id),
+            inner: ProximaBlockReader::new(filesystem, collection_id),
         }
     }
 
@@ -527,7 +527,7 @@ impl SstBlockReader {
         &self,
         file_path: &str,
     ) -> Result<Vec<ProximaDataBlock>> {
-        let strategy = FastLanesReadStrategy::FullScan {
+        let strategy = ProximaReadStrategy::FullScan {
             sequential_io: true,      // Sequential for compaction
             use_block_cache: false,    // Don't pollute cache during compaction
             prefetch_ahead: 8,         // Prefetch 8 blocks ahead
@@ -541,9 +541,9 @@ impl SstBlockReader {
         file_path: &str,
         filter: Option<FilterExpression>,
     ) -> Result<Vec<ProximaDataBlock>> {
-        let strategy = FastLanesReadStrategy::SelectiveRead {
-            use_bloom_filters: true,   // Use FastLanes bloom filters
-            use_metadata_stats: true,  // Use FastLanes metadata stats
+        let strategy = ProximaReadStrategy::SelectiveRead {
+            use_bloom_filters: true,   // Use Proxima bloom filters
+            use_metadata_stats: true,  // Use Proxima metadata stats
             enable_cache: true,         // Cache for repeated queries
             filter_expression: filter,
         };
@@ -551,15 +551,15 @@ impl SstBlockReader {
     }
 }
 
-/// ✅ SWIFT-specific reader that delegates to FastLanesBlockReader
+/// ✅ SWIFT-specific reader that delegates to ProximaBlockReader
 pub struct SwiftBlockReader {
-    inner: FastLanesBlockReader,
+    inner: ProximaBlockReader,
 }
 
 impl SwiftBlockReader {
     pub fn new(filesystem: Arc<UnifiedCachingFilesystem>, collection_id: String) -> Self {
         Self {
-            inner: FastLanesBlockReader::new(filesystem, collection_id),
+            inner: ProximaBlockReader::new(filesystem, collection_id),
         }
     }
 
@@ -572,7 +572,7 @@ impl SwiftBlockReader {
     ) -> Result<Vec<ProximaDataBlock>> {
         // Convert SuperBlock range to block range
         let blocks_per_superblock = 64;
-        let strategy = FastLanesReadStrategy::RangeRead {
+        let strategy = ProximaReadStrategy::RangeRead {
             start_block: start_superblock * blocks_per_superblock,
             end_block: end_superblock * blocks_per_superblock,
             use_bloom_filters: true,
@@ -586,7 +586,7 @@ impl SwiftBlockReader {
         &self,
         file_path: &str,
     ) -> Result<Vec<ProximaDataBlock>> {
-        let strategy = FastLanesReadStrategy::StreamingRead {
+        let strategy = ProximaReadStrategy::StreamingRead {
             batch_size: 1000,          // Process 1000 blocks per batch
             parallel_streams: 4,        // 4 parallel streams
             memory_budget_mb: 1024,     // 1GB memory budget
@@ -595,15 +595,15 @@ impl SwiftBlockReader {
     }
 }
 
-/// ✅ HELIX-specific reader that delegates to FastLanesBlockReader
+/// ✅ HELIX-specific reader that delegates to ProximaBlockReader
 pub struct HelixBlockReader {
-    inner: FastLanesBlockReader,
+    inner: ProximaBlockReader,
 }
 
 impl HelixBlockReader {
     pub fn new(filesystem: Arc<UnifiedCachingFilesystem>, collection_id: String) -> Self {
         Self {
-            inner: FastLanesBlockReader::new(filesystem, collection_id),
+            inner: ProximaBlockReader::new(filesystem, collection_id),
         }
     }
 
@@ -612,7 +612,7 @@ impl HelixBlockReader {
         &self,
         file_path: &str,
     ) -> Result<Vec<ProximaDataBlock>> {
-        let strategy = FastLanesReadStrategy::FullScan {
+        let strategy = ProximaReadStrategy::FullScan {
             sequential_io: true,       // Sequential for compaction
             use_block_cache: false,     // Don't pollute cache during compaction
             prefetch_ahead: 16,         // Prefetch more blocks for Hilbert patterns
@@ -629,7 +629,7 @@ impl HelixBlockReader {
         filter: Option<FilterExpression>,
     ) -> Result<Vec<ProximaDataBlock>> {
         // First do a selective read with filter
-        let strategy = FastLanesReadStrategy::SelectiveRead {
+        let strategy = ProximaReadStrategy::SelectiveRead {
             use_bloom_filters: true,
             use_metadata_stats: true,
             enable_cache: true,
@@ -639,10 +639,10 @@ impl HelixBlockReader {
         let blocks = self.inner.read_blocks(file_path, &strategy).await?;
 
         // Then apply Hilbert-specific pruning
-        // This could be enhanced to use FastLanes metadata for Hilbert ranges
+        // This could be enhanced to use Proxima metadata for Hilbert ranges
         let filtered_blocks = blocks.into_iter().filter(|block| {
             // Check if block's Hilbert range overlaps with query
-            // This would use the HelixBlockMetadata that composes with FastLanes
+            // This would use the HelixBlockMetadata that composes with Proxima
             true // For now, pass all blocks
         }).collect();
 
@@ -658,7 +658,7 @@ impl HelixBlockReader {
     ) -> Result<Vec<ProximaDataBlock>> {
         // HELIX uses clustering, so convert cluster IDs to block ranges
         let blocks_per_cluster = 32; // HELIX-specific clustering factor
-        let strategy = FastLanesReadStrategy::RangeRead {
+        let strategy = ProximaReadStrategy::RangeRead {
             start_block: start_cluster * blocks_per_cluster,
             end_block: end_cluster * blocks_per_cluster,
             use_bloom_filters: true,
@@ -673,9 +673,9 @@ impl HelixBlockReader {
         file_path: &str,
         target_keys: Vec<String>,
     ) -> Result<Vec<ProximaDataBlock>> {
-        let strategy = FastLanesReadStrategy::PointLookup {
+        let strategy = ProximaReadStrategy::PointLookup {
             target_keys,
-            use_bloom_filters: true,   // Use FastLanes bloom filters
+            use_bloom_filters: true,   // Use Proxima bloom filters
             early_termination: true,    // Stop when all keys found
         };
         self.inner.read_blocks(file_path, &strategy).await

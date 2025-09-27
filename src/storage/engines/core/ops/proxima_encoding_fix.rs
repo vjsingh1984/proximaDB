@@ -1,10 +1,10 @@
-// Optimized FastLanes Encoding Fix
+// Optimized Proxima Encoding Fix
 // This demonstrates the recommended fix for the element count issue
 
 use anyhow::Result;
 
 /// Fixed encoder that stores element count
-pub fn encode_i64_fixed(encoder: &FastLanesEncoder, data: &[i64]) -> Result<Vec<u8>> {
+pub fn encode_i64_fixed(encoder: &ProximaEncoder, data: &[i64]) -> Result<Vec<u8>> {
     let mut result = Vec::new();
 
     // 1. Type marker for i64
@@ -21,7 +21,7 @@ pub fn encode_i64_fixed(encoder: &FastLanesEncoder, data: &[i64]) -> Result<Vec<
 }
 
 /// Fixed decoder that reads element count
-pub fn decode_i64_fixed(decoder: &FastLanesDecoder, data: &[u8]) -> Result<Vec<i64>> {
+pub fn decode_i64_fixed(decoder: &ProximaDecoder, data: &[u8]) -> Result<Vec<i64>> {
     if data.len() < 5 {
         return Err(anyhow::anyhow!("Invalid i64 data: too short"));
     }
@@ -97,8 +97,8 @@ pub fn delta_decode_with_count(data: &[u8]) -> Result<Vec<i64>> {
     Ok(values)
 }
 
-// For the FastLanesDataBlock use case
-impl FastLanesDataBlock {
+// For the ProximaDataBlock use case
+impl ProximaDataBlock {
     pub fn serialize_column_with_count(&self, column_data: &[i64]) -> Result<Vec<u8>> {
         let mut result = Vec::new();
 
@@ -106,7 +106,7 @@ impl FastLanesDataBlock {
         result.extend_from_slice(&(column_data.len() as u32).to_le_bytes());
 
         // Then encode the data
-        let encoder = FastLanesEncoder::new(self.select_optimal_scheme(column_data));
+        let encoder = ProximaEncoder::new(self.select_optimal_scheme(column_data));
         let encoded = encoder.encode_integers(column_data)?;
         result.extend(encoded);
 
@@ -122,7 +122,7 @@ impl FastLanesDataBlock {
         let count = u32::from_le_bytes(data[0..4].try_into()?) as usize;
 
         // Decode exactly that many elements
-        let decoder = FastLanesDecoder::new_from_data(&data[4..]);
+        let decoder = ProximaDecoder::new_from_data(&data[4..]);
         decoder.decode_integers(&data[4..], count)
     }
 }

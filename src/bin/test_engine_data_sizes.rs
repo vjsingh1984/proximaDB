@@ -38,8 +38,8 @@ fn main() {
              total_raw_size, total_raw_size as f64 / (1024.0 * 1024.0));
 
     println!("\n📝 Expected file sizes by engine:");
-    println!("  SST (FastLanes + compression): ~{:.1} MB", total_raw_size as f64 / (1024.0 * 1024.0) * 0.7);
-    println!("  SWIFT (FastLanes blocks): ~{:.1} MB", total_raw_size as f64 / (1024.0 * 1024.0) * 0.7);
+    println!("  SST (Proxima + compression): ~{:.1} MB", total_raw_size as f64 / (1024.0 * 1024.0) * 0.7);
+    println!("  SWIFT (Proxima blocks): ~{:.1} MB", total_raw_size as f64 / (1024.0 * 1024.0) * 0.7);
     println!("  VIPER (Parquet + Zstd): ~{:.1} MB", total_raw_size as f64 / (1024.0 * 1024.0) * 0.5);
     println!("  NOVA (Parquet + Zstd): ~{:.1} MB", total_raw_size as f64 / (1024.0 * 1024.0) * 0.5);
 

@@ -1,4 +1,4 @@
-// Optimal FastLanes Encoding - Minimal redundancy
+// Optimal Proxima Encoding - Minimal redundancy
 use anyhow::Result;
 
 /// Encoding markers that indicate whether count is stored
@@ -29,7 +29,7 @@ pub mod markers {
     }
 }
 
-impl FastLanesEncoder {
+impl ProximaEncoder {
     /// Encode with smart count handling
     pub fn encode_columnar(
         &self,
@@ -45,7 +45,7 @@ impl FastLanesEncoder {
         };
 
         match self.scheme {
-            FastLanesScheme::Delta { base } => {
+            ProximaScheme::Delta { base } => {
                 if needs_count {
                     encoded.push(markers::DELTA_WITH_COUNT);
                     encoded.extend(&(data.len() as u32).to_le_bytes());
@@ -60,7 +60,7 @@ impl FastLanesEncoder {
                 encoded.extend(encode_deltas(&deltas)?);
             },
 
-            FastLanesScheme::RunLength => {
+            ProximaScheme::RunLength => {
                 // RLE often has different output count
                 encoded.push(markers::RLE_WITH_COUNT);
                 encoded.extend(&(data.len() as u32).to_le_bytes());
@@ -80,7 +80,7 @@ impl FastLanesEncoder {
     }
 }
 
-impl FastLanesDecoder {
+impl ProximaDecoder {
     /// Decode with smart count handling
     pub fn decode_columnar(
         &self,
@@ -139,8 +139,8 @@ impl FastLanesDecoder {
     }
 }
 
-// Usage in FastLanesDataBlock
-impl FastLanesDataBlock {
+// Usage in ProximaDataBlock
+impl ProximaDataBlock {
     pub fn serialize_with_context(&self, record_count: usize) -> Result<Vec<u8>> {
         // ... serialize vectors, IDs, etc.
 

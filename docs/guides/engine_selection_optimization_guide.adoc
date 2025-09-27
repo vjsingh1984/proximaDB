@@ -65,7 +65,7 @@ flowchart TD
 | Ultra-fast
 | Low
 | Low-latency queries
-| FastLanes encoding (101μs flush @ 1K vectors)
+| Proxima encoding (101μs flush @ 1K vectors)
 
 | **VIPER**
 | 100μs (consistent)
@@ -155,9 +155,9 @@ RUST_LOG=sst=info proximadb-server 2>&1 | grep throughput
 **Configuration Optimization:**
 ```toml
 [storage.engines.swift]
-# FastLanes encoding for speed
-enable_fastlanes_encoding = true
-fastlanes_bit_width = 8              # Optimize for your data distribution
+# Proxima encoding for speed
+enable_proxima_encoding = true
+proxima_bit_width = 8              # Optimize for your data distribution
 
 # Memory pool optimization
 memory_pool_size_mb = 128             # Dedicated memory pool
@@ -190,7 +190,7 @@ echo performance > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 
 **Expected Performance (Apple M4 Pro):**
 - **Query latency**: <1ms (p99)
-- **Flush performance**: 101μs for 1K vectors (FastLanes encoding)
+- **Flush performance**: 101μs for 1K vectors (Proxima encoding)
 - **Throughput**: Optimized for latency over throughput
 - **Memory usage**: Fixed pools for predictable performance
 

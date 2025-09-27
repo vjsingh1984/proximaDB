@@ -1,5 +1,5 @@
 //! Comprehensive tests for SST engine optimizations
-//! Tests bytemuck vector serialization and ZSTD FastLanesDataBlock compression
+//! Tests bytemuck vector serialization and ZSTD ProximaDataBlock compression
 
 use anyhow::Result;
 use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationConfig};
@@ -7,8 +7,8 @@ use proximadb::proto::proximadb_v1::{MetadataItem, VectorRecord, SqlValue};
 use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata, SstEngine};
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
-use proximadb::storage::engines::core::formats::fastlanes_blocks::block_structures::{
-    FastLanesDataBlock, BlockCompressionConfig,
+use proximadb::storage::engines::core::formats::proxima_blocks::block_structures::{
+    ProximaDataBlock, BlockCompressionConfig,
 };
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -213,7 +213,7 @@ fn test_sst_record_optimized_serialization() {
 
 #[test]
 fn test_data_block_zstd_compression() {
-    // Create FastLanesFastLanesDataBlock with multiple records containing different vector types
+    // Create ProximaProximaDataBlock with multiple records containing different vector types
     let sst_entries = vec![
         create_test_sst_record("dense_128".to_string(), create_test_vector(128, 0.1)),
         create_test_sst_record("sparse_512".to_string(), create_test_vector(512, 0.8)),
@@ -230,12 +230,12 @@ fn test_data_block_zstd_compression() {
     // Note: compression configuration may have changed
     compression_config.compression_level = 6; // Higher compression
 
-    let data_block = FastLanesDataBlock::new(records, compression_config.clone());
+    let data_block = ProximaDataBlock::new(records, compression_config.clone());
 
     let serialized = data_block
         .serialize_with_config(&compression_config)
         .unwrap();
-    let deserialized = FastLanesDataBlock::deserialize(&serialized).unwrap();
+    let deserialized = ProximaDataBlock::deserialize(&serialized).unwrap();
 
     // Verify block metadata
     assert_eq!(data_block.block_id, deserialized.block_id);
@@ -287,7 +287,7 @@ fn test_data_block_zstd_compression() {
             1.0
         };
         debug!(
-            "📦 FastLanesFastLanesDataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes",
+            "📦 ProximaProximaDataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes",
             compression_ratio,
             uncompressed_size,
             serialized.len()
@@ -295,7 +295,7 @@ fn test_data_block_zstd_compression() {
         assert!(compression_ratio < 0.95, "Compression should be beneficial");
     } else {
         debug!(
-            "📦 FastLanesFastLanesDataBlock stored uncompressed - {} bytes",
+            "📦 ProximaProximaDataBlock stored uncompressed - {} bytes",
             serialized.len()
         );
     }
@@ -313,12 +313,12 @@ fn test_compression_performance_benchmark() {
         .collect();
 
     let config = BlockCompressionConfig::default();
-    let data_block = FastLanesDataBlock::new(vectors, config);
+    let data_block = ProximaDataBlock::new(vectors, config);
 
     // Benchmark uncompressed serialization
     let start = Instant::now();
     let uncompressed = {
-        // Note: FastLanesDataBlock may not implement Serialize directly
+        // Note: ProximaDataBlock may not implement Serialize directly
         // Use its own serialization method instead
         data_block.serialize_with_config(&BlockCompressionConfig::default()).unwrap()
     };

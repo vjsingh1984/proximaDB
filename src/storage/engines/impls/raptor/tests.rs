@@ -53,7 +53,7 @@ mod tests {
             cache_eviction_policy: config::EvictionPolicy::Lru,
             clustering_config: None,
             compression_level: 3,
-            use_fastlanes_encoding: false,
+            use_proxima_encoding: false,
             simd_lanes: 8,
             prefetch_size_mb: 1,
             enable_clustering: false,
@@ -493,7 +493,7 @@ mod tests {
     #[tokio::test]
     async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
         use crate::storage::engines::impls::raptor::common::{
-            ColumnarCentroids, FastLanesMetadata,
+            ColumnarCentroids, ProximaMetadata,
         };
         use crate::storage::engines::impls::raptor::writer::RaptorWriter;
         use tempfile::TempDir;
@@ -511,7 +511,7 @@ mod tests {
             rowgroup_size: 100,
             compression: crate::storage::engines::impls::raptor::config::CompressionCodec::Snappy,
             compression_level: 3,
-            use_fastlanes_encoding: false,
+            use_proxima_encoding: false,
             enable_simd: false,
             simd_lanes: 8,
             enable_range_reads: false,

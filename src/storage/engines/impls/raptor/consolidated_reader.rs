@@ -18,7 +18,7 @@ use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistan
 use crate::core::search::results::OptimizedSearchRecord;
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
-use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
+use crate::storage::engines::core::ops::proxima_encoding::{ProximaDecoder, ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -232,8 +232,8 @@ pub struct RaptorReader {
     /// Unified distance computation (replaces simd_encoder.rs distance logic)
     distance_compute: Arc<UnifiedDistanceCompute>,
 
-    /// FastLanes decoder for SIMD-optimized decompression
-    fastlanes_decoder: FastLanesDecoder,
+    /// Proxima decoder for SIMD-optimized decompression
+    proxima_decoder: ProximaDecoder,
 
     /// Filesystem for unified caching operations
     filesystem: Arc<dyn FileSystem>,
@@ -291,11 +291,11 @@ impl RaptorReader {
         filesystem: Arc<dyn FileSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
-        // Initialize FastLanes decoder based on config
-        let fastlanes_scheme = if config.use_fastlanes_encoding {
-            FastLanesScheme::BitPacked { bits: 32 }
+        // Initialize Proxima decoder based on config
+        let proxima_scheme = if config.use_proxima_encoding {
+            ProximaScheme::BitPacked { bits: 32 }
         } else {
-            FastLanesScheme::BitPacked { bits: 32 } // Default to raw
+            ProximaScheme::BitPacked { bits: 32 } // Default to raw
         };
 
         Self {
@@ -304,7 +304,7 @@ impl RaptorReader {
             config,
             cache,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
-            fastlanes_decoder: FastLanesDecoder::new(fastlanes_scheme),
+            proxima_decoder: ProximaDecoder::new(proxima_scheme),
             filesystem,
             transaction_coordinator,
         }
@@ -359,7 +359,7 @@ impl RaptorReader {
                 let end = start + rg_metadata.compressed_size;
                 let compressed_data = &full_file_data[start as usize..end as usize];
 
-                // Use standard decompression (FastLanes used for different data types)
+                // Use standard decompression (Proxima used for different data types)
                 let decompressed = crate::core::compression::decompress(
                     &compressed_data,
                     CompressionAlgorithm::Zstd,
@@ -1454,7 +1454,7 @@ impl RaptorReader {
             min_distance: 0.0,
             max_distance: 2.0,
             compression:
-                crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme::BitPacked {
+                crate::storage::engines::core::ops::proxima_encoding::ProximaScheme::BitPacked {
                     bits: 8,
                 },
             compressed_size: 64000,
@@ -3563,9 +3563,9 @@ impl RaptorReader {
         // Parse vector column
         let mut cursor = std::io::Cursor::new(&vector_data);
 
-        // Import FastLanes decoder
-        use crate::storage::engines::core::ops::fastlanes_encoding::{FastLanesDecoder, FastLanesScheme};
-        let fastlanes_decoder = FastLanesDecoder::new(FastLanesScheme::BitPacked { bits: 16 });
+        // Import Proxima decoder
+        use crate::storage::engines::core::ops::proxima_encoding::{ProximaDecoder, ProximaScheme};
+        let proxima_decoder = ProximaDecoder::new(ProximaScheme::BitPacked { bits: 16 });
 
         // Read columnar vectors (transposed format)
         let mut columns: Vec<Vec<f32>> = vec![Vec::with_capacity(num_rows); dimension];
@@ -3597,8 +3597,8 @@ impl RaptorReader {
             let mut encoded_data = vec![0u8; encoded_len];
             cursor.read_exact(&mut encoded_data)?;
 
-            // Decode using FastLanes
-            let decoded = fastlanes_decoder.decode_f32(&encoded_data, Some(num_rows))?; // Pass expected count for smart decoding
+            // Decode using Proxima
+            let decoded = proxima_decoder.decode_f32(&encoded_data, Some(num_rows))?; // Pass expected count for smart decoding
             columns[dim_idx] = decoded;
         }
 

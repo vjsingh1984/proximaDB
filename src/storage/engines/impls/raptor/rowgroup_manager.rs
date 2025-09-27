@@ -6,16 +6,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::common::{
-    ColumnarBlock, FastLanesEncodedData, FastLanesScheme, MetadataColumns, QuantizationParams,
+    ColumnarBlock, ProximaEncodedData, ProximaScheme, MetadataColumns, QuantizationParams,
     QuantizedColumnarData, RowGroup, TransposedVectors,
 };
 use super::config::RaptorConfig;
 use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesEncoder;
-use crate::storage::engines::core::ops::unified_fastlanes_simd::{UnifiedFastLanesSIMD, EngineProfile};
-use crate::storage::engines::core::formats::fastlanes_blocks::{BlockCompressionConfig, VectorEncodingLayout};
+use crate::storage::engines::core::ops::proxima_encoding::ProximaEncoder;
+use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
+use crate::storage::engines::core::formats::proximablocks::{BlockCompressionConfig, VectorEncodingLayout};
 use crate::core::compression::CompressionAlgorithm;
 
 // RowGroup removed - consolidated into common::RowGroup
@@ -25,9 +25,9 @@ use crate::core::compression::CompressionAlgorithm;
 
 // TransposedVectors moved to common.rs
 
-// FastLanesEncodedData moved to common.rs
+// ProximaEncodedData moved to common.rs
 
-// FastLanesScheme imported from common.rs
+// ProximaScheme imported from common.rs
 
 // QuantizedColumnarData and QuantizationParams moved to common.rs
 
@@ -51,7 +51,7 @@ pub struct RowGroups {
     /// Quantization engine if enabled
     quantization_engine: Option<Arc<StorageQuantizationEngine>>,
     /// SIMD-optimized encoder for RAPTOR
-    simd_encoder: UnifiedFastLanesSIMD,
+    simd_encoder: UnifiedProximaSIMD,
     /// Block compression configuration
     compression_config: BlockCompressionConfig,
     /// Configuration
@@ -70,7 +70,7 @@ impl RowGroups {
         tracing::info!("RAPTOR RowGroups initialized: {}", optimal_size.rationale);
 
         // Use SIMD-optimized encoder with RAPTOR engine profile
-        let simd_encoder = UnifiedFastLanesSIMD::new(EngineProfile::SST)?;
+        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?;
 
         // Configure compression for optimal read performance
         let compression_config = BlockCompressionConfig {
@@ -169,7 +169,7 @@ impl RowGroups {
                 dimension: 0,
                 vector_count: 0,
             }),
-            fastlanes_data: None,
+            proxima_data: None,
             quantized_data: None,
             metadata_columns: MetadataColumns {
                 string_columns: HashMap::new(),
@@ -215,7 +215,7 @@ impl RowGroups {
             row_group.columnar_data = Some(ColumnarBlock {
                 vector_ids: Vec::new(),
                 transposed_vectors: None,
-                fastlanes_data: None,
+                proxima_data: None,
                 quantized_data: None,
                 metadata_columns: MetadataColumns {
                     string_columns: HashMap::new(),
@@ -481,8 +481,8 @@ impl RowGroups {
                     .unwrap_or(0)
             );
 
-            // Apply FastLanes compression
-            self.apply_fastlanes_compression(row_group_id).await?;
+            // Apply Proxima compression
+            self.apply_proxima_compression(row_group_id).await?;
 
             // Apply quantization if enabled
             if self.quantization_engine.is_some() {
@@ -496,8 +496,8 @@ impl RowGroups {
         Ok(())
     }
 
-    /// Apply SIMD-optimized FastLanes compression to a row group
-    async fn apply_fastlanes_compression(&mut self, row_group_id: u16) -> Result<()> {
+    /// Apply SIMD-optimized Proxima compression to a row group
+    async fn apply_proxima_compression(&mut self, row_group_id: u16) -> Result<()> {
         let row_group = self
             .row_groups
             .get(&row_group_id)
@@ -546,9 +546,9 @@ impl RowGroups {
                 for dim_idx in start..end {
                     if dim_idx < simd_transposed.len() {
                         let encoded_dim = self.simd_encoder.simd_encode_dimension(&simd_transposed[dim_idx],
-                                                                           &FastLanesScheme::Adaptive)?;
+                                                                           &ProximaScheme::Adaptive)?;
                         encoded.push(encoded_dim);
-                        schemes.push(FastLanesScheme::Adaptive);
+                        schemes.push(ProximaScheme::Adaptive);
                     }
                 }
             }
@@ -560,9 +560,9 @@ impl RowGroups {
 
             for dim_data in &simd_transposed {
                 let encoded_dim = self.simd_encoder.simd_encode_dimension(dim_data,
-                                                                   &FastLanesScheme::Adaptive)?;
+                                                                   &ProximaScheme::Adaptive)?;
                 encoded.push(encoded_dim);
-                schemes.push(FastLanesScheme::Adaptive);
+                schemes.push(ProximaScheme::Adaptive);
             }
             (encoded, schemes)
         };
@@ -576,14 +576,14 @@ impl RowGroups {
         let row_group = self.row_groups.get_mut(&row_group_id).unwrap();
         let columnar_data = row_group.columnar_data.as_mut().unwrap();
 
-        columnar_data.fastlanes_data = Some(FastLanesEncodedData {
+        columnar_data.proxima_data = Some(ProximaEncodedData {
             encoded_dimensions,
             encoding_schemes,
             compression_ratio,
         });
 
         tracing::debug!(
-            "SIMD FastLanes compression: {:.2}x ratio for row group {} (dimension: {})",
+            "SIMD Proxima compression: {:.2}x ratio for row group {} (dimension: {})",
             compression_ratio,
             row_group_id,
             dimension

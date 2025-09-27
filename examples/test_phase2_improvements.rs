@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -82,7 +82,7 @@ fn test_pattern(pattern: &str, vectors: &[VectorRecord]) {
         metadata_algorithm: None,
     };
 
-    let block = FastLanesDataBlock::new(vectors.to_vec(), config.clone());
+    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
     let dimension = vectors[0].vector.len();
     let original_size = vectors.len() * dimension * 4; // 4 bytes per f32
 

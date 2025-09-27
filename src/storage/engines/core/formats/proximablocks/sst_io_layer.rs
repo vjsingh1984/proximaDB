@@ -11,7 +11,7 @@
 // - Bloom filter caching (4KB per file)
 // - Index block caching (60KB per file)
 // - Bandwidth optimization for cloud storage
-// - FastLanes encoding support for compressed blocks
+// - Proxima encoding support for compressed blocks
 //
 // RELATIONSHIP WITH sst_query_engine.rs:
 // Similar to parquet_io_layer vs parquet_query_engine:
@@ -21,20 +21,20 @@
 // RENAME SUGGESTION: This file should be renamed to `sst_io_layer.rs`
 // to match the parquet naming convention
 //
-// FASTLANES INTEGRATION ARCHITECTURE:
+// PROXIMA INTEGRATION ARCHITECTURE:
 // ====================================
 // This reader supports multiple encoding schemes per DataBlock based on data characteristics:
 //
 // 1. ENCODING DETECTION:
 //    - Each DataBlock has a 1-byte encoding marker at offset 0
 //    - Marker format: [7:4] = Major encoding, [3:0] = Sub-encoding variant
-//    - Examples: 0x00 = Raw, 0x10 = FastLanes BitPacked, 0x20 = FastLanes Delta, etc.
+//    - Examples: 0x00 = Raw, 0x10 = Proxima BitPacked, 0x20 = Proxima Delta, etc.
 //
-// 2. DATABLOCK LAYOUT WITH FASTLANES:
+// 2. DATABLOCK LAYOUT WITH PROXIMA:
 //    Traditional SST DataBlock:
 //    [Header][Records][Bloom][Index]
 //
-//    FastLanes-Enhanced DataBlock:
+//    Proxima-Enhanced DataBlock:
 //    [EncodingMarker(1B)][Header][EncodedVectorData][MetadataSection][Bloom][Index]
 //
 //    Where EncodedVectorData uses columnar transpose:
@@ -109,7 +109,7 @@ pub struct SharedSstFormatReader {
     distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 }
 
-/// Shared SST format writer with compression and FastLanes encoding
+/// Shared SST format writer with compression and Proxima encoding
 /// Complements the reader for full read/write support
 pub struct SharedSstFormatWriter {
     /// Filesystem for I/O operations
@@ -188,13 +188,13 @@ impl SharedSstFormatReader {
         }
     }
 
-    /// Enhanced read with strategy-based delegation to FastLanes blocks
+    /// Enhanced read with strategy-based delegation to Proxima blocks
     pub fn read_with_strategy<'a>(
         &'a self,
         file_path: &'a str,
         strategy: &'a crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy,
         filter_expression: Option<&'a crate::core::search::FilterExpression>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>> + Send + 'a>> {
         Box::pin(async move {
         use crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy;
 
@@ -274,7 +274,7 @@ impl SharedSstFormatReader {
         &self,
         file_path: &str,
         use_block_cache: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         use crate::storage::persistence::filesystem::FileSystem;
 
         // Read data from file
@@ -291,7 +291,7 @@ impl SharedSstFormatReader {
         // For now, try to deserialize as a single block
         // TODO: Implement multi-block file format
         let blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
             vec![single_block]
         } else {
             // If single block fails, assume empty or corrupted file
@@ -309,7 +309,7 @@ impl SharedSstFormatReader {
         enable_cache_lookup: bool,
         enable_metadata_cache: bool,
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         use crate::storage::persistence::filesystem::FileSystem;
 
         // Use unified filesystem with selective caching
@@ -325,7 +325,7 @@ impl SharedSstFormatReader {
         // Deserialize blocks
         // TODO: Implement multi-block file format
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
             vec![single_block]
         } else {
             Vec::new()
@@ -335,7 +335,7 @@ impl SharedSstFormatReader {
             // Check bloom filter if enabled
             if enable_bloom_filters {
                 if let Some(ref filter_expr) = filter_expression {
-                    // FastLanes blocks have auto-generated bloom filters
+                    // Proxima blocks have auto-generated bloom filters
                     if let Some(ref bloom) = block.bloom_filter {
                         // Check if block might contain matching records
                         // TODO: Implement bloom filter check logic
@@ -358,7 +358,7 @@ impl SharedSstFormatReader {
         bypass_write_cache: bool,
         use_disk_cache_if_exists: bool,
         sequential_io: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         // Compaction needs all blocks for merging
         use crate::storage::persistence::filesystem::FileSystem;
 
@@ -368,7 +368,7 @@ impl SharedSstFormatReader {
         // Deserialize blocks
         // TODO: Implement multi-block file format
         let blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
             vec![single_block]
         } else {
             Vec::new()
@@ -383,7 +383,7 @@ impl SharedSstFormatReader {
         start_block: u32,
         end_block: u32,
         use_bloom_filter: bool,
-    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         use crate::storage::persistence::filesystem::FileSystem;
 
         // For now, read the entire file and filter blocks in memory
@@ -392,7 +392,7 @@ impl SharedSstFormatReader {
 
         // Deserialize and filter blocks by range
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
             vec![single_block]
         } else {
             Vec::new()
@@ -416,7 +416,7 @@ impl SharedSstFormatReader {
         selected_blocks: &[u32],
         skip_bloom_check: bool,
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         // Read only selected blocks
         let mut blocks = Vec::new();
         use crate::storage::persistence::filesystem::FileSystem;
@@ -426,7 +426,7 @@ impl SharedSstFormatReader {
 
         // Deserialize all blocks
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
             vec![single_block]
         } else {
             Vec::new()
@@ -446,7 +446,7 @@ impl SharedSstFormatReader {
         &self,
         file_path: &str,
         block_ids: &[u32],
-    ) -> Result<Vec<crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock>, ProximaDBError> {
+    ) -> Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError> {
         let mut blocks = Vec::new();
         use crate::storage::persistence::filesystem::FileSystem;
 
@@ -455,7 +455,7 @@ impl SharedSstFormatReader {
 
         // Deserialize all blocks
         let all_blocks = if let Ok(single_block) =
-            crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock::deserialize(&data) {
+            crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock::deserialize(&data) {
             vec![single_block]
         } else {
             Vec::new()
@@ -470,10 +470,10 @@ impl SharedSstFormatReader {
         Ok(blocks)
     }
 
-    /// Search FastLanes blocks with predicate pushdown
+    /// Search Proxima blocks with predicate pushdown
     pub async fn search_blocks_with_predicate(
         &self,
-        blocks: &[crate::storage::engines::core::formats::fastlanes_blocks::block_structures::FastLanesDataBlock],
+        blocks: &[crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock],
         query_vector: &[f32],
         filter_expression: Option<&crate::core::search::FilterExpression>,
         k: usize,

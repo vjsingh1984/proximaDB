@@ -76,7 +76,7 @@ type VectorSearchResult = OptimizedSearchRecord;
 ///    a) Global HNSW navigation → find promising rowgroups
 ///    b) Local HNSW search within rowgroups (parallel)
 ///    c) Optional: columnar scan for exhaustive search
-///    d) FastLanes decoding only for final candidates
+///    d) Proxima decoding only for final candidates
 ///
 /// 5. COMPACTION STRATEGY:
 ///    - Single file maintained (L0 only, max_level=0)
@@ -831,7 +831,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
     }
 
     fn deserialize_batch(&self, data: &[u8]) -> Result<RecordBatch> {
-        // FASTLANES INTEGRATION: Check for encoding marker
+        // PROXIMA INTEGRATION: Check for encoding marker
         // RAPTOR uses 0xA0-0xAF range for tensor-optimized encodings
         if data.is_empty() {
             return Err(anyhow::anyhow!("Empty data"));
@@ -839,11 +839,11 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
         let encoding_marker = data[0];
 
-        // Check if this is a FastLanes-encoded batch
+        // Check if this is a Proxima-encoded batch
         match encoding_marker {
             0xA1 => {
-                // FastLanes tensor encoding - decode it first
-                self.deserialize_fastlanes_batch(&data[1..], encoding_marker)
+                // Proxima tensor encoding - decode it first
+                self.deserialize_proxima_batch(&data[1..], encoding_marker)
             }
             0xA2 => {
                 // Sparse tensor encoding
@@ -880,9 +880,9 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         }
     }
 
-    fn deserialize_fastlanes_batch(&self, data: &[u8], marker: u8) -> Result<RecordBatch> {
-        use crate::storage::engines::core::ops::fastlanes_encoding::{
-            FastLanesDecoder, FastLanesScheme,
+    fn deserialize_proxima_batch(&self, data: &[u8], marker: u8) -> Result<RecordBatch> {
+        use crate::storage::engines::core::ops::proxima_encoding::{
+            ProximaDecoder, ProximaScheme,
         };
         use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
         use std::io::Read;
@@ -908,9 +908,9 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             let mut column_data = vec![0u8; column_len];
             cursor.read_exact(&mut column_data)?;
 
-            // Decode using FastLanes
+            // Decode using Proxima
             // The scheme information should be embedded in the column data
-            let decoder = FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
+            let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
                 reference: 0,
                 bits: 16,
             });
@@ -1029,7 +1029,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                 col_indices.push(u32::from_le_bytes(idx_bytes));
             }
 
-            // Read values (using FastLanes encoding for compression)
+            // Read values (using Proxima encoding for compression)
             let mut val_len_bytes = [0u8; 4];
             cursor.read_exact(&mut val_len_bytes)?;
             let values_len = u32::from_le_bytes(val_len_bytes) as usize;
@@ -1037,11 +1037,11 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             let mut values_data = vec![0u8; values_len];
             cursor.read_exact(&mut values_data)?;
 
-            // Decode values using FastLanes
-            use crate::storage::engines::core::ops::fastlanes_encoding::{
-                FastLanesDecoder, FastLanesScheme,
+            // Decode values using Proxima
+            use crate::storage::engines::core::ops::proxima_encoding::{
+                ProximaDecoder, ProximaScheme,
             };
-            let decoder = FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
+            let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
                 reference: 0,
                 bits: 16,
             });
@@ -1085,10 +1085,10 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             let mut values_data = vec![0u8; values_len];
             cursor.read_exact(&mut values_data)?;
 
-            use crate::storage::engines::core::ops::fastlanes_encoding::{
-                FastLanesDecoder, FastLanesScheme,
+            use crate::storage::engines::core::ops::proxima_encoding::{
+                ProximaDecoder, ProximaScheme,
             };
-            let decoder = FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
+            let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
                 reference: 0,
                 bits: 16,
             });

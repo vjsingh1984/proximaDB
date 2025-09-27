@@ -208,7 +208,7 @@ impl UnifiedSWIFTReader {
             ReadAccessStrategy::CachedSelective { filter } => {
                 // Predicate pushdown: only read blocks that match filter
                 for superblock in &swift_file.superblocks {
-                    // ✅ Check FastLanes auto-generated bloom filters for quick negative lookups
+                    // ✅ Check Proxima auto-generated bloom filters for quick negative lookups
                     // Aggregate bloom filters from all blocks in superblock
                     let mut should_skip = false;
                     for block in &superblock.blocks {

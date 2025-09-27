@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -64,7 +64,7 @@ fn test_round_trip(
         metadata_algorithm: None, // Use main algorithm for metadata
     };
 
-    let block = FastLanesDataBlock::new(vectors.to_vec(), config.clone());
+    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
 
     // Calculate original size
     let dimension = vectors[0].vector.len();
@@ -76,7 +76,7 @@ fn test_round_trip(
     let compression_ratio = original_size as f64 / encoded_size as f64;
 
     // Test decoding
-    let decoded_block = FastLanesDataBlock::deserialize(&encoded)?;
+    let decoded_block = ProximaDataBlock::deserialize(&encoded)?;
 
     // Verify data integrity
     if decoded_block.records.len() != vectors.len() {
@@ -104,7 +104,7 @@ fn test_round_trip(
 }
 
 fn main() -> anyhow::Result<()> {
-    println!("🚀 FastLanes Round-Trip Testing");
+    println!("🚀 Proxima Round-Trip Testing");
     println!("========================================");
 
     // Use consistent test data: 256 vectors × 256 dimensions (realistic high-dimensional dataset)

@@ -444,7 +444,7 @@ async fn test_liquid_clustering() {
 }
 
 #[tokio::test]
-async fn test_fastlanes_integration() {
+async fn test_proxima_integration() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let temp_dir = tempdir().unwrap();
@@ -460,7 +460,7 @@ async fn test_fastlanes_integration() {
     let path = temp_dir.path().join("test.helix");
 
     // Write SSTable
-    let bytes_written = fastlane::write_helix_sstable(
+    let bytes_written = proxima::write_helix_sstable(
         &filesystem,
         &path,
         &records,
@@ -475,7 +475,7 @@ async fn test_fastlanes_integration() {
 
     // Search SSTable
     let query = vec![0.5; 128];
-    let results = fastlane::search_helix_sstable(
+    let results = proxima::search_helix_sstable(
         &filesystem,
         &path,
         &query,

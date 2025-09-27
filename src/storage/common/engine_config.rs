@@ -153,8 +153,8 @@ pub struct HelixCompactionConfig {
     /// Memory optimization level
     pub memory_optimization_level: String,
 
-    /// FastLanes encoding for vectors
-    pub use_fastlanes_encoding: bool,
+    /// Proxima encoding for vectors
+    pub use_proxima_encoding: bool,
 
     /// Tree rebalancing threshold
     pub tree_rebalance_threshold: f64,
@@ -167,7 +167,7 @@ impl Default for HelixCompactionConfig {
     fn default() -> Self {
         Self {
             memory_optimization_level: "aggressive".to_string(),
-            use_fastlanes_encoding: true,
+            use_proxima_encoding: true,
             tree_rebalance_threshold: 0.7,
             cache_warmup: true,
         }

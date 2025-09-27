@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::storage::engines::core::ops::fastlanes_encoding::FastLanesScheme;
+use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
 
 use super::common::{
     CompressionType, DeltaEntry, HierarchicalData, InterCentroidCompressionMetadata,
@@ -49,7 +49,7 @@ impl MatrixBuilder {
                 distances: Vec::new(),
                 min_distance: 0.0,
                 max_distance: 0.0,
-                compression: FastLanesScheme::BitPacked { bits: 16 },
+                compression: ProximaScheme::BitPacked { bits: 16 },
                 compressed_size: 0,
             });
         }
@@ -120,7 +120,7 @@ impl MatrixBuilder {
             distances: compressed_bytes,
             min_distance: min_dist,
             max_distance: max_dist,
-            compression: FastLanesScheme::BitPacked { bits: 16 },
+            compression: ProximaScheme::BitPacked { bits: 16 },
             compressed_size,
         })
     }
@@ -223,7 +223,7 @@ impl MatrixBuilder {
                 max_distance: max_dist,
                 scale_factor,
                 compression_type: CompressionType::Quantized16Bit,
-                row_encodings: vec![FastLanesScheme::BitPacked { bits: 16 }; num_centroids],
+                row_encodings: vec![ProximaScheme::BitPacked { bits: 16 }; num_centroids],
                 row_compressed_sizes,
             },
             lookup_table,

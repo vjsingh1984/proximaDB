@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-// Import FastLanesDataBlock for SST usage
-use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+// Import ProximaDataBlock for SST usage
+use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
 // Define types locally to avoid circular dependencies
 /// Cache key for block caching
@@ -32,7 +32,7 @@ pub struct PredictivePrefetcher {
     /// Prefetch queue
     prefetch_queue: Arc<RwLock<PrefetchQueue>>,
     /// Prefetch cache (separate from main block cache)
-    prefetch_cache: Arc<DashMap<BlockCacheKey, Arc<FastLanesDataBlock>>>,
+    prefetch_cache: Arc<DashMap<BlockCacheKey, Arc<ProximaDataBlock>>>,
     /// Configuration
     config: PrefetchConfig,
     /// Metrics
@@ -183,7 +183,7 @@ impl PredictivePrefetcher {
     }
 
     /// Get prefetched block if available
-    pub async fn get_prefetched(&self, key: &BlockCacheKey) -> Option<Arc<FastLanesDataBlock>> {
+    pub async fn get_prefetched(&self, key: &BlockCacheKey) -> Option<Arc<ProximaDataBlock>> {
         if let Some((_, block)) = self.prefetch_cache.remove(key) {
             self.metrics.prefetch_hits.fetch_add(1, Ordering::Relaxed);
             Some(block)

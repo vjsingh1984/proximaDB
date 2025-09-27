@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -53,13 +53,13 @@ fn test_encoding(vectors: Vec<VectorRecord>, name: &str) -> Result<(), String> {
 
     println!("Testing {}: {} vectors", name, vectors.len());
 
-    let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
+    let block = ProximaDataBlock::new(vectors.clone(), config.clone());
     let encoded = block.serialize_with_config(&config)
         .map_err(|e| format!("Serialization failed: {}", e))?;
 
     println!("  Encoded: {} bytes", encoded.len());
 
-    let decoded_block = FastLanesDataBlock::deserialize(&encoded)
+    let decoded_block = ProximaDataBlock::deserialize(&encoded)
         .map_err(|e| format!("Deserialization failed: {}", e))?;
 
     println!("  Decoded: {} vectors", decoded_block.records.len());

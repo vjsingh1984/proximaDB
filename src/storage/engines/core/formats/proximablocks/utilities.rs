@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::{FastLanesDataBlock, RowBasedConfig, FastLanesBlockMetadata, BlockCompressionConfig};
+use super::{ProximaDataBlock, RowBasedConfig, ProximaBlockMetadata, BlockCompressionConfig};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::compression::CompressionAlgorithm;
@@ -16,7 +16,7 @@ pub struct RowBasedUtilities;
 
 impl RowBasedUtilities {
     /// Calculate memory usage for a collection of blocks
-    pub fn calculate_memory_usage(blocks: &[FastLanesDataBlock]) -> MemoryUsageReport {
+    pub fn calculate_memory_usage(blocks: &[ProximaDataBlock]) -> MemoryUsageReport {
         let mut total_records = 0;
         let mut total_vector_bytes = 0;
         let mut total_metadata_bytes = 0;
@@ -606,8 +606,8 @@ mod tests {
         ];
 
         // TODO: Update to use proper data structure
-        // Temporarily using FastLanesDataBlock
-        let blocks = vec![FastLanesDataBlock {
+        // Temporarily using ProximaDataBlock
+        let blocks = vec![ProximaDataBlock {
             encoding_marker: 0x00,
             encoding_metadata: None,
             block_id: 0,
@@ -615,9 +615,9 @@ mod tests {
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
-            vector_layout: crate::storage::engines::core::formats::fastlanes_blocks::VectorEncodingLayout::Auto,
+            vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
             quantized_section: None,
-            metadata: FastLanesBlockMetadata::default(),
+            metadata: ProximaBlockMetadata::default(),
             compression_config: BlockCompressionConfig::default(),
             compression_algorithm: CompressionAlgorithm::None,
             uncompressed_size: 0,

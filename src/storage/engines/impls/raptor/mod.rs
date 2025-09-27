@@ -49,7 +49,7 @@
 //!
 //! ### **P² Matrix (Intra-RowGroup)**
 //! - **Purpose**: Pairwise distances within row groups for local navigation
-//! - **Optimization**: SIMD-accelerated distance computation with FastLanes compression
+//! - **Optimization**: SIMD-accelerated distance computation with Proxima compression
 //! - **Benefit**: O(1) neighbor lookup within clusters
 //!
 //! ### **K² Matrix (Inter-Centroid)**
@@ -124,7 +124,7 @@ pub use common::{
     ConfidenceAssessment,
     ConfidenceSignals,
     CorrectionStrategy,
-    FastLanesScheme,
+    ProximaScheme,
     FieldDescriptor,
     IoStrategy,
     K2Matrix,
@@ -156,7 +156,7 @@ pub use writer::RaptorWriter; // Use consolidated compactor
 // IvfManager removed - Matrix Trinity handles clustering via centroids
 pub use adaptive_pxk::{AdaptivePxKStorage, BoundaryInfo, SelectionReason, VectorSelection};
 pub use common::{
-    ColumnarBlock, FastLanesEncodedData, MetadataColumns, QuantizationParams,
+    ColumnarBlock, ProximaEncodedData, MetadataColumns, QuantizationParams,
     QuantizedColumnarData, TransposedVectors,
 };
 pub use rowgroup_manager::RowGroups;

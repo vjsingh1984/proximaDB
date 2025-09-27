@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -23,7 +23,7 @@ fn create_random_vectors(num_vectors: usize, dimension: usize) -> Vec<VectorReco
 }
 
 fn test_random_data_robustness() {
-    println!("🚀 Debug: Random Data FastLanes Test");
+    println!("🚀 Debug: Random Data Proxima Test");
     println!("===================================");
 
     // Small test case to isolate the issue
@@ -36,7 +36,7 @@ fn test_random_data_robustness() {
 
     let config = BlockCompressionConfig {
         vector_layout: VectorEncodingLayout::FullVector,
-        algorithm: CompressionAlgorithm::None, // No compression to isolate FastLanes issue
+        algorithm: CompressionAlgorithm::None, // No compression to isolate Proxima issue
         compression_level: 1,
         enable_vector_compression: true,
         enable_metadata_compression: false,
@@ -49,8 +49,8 @@ fn test_random_data_robustness() {
     println!("============================================");
 
     // Step 1: Create block (this should show our debug output)
-    println!("Step 1: Creating FastLanes block...");
-    let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
+    println!("Step 1: Creating Proxima block...");
+    let block = ProximaDataBlock::new(vectors.clone(), config.clone());
 
     // Step 2: Serialize (this should show encoding debug)
     println!("Step 2: Serializing block...");
@@ -60,7 +60,7 @@ fn test_random_data_robustness() {
 
             // Step 3: Deserialize (this should show decoding debug)
             println!("Step 3: Deserializing block...");
-            match FastLanesDataBlock::deserialize(&encoded) {
+            match ProximaDataBlock::deserialize(&encoded) {
                 Ok(decoded_block) => {
                     println!("✅ Deserialization successful: {} vectors", decoded_block.records.len());
 

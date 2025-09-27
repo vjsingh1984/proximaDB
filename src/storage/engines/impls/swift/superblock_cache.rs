@@ -65,7 +65,7 @@ pub struct CachedSuperBlockMetadata {
     pub total_records: u64,
     pub records_per_datablock: u32,
 
-    /// FastLanes encoding information
+    /// Proxima encoding information
     pub superblock_encoding_marker: u8,
     pub encoding_efficiency: f32,
     pub compression_ratio: f32,

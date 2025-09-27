@@ -290,7 +290,7 @@ use crate::storage::engines::core::ops::{
 // Import search optimization components
 use crate::core::search::smart_execution_strategy::ExecutionStrategy;
 
-// Import FastLanes common structures (shared with SWIFT)
+// Import Proxima common structures (shared with SWIFT)
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, BlockStatistics, ColumnStatistics, ProximaBlockMetadata,
     ProximaDataBlock,
@@ -1188,10 +1188,10 @@ mod block_utils {
         }
     }
 
-    /// Encode vectors using FastLanes SIMD-optimized encoding
-    pub fn encode_with_fastlanes(block: &ProximaDataBlock) -> anyhow::Result<Vec<u8>> {
+    /// Encode vectors using Proxima SIMD-optimized encoding
+    pub fn encode_with_proxima(block: &ProximaDataBlock) -> anyhow::Result<Vec<u8>> {
         use crate::storage::engines::core::ops::proximaencoder::{
-            FastLanesEncoder, FastLanesScheme,
+            ProximaEncoder, ProximaScheme,
         };
         use std::io::Write;
 
@@ -1209,8 +1209,8 @@ mod block_utils {
         }
 
         // Encode each dimension column using a default scheme
-        let scheme = FastLanesScheme::BitPacked { bits: 16 };
-        let encoder = FastLanesEncoder::new(scheme);
+        let scheme = ProximaScheme::BitPacked { bits: 16 };
+        let encoder = ProximaEncoder::new(scheme);
         let mut encoded_data = Vec::new();
 
         // Write metadata first
@@ -1238,10 +1238,10 @@ mod block_utils {
         Ok(encoded_data)
     }
 
-    /// Decode vectors from FastLanes format
-    pub fn decode_with_fastlanes(data: &[u8], marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
+    /// Decode vectors from Proxima format
+    pub fn decode_with_proxima(data: &[u8], marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
         use crate::storage::engines::core::ops::proximaencoder::{
-            FastLanesDecoder, FastLanesScheme,
+            ProximaDecoder, ProximaScheme,
         };
         use std::io::Read;
 
@@ -1257,17 +1257,17 @@ mod block_utils {
 
         // Determine scheme from marker
         let scheme = match marker & 0xF0 {
-            0x10 => FastLanesScheme::BitPacked { bits: 16 },
-            0x20 => FastLanesScheme::Delta { base: 0 },
-            0x30 => FastLanesScheme::FrameOfReference {
+            0x10 => ProximaScheme::BitPacked { bits: 16 },
+            0x20 => ProximaScheme::Delta { base: 0 },
+            0x30 => ProximaScheme::FrameOfReference {
                 reference: 0,
                 bits: 16,
             },
-            0x60 => FastLanesScheme::RunLength,
-            _ => FastLanesScheme::BitPacked { bits: 32 },
+            0x60 => ProximaScheme::RunLength,
+            _ => ProximaScheme::BitPacked { bits: 32 },
         };
 
-        let decoder = FastLanesDecoder::new(scheme);
+        let decoder = ProximaDecoder::new(scheme);
 
         // Decode each dimension column
         let mut columns = Vec::with_capacity(dimension);
@@ -4552,7 +4552,7 @@ impl SstEngine {
         let mut current_block_size = 0;
         let mut block_id = 0;
 
-        // Use centralized compression config conversion from FastLanes
+        // Use centralized compression config conversion from Proxima
         use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
 
         let block_compression_config = RowBasedCompressionConfig::create_block_config_from_proto(compression_config);

@@ -248,7 +248,7 @@ _Note: Normalized using core count, SIMD capabilities, and memory bandwidth rati
 %%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
 xychart-beta
     title "Encoding Strategy: Performance vs Compression Trade-offs"
-    x-axis ["GroupedField", "RowWise", "Columnar", "FastLanes", "Adaptive"]
+    x-axis ["GroupedField", "RowWise", "Columnar", "Proxima", "Adaptive"]
     y-axis "Time (ms)" 0 --> 90
     bar [65.79, 12.45, 89.23, 23.56, 45.0]
     line [2.31, 1.89, 3.45, 1.02, 2.5]
@@ -263,7 +263,7 @@ xychart-beta
 %%{init: {"theme": "neutral", "themeVariables": {"primaryColor": "#4a90e2", "primaryTextColor": "#000000", "primaryBorderColor": "#2e5c8a", "lineColor": "#5a5a5a", "gridColor": "#b8b8b8"}}}%%
 xychart-beta
     title "Compression Ratios by Encoding Strategy"
-    x-axis ["GroupedField", "RowWise", "Columnar", "FastLanes", "Adaptive"]
+    x-axis ["GroupedField", "RowWise", "Columnar", "Proxima", "Adaptive"]
     y-axis "Compression Ratio (x)" 0 --> 3.5
     bar [2.09, 1.0, 3.21, 1.85, 2.75]
 ----
@@ -572,11 +572,11 @@ prefetch_distance = 8
 |Coarse filter
 |===
 
-== FastLanes Encoding Performance
+== Proxima Encoding Performance
 
 === Vector Encoding Strategy Performance (December 2024)
 
-ProximaDB's FastLanes encoding system delivers exceptional performance with configurable strategies:
+ProximaDB's Proxima encoding system delivers exceptional performance with configurable strategies:
 
 [cols="3,2,2,2,2", options="header"]
 |===
@@ -717,7 +717,7 @@ ProximaDB's decoding performance delivers exceptional read throughput:
 
 [IMPORTANT]
 ====
-**link:ENCODING_PERFORMANCE.adoc[FastLanes Encoding & Decoding Performance Guide]**
+**link:ENCODING_PERFORMANCE.adoc[Proxima Encoding & Decoding Performance Guide]**
 
 Complete performance analysis with Criterion-based benchmarks covering encoding, decoding, round-trip operations, and configuration recommendations for WORM, real-time, and balanced workloads.
 ====
@@ -827,7 +827,7 @@ flowchart LR
 |150K vectors/sec
 |101μs flush
 |Variable
-|FastLanes encoding, ultra-fast
+|Proxima encoding, ultra-fast
 
 |**RAPTOR Engine**
 |Adaptive

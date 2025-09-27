@@ -534,7 +534,7 @@ fn test_configuration() {
     // Test defaults
     assert_eq!(config.pca_dimensions, 16);
     assert_eq!(config.hilbert_bits_per_dimension, 16);
-    assert_eq!(config.fastlane_block_size, 128);
+    assert_eq!(config.proxima_block_size, 128);
     assert!(config.enable_liquid_clustering);
 
     // Test configuration changes

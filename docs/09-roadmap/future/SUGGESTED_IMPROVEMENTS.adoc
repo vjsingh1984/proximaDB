@@ -29,7 +29,7 @@ Create detailed technical documentation for each storage engine:
   - Mixed workload handling
 
 * **SWIFT Engine Guide** (`docs/technical/engines/swift_engine_guide.adoc`)
-  - FastLanes encoding implementation
+  - Proxima encoding implementation
   - Low-latency optimization techniques
   - Memory management strategies
 

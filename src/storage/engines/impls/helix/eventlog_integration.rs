@@ -59,7 +59,7 @@ impl HelixFlushHandler {
             .map(|q| q.enabled)
             .unwrap_or(false);
 
-        // HELIX uses PCA projection + FastLanes encoding
+        // HELIX uses PCA projection + Proxima encoding
         let has_fp32 = true;
 
         // Notify EventLog with HELIX storage type

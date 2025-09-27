@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::VectorRecord;
@@ -56,8 +56,8 @@ fn main() -> anyhow::Result<()> {
         metadata_algorithm: None,
     };
 
-    info!("Creating FastLanesDataBlock");
-    let block = FastLanesDataBlock::new(vectors.clone(), config.clone());
+    info!("Creating ProximaDataBlock");
+    let block = ProximaDataBlock::new(vectors.clone(), config.clone());
 
     info!("Serializing block");
     let encoded = block.serialize_with_config(&config)?;
@@ -67,7 +67,7 @@ fn main() -> anyhow::Result<()> {
     debug!("First 32 bytes of encoded data: {:02X?}", &encoded[..encoded.len().min(32)]);
 
     info!("Deserializing block");
-    let decoded_block = FastLanesDataBlock::deserialize(&encoded)?;
+    let decoded_block = ProximaDataBlock::deserialize(&encoded)?;
 
     info!("Comparing vectors");
     for (i, (orig, dec)) in vectors.iter().zip(decoded_block.records.iter()).enumerate() {

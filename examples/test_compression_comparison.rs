@@ -1,5 +1,5 @@
-use proximadb::storage::engines::core::formats::fastlanes_blocks::{
-    BlockCompressionConfig, VectorEncodingLayout, FastLanesDataBlock
+use proximadb::storage::engines::core::formats::proxima_blocks::{
+    BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use proximadb::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
@@ -77,7 +77,7 @@ fn measure_compression(
         metadata_algorithm: None,
     };
 
-    let block = FastLanesDataBlock::new(vectors.to_vec(), config.clone());
+    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
 
     // Calculate original size
     let dimension = vectors[0].vector.len();
@@ -95,7 +95,7 @@ fn measure_compression(
 }
 
 fn main() -> anyhow::Result<()> {
-    println!("🔬 FastLanes Compression Analysis");
+    println!("🔬 Proxima Compression Analysis");
     println!("==================================\n");
 
     let test_configs = vec![

@@ -1,15 +1,15 @@
 // Unified SWIFT Reader with cloud-optimized I/O and hierarchical pruning
 // Optimized for HTTP range reads and minimal API calls to reduce cloud storage costs
 //
-// FASTLANES INTEGRATION FOR SWIFT SUPERBLOCKS:
+// PROXIMA INTEGRATION FOR SWIFT SUPERBLOCKS:
 // =============================================
-// SWIFT extends SST with hierarchical SuperBlocks that benefit from FastLanes encoding:
+// SWIFT extends SST with hierarchical SuperBlocks that benefit from Proxima encoding:
 //
-// 1. SUPERBLOCK STRUCTURE WITH FASTLANES:
+// 1. SUPERBLOCK STRUCTURE WITH PROXIMA:
 //    Traditional SuperBlock (10K vectors = 10 DataBlocks):
 //    [SuperBlockHeader][DataBlock1][DataBlock2]...[DataBlock10][SuperIndex]
 //
-//    FastLanes-Enhanced SuperBlock:
+//    Proxima-Enhanced SuperBlock:
 //    [EncodingMarker(1B)][SuperBlockHeader][EncodedSuperVectors][SubBlocks][SuperIndex]
 //
 //    Where EncodedSuperVectors can use:
@@ -30,7 +30,7 @@
 //
 // 3. ENCODING MARKERS HIERARCHY:
 //    SuperBlock Marker (1 byte):
-//    - 0x80-0x8F: SuperBlock-level FastLanes encoding
+//    - 0x80-0x8F: SuperBlock-level Proxima encoding
 //    - Indicates all child blocks use same encoding
 //
 //    DataBlock Markers (1 byte each):
@@ -59,7 +59,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::io::zero_copy::traits::CacheTemperature;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // INTEGRATION: Use SharedSstFormatReader for file operations (SWIFT extends SST format)
-use crate::storage::engines::core::formats::fastlanes_blocks::sst_io_layer::{
+use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
 };
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;

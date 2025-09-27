@@ -28,7 +28,7 @@ use super::{
 };
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
-// Import CollectionMetadata from fastlanes
+// Import CollectionMetadata from proxima
 
 /// Transaction identifier
 pub type TransactionId = Uuid;

@@ -208,7 +208,7 @@ let sst_reader = UnifiedSstableReader::new(
 // CachedSearch -> SearchOptimized (cache bloom filters and indexes)
 ----
 
-=== SWIFT Engine (FastLanes Columnar)
+=== SWIFT Engine (Proxima Columnar)
 
 [source,rust]
 ----

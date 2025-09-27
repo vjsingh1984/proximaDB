@@ -17,8 +17,8 @@ pub mod file_format {
     /// Default footer size for metadata storage (bytes)
     pub const DEFAULT_FOOTER_SIZE: usize = 1024;
 
-    /// Default encoding marker for FastLanes tensor encoding
-    pub const FASTLANES_ENCODING_MARKER: u8 = 0xA1;
+    /// Default encoding marker for Proxima tensor encoding
+    pub const PROXIMA_ENCODING_MARKER: u8 = 0xA1;
 
     /// Sparse tensor encoding marker
     pub const SPARSE_ENCODING_MARKER: u8 = 0xA2;
@@ -141,8 +141,8 @@ pub mod compression {
     /// Default ZSTD compression level for balanced performance
     pub const DEFAULT_ZSTD_LEVEL: i32 = 3;
 
-    /// Default FastLanes bit-packing bits
-    pub const DEFAULT_FASTLANES_BITS: u8 = 16;
+    /// Default Proxima bit-packing bits
+    pub const DEFAULT_PROXIMA_BITS: u8 = 16;
 
     /// Default bloom filter false positive rate
     pub const DEFAULT_BLOOM_FPP: f64 = 0.01;
@@ -242,7 +242,7 @@ mod tests {
 
         // Ensure encoding markers are in the correct range (0xA0-0xAF)
         assert_eq!(file_format::RAW_ENCODING_MARKER, 0xA0);
-        assert_eq!(file_format::FASTLANES_ENCODING_MARKER, 0xA1);
+        assert_eq!(file_format::PROXIMA_ENCODING_MARKER, 0xA1);
         assert_eq!(file_format::SPARSE_ENCODING_MARKER, 0xA2);
         assert_eq!(file_format::QUANTIZED_ENCODING_MARKER, 0xA3);
     }

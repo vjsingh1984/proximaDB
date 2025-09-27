@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::storage::engines::core::ops::fastlanes_encoding::{
-        FastLanesEncoder, FastLanesDecoder, FastLanesScheme, FastLanesMetadata
+    use crate::storage::engines::core::ops::proxima_encoding::{
+        ProximaEncoder, ProximaDecoder, ProximaScheme, ProximaMetadata
     };
     
     // ============================================================================
@@ -12,14 +12,14 @@ mod tests {
     #[test]
     fn test_bitpacked_encoding_decoding() {
         let data = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 100.0, 200.0, 300.0];
-        let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
+        let encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
         
         // Encode
         let encoded = encoder.encode_f32(&data).expect("Encoding should succeed");
         assert!(encoded.len() < data.len() * 4, "Should compress data");
         
         // Decode
-        let decoder = FastLanesDecoder::new(FastLanesScheme::BitPacked { bits: 16 });
+        let decoder = ProximaDecoder::new(ProximaScheme::BitPacked { bits: 16 });
         let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         // Verify
@@ -33,14 +33,14 @@ mod tests {
     fn test_delta_encoding_decoding() {
         // Sequential data that benefits from delta encoding
         let data: Vec<f32> = (0..1000).map(|i| i as f32 * 0.1).collect();
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { 
+        let encoder = ProximaEncoder::new(ProximaScheme::Delta { 
             base: data[0] as i64 
         });
         
         let encoded = encoder.encode_f32(&data).expect("Encoding should succeed");
         assert!(encoded.len() < data.len() * 4, "Delta should compress sequential data well");
         
-        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { 
+        let decoder = ProximaDecoder::new(ProximaScheme::Delta { 
             base: data[0] as i64 
         });
         let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
@@ -57,7 +57,7 @@ mod tests {
         let data: Vec<f32> = vec![100.0, 100.5, 101.0, 99.5, 100.2, 100.8, 99.9, 100.1];
         let min_val = data.iter().cloned().fold(f32::INFINITY, f32::min);
         
-        let encoder = FastLanesEncoder::new(FastLanesScheme::FrameOfReference {
+        let encoder = ProximaEncoder::new(ProximaScheme::FrameOfReference {
             reference: min_val as i64,
             bits: 8,
         });
@@ -65,7 +65,7 @@ mod tests {
         let encoded = encoder.encode_f32(&data).expect("Encoding should succeed");
         assert!(encoded.len() < data.len() * 4, "FrameOfReference should compress");
         
-        let decoder = FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
+        let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
             reference: min_val as i64,
             bits: 8,
         });
@@ -84,13 +84,13 @@ mod tests {
         data.extend(vec![2.0f32; 50]);
         data.extend(vec![3.0f32; 25]);
         
-        let encoder = FastLanesEncoder::new(FastLanesScheme::RunLength);
+        let encoder = ProximaEncoder::new(ProximaScheme::RunLength);
         let encoded = encoder.encode_f32(&data).expect("Encoding should succeed");
         
         // Run-length should compress repeated values very well
         assert!(encoded.len() < 100, "RunLength should compress repeated values");
         
-        let decoder = FastLanesDecoder::new(FastLanesScheme::RunLength);
+        let decoder = ProximaDecoder::new(ProximaScheme::RunLength);
         let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(data, decoded, "RunLength encoding should preserve values exactly");
@@ -107,13 +107,13 @@ mod tests {
             }
         }
         
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Dictionary);
+        let encoder = ProximaEncoder::new(ProximaScheme::Dictionary);
         let encoded = encoder.encode_f32(&data).expect("Encoding should succeed");
         
         // Dictionary should compress when few unique values
         assert!(encoded.len() < data.len() * 2, "Dictionary should compress");
         
-        let decoder = FastLanesDecoder::new(FastLanesScheme::Dictionary);
+        let decoder = ProximaDecoder::new(ProximaScheme::Dictionary);
         let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(data, decoded, "Dictionary encoding should preserve values");
@@ -128,7 +128,7 @@ mod tests {
         data[500] = 2000.0;
         data[750] = 3000.0;
         
-        let encoder = FastLanesEncoder::new(FastLanesScheme::PatchedBase {
+        let encoder = ProximaEncoder::new(ProximaScheme::PatchedBase {
             base: 100,
             patch_bits: 16,
         });
@@ -136,7 +136,7 @@ mod tests {
         let encoded = encoder.encode_f32(&data).expect("Encoding should succeed");
         assert!(encoded.len() < data.len() * 4, "PatchedBase should compress");
         
-        let decoder = FastLanesDecoder::new(FastLanesScheme::PatchedBase {
+        let decoder = ProximaDecoder::new(ProximaScheme::PatchedBase {
             base: 100,
             patch_bits: 16,
         });
@@ -155,7 +155,7 @@ mod tests {
     
     #[test]
     fn test_sst_datablock_encoding() {
-        use crate::storage::engines::core::formats::fastlanes_blocks::FastLanesDataBlock;
+        use crate::storage::engines::core::formats::proxima_blocks::ProximaDataBlock;
         use crate::proto::proximadb_v1::VectorRecord;
         
         // Create sample vectors
@@ -168,10 +168,10 @@ mod tests {
         }
         
         // Create DataBlock with encoding
-        let mut block = FastLanesDataBlock::new(records.clone(), BlockCompressionConfig::default());
+        let mut block = ProximaDataBlock::new(records.clone(), BlockCompressionConfig::default());
         block.encoding_marker = 0x30; // FrameOfReference
-        block.encoding_metadata = Some(FastLanesMetadata {
-            scheme: FastLanesScheme::FrameOfReference { 
+        block.encoding_metadata = Some(ProximaMetadata {
+            scheme: ProximaScheme::FrameOfReference { 
                 reference: 0, 
                 bits: 16 
             },
@@ -186,7 +186,7 @@ mod tests {
         
         // Verify optimal encoding selection
         let marker = block.choose_optimal_encoding_marker(&records);
-        assert!(marker >= 0x10 && marker <= 0x60, "Should choose FastLanes encoding");
+        assert!(marker >= 0x10 && marker <= 0x60, "Should choose Proxima encoding");
     }
     
     #[test]
@@ -201,7 +201,7 @@ mod tests {
             .collect();
         
         // Encode at SuperBlock level
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+        let encoder = ProximaEncoder::new(ProximaScheme::Delta { base: 0 });
         let encoded = encoder.encode_f32(&superblock_data).expect("SuperBlock encoding should work");
         
         // Verify compression ratio for 10K vectors
@@ -212,7 +212,7 @@ mod tests {
         assert!(ratio < 0.5, "SuperBlock should achieve >50% compression, got {}", ratio);
         
         // Decode and verify
-        let decoder = FastLanesDecoder::new(FastLanesScheme::Delta { base: 0 });
+        let decoder = ProximaDecoder::new(ProximaScheme::Delta { base: 0 });
         let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should succeed");
         
         assert_eq!(superblock_data.len(), decoded.len());
@@ -241,7 +241,7 @@ mod tests {
         }
         
         // Encode each dimension independently
-        let encoder = FastLanesEncoder::new(FastLanesScheme::FrameOfReference {
+        let encoder = ProximaEncoder::new(ProximaScheme::FrameOfReference {
             reference: 0,
             bits: 16,
         });
@@ -279,7 +279,7 @@ mod tests {
         // PQ level would be more complex, skip for basic test
         
         // FP32 level (full precision)
-        let fp32_encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 32 });
+        let fp32_encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 32 });
         let fp32_encoded = fp32_encoder.encode_f32(&data).expect("FP32 encoding should work");
         
         // Verify progressive sizes
@@ -311,13 +311,13 @@ mod tests {
             .map(|&v| v as f32)
             .collect();
         
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Dictionary);
+        let encoder = ProximaEncoder::new(ProximaScheme::Dictionary);
         let encoded = encoder.encode_f32(&quantized_f32).expect("Should encode quantized data");
         
         // Dictionary should work well for quantized data (256 unique values max)
         assert!(encoded.len() < quantized_f32.len() * 2, "Should compress quantized data");
         
-        let decoder = FastLanesDecoder::new(FastLanesScheme::Dictionary);
+        let decoder = ProximaDecoder::new(ProximaScheme::Dictionary);
         let decoded = decoder.decode_f32(&encoded, None).expect("Should decode");
         
         // Convert back to INT8 and verify
@@ -343,7 +343,7 @@ mod tests {
         
         // Encode PQ codes
         let pq_f32: Vec<f32> = pq_codes.iter().map(|&c| c as f32).collect();
-        let encoder = FastLanesEncoder::new(FastLanesScheme::Dictionary);
+        let encoder = ProximaEncoder::new(ProximaScheme::Dictionary);
         let encoded = encoder.encode_f32(&pq_f32).expect("Should encode PQ codes");
         
         // Dictionary should be perfect for PQ (exactly 256 values)
@@ -358,12 +358,12 @@ mod tests {
     #[test]
     fn test_empty_data_encoding() {
         let data: Vec<f32> = vec![];
-        let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
+        let encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
         
         let encoded = encoder.encode_f32(&data).expect("Should handle empty data");
         assert_eq!(encoded.len(), 0, "Empty data should produce empty encoding");
         
-        let decoder = FastLanesDecoder::new(FastLanesScheme::BitPacked { bits: 16 });
+        let decoder = ProximaDecoder::new(ProximaScheme::BitPacked { bits: 16 });
         let decoded = decoder.decode_f32(&encoded, None).expect("Should decode empty data");
         assert_eq!(decoded.len(), 0, "Should decode to empty");
     }
@@ -374,18 +374,18 @@ mod tests {
         
         // Test all encoding schemes with single value
         let schemes = vec![
-            FastLanesScheme::BitPacked { bits: 16 },
-            FastLanesScheme::Delta { base: 42 },
-            FastLanesScheme::FrameOfReference { reference: 42, bits: 1 },
-            FastLanesScheme::RunLength,
-            FastLanesScheme::Dictionary,
+            ProximaScheme::BitPacked { bits: 16 },
+            ProximaScheme::Delta { base: 42 },
+            ProximaScheme::FrameOfReference { reference: 42, bits: 1 },
+            ProximaScheme::RunLength,
+            ProximaScheme::Dictionary,
         ];
         
         for scheme in schemes {
-            let encoder = FastLanesEncoder::new(scheme.clone());
+            let encoder = ProximaEncoder::new(scheme.clone());
             let encoded = encoder.encode_f32(&data).expect("Should encode single value");
             
-            let decoder = FastLanesDecoder::new(scheme);
+            let decoder = ProximaDecoder::new(scheme);
             let decoded = decoder.decode_f32(&encoded, None).expect("Should decode single value");
             
             assert_eq!(decoded, data, "Single value should match");
@@ -406,7 +406,7 @@ mod tests {
         }
         
         // Test that large data can be encoded/decoded
-        let encoder = FastLanesEncoder::new(FastLanesScheme::FrameOfReference {
+        let encoder = ProximaEncoder::new(ProximaScheme::FrameOfReference {
             reference: -1,
             bits: 16,
         });
@@ -416,7 +416,7 @@ mod tests {
         let encode_time = start.elapsed();
         
         let start = std::time::Instant::now();
-        let decoder = FastLanesDecoder::new(FastLanesScheme::FrameOfReference {
+        let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
             reference: -1,
             bits: 16,
         });
@@ -455,21 +455,21 @@ mod tests {
             // Block 1: Sequential data (good for Delta)
             {
                 let data: Vec<f32> = (0..100).map(|i| i as f32).collect();
-                let encoder = FastLanesEncoder::new(FastLanesScheme::Delta { base: 0 });
+                let encoder = ProximaEncoder::new(ProximaScheme::Delta { base: 0 });
                 let encoded = encoder.encode_f32(&data).unwrap();
                 EncodedBlock { marker: 0x20, data: encoded }
             },
             // Block 2: Repeated values (good for RunLength)
             {
                 let data = vec![1.0f32; 100];
-                let encoder = FastLanesEncoder::new(FastLanesScheme::RunLength);
+                let encoder = ProximaEncoder::new(ProximaScheme::RunLength);
                 let encoded = encoder.encode_f32(&data).unwrap();
                 EncodedBlock { marker: 0x60, data: encoded }
             },
             // Block 3: Random values (use BitPacked)
             {
                 let data: Vec<f32> = (0..100).map(|i| (i as f32).sin() * 100.0).collect();
-                let encoder = FastLanesEncoder::new(FastLanesScheme::BitPacked { bits: 16 });
+                let encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
                 let encoded = encoder.encode_f32(&data).unwrap();
                 EncodedBlock { marker: 0x10, data: encoded }
             },
@@ -478,13 +478,13 @@ mod tests {
         // Decode each block based on its marker
         for block in blocks {
             let scheme = match block.marker {
-                0x10 => FastLanesScheme::BitPacked { bits: 16 },
-                0x20 => FastLanesScheme::Delta { base: 0 },
-                0x60 => FastLanesScheme::RunLength,
+                0x10 => ProximaScheme::BitPacked { bits: 16 },
+                0x20 => ProximaScheme::Delta { base: 0 },
+                0x60 => ProximaScheme::RunLength,
                 _ => panic!("Unknown marker"),
             };
             
-            let decoder = FastLanesDecoder::new(scheme);
+            let decoder = ProximaDecoder::new(scheme);
             let decoded = decoder.decode_f32(&block.data).expect("Should decode mixed blocks");
             assert!(!decoded.is_none(), "Decoded data should not be empty");
         }
@@ -500,7 +500,7 @@ mod tests {
         struct TestCase {
             name: &'static str,
             data: Vec<f32>,
-            scheme: FastLanesScheme,
+            scheme: ProximaScheme,
             expected_ratio: f32, // Expected compression ratio (compressed/original)
         }
         
@@ -508,31 +508,31 @@ mod tests {
             TestCase {
                 name: "Sequential data with Delta",
                 data: (0..1000).map(|i| i as f32 * 0.1).collect(),
-                scheme: FastLanesScheme::Delta { base: 0 },
+                scheme: ProximaScheme::Delta { base: 0 },
                 expected_ratio: 0.3, // Should compress to ~30%
             },
             TestCase {
                 name: "Repeated values with RunLength",
                 data: vec![42.0; 1000],
-                scheme: FastLanesScheme::RunLength,
+                scheme: ProximaScheme::RunLength,
                 expected_ratio: 0.01, // Should compress to ~1%
             },
             TestCase {
                 name: "Limited range with FrameOfReference",
                 data: (0..1000).map(|i| 100.0 + (i as f32 * 0.01)).collect(),
-                scheme: FastLanesScheme::FrameOfReference { reference: 100, bits: 12 },
+                scheme: ProximaScheme::FrameOfReference { reference: 100, bits: 12 },
                 expected_ratio: 0.4, // Should compress to ~40%
             },
             TestCase {
                 name: "Few unique values with Dictionary",
                 data: (0..1000).map(|i| (i % 10) as f32).collect(),
-                scheme: FastLanesScheme::Dictionary,
+                scheme: ProximaScheme::Dictionary,
                 expected_ratio: 0.3, // Should compress to ~30%
             },
         ];
         
         for test in test_cases {
-            let encoder = FastLanesEncoder::new(test.scheme.clone());
+            let encoder = ProximaEncoder::new(test.scheme.clone());
             let encoded = encoder.encode_f32(&test.data).expect("Encoding should work");
             
             let original_size = test.data.len() * 4;
@@ -547,7 +547,7 @@ mod tests {
                 test.name, actual_ratio, test.expected_ratio);
             
             // Verify decoding
-            let decoder = FastLanesDecoder::new(test.scheme);
+            let decoder = ProximaDecoder::new(test.scheme);
             let decoded = decoder.decode_f32(&encoded, None).expect("Decoding should work");
             assert_eq!(test.data.len(), decoded.len());
         }
@@ -584,16 +584,16 @@ mod tests {
         
         // Test different encoding schemes
         let schemes = vec![
-            ("BitPacked", FastLanesScheme::BitPacked { bits: 16 }),
-            ("FrameOfReference", FastLanesScheme::FrameOfReference { reference: -1, bits: 16 }),
-            ("Delta", FastLanesScheme::Delta { base: 0 }),
+            ("BitPacked", ProximaScheme::BitPacked { bits: 16 }),
+            ("FrameOfReference", ProximaScheme::FrameOfReference { reference: -1, bits: 16 }),
+            ("Delta", ProximaScheme::Delta { base: 0 }),
         ];
         
         for (name, scheme) in schemes {
-            let encoder = FastLanesEncoder::new(scheme.clone());
+            let encoder = ProximaEncoder::new(scheme.clone());
             let encoded = encoder.encode_f32(&vectors).expect("Should encode embeddings");
             
-            let decoder = FastLanesDecoder::new(scheme);
+            let decoder = ProximaDecoder::new(scheme);
             let decoded = decoder.decode_f32(&encoded, None).expect("Should decode embeddings");
             
             // Calculate cosine similarity preservation
