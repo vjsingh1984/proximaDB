@@ -20,7 +20,7 @@ Welcome to the ProximaDB documentation. ProximaDB is a high-performance vector d
 
 === Performance & Optimization
 * link:performance/[Performance Documentation] - Benchmarks and tuning
-* link:benchmarks/[Benchmark Results] - Detailed performance analysis
+* link:performance/benchmarks/[Benchmark Results] - Detailed performance analysis
 * link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] - Choose the right engine
 
 === API Reference
@@ -29,7 +29,12 @@ Welcome to the ProximaDB documentation. ProximaDB is a high-performance vector d
 === Security
 * link:security/[Security Guide] - Authentication, encryption, and best practices
 
+=== Storage Engines & AI Features
+* link:storage/[Storage Engine Documentation] - Hybrid block and columnar architectures
+* link:automl/[AutoML Framework] - Automatic optimization and performance tuning
+
 === Development
+* link:development/[Development Guides] - Contributing, style guides, and development setup
 * link:business/[Business Case] - ProximaDB advantages and use cases
 * link:09-roadmap/[Development Roadmap] - Future features and timeline
 
@@ -39,16 +44,18 @@ Welcome to the ProximaDB documentation. ProximaDB is a high-performance vector d
 docs/
 ├── quickstart/           # Getting started guides
 ├── architecture/         # System architecture
-├── technical/           # Technical implementation
-├── operations/          # Production operations
-├── enterprise/          # Enterprise features
-├── performance/         # Performance analysis
-├── benchmarks/          # Benchmark results
-├── guides/              # How-to guides
-├── reference/           # API reference
-├── security/            # Security documentation
-├── business/            # Business documentation
-└── 09-roadmap/          # Development roadmap
+├── storage/              # Storage engine documentation
+├── automl/               # AutoML framework documentation
+├── technical/            # Technical implementation details
+├── operations/           # Production operations
+├── enterprise/           # Enterprise features
+├── performance/          # Performance analysis and benchmarks
+├── development/          # Development guides and contributing
+├── guides/               # How-to guides
+├── reference/            # API reference
+├── security/             # Security documentation
+├── business/             # Business documentation
+└── 09-roadmap/           # Development roadmap
 ----
 
 == Contributing
