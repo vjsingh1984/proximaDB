@@ -13,6 +13,9 @@
 # Rust debug artifacts
 **/*.dSYM/
 
+# Development artifacts moved to keep root clean
+/dev-artifacts/
+
 # Executables
 *.exe
 *.dll
