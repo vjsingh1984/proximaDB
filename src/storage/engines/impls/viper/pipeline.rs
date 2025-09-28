@@ -20,9 +20,16 @@ use anyhow::{Context, Result};
 use arrow_array::RecordBatch;
 use arrow_schema::Schema;
 use chrono::{DateTime, Utc};
+// TODO: Refactor to use columnar module's exports instead of direct parquet imports
+// Currently using direct imports due to complex ArrowWriter usage that needs refactoring
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
 use parquet::file::properties::WriterProperties;
+// Also import columnar exports for future migration
+use crate::storage::engines::core::formats::columnar::{
+    StreamingParquetWriter, ParquetWriterConfig,
+    map_core_to_parquet_compression,
+};
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

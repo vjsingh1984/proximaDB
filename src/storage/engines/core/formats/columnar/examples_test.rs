@@ -428,10 +428,22 @@ pub async fn nova_optimization_example() -> Result<()> {
 
         // TODO: Implement with_id_less_mode method
         // For now, use regular constructor
-        let reader = UnifiedParquetReader::with_filesystem_factory(
+        // Create UnifiedCachingFilesystem for optimal performance
+        let base_fs = filesystem.get_filesystem("file://").unwrap();
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "nova_collection".to_string(),
+                "nova".to_string(),
+            )
+        );
+        let reader = UnifiedParquetReader::new(
             vec![file_path.to_str().unwrap().to_string()],
             1024,  // dimension from the example
-            filesystem,
+            filesystem.clone(),
+            cached_filesystem,
+            "nova_collection".to_string(),
+            "nova".to_string(),
         )?;
 
         println!("📊 NOVA Analytical Queries:");
@@ -449,8 +461,8 @@ pub async fn nova_optimization_example() -> Result<()> {
         let mut row_groups_processed = 0;
 
         // Stream through row groups without loading everything into memory
-        while let Some(batch) = iterator.next().await? {
-            total_vectors += batch.num_rows();
+        while let Some(batch) = iterator.next_batch().await? {
+            total_vectors += batch.len();
             row_groups_processed += 1;
 
             // Process batch (e.g., aggregations, filtering, etc.)
@@ -458,7 +470,7 @@ pub async fn nova_optimization_example() -> Result<()> {
                 println!(
                     "  - Processed row group {}: {} vectors",
                     row_groups_processed,
-                    batch.num_rows()
+                    batch.len()
                 );
             }
         }

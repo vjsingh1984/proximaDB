@@ -145,10 +145,22 @@ async fn test_parquet_flush_and_read_pattern() {
     let file_metadata = filesystem.metadata(file_path.to_str().unwrap()).await.unwrap();
     assert!(file_metadata.size > 0);
 
-    let reader = UnifiedParquetReader::with_filesystem_factory(
+    // Create UnifiedCachingFilesystem for optimal performance
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let cached_filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "test".to_string(),
+        )
+    );
+    let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
         128,
-        filesystem.clone()
+        filesystem.clone(),
+        cached_filesystem,
+        "test_collection".to_string(),
+        "test".to_string(),
     ).unwrap();
 
     // Read all data back
@@ -262,10 +274,22 @@ async fn test_branched_filtering_fast_vs_slow_path() {
             .await
             .unwrap()
     );
-    let reader = UnifiedParquetReader::with_filesystem_factory(
+    // Create UnifiedCachingFilesystem for optimal performance
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let cached_filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "test".to_string(),
+        )
+    );
+    let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
         256,
-        filesystem.clone()
+        filesystem.clone(),
+        cached_filesystem,
+        "test_collection".to_string(),
+        "test".to_string(),
     ).unwrap();
 
     // Note: Filterable columns would be configured during reader creation
@@ -273,17 +297,19 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     // Test 1: Fast path - filter on filterable column (category)
     // This should use column projection and pushdown
-    let fast_filter = vec![
-        ColumnarMetadataFilter {
-            conditions: vec![
-                FilterCondition::Equals(
-                    "category".to_string(),
-                    serde_json::Value::String("cat_2".to_string()),
-                ),
-            ],
-            logic: FilterLogic::And,
-        },
-    ];
+    // Create proto MetadataFilter for fast path
+    let fast_filter = crate::proto::proximadb_v1::MetadataFilter {
+        clauses: vec![
+            crate::proto::proximadb_v1::FilterClause {
+                field: "category".to_string(),
+                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(
+                    "cat_2".to_string(),
+                )),
+            },
+        ],
+        op: crate::proto::proximadb_v1::LogicalOp::And as i32,
+    };
 
     // Read with filterable column - should use fast path
     let start_fast = std::time::Instant::now();
@@ -312,17 +338,19 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     // Test 2: Slow path - filter on non-filterable column (custom_field)
     // This should require full scan and post-filtering
-    let slow_filter = vec![
-        ColumnarMetadataFilter {
-            conditions: vec![
-                FilterCondition::Equals(
-                    "custom_field".to_string(), // NOT filterable
-                    serde_json::Value::String("custom_1".to_string()),
-                ),
-            ],
-            logic: FilterLogic::And,
-        },
-    ];
+    // Create proto MetadataFilter for slow path
+    let slow_filter = crate::proto::proximadb_v1::MetadataFilter {
+        clauses: vec![
+            crate::proto::proximadb_v1::FilterClause {
+                field: "custom_field".to_string(), // NOT filterable
+                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(
+                    "custom_1".to_string(),
+                )),
+            },
+        ],
+        op: crate::proto::proximadb_v1::LogicalOp::And as i32,
+    };
 
     // Should fail without allow_slow_queries
     let slow_result = reader
@@ -351,16 +379,26 @@ async fn test_branched_filtering_fast_vs_slow_path() {
     println!("Slow path: {} results in {:?} (with warning)", slow_results.len(), slow_duration);
 
     // Test 3: Mixed path - both filterable and non-filterable
-    let mixed_filter = vec![
-        ColumnarMetadataFilter {
-            conditions: vec![FilterCondition::Equals("category".to_string(), serde_json::Value::String("cat_1".to_string()))], // Filterable
-            logic: FilterLogic::And,
-        },
-        ColumnarMetadataFilter {
-            conditions: vec![FilterCondition::Equals("custom_field".to_string(), serde_json::Value::String("custom_0".to_string()))], // NOT filterable
-            logic: FilterLogic::And,
-        },
-    ];
+    // Create proto MetadataFilter for mixed path
+    let mixed_filter = crate::proto::proximadb_v1::MetadataFilter {
+        clauses: vec![
+            crate::proto::proximadb_v1::FilterClause {
+                field: "category".to_string(), // filterable
+                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(
+                    "cat_1".to_string(),
+                )),
+            },
+            crate::proto::proximadb_v1::FilterClause {
+                field: "custom_field".to_string(), // NOT filterable
+                op: crate::proto::proximadb_v1::ComparisonOp::Eq as i32,
+                value: Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(
+                    "custom_0".to_string(),
+                )),
+            },
+        ],
+        op: crate::proto::proximadb_v1::LogicalOp::And as i32,
+    };
 
     let start_mixed = std::time::Instant::now();
     let mixed_results = reader
@@ -468,10 +506,22 @@ async fn test_multi_file_directory_scan() {
     assert_eq!(parquet_files.len(), 3, "Should find all 3 flush files");
 
     // Now read from all files using directory scanning pattern
-    let reader = UnifiedParquetReader::with_filesystem_factory(
+    // Create UnifiedCachingFilesystem for optimal performance
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let cached_filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "test".to_string(),
+        )
+    );
+    let reader = UnifiedParquetReader::new(
         parquet_files.clone(),
         256,  // dimension from test
-        filesystem.clone()
+        filesystem.clone(),
+        cached_filesystem,
+        "test_collection".to_string(),
+        "test".to_string(),
     ).unwrap();
 
     // Read from all files and verify total record count
@@ -552,10 +602,22 @@ async fn test_dictionary_encoding_optimization() {
     // Verify ID lookups still work correctly
     let filesystem_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
-    let reader = UnifiedParquetReader::with_filesystem_factory(
+    // Create UnifiedCachingFilesystem for optimal performance
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let cached_filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "test".to_string(),
+        )
+    );
+    let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
         128,
-        filesystem
+        filesystem.clone(),
+        cached_filesystem,
+        "test_collection".to_string(),
+        "test".to_string(),
     ).unwrap();
 
     // TODO: Implement optimized_batch_id_lookup method
@@ -648,10 +710,22 @@ async fn test_customer_api_compatibility() {
     // Test get_by_id equivalent
     let filesystem_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
-    let reader = UnifiedParquetReader::with_filesystem_factory(
+    // Create UnifiedCachingFilesystem for optimal performance
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let cached_filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "test".to_string(),
+        )
+    );
+    let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
         384,
-        filesystem
+        filesystem.clone(),
+        cached_filesystem,
+        "test_collection".to_string(),
+        "test".to_string(),
     ).unwrap();
 
     // Single ID lookup
@@ -748,10 +822,22 @@ async fn test_row_group_offset_optimization() {
     // Verify ID-based lookup still works
     let filesystem_config = FilesystemConfig::default();
     let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
-    let reader = UnifiedParquetReader::with_filesystem_factory(
+    // Create UnifiedCachingFilesystem for optimal performance
+    let base_fs = filesystem.get_filesystem("file://").unwrap();
+    let cached_filesystem = Arc::new(
+        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            base_fs,
+            "test_collection".to_string(),
+            "test".to_string(),
+        )
+    );
+    let reader = UnifiedParquetReader::new(
         vec![file_path.to_string_lossy().to_string()],
         128,
-        filesystem
+        filesystem.clone(),
+        cached_filesystem,
+        "test_collection".to_string(),
+        "test".to_string(),
     ).unwrap();
 
     // TODO: Implement optimized_batch_id_lookup method

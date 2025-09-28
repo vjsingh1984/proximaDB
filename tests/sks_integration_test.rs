@@ -10,8 +10,8 @@
 #[cfg(test)]
 mod sks_integration_tests {
     use proximadb::proto::proximadb_v1::{
-        EmbeddingVersion, Entity, Modality, Provenance, Relation, StringArray, TypedField,
-        TypedMetadata, SqlValue
+        EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField,
+        TypedMetadata
     };
     use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore, RelationsStore, ProvenanceRegistry};
     use proximadb::storage::relations::InMemoryRelationsStore;

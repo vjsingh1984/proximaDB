@@ -136,10 +136,15 @@ impl UnifiedNOVAReader {
 
         // Create UnifiedParquetReader for direct reads
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+        let cached_fs = self.cached_filesystem.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("UnifiedCachingFilesystem not available"))?;
+        let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             dimension,
             self.filesystem_factory.clone(),
+            cached_fs.clone(),
+            self.collection_id.clone(),
+            "nova".to_string(),
         )?;
 
         // For full scan without filters, use similarity search with empty query
@@ -159,10 +164,15 @@ impl UnifiedNOVAReader {
 
         // Create reader with cached filesystem for metadata caching
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+        let cached_fs = self.cached_filesystem.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("UnifiedCachingFilesystem not available"))?;
+        let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             dimension,
             self.filesystem_factory.clone(),
+            cached_fs.clone(),
+            self.collection_id.clone(),
+            "nova".to_string(),
         )?;
 
         // Apply filter based on strategy
@@ -231,10 +241,15 @@ impl UnifiedNOVAReader {
     ) -> Result<Vec<VectorRecord>> {
         // Create Parquet reader
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+        let cached_fs = self.cached_filesystem.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("UnifiedCachingFilesystem not available"))?;
+        let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             dimension,
             self.filesystem_factory.clone(),
+            cached_fs.clone(),
+            self.collection_id.clone(),
+            "nova".to_string(),
         )?;
 
         // Read specified row groups
@@ -355,10 +370,22 @@ impl DirectNOVAReader {
 
         // Create reader for direct streaming
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+        // Create UnifiedCachingFilesystem for optimal performance
+        let base_fs = self.filesystem_factory.get_filesystem("file://")?;
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                self.collection_id.clone(),
+                "nova".to_string(),
+            )
+        );
+        let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             dimension,
             self.filesystem_factory.clone(),
+            cached_filesystem,
+            self.collection_id.clone(),
+            "nova".to_string(),
         )?;
 
         // Use similarity search for full read which returns VectorRecords
@@ -413,12 +440,13 @@ impl CachedNOVAReader {
 
         // Create reader with cached filesystem
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+        let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             dimension,
-            // CachedNOVAReader doesn't have direct filesystem_factory access,
-            // but we can create one from the cached filesystem
             Arc::new(FilesystemFactory::default()),
+            self.cached_filesystem.clone(),
+            self.collection_id.clone(),
+            "nova".to_string(),
         )?;
 
         // Apply zone map pruning based on strategy

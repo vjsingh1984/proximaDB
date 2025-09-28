@@ -509,15 +509,20 @@ impl ViperEngine {
         &self,
         file_path: &str,
         column_indices: &[usize],
+        collection_id: &str,
     ) -> Result<Vec<Vec<u8>>> {
         // Use universal optimizer for parallel operations
         let filesystem_factory = self.filesystem_factory.clone();
+        let cached_filesystem = self.filesystem.clone();
+        let collection_id_clone = collection_id.to_string();
         let read_operations: Vec<_> = column_indices
             .iter()
             .map(|&column_idx| {
                 let file_path = file_path.to_string();
                 let fs_factory = filesystem_factory.clone();
-                async move { Self::read_column_optimized(&file_path, column_idx, fs_factory).await }
+                let cached_fs = cached_filesystem.clone();
+                let coll_id = collection_id_clone.clone();
+                async move { Self::read_column_optimized(&file_path, column_idx, fs_factory, cached_fs, &coll_id).await }
             })
             .collect();
 
@@ -548,13 +553,18 @@ impl ViperEngine {
         file_path: &str,
         column_idx: usize,
         filesystem_factory: Arc<FilesystemFactory>,
+        cached_filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        collection_id: &str,
     ) -> Result<Vec<u8>> {
         // For column reading, we don't need dimension - Parquet has schema info
         // Use 0 to indicate dimension is not needed for this operation
-        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+        let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             0,
             filesystem_factory,
+            cached_filesystem,
+            collection_id.to_string(),
+            "viper".to_string(),
         )?;
 
         // Read the actual column data from the Parquet file
@@ -661,13 +671,18 @@ impl ViperEngine {
         row_group_idx: usize,
         optimizer: &UniversalPerformanceOptimizer,
         filesystem_factory: Arc<FilesystemFactory>,
+        cached_filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        collection_id: &str,
     ) -> Result<Vec<u8>> {
         // For row group reading, we don't need dimension - Parquet has schema info
         // Use 0 to indicate dimension is not needed for this operation
-        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+        let reader = super::readers::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             0,
             filesystem_factory,
+            cached_filesystem,
+            collection_id.to_string(),
+            "viper".to_string(),
         )?;
 
         // Read vectors from the specific row group
@@ -2070,10 +2085,13 @@ impl UnifiedStorageEngine for ViperEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.dimension as usize)
             .unwrap_or(128);
-        let parquet_reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
+        let parquet_reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             parquet_files.clone(),
             dimension,
             self.filesystem_factory.clone(),
+            unified_fs,
+            search_context.collection_id.clone(),
+            "viper".to_string(),
         )?;
 
         // Create collection context for the reader

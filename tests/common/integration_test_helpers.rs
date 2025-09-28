@@ -961,7 +961,7 @@ pub async fn flush_sst_with_block_stats(
     use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
     let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
+    let _filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(
         proximadb::compute::distance_computation::DistanceMetric::Euclidean,
     ));
@@ -969,7 +969,7 @@ pub async fn flush_sst_with_block_stats(
     let sst_storage = SstEngine::new().await?;
 
     // Create collection config with compression
-    let compression_config = CompressionConfig {
+    let _compression_config = CompressionConfig {
         algorithm: match compression_algo {
             "none" | "uncompressed" => CompressionAlgorithm::CompressionNone as i32,
             "zstd" => CompressionAlgorithm::CompressionZstd as i32,

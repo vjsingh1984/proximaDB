@@ -137,6 +137,9 @@ pub mod optimized_operations;
 pub mod progressive_refinement;
 pub mod quantized_columns;
 
+// Core operations modules organized in operations/
+pub mod operations;
+
 // New optimized modules
 pub mod hierarchical_cache;
 pub mod hierarchical_stats;
@@ -163,6 +166,9 @@ pub mod nova_meta_reader;
 pub use engine::NovaEngine;
 pub use nova_meta_reader::{NovaMetaReader, QueryOptimizationHints};
 
+// Re-export modularized operations
+pub use operations::{NovaFlushOperations, NovaCompactionOperations, NovaSearchOperations};
+
 // Re-export unified strategy readers
 pub use unified_strategy_reader::{
     UnifiedNOVAReader, DirectNOVAReader, CachedNOVAReader
@@ -184,6 +190,8 @@ pub use zone_maps::{AdvancedZoneMap, CostBasedOptimizer, ZoneMapConfig};
 
 use anyhow::Result;
 use arrow_schema::{DataType, Field, Schema};
+// These parquet metadata types are used internally for low-level operations
+// The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::RowGroupMetaData;
 use std::sync::Arc;
 

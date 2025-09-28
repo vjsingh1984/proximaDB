@@ -474,7 +474,24 @@ mod tests {
                 .unwrap(),
         );
 
-        let parquet_reader = Arc::new(UnifiedParquetReader::new(vec![], 128).unwrap());
+        // Create UnifiedCachingFilesystem for testing
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "test_collection".to_string(),
+                "test".to_string(),
+            )
+        );
+        let parquet_reader = Arc::new(UnifiedParquetReader::new(
+            vec![],
+            128,
+            filesystem_factory,
+            cached_filesystem,
+            "test_collection".to_string(),
+            "test".to_string(),
+        ).unwrap());
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
         let config = ColumnarConfig::default();
@@ -526,7 +543,24 @@ mod tests {
                     .unwrap(),
             );
 
-            let parquet_reader = Arc::new(UnifiedParquetReader::new(vec![], 128).unwrap());
+            // Create UnifiedCachingFilesystem for testing
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "test_collection".to_string(),
+                "test".to_string(),
+            )
+        );
+        let parquet_reader = Arc::new(UnifiedParquetReader::new(
+            vec![],
+            128,
+            filesystem_factory,
+            cached_filesystem,
+            "test_collection".to_string(),
+            "test".to_string(),
+        ).unwrap());
             let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
             let memory_pool = Arc::new(VectorMemoryPool::new());
             let config = ColumnarConfig::default();

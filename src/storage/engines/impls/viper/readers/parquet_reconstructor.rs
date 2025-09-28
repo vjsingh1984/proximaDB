@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use arrow_array::{Array, Float32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use chrono;
+// These parquet metadata types are used internally for low-level operations
+// The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::collections::HashMap;
 use std::sync::Arc;

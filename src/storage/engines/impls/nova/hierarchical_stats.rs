@@ -2,6 +2,8 @@
 // Implements SuperBlock and enhanced row group statistics for efficient pruning
 
 use anyhow::Result;
+// These parquet metadata types are used internally for low-level operations
+// The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::RowGroupMetaData;
 use serde::{Serialize, Deserialize};
 use std::ops::Range;

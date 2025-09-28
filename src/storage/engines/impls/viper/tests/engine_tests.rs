@@ -23,12 +23,18 @@ use crate::core::search::unified_interface::{SearchPlan, CollectionConfig, Stora
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use arrow_array::{StringArray, Int32Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
+use std::fs::File;
+// TODO: Refactor test code to use columnar module's exports
+// Currently using direct parquet imports for test compatibility
 use parquet::arrow::ArrowWriter;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::file::properties::WriterProperties;
-use std::fs::File;
-// Import column constants from columnar module
-use crate::storage::engines::core::formats::columnar::{FIELD_ID, FIELD_TIMESTAMP};
+// Also use columnar module's exports
+use crate::storage::engines::core::formats::columnar::{
+    FIELD_ID, FIELD_TIMESTAMP,
+    BatchParquetWriter, ParquetWriterConfig,
+    UnifiedParquetReader, ReaderConfig,
+};
 
 /// Create test configuration
 fn create_test_config(_base_path: &str) -> ViperEngineConfig {
@@ -877,7 +883,23 @@ async fn test_search_vectors_unified() {
                 .await
                 .unwrap(),
         );
-        let reader = UnifiedParquetReader::new(vec![], 128).unwrap();
+        // Create UnifiedCachingFilesystem for testing
+        let base_fs = filesystem.get_filesystem("file://").unwrap();
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                collection_id.to_string(),
+                "viper".to_string(),
+            )
+        );
+        let reader = UnifiedParquetReader::new(
+            vec![],
+            128,
+            filesystem.clone(),
+            cached_filesystem,
+            collection_id.to_string(),
+            "viper".to_string(),
+        ).unwrap();
 
         // Find the parquet file
         let mut parquet_file = String::new();

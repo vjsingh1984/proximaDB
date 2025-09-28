@@ -27,7 +27,24 @@ mod tests {
     // Test helpers
     async fn create_test_reader() -> UnifiedParquetReader {
         let file_paths = vec!["/tmp/test1.parquet".to_string(), "/tmp/test2.parquet".to_string()];
-        UnifiedParquetReader::new(file_paths, 128).unwrap()
+        // Create UnifiedCachingFilesystem for testing
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "test_collection".to_string(),
+                "viper".to_string(),
+            )
+        );
+        UnifiedParquetReader::new(
+            file_paths,
+            128,
+            filesystem_factory,
+            cached_filesystem,
+            "test_collection".to_string(),
+            "viper".to_string(),
+        ).unwrap()
     }
 
     fn convert_search_params_to_plan(params: &SearchParams, collection_id: &str) -> SearchPlan {

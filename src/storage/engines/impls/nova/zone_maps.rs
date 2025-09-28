@@ -2,6 +2,8 @@
 // Advanced multi-dimensional pruning and search cost estimation
 
 use anyhow::Result;
+// These parquet metadata types are used internally for low-level operations
+// The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::RowGroupMetaData;
 use std::collections::HashMap;
 use tracing::instrument;

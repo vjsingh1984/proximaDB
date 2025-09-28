@@ -11,8 +11,14 @@ use arrow_array::builder::{Float32Builder, ListBuilder};
 use arrow_array::types::UInt8Type;
 use arrow_array::{ArrayRef, Float64Array, Int64Array, ListArray, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
+// TODO: Refactor test code to use columnar module's exports
+// Currently using direct ArrowWriter for test data generation
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
+// Also import columnar exports for future migration
+use crate::storage::engines::core::formats::columnar::{
+    BatchParquetWriter, ParquetWriterConfig,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;

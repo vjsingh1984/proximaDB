@@ -55,7 +55,24 @@ impl ParquetReader {
         );
 
         // Use UnifiedParquetReader for actual reading
-        let unified_reader = UnifiedParquetReader::new(vec![file_path.clone()], 1024)?;
+        // Create UnifiedCachingFilesystem for optimal performance
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+        let base_fs = filesystem_factory.get_filesystem("file://")?;
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "default_collection".to_string(),
+                "columnar".to_string(),
+            )
+        );
+        let unified_reader = UnifiedParquetReader::new(
+            vec![file_path.clone()],
+            1024,
+            filesystem_factory,
+            cached_filesystem,
+            "default_collection".to_string(),
+            "columnar".to_string(),
+        )?;
 
         // Read all records
         let records = unified_reader.read_all_records(0, None).await?;

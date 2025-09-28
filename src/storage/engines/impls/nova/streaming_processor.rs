@@ -4,6 +4,8 @@
 use super::hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::{Result, anyhow};
+// These parquet metadata types are used internally for low-level operations
+// The columnar module doesn't re-export them as they're implementation details
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
 use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore, mpsc};

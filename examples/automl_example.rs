@@ -14,9 +14,10 @@
 use proximadb::automl::{
     AutoMLCoordinator, AutoMLConfig,
     WorkloadAnalyzer, WorkloadPattern,
-    OptimizationPipeline, OptimizationGoal, OptimizationStrategy,
-    HyperparameterTuner, TuningConfig, TuningAlgorithm,
-    ProximaDBHyperparameters, ParameterValue,
+    OptimizationPipeline, OptimizationGoal,
+    optimization::OptimizationStrategy,
+    HyperparameterTuner, TuningConfig,
+    tuning::{TuningAlgorithm, ProximaDBHyperparameters, ParameterValue},
 };
 use std::collections::HashMap;
 use tokio::time::{sleep, Duration};
@@ -65,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Detected workload pattern: {:?}", pattern);
 
     // Optimize for the detected pattern
-    let optimization_goal = match pattern {
+    let optimization_goal = match pattern.clone() {
         WorkloadPattern::ReadHeavy => OptimizationGoal::MinimizeLatency,
         WorkloadPattern::WriteHeavy => OptimizationGoal::MaximizeThroughput,
         WorkloadPattern::Analytics => OptimizationGoal::MaximizeAccuracy,
@@ -78,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "demo_collection",
         optimization_goal,
         OptimizationStrategy::BayesianOptimization { n_iterations: 20 },
-        pattern,
+        pattern.clone(),
     ).await?;
 
     info!("✅ Optimization complete!");
@@ -228,8 +229,8 @@ async fn tune_index_parameters(algorithm: &str) -> Result<(), Box<dyn std::error
     };
 
     info!("Running hyperparameter tuning with TPE algorithm...");
-    let best_params = tuner.with_algorithm(TuningAlgorithm::TPE)
-        .tune(objective)
+    let tuner_with_algo = tuner.with_algorithm(TuningAlgorithm::TPE);
+    let best_params = tuner_with_algo.tune(objective)
         .await?;
 
     info!("Best hyperparameters found:");
@@ -243,10 +244,10 @@ async fn tune_index_parameters(algorithm: &str) -> Result<(), Box<dyn std::error
     }
 
     // Get tuning statistics
-    let trials = tuner.get_trials().await;
+    let trials = tuner_with_algo.get_trials().await;
     info!("Total trials executed: {}", trials.len());
 
-    if let Some(best_trial) = tuner.get_best_trial().await {
+    if let Some(best_trial) = tuner_with_algo.get_best_trial().await {
         info!("Best trial score: {:.2}", best_trial.score);
         info!("Best trial duration: {} ms", best_trial.duration_ms);
     }
@@ -254,43 +255,43 @@ async fn tune_index_parameters(algorithm: &str) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-/// Example output:
-/// ```
-/// 🚀 ProximaDB AutoML Example
-/// 📊 Starting AutoML Coordinator...
-/// 🔍 Monitoring workload patterns...
-/// Simulating read-heavy workload...
-/// Transitioning to write-heavy workload...
-/// Simulating analytics workload...
-/// ⚙️ Running manual optimization...
-/// Detected workload pattern: Analytics
-/// Optimizing for goal: MaximizeAccuracy
-/// ✅ Optimization complete!
-///   Optimal Index: HNSW
-///   Optimal Quantization: PQ8
-///   Optimal Engine: VIPER
-///   Optimal Cache: 1024 MB
-/// 🎯 Tuning hyperparameters...
-/// Running hyperparameter tuning with TPE algorithm...
-/// Best hyperparameters found:
-///   M: 24
-///   ef_construction: 200
-///   ef_search: 50
-/// Total trials executed: 20
-/// Best trial score: 145.32
-/// Best trial duration: 12 ms
-/// 📈 AutoML Metrics:
-///   Active optimizations: 0
-///   Total optimizations: 1
-///   Average improvement: 15.00%
-///   Predictions made: 5
-///   Successful optimizations: 1
-/// 🔮 Predicting future workload...
-/// Predicted pattern in 1 hour: ReadHeavy
-/// ⚠️ Workload pattern expected to change from Analytics to ReadHeavy
-/// Preparing preemptive optimization for future workload...
-/// Future-optimized configuration ready for deployment
-/// ⏰ AutoML running in background for 10 seconds...
-/// 🛑 Stopping AutoML services...
-/// ✨ AutoML example complete!
-/// ```
+// Example output:
+// ```
+// 🚀 ProximaDB AutoML Example
+// 📊 Starting AutoML Coordinator...
+// 🔍 Monitoring workload patterns...
+// Simulating read-heavy workload...
+// Transitioning to write-heavy workload...
+// Simulating analytics workload...
+// ⚙️ Running manual optimization...
+// Detected workload pattern: Analytics
+// Optimizing for goal: MaximizeAccuracy
+// ✅ Optimization complete!
+//   Optimal Index: HNSW
+//   Optimal Quantization: PQ8
+//   Optimal Engine: VIPER
+//   Optimal Cache: 1024 MB
+// 🎯 Tuning hyperparameters...
+// Running hyperparameter tuning with TPE algorithm...
+// Best hyperparameters found:
+//   M: 24
+//   ef_construction: 200
+//   ef_search: 50
+// Total trials executed: 20
+// Best trial score: 145.32
+// Best trial duration: 12 ms
+// 📈 AutoML Metrics:
+//   Active optimizations: 0
+//   Total optimizations: 1
+//   Average improvement: 15.00%
+//   Predictions made: 5
+//   Successful optimizations: 1
+// 🔮 Predicting future workload...
+// Predicted pattern in 1 hour: ReadHeavy
+// ⚠️ Workload pattern expected to change from Analytics to ReadHeavy
+// Preparing preemptive optimization for future workload...
+// Future-optimized configuration ready for deployment
+// ⏰ AutoML running in background for 10 seconds...
+// 🛑 Stopping AutoML services...
+// ✨ AutoML example complete!
+// ```

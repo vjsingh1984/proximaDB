@@ -68,10 +68,22 @@ impl VIPERParquetMetadataSource {
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         // For metadata reading, dimension is not needed - Parquet has schema
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
+        // Create UnifiedCachingFilesystem for optimal performance
+        let base_fs = filesystem_factory.get_filesystem("file://")?;
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "viper_collection".to_string(),
+                "viper".to_string(),
+            )
+        );
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             0, // Dimension not needed for metadata operations
-            filesystem_factory,
+            filesystem_factory.clone(),
+            cached_filesystem,
+            "viper_collection".to_string(),
+            "viper".to_string(),
         )?;
         
         // Read all records to build metadata cache (for now - could be optimized)
@@ -192,10 +204,22 @@ impl VIPERIndexBasedReader {
         indices: &[usize],
     ) -> Result<Vec<VectorRecord>> {
         // For reading records, we don't need dimension - Parquet has the schema
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
+        // Create UnifiedCachingFilesystem for optimal performance
+        let base_fs = self.filesystem_factory.get_filesystem("file://")?;
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "viper_collection".to_string(),
+                "viper".to_string(),
+            )
+        );
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             0, // Dimension not needed, will be read from Parquet schema
             self.filesystem_factory.clone(),
+            cached_filesystem,
+            "viper_collection".to_string(),
+            "viper".to_string(),
         )?;
         
         // For now, read all and filter by indices
@@ -216,10 +240,22 @@ impl VIPERIndexBasedReader {
     /// Read full parquet file
     async fn read_full_file(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         // For reading records, we don't need dimension - Parquet has the schema
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
+        // Create UnifiedCachingFilesystem for optimal performance
+        let base_fs = self.filesystem_factory.get_filesystem("file://")?;
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "viper_collection".to_string(),
+                "viper".to_string(),
+            )
+        );
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             0, // Dimension not needed, will be read from Parquet schema
             self.filesystem_factory.clone(),
+            cached_filesystem,
+            "viper_collection".to_string(),
+            "viper".to_string(),
         )?;
         
         // TODO: Implement proper batch reading

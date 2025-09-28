@@ -1,0 +1,228 @@
+//! Search operations module for NOVA engine
+//! Handles all search-related logic including hierarchical pruning and progressive refinement
+
+use anyhow::{Result, Context};
+use std::sync::Arc;
+use std::collections::HashMap;
+use tracing::{info, debug};
+
+use crate::proto::proximadb_v1::{VectorRecord, MetadataFilter};
+use crate::core::search::unified_interface::SearchPlan;
+use crate::storage::engines::core::search::search_common::SearchConfig;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::compute::distance_computation::DistanceMetric;
+
+use crate::storage::engines::impls::nova::progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig};
+use crate::storage::engines::impls::nova::streaming_search::{StreamingSearchEngine, StreamingSearchConfig};
+use crate::storage::engines::impls::nova::hierarchical_stats::SuperBlock;
+use crate::storage::engines::impls::nova::zone_maps::{AdvancedZoneMap, CostBasedOptimizer};
+
+/// Handles all search operations for NOVA engine
+pub struct NovaSearchOperations {
+    filesystem: Arc<FilesystemFactory>,
+    distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
+}
+
+impl NovaSearchOperations {
+    /// Create new search operations handler
+    pub fn new(
+        filesystem: Arc<FilesystemFactory>,
+        distance_metric: DistanceMetric,
+    ) -> Self {
+        Self {
+            filesystem,
+            distance_engine: Arc::new(
+                crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                    distance_metric,
+                )
+            ),
+        }
+    }
+
+    /// Search vectors with unified interface
+    pub async fn search_vectors_unified(
+        &self,
+        ctx: &crate::storage::traits::StorageQueryContext,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        // Extract search parameters from context
+        let query_vector = ctx.query_vector()
+            .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
+        let k = ctx.top_k();
+        let distance_metric = ctx.distance_metric();
+        let collection_id = &ctx.collection.id;
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
+
+        info!(
+            "🔍 NOVA: Searching with k={}, query_dim={}, filters={:?}",
+            k, query_vector.len(), filter_expression.is_some()
+        );
+
+        let collection_size = 1000; // Default collection size estimate
+
+        // For now, implement direct search logic here
+        // Check if we should use progressive search
+        if self.should_use_progressive_search(k, collection_size, filter_expression.is_some()) {
+            self.search_with_progressive_refinement(ctx, collection_id).await
+        } else if self.should_use_streaming_search(k, collection_size) {
+            self.search_with_streaming(ctx, collection_id).await
+        } else {
+            self.search_standard(ctx, collection_id).await
+        }
+    }
+
+    /// Search with progressive refinement
+    async fn search_with_progressive_refinement(
+        &self,
+        ctx: &crate::storage::traits::StorageQueryContext,
+        collection_id: &str,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        // For now, use standard search as progressive search needs more setup
+        self.search_standard(ctx, collection_id).await
+    }
+
+    /// Search with streaming
+    async fn search_with_streaming(
+        &self,
+        ctx: &crate::storage::traits::StorageQueryContext,
+        collection_id: &str,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        // For now, use standard search as streaming search needs more setup
+        self.search_standard(ctx, collection_id).await
+    }
+
+    /// Standard search without optimization
+    async fn search_standard(
+        &self,
+        ctx: &crate::storage::traits::StorageQueryContext,
+        collection_id: &str,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
+        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+        use crate::core::search::results::OptimizedSearchRecord;
+        use std::collections::BinaryHeap;
+        use std::cmp::Reverse;
+
+        // Get search parameters from context
+        let query_vector = ctx.query_vector()
+            .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
+        let k = ctx.top_k();
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
+
+        // Get files for the collection
+        let collection_path = format!("/data/collections/{}/nova", collection_id);
+        // Get files for collection - simplified for now
+        let files: Vec<String> = vec![]; // Would normally list actual files
+
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut all_candidates: Vec<(f32, OptimizedSearchRecord)> = Vec::new();
+        let dimension = query_vector.len();
+
+        for file_path in files {
+            // Create unified caching filesystem
+            let fs = self.filesystem.get_filesystem(&file_path)?;
+            let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
+                fs,
+                collection_id.to_string(),
+                "nova".to_string(),
+            ));
+
+            let reader = UnifiedParquetReader::new(
+                vec![file_path],
+                dimension,
+                self.filesystem.clone(),
+                unified_fs,
+                collection_id.to_string(),
+                "nova".to_string(),
+            )?;
+
+            // Convert filter if provided
+            let metadata_filter = filter_expression.as_ref().map(|_f| {
+                // Convert FilterExpression to MetadataFilter
+                // This is a simplified conversion - real implementation would be more complex
+                crate::storage::engines::core::formats::columnar::MetadataFilter {
+                    conditions: vec![], // Would need proper conversion
+                    logic: crate::storage::engines::core::formats::columnar::FilterLogic::And,
+                }
+            });
+
+            let records = reader.read_all_records(10000, metadata_filter).await?;
+
+            // Compute distances and collect candidates
+            for record in records {
+                if let Some(vector) = record.vector.as_ref() {
+                    let distance = self.distance_engine.distance_with_metric(
+                        query_vector,
+                        vector,
+                        &ctx.distance_metric(),
+                    );
+
+                    let search_record = OptimizedSearchRecord {
+                        id: record.id.clone(),
+                        vector_id: Some(record.id),
+                        score: 1.0 - distance, // Convert distance to similarity score
+                        similarity: Some(distance),
+                        vector: Some(Arc::new(vector.clone())),
+                        metadata: record.metadata.unwrap_or_else(HashMap::new),
+                        debug_info: None,
+                        version: record.version,
+                        timestamp: Some(record.timestamp),
+                        updated_at: None,
+                        expires_at: None,
+                        source: None,
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                    };
+
+                    // Add to candidates
+                    all_candidates.push((distance, search_record));
+                }
+            }
+        }
+
+        // Sort by distance (ascending) and take top-k
+        all_candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        all_candidates.truncate(k);
+
+        let results: Vec<OptimizedSearchRecord> = all_candidates
+            .into_iter()
+            .map(|(_, record)| record)
+            .collect();
+
+        Ok(results)
+    }
+
+    /// Determine if progressive search should be used
+    fn should_use_progressive_search(&self, _k: usize, collection_size: usize, has_filter: bool) -> bool {
+        // Use progressive search for large collections or complex filters
+        let is_large_collection = collection_size > 100000;
+
+        has_filter || is_large_collection
+    }
+
+    /// Determine if streaming search should be used
+    fn should_use_streaming_search(&self, _k: usize, collection_size: usize) -> bool {
+        // Use streaming for very large collections
+        collection_size > 1000000
+    }
+
+    /// Search by vector ID
+    pub async fn vector_by_id(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+    ) -> Result<Option<VectorRecord>> {
+        // Implement ID-based search using bloom filters and hierarchical index
+        debug!("🔍 NOVA: Searching for vector ID: {}", vector_id);
+
+        // This would use the hierarchical index and bloom filters for fast ID lookup
+        // For now, return a placeholder
+        Ok(None)
+    }
+}

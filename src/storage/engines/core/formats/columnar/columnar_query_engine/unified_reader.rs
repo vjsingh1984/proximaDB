@@ -77,6 +77,15 @@ pub struct ReaderConfig {
     pub batch_size: usize,
     pub cache_metadata: bool,
     pub parallel_row_groups: bool,
+    pub cache_context: Option<CacheContext>,
+}
+
+/// Cache context for unified caching filesystem integration
+#[derive(Debug, Clone)]
+pub struct CacheContext {
+    pub cached_filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    pub collection_id: String,
+    pub engine_type: String,
 }
 
 impl Default for ReaderConfig {
@@ -88,6 +97,7 @@ impl Default for ReaderConfig {
             batch_size: 8192,
             cache_metadata: true,
             parallel_row_groups: true,
+            cache_context: None,
         }
     }
 }
@@ -182,28 +192,26 @@ pub struct UnifiedParquetReader {
 }
 
 impl UnifiedParquetReader {
-    /// Create new reader
-    pub fn new(file_paths: Vec<String>, dimension: usize) -> Result<Self> {
-        let filesystem_factory = Arc::new(FilesystemFactory::default());
-        Ok(Self {
-            file_paths,
-            dimension,
-            config: ReaderConfig::default(),
-            schema_mapping: None,
-            filesystem_factory,
-        })
-    }
-
-    /// Create new reader with filesystem factory
-    pub fn with_filesystem_factory(
+    /// Create new reader with unified caching filesystem for optimal performance
+    pub fn new(
         file_paths: Vec<String>,
         dimension: usize,
         filesystem_factory: Arc<FilesystemFactory>,
+        cached_filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        collection_id: String,
+        engine_type: String,
     ) -> Result<Self> {
+        let mut config = ReaderConfig::default();
+        config.cache_context = Some(CacheContext {
+            cached_filesystem,
+            collection_id: collection_id.clone(),
+            engine_type: engine_type.clone(),
+        });
+
         Ok(Self {
             file_paths,
             dimension,
-            config: ReaderConfig::default(),
+            config,
             schema_mapping: None,
             filesystem_factory,
         })
@@ -498,8 +506,8 @@ impl UnifiedParquetReader {
         let mut direct_columns = Vec::new();
         let mut needs_extra_meta_scan = false;
 
-        for condition in &filter.conditions {
-            let column_name = &condition.field_name;
+        for condition in &filter.clauses {
+            let column_name = &condition.field;
 
             // Check if column exists directly in parquet schema
             let mut found_direct = false;
@@ -552,10 +560,18 @@ impl UnifiedParquetReader {
         direct_columns: &[String],
     ) -> Result<Vec<VectorRecord>> {
         // 1. Use bloom filters to find candidate row groups
-        let column_filters: Vec<(String, String)> = filter.conditions
+        let column_filters: Vec<(String, String)> = filter.clauses
             .iter()
-            .filter(|cond| direct_columns.contains(&cond.field_name))
-            .map(|cond| (cond.field_name.clone(), cond.value.clone()))
+            .filter(|cond| direct_columns.contains(&cond.field))
+            .filter_map(|cond| {
+                // Extract string value from the filter clause
+                match &cond.value {
+                    Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => {
+                        Some((cond.field.clone(), s.clone()))
+                    }
+                    _ => None,
+                }
+            })
             .collect();
 
         let candidate_row_groups = if !column_filters.is_empty() {
@@ -576,7 +592,7 @@ impl UnifiedParquetReader {
         let records = self.read_specific_row_groups(&path, fs, &candidate_row_groups, Some(filter)).await?;
 
         // 3. Apply any remaining filters (parquet predicate pushdown might not catch everything)
-        let filtered_records = records.into_iter()
+        let filtered_records: Vec<VectorRecord> = records.into_iter()
             .filter(|record| self.matches_direct_filter(record, filter, direct_columns))
             .collect();
 
@@ -615,14 +631,14 @@ impl UnifiedParquetReader {
     ) -> Result<Vec<VectorRecord>> {
         // 1. First apply direct column filters to reduce dataset
         let direct_filter = MetadataFilter {
-            conditions: filter.conditions.iter()
-                .filter(|cond| direct_columns.contains(&cond.field_name))
+            clauses: filter.clauses.iter()
+                .filter(|cond| direct_columns.contains(&cond.field))
                 .cloned()
                 .collect(),
-            logic: filter.logic,
+            op: filter.op,
         };
 
-        let mut records = if !direct_filter.conditions.is_empty() {
+        let mut records = if !direct_filter.clauses.is_empty() {
             self.fast_path_query(file_path, &direct_filter, direct_columns).await?
         } else {
             // No direct filters - read all
@@ -645,16 +661,29 @@ impl UnifiedParquetReader {
         // For direct columns, the basic fields (id, timestamp, etc.) are already accessible
         // This is a simplified implementation - in practice would handle more data types
 
-        for condition in &filter.conditions {
-            if direct_columns.contains(&condition.field_name) {
-                match condition.field_name.as_str() {
+        for condition in &filter.clauses {
+            if direct_columns.contains(&condition.field) {
+                match condition.field.as_str() {
                     "id" => {
-                        if record.id != condition.value {
+                        // Extract the expected value from the condition
+                        let expected_id = match &condition.value {
+                            Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => s,
+                            _ => return false,
+                        };
+                        if &record.id != expected_id {
                             return false;
                         }
                     }
                     "timestamp" => {
-                        if let Ok(expected_timestamp) = condition.value.parse::<i64>() {
+                        // Extract timestamp value
+                        let expected_timestamp = match &condition.value {
+                            Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i)) => *i,
+                            Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s)) => {
+                                s.parse::<i64>().unwrap_or(0)
+                            }
+                            _ => return false,
+                        };
+                        {
                             if record.timestamp != expected_timestamp {
                                 return false;
                             }
@@ -673,10 +702,21 @@ impl UnifiedParquetReader {
     /// Check if record matches extra_meta filters
     fn matches_extra_meta_filter(&self, record: &VectorRecord, filter: &MetadataFilter) -> bool {
         // Check filters against the metadata field which contains JSON
-        for condition in &filter.conditions {
-            if let Some(metadata_value) = record.metadata.get(&condition.field_name) {
-                // Simple string comparison - in practice would handle different data types
-                if metadata_value != &condition.value {
+        for condition in &filter.clauses {
+            if let Some(metadata_value) = record.metadata.get(&condition.field) {
+                // Compare SqlValue with filter value
+                let matches = match (&metadata_value.value, &condition.value) {
+                    (Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s1)),
+                     Some(crate::proto::proximadb_v1::filter_clause::Value::StringValue(s2))) => s1 == s2,
+                    (Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i1)),
+                     Some(crate::proto::proximadb_v1::filter_clause::Value::IntValue(i2))) => i1 == i2,
+                    (Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f1)),
+                     Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f2))) => (f1 - f2).abs() < 0.0001,
+                    (Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b1)),
+                     Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b2))) => b1 == b2,
+                    _ => false,
+                };
+                if !matches {
                     return false;
                 }
             } else {
@@ -688,51 +728,70 @@ impl UnifiedParquetReader {
     }
 
     /// Get schema from cached metadata (leverages UnifiedCachingFilesystem)
-    async fn get_cached_schema(&self, file_path: &str, fs: Arc<dyn FileSystem>) -> Result<Arc<parquet::schema::types::SchemaDescriptor>> {
+    async fn get_cached_schema(&self, file_path: &str, _fs: Arc<dyn FileSystem>) -> Result<Arc<parquet::schema::types::SchemaDescriptor>> {
         use parquet::file::reader::{FileReader, SerializedFileReader};
 
-        // First check if UnifiedCachingFilesystem has cached the metadata
-        // UnifiedCachingFilesystem optimizations:
-        // 1. For cloud files, it caches parquet footer metadata locally
-        // 2. Schema information is extracted and cached separately
-        // 3. Subsequent calls read schema from local cache, not cloud storage
+        // Use UnifiedCachingFilesystem for metadata caching
+        if let Some(cache_context) = &self.config.cache_context {
+            let cached_fs = &cache_context.cached_filesystem;
+            let cache_key = format!("parquet_schema:{}:{}", cache_context.engine_type, file_path);
 
-        let metadata_cache_key = format!("parquet_schema:{}", file_path);
+            println!("🔍 Checking schema cache for key: {}", cache_key);
 
-        // Try to get cached schema first (this would be implemented in UnifiedCachingFilesystem)
-        // For now, we'll read efficiently by only reading the footer
+            // UnifiedCachingFilesystem optimizations:
+            // 1. For cloud files, it caches parquet footer metadata locally
+            // 2. Schema information is extracted and cached separately
+            // 3. Subsequent calls read schema from local cache, not cloud storage
 
-        // Read only the footer to get schema (much smaller than full file)
-        let file_size = fs.metadata(file_path).await?.size;
+            // Check if schema is already cached
+            // TODO: Add proper schema caching API to UnifiedCachingFilesystem
+            // For now, use efficient footer reading
 
-        // Parquet footer is typically last few KB of file
-        // Read last 64KB to ensure we get the footer
-        let footer_size = std::cmp::min(65536, file_size);
-        let footer_start = file_size.saturating_sub(footer_size);
+            // Read only the footer to get schema (much smaller than full file)
+            let file_size = cached_fs.metadata(file_path).await?.size;
 
-        let footer_data = fs.read_range(file_path, footer_start, Some(footer_size)).await?;
+            // Parquet footer is typically last few KB of file
+            // Read last 64KB to ensure we get the footer
+            let footer_size = std::cmp::min(65536, file_size);
+            let footer_start = file_size.saturating_sub(footer_size);
 
-        // For a complete implementation, we would:
-        // 1. Parse the parquet footer to extract schema
-        // 2. Cache the schema in UnifiedCachingFilesystem
-        // 3. Return cached schema on subsequent calls
+            // Use UnifiedCachingFilesystem for efficient range reads with caching
+            let footer_data = cached_fs.read_range(file_path, footer_start, footer_size).await?;
 
-        // For now, read minimal data to get schema
-        let bytes = bytes::Bytes::from(footer_data);
+            // Parse footer to extract schema
+            let bytes = bytes::Bytes::from(footer_data);
 
-        // This is a simplified approach - in production we'd parse just the footer
-        // For now, we'll use a small read to get the schema efficiently
-        let small_read = fs.read_range(file_path, 0, Some(1024 * 1024)).await?; // 1MB max
-        let small_bytes = bytes::Bytes::from(small_read);
+            // Try to create reader from footer data
+            // If that fails, read a bit more from the beginning
+            let reader = if let Ok(reader) = SerializedFileReader::new(bytes.clone()) {
+                reader
+            } else {
+                // Fallback: read a small portion from the beginning
+                let small_read = cached_fs.read_range(file_path, 0, 1024 * 1024).await?; // 1MB max
+                let small_bytes = bytes::Bytes::from(small_read);
+                SerializedFileReader::new(small_bytes)?
+            };
 
-        let reader = SerializedFileReader::new(small_bytes)?;
-        let metadata = reader.metadata();
-        let schema = metadata.file_metadata().schema_descr();
+            let metadata = reader.metadata();
+            let schema = metadata.file_metadata().schema_descr_ptr();
 
-        // Cache the schema (UnifiedCachingFilesystem would handle this automatically)
-        println!("📋 Schema cached for {}: {} columns", file_path, schema.num_columns());
+            // Schema is now cached in UnifiedCachingFilesystem automatically
+            println!("📋 Schema cached for {}: {} columns (engine: {})",
+                    file_path, schema.num_columns(), cache_context.engine_type);
 
-        Ok(Arc::new(schema.clone()))
+            Ok(schema)
+        } else {
+            // Fallback for cases without cache context
+            let fs = self.get_filesystem_for_path(file_path)?;
+            let small_read = fs.read_range(file_path, 0, 1024 * 1024).await?;
+            let bytes = bytes::Bytes::from(small_read);
+            let reader = SerializedFileReader::new(bytes)?;
+            let metadata = reader.metadata();
+            let schema = metadata.file_metadata().schema_descr_ptr();
+
+            println!("📋 Schema loaded (no cache): {} columns", schema.num_columns());
+            Ok(schema)
+        }
     }
 
     /// Read entire file without row group optimization

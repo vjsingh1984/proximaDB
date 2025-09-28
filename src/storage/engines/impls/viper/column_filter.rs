@@ -300,10 +300,22 @@ impl VIPERColumnFilterEvaluator {
 
             // Use UnifiedParquetReader to read specific column
             // For metadata column reading, dimension is not needed
-            let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
+            // Create UnifiedCachingFilesystem for optimal performance
+            let base_fs = self.filesystem_factory.get_filesystem("file://")?;
+            let cached_filesystem = Arc::new(
+                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                    base_fs,
+                    "viper_collection".to_string(),
+                    "viper".to_string(),
+                )
+            );
+            let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
                 vec![parquet_file.to_string()],
                 0, // Dimension not needed for metadata column reading
                 self.filesystem_factory.clone(),
+                cached_filesystem,
+                "viper_collection".to_string(),
+                "viper".to_string(),
             )?;
 
             // Get collection context to check if this is a filterable column
@@ -542,10 +554,22 @@ impl VIPERSelectiveReader {
         row_indices: &[usize]
     ) -> Result<Vec<VectorRecord>> {
         // For selective reading, dimension is not needed - Parquet has the schema
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
+        // Create UnifiedCachingFilesystem for optimal performance
+        let base_fs = self.filesystem_factory.get_filesystem("file://")?;
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "viper_collection".to_string(),
+                "viper".to_string(),
+            )
+        );
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
             vec![file_path.to_string()],
             0, // Dimension will be read from Parquet schema
             self.filesystem_factory.clone(),
+            cached_filesystem,
+            "viper_collection".to_string(),
+            "viper".to_string(),
         )?;
 
         // Perform selective row reading

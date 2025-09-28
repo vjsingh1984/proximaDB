@@ -104,6 +104,7 @@ pub mod parquet_io_layer; // Low-level I/O operations (formerly shared_parquet_r
 pub mod parquet_metadata; // NEW: Zero-copy metadata serialization for Parquet
 pub mod utilities; // NEW: Zero-copy metadata serialization for NOVA
 pub mod metadata_collector; // NEW: Trait for engine-specific metadata collection during writes
+pub use metadata_collector::MetadataCollector;
 pub mod unified_compaction; // Unified Parquet compaction using StreamingParquetWriter
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
@@ -603,10 +604,28 @@ impl ColumnarFactory {
             batch_size: 1024,
             cache_metadata: true,
             parallel_row_groups: false, // Add missing field
+            cache_context: None, // Add missing cache_context field
         };
 
         // Create reader with empty paths and 0 dimension - caller will set actual values
-        let reader = UnifiedParquetReader::new(vec![], 0)?;
+        // Create a default UnifiedCachingFilesystem for testing/default usage
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+        let base_fs = filesystem_factory.get_filesystem("file://")?;
+        let cached_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                base_fs,
+                "default_collection".to_string(),
+                "columnar".to_string(),
+            )
+        );
+        let reader = UnifiedParquetReader::new(
+            vec![],
+            0,
+            filesystem_factory,
+            cached_filesystem,
+            "default_collection".to_string(),
+            "columnar".to_string(),
+        )?;
         Ok(reader.with_config(reader_config))
     }
 

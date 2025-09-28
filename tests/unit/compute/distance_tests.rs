@@ -18,7 +18,7 @@
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
 #[test]
 fn test_platform_detection() {

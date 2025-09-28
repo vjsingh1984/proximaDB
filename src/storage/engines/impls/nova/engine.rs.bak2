@@ -27,7 +27,9 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
 use super::optimized_operations::OptimizedNovaOperations;
-use super::operations::{NovaFlushOperations, NovaCompactionOperations, NovaSearchOperations};
+use super::flush_operations::NovaFlushOperations;
+use super::compaction_operations::NovaCompactionOperations;
+use super::search_operations::NovaSearchOperations;
 use crate::core::compression::CompressionAlgorithm;
 // Arrow schema handled by parquet reader
 
@@ -949,6 +951,212 @@ impl UnifiedStorageEngine for NovaEngine {
         self.compaction_ops.compact(params).await
     }
 
+    // Old compact implementation removed - using modularized compaction_operations.rs
+    /*
+        use crate::storage::engines::core::formats::columnar::parquet_write_engine::{
+            StreamingParquetWriter, ParquetWriterConfig,
+        };
+        use super::nova_meta_collector::{NovaMetadataCollector, NovaCollectorConfig};
+        use super::unified_strategy_reader::UnifiedNOVAReader;
+
+        let start_time = std::time::Instant::now();
+
+        let collection_id = params
+            .collection_id
+            .as_ref()
+            .ok_or_else(|| anyhow!("Collection ID required for compaction"))?;
+        info!("NOVA compaction: collection={}", collection_id);
+
+        // Get storage path from collection config
+        let storage_path = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .map(|s| StoragePath::collection_data_path(&s.base_location, &collection_id))
+            .ok_or_else(|| anyhow!("Collection '{}' has no storage assignment", collection_id))?;
+
+        // List existing Parquet files
+        let fs = self.filesystem.get_filesystem(&self.determine_fs_url(&storage_path))?;
+        let files = fs.list(&storage_path).await?
+            .into_iter()
+            .filter(|f| f.name.ends_with(".parquet"))
+            .collect::<Vec<_>>();
+
+        if files.len() < 2 {
+            let duration_ms = start_time.elapsed().as_millis() as u64;
+            return Ok(CompactionResult {
+                success: true,
+                collections_affected: vec![collection_id.to_string()],
+                entries_processed: Some(0),
+                entries_removed: Some(0),
+                bytes_read: Some(0),
+                bytes_written: Some(0),
+                input_files: Some(files.len() as u64),
+                output_files: Some(files.len() as u64),
+                duration_ms: Some(duration_ms),
+                completed_at: chrono::Utc::now(),
+                engine_metrics: HashMap::new(),
+            });
+        }
+
+        // Get collection configuration
+        let dimension = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.dimension)
+            .unwrap_or(1536);
+
+        // Get filterable columns from collection config (use proto type directly)
+        let filterable_columns = params
+            .collection_config
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.filterable_columns.clone())
+            .unwrap_or_else(|| vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: FIELD_ID.to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                indexed: true,
+                supports_range: false,
+                estimated_cardinality: Some(1000000),
+            }]);
+
+        // Create schema for the compacted file
+        let filterable_column_names: Vec<String> = filterable_columns.iter()
+            .map(|col| col.name.clone())
+            .collect();
+        let schema = super::create_vector_schema_with_types(
+            dimension as usize,
+            &super::QuantizationConfig::default(),
+            &filterable_column_names,
+            &filterable_columns,
+        );
+
+        // Configure writer for compaction (larger row groups)
+        // Include both ID and filterable columns in bloom filters
+        let mut bloom_columns_compact = vec!["id".to_string()];
+        bloom_columns_compact.extend(filterable_columns.iter().map(|c| c.name.clone()));
+
+        let writer_config = ParquetWriterConfig {
+            compression: parquet::basic::Compression::ZSTD(Default::default()),
+            row_group_size: 100_000, // Larger row groups for compacted files
+            write_batch_size: 20_000,
+            enable_bloom_filters: true,
+            bloom_filter_fpp: 0.01,
+            bloom_filter_ndv: 2000000, // Larger for compacted files
+            enable_statistics: true,
+            enable_page_index: true,
+            enable_dictionary: true,
+            quantization: crate::proto::proximadb_v1::QuantizationConfig::default(),
+            id_less_storage: false,
+            page_size: 8192,
+            sort_columns: vec![], // No sorting for now
+            filterable_metadata_columns: Some(filterable_columns.iter().map(|c| c.name.clone()).collect()),
+            compression_level: None,
+            max_records_per_file: None,
+            target_file_size_bytes: None,
+            enable_async_io: false,
+        };
+
+        // Generate output filename
+        use crate::storage::common::compaction_orchestrator::FilenameCodec;
+        let codec = FilenameCodec::new();
+        let output_filename = codec.generate(0, &crate::storage::engines::constants::NOVA_FILE_EXT[1..]);
+        let output_path = format!("{}/{}", storage_path, output_filename);
+
+        // Create NOVA metadata collector for compacted file
+        let nova_collector = NovaMetadataCollector::new(NovaCollectorConfig {
+            row_groups_per_superblock: 20, // More row groups per SuperBlock for larger files
+            compute_vector_stats: true,
+            sample_rate: 0.05, // Lower sample rate for compaction
+        });
+
+        // Use HybridParquetWriter for adaptive optimization during compaction
+        use crate::storage::engines::core::formats::columnar::hybrid_writer::{HybridParquetWriter, HybridWriterConfig};
+        let hybrid_config = HybridWriterConfig {
+            base_config: writer_config,
+            ..Default::default()
+        };
+        let mut writer = HybridParquetWriter::new(
+            &output_path,
+            dimension as usize,
+            hybrid_config,
+        )?;
+
+        writer.set_metadata_collector(Box::new(nova_collector)).await;
+
+        // Read and merge all input files
+        // NOTE: Compaction does NOT use sidecar metadata because:
+        // 1. Full scan reads ALL vectors (no pruning benefit)
+        // 2. Sidecar metadata adds overhead without value for full reads
+        // 3. Direct Parquet reading is faster for sequential access
+        let reader = UnifiedNOVAReader::for_compaction(
+            self.filesystem.clone(),
+            collection_id.to_string(),
+        )?;
+        let mut total_entries = 0u64;
+        let mut bytes_read = 0u64;
+
+        for file_entry in &files {
+            // Read vectors from each file (full scan, no sidecar metadata used)
+            let vectors = reader.read_progressive(&file_entry.url).await?;
+            total_entries += vectors.len() as u64;
+
+            // Get file size for metrics
+            bytes_read += file_entry.metadata.size;
+
+            // Write directly without conversion - StreamingParquetWriter handles everything
+            for chunk in vectors.chunks(20_000) {
+                // No conversion needed - StreamingParquetWriter accepts VectorRecords directly
+                writer.write_batch(chunk).await?;
+            }
+        }
+
+        // Finalize and get statistics
+        let (stats, collector) = writer.finalize().await?;
+        let bytes_written = stats.file_size;
+
+        // Write sidecar metadata
+        if let Some(collector) = collector {
+            let sidecar_path = format!("{}.{}", output_path, collector.sidecar_extension());
+            let sidecar_data = collector.serialize_metadata()?;
+            fs.write(&sidecar_path, &sidecar_data, None).await?;
+
+            info!("NOVA compaction: Wrote sidecar metadata to {}", sidecar_path);
+        }
+
+        // Delete input files after successful compaction
+        for file_entry in &files {
+            fs.delete(&file_entry.url).await?;
+            // Also delete sidecar files if they exist
+            let sidecar_path = format!("{}.nova_meta", file_entry.url);
+            let _ = fs.delete(&sidecar_path).await; // Ignore errors for missing sidecars
+        }
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+
+        // Update statistics
+        let mut stats_guard = self.statistics.write().await;
+        stats_guard.pending_compactions = stats_guard.pending_compactions.saturating_sub(1);
+        stats_guard.last_compaction = Some(chrono::Utc::now());
+
+        info!("NOVA compaction: Merged {} files into {} ({} entries, {} bytes -> {} bytes)",
+              files.len(), output_filename, total_entries, bytes_read, bytes_written);
+
+        Ok(CompactionResult {
+            success: true,
+            collections_affected: vec![collection_id.to_string()],
+            entries_processed: Some(total_entries),
+            entries_removed: Some(0), // NOVA doesn't deduplicate during compaction
+            bytes_read: Some(bytes_read),
+            bytes_written: Some(bytes_written),
+            input_files: Some(files.len() as u64),
+            output_files: Some(1),
+            duration_ms: Some(duration_ms),
+            completed_at: chrono::Utc::now(),
+            engine_metrics: HashMap::new(),
+        })
+    }
 
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
@@ -1035,31 +1243,264 @@ impl UnifiedStorageEngine for NovaEngine {
         &self,
         ctx: &crate::storage::traits::StorageQueryContext,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
-        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-        use crate::core::search::results::OptimizedSearchRecord;
+        // Convert context to SearchPlan and delegate to search operations
+        let plan = crate::core::search::unified_interface::SearchPlan {
+            search_params: ctx.search_params.clone(),
+            collection_config: ctx.collection_config.clone(),
+            storage_info: ctx.storage_info.clone(),
+            optimization_hints: ctx.optimization_hints.clone(),
+            search_mode: ctx.search_mode,
+        };
 
-        // Extract search parameters from context
-        let query_vector = ctx.search_params.vector.as_ref()
-            .or(ctx.search_params.query_vectors.as_ref().and_then(|vecs| vecs.first()))
-            .ok_or_else(|| anyhow::anyhow!("No query vector provided"))?;
-        let k = ctx.search_params.top_k.unwrap_or(10);
-        let collection_id = &ctx.collection.id;
+        let search_context = crate::core::search::unified_interface::SearchContext {
+            collection_id: ctx.collection_id.clone(),
+            collection_size: Some(ctx.collection_config.as_ref()
+                .and_then(|c| c.size)
+                .unwrap_or(0) as usize),
+            data_freshness: ctx.data_freshness.clone(),
+        };
 
-        // Get files for the collection
-        let collection_path = format!("/data/collections/{}/nova", collection_id);
-        // Get files for the collection - simplified for now
-        let files: Vec<String> = vec![];
-
-        if files.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Delegate to modularized search operations
-        self.search_ops.search_vectors_unified(ctx).await
+        self.search_ops.search_vectors_unified(plan, search_context).await
     }
 
     // Old search implementation removed - using modularized search_operations.rs
+    async fn _search_vectors_unified_old(
+        &self,
+        ctx: &crate::storage::traits::StorageQueryContext,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        // OLD IMPLEMENTATION - KEPT FOR REFERENCE
+        let search_start = std::time::Instant::now();
+
+        // Extract all parameters from context (pre-computed)
+        let collection_id = ctx.collection_id();
+        let storage_path = ctx.storage_path();
+        let query_vector = ctx
+            .query_vector()
+            .ok_or_else(|| anyhow!("No query vector in context"))?;
+        let top_k = ctx.top_k();
+        let distance_metric = ctx.distance_metric();
+        let dimension = ctx.dimension();
+        let filter_expression = ctx.search_params.filter_expression.as_ref();
+        let search_params = ctx.search_params.custom_hints.clone();
+
+        info!(
+            "🚀 NOVA: Enhanced unified search with orchestration for collection {}",
+            collection_id
+        );
+
+        // ========================================================================
+        // PHASE 1: SEARCH ORCHESTRATION AND STRATEGY SELECTION
+        // ========================================================================
+
+        // Check if orchestration should be used based on context metadata
+        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
+
+        if use_orchestration {
+            info!("🎯 NOVA: Using intelligent search orchestration");
+
+            // Create mock services for orchestration
+            let axis_manager = match self.get_axis_manager().await {
+                Ok(manager) => manager,
+                Err(e) => {
+                    tracing::warn!(
+                        "⚠️ Failed to get AXIS manager: {}, falling back to direct search",
+                        e
+                    );
+                    return self
+                        .fallback_to_direct_search(
+                            ctx,
+                            collection_id,
+                            storage_path,
+                            query_vector,
+                            top_k,
+                            distance_metric,
+                            filter_expression,
+                        )
+                        .await;
+                }
+            };
+
+            // TODO: Integrate with AdvancedSearchOptimizer for intelligent search routing
+            //
+            // The AdvancedSearchOptimizer provides significant value for NOVA engine:
+            // 1. **Progressive quantization**: NOVA's multi-level approach perfectly suited
+            // 2. **Adaptive refinement**: Dynamically adjusts search precision
+            // 3. **Mixed workload optimization**: Balances between OLAP and OLTP patterns
+            // 4. **Smart caching**: Leverages NOVA's tiered storage effectively
+            // 5. **Cost-aware routing**: Chooses optimal quantization level per query
+            //
+            // NOVA-specific benefits when integrated:
+            // - Use coarse quantization for initial candidate selection
+            // - Progressively refine with higher precision levels
+            // - Early termination when confidence threshold met
+            // - Adaptive batch sizing based on intermediate results
+            //
+            // Implementation pattern:
+            // ```rust
+            // let orchestrator = AdvancedSearchOptimizer::new(
+            //     ctx.clone(), axis_manager, cost_estimator
+            // ).await?;
+            //
+            // match orchestrator.select_optimal_strategy().await? {
+            //     ExecutionStrategy::ProgressiveQuantization { levels, .. } => {
+            //         // NOVA's sweet spot - multi-stage refinement
+            //         self.progressive_search(levels).await
+            //     }
+            //     _ => self.fallback_to_direct_search(...).await
+            // }
+            // ```
+            //
+            // Current blocker: Cache infrastructure and service availability
+            // Expected gains: 3-15x speedup on large datasets through progressive refinement
+            return self
+                .fallback_to_direct_search(
+                    ctx,
+                    collection_id,
+                    storage_path,
+                    query_vector,
+                    top_k,
+                    distance_metric,
+                    filter_expression,
+                )
+                .await;
+        }
+
+        // ========================================================================
+        // PHASE 2: CURRENT IMPLEMENTATION WITH ENHANCED LOGGING
+        // ========================================================================
+
+        info!("🔍 NOVA: Using current unified search implementation (orchestration disabled)");
+
+        // Load files from storage
+        let fs = self.filesystem.get_filesystem(&self.determine_fs_url(storage_path))?;
+        let parquet_files = fs.list(storage_path).await?
+            .into_iter()
+            .filter(|f| f.name.ends_with(".parquet"))
+            .collect::<Vec<_>>();
+
+        if parquet_files.is_empty() {
+            info!("NOVA: No parquet files found in {}", storage_path);
+            return Ok(Vec::new());
+        }
+
+        // Create metadata reader for sidecar pruning
+        // SIDECAR USAGE: Only beneficial for selective queries (similarity search, filtered search)
+        // where we can prune 70-97% of row groups before reading
+        let mut meta_reader = super::nova_meta_reader::NovaMetaReader::new(self.filesystem.clone());
+        let mut all_results = Vec::new();
+
+        // Search each NOVA file using sidecar metadata for pruning
+        for parquet_file in &parquet_files {
+            // Try to load sidecar metadata for optimized pruning (selective queries only)
+            let row_groups_to_read = match meta_reader.load_metadata(&parquet_file.url).await {
+                Ok(nova_meta) => {
+                    // Get optimization hints based on query
+                    let hints = meta_reader.get_optimization_hints(&nova_meta, query_vector, top_k);
+
+                    info!("NOVA: Sidecar pruning for {} - reading {} of {} row groups ({}% pruned)",
+                          parquet_file.name, hints.row_groups.len(),
+                          nova_meta.row_group_stats.len(),
+                          (hints.pruning_ratio * 100.0) as u32);
+
+                    hints.row_groups
+                }
+                Err(e) => {
+                    // No sidecar file or read error - read all row groups
+                    tracing::debug!("NOVA: No sidecar metadata for {}: {}", parquet_file.name, e);
+                    Vec::new() // Empty means read all
+                }
+            };
+
+            // Use UnifiedNOVAReader to read the selected row groups
+            let reader = super::unified_strategy_reader::UnifiedNOVAReader::for_search(
+                self.filesystem.clone(),
+                collection_id.to_string(),
+            )?;
+
+            // Read vectors from selected row groups (or all if no pruning)
+            let vectors = if row_groups_to_read.is_empty() {
+                // No pruning - read entire file
+                reader.read_progressive(&parquet_file.url).await?
+            } else {
+                // Read only selected row groups
+                reader.read_row_groups(&parquet_file.url, &row_groups_to_read).await?
+            };
+
+            // Compute distances and collect results
+            for record in vectors {
+                // Compute distance using hardware-accelerated SIMD
+                // Use the DistanceComputeProvider trait method
+                use crate::compute::distance_computation::engine::DistanceComputeProvider;
+                let distance = self.distance_engine.compute_distance(
+                    query_vector,
+                    &record.vector,
+                    Some(distance_metric),
+                );
+
+                all_results.push((record, distance));
+            }
+        }
+
+        // Sort by score and take top-k
+        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_results.truncate(top_k);
+
+        // Convert to OptimizedSearchRecord format directly
+        let search_results: Vec<OptimizedSearchRecord> = all_results
+            .into_iter()
+            .enumerate()
+            .map(|(idx, (record, score))| {
+                // Create similarity result for semantic information
+                let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
+                    1.0 - score, // Distance value
+                    distance_metric,
+                );
+
+                let id = if record.id.is_empty() {
+                    format!("unknown_{}", idx)
+                } else {
+                    record.id.clone()
+                };
+
+                let metadata_map: HashMap<String, serde_json::Value> = record
+                    .metadata
+                    .iter()
+                    .map(|(key, sql_value)| {
+                        let value = match &sql_value.value {
+                            Some(
+                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                            ) => serde_json::Value::String(s.clone()),
+                            Some(
+                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n),
+                            ) => serde_json::json!(n),
+                            Some(
+                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
+                            ) => serde_json::json!(i),
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
+                                b,
+                            )) => serde_json::Value::Bool(*b),
+                            _ => serde_json::Value::Null,
+                        };
+                        (key.clone(), value)
+                    })
+                    .collect();
+
+                let mut search_record =
+                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                        .with_similarity(similarity_result.normalized_score)
+                        .add_vector(record.vector.clone())
+                        .with_metadata(record.metadata.clone());
+
+                if let Some(version) = record.version {
+                    search_record = search_record.with_version_info(version, record.timestamp);
+                }
+
+                search_record
+            })
+            .collect();
+
+        Ok(search_results)
+    }
 
     // OPTIONAL OPERATIONS
     async fn optimize(&self, collection_id: &str) -> Result<()> {
