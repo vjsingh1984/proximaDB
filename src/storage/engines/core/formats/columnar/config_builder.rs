@@ -353,7 +353,7 @@ impl ParquetPresets {
         ParquetConfigBuilder::new()
             .row_group_size(50000) // Large row groups for fewer files
             .page_size(2 * 1024 * 1024) // 2MB pages
-            .compression(Compression::ZSTD) // Best compression
+            .compression(Compression::ZSTD(parquet::basic::ZstdLevel::default())) // Best compression
             .bloom_filter_fpp(0.001) // 0.1% FPP for better filtering
             .build()
     }
@@ -376,10 +376,9 @@ mod tests {
     fn test_default_has_all_optimizations() {
         let config = ParquetWriterConfig::default();
         assert!(config.enable_bloom_filters);
-        assert!(config.enable_column_index);
-        assert!(config.enable_offset_index);
-        assert!(config.enable_pq_sorting);
-        assert!(config.enable_native_metadata);
+        assert!(config.enable_page_index);
+        assert!(config.enable_statistics);
+        assert!(config.enable_dictionary);
     }
 
     #[test]
@@ -413,12 +412,12 @@ mod tests {
 
         let memory = ParquetPresets::memory_constrained();
         assert!(!memory.enable_bloom_filters);
-        assert!(!memory.enable_pq_sorting);
+        assert_eq!(memory.row_group_size, 1000);
 
         let cloud = ParquetPresets::cloud_optimized();
         assert_eq!(cloud.row_group_size, 50000);
 
         let realtime = ParquetPresets::real_time();
-        assert!(!realtime.enable_pq_sorting);
+        assert_eq!(realtime.row_group_size, 1000);
     }
 }

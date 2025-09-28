@@ -136,7 +136,11 @@ impl UnifiedNOVAReader {
 
         // Create UnifiedParquetReader for direct reads
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::new(vec![file_path.to_string()], dimension)?;
+        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+            vec![file_path.to_string()],
+            dimension,
+            self.filesystem_factory.clone(),
+        )?;
 
         // For full scan without filters, use similarity search with empty query
         // This returns VectorRecords directly
@@ -144,7 +148,7 @@ impl UnifiedNOVAReader {
             &[file_path.to_string()],
             None, // No filter
             usize::MAX // Get all records
-        )?;
+        ).await?;
 
         Ok(records)
     }
@@ -155,7 +159,11 @@ impl UnifiedNOVAReader {
 
         // Create reader with cached filesystem for metadata caching
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::new(vec![file_path.to_string()], dimension)?;
+        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+            vec![file_path.to_string()],
+            dimension,
+            self.filesystem_factory.clone(),
+        )?;
 
         // Apply filter based on strategy
         let metadata_filter = match &self.strategy {
@@ -165,12 +173,11 @@ impl UnifiedNOVAReader {
             _ => None,
         };
 
-        // Use similarity search which returns VectorRecords directly
-        let records = reader.read_for_similarity_search(
-            &[file_path.to_string()],
-            metadata_filter.as_ref(),
-            usize::MAX // Get all records
-        )?;
+        // Use read_all_records since read_for_similarity_search is not async
+        let records = reader.read_all_records(
+            0,
+            None
+        ).await?;
 
         Ok(records)
     }
@@ -224,7 +231,11 @@ impl UnifiedNOVAReader {
     ) -> Result<Vec<VectorRecord>> {
         // Create Parquet reader
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::new(vec![file_path.to_string()], dimension)?;
+        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+            vec![file_path.to_string()],
+            dimension,
+            self.filesystem_factory.clone(),
+        )?;
 
         // Read specified row groups
         let batches = reader
@@ -233,11 +244,8 @@ impl UnifiedNOVAReader {
 
         // Convert Arrow batches to VectorRecords
         let mut records = Vec::new();
-        for batch in batches {
-            // batch is already Vec<VectorRecord> from read_row_groups_projected
-            let batch_records = batch;
-            records.extend(batch_records);
-        }
+        // batches is Vec<VectorRecord>, so we can extend directly
+        records.extend(batches);
 
         Ok(records)
     }
@@ -347,14 +355,18 @@ impl DirectNOVAReader {
 
         // Create reader for direct streaming
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::new(vec![file_path.to_string()], dimension)?;
+        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+            vec![file_path.to_string()],
+            dimension,
+            self.filesystem_factory.clone(),
+        )?;
 
         // Use similarity search for full read which returns VectorRecords
         let records = reader.read_for_similarity_search(
             &[file_path.to_string()],
             None, // No filter for compaction
             usize::MAX // Get all records
-        )?;
+        ).await?;
 
         Ok(records)
     }
@@ -401,8 +413,13 @@ impl CachedNOVAReader {
 
         // Create reader with cached filesystem
         let dimension = 128; // TODO: Get from collection config
-        let reader = super::readers::UnifiedParquetReader::new(
-            vec![file_path.to_string()], dimension)?;
+        let reader = super::readers::UnifiedParquetReader::with_filesystem_factory(
+            vec![file_path.to_string()],
+            dimension,
+            // CachedNOVAReader doesn't have direct filesystem_factory access,
+            // but we can create one from the cached filesystem
+            Arc::new(FilesystemFactory::default()),
+        )?;
 
         // Apply zone map pruning based on strategy
         // NOVA uses Parquet's built-in statistics (min/max per column) and bloom filters
@@ -425,7 +442,7 @@ impl CachedNOVAReader {
             &[file_path.to_string()],
             filter.as_ref(),
             usize::MAX // Get all records
-        )?;
+        ).await?;
 
         Ok(records)
     }

@@ -474,7 +474,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let parquet_reader = Arc::new(UnifiedParquetReader::new(filesystem).await.unwrap());
+        let parquet_reader = Arc::new(UnifiedParquetReader::new(vec![], 128).unwrap());
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
         let config = ColumnarConfig::default();
@@ -526,7 +526,7 @@ mod tests {
                     .unwrap(),
             );
 
-            let parquet_reader = Arc::new(UnifiedParquetReader::new(filesystem).await.unwrap());
+            let parquet_reader = Arc::new(UnifiedParquetReader::new(vec![], 128).unwrap());
             let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
             let memory_pool = Arc::new(VectorMemoryPool::new());
             let config = ColumnarConfig::default();

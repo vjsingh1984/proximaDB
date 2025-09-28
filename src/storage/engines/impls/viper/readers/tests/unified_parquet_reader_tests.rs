@@ -7,10 +7,13 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::SimilarityResult;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use crate::core::search::unified_interface::{SearchPlan, CollectionConfig, StorageInfo};
+    use crate::compute::quantization::unified::UnifiedQuantizationLevel;
     use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
     use crate::storage::engines::core::formats::columnar::CollectionContext;
     use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use crate::core::service_types::VectorSearchResponse;
     use anyhow::Result;
     use arrow_array::{Array, Float32Array, Int64Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
@@ -23,24 +26,42 @@ mod tests {
 
     // Test helpers
     async fn create_test_reader() -> UnifiedParquetReader {
-        let config = FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-        UnifiedParquetReader::new(filesystem, 128).await.unwrap()
+        let file_paths = vec!["/tmp/test1.parquet".to_string(), "/tmp/test2.parquet".to_string()];
+        UnifiedParquetReader::new(file_paths, 128).unwrap()
     }
+
+    fn convert_search_params_to_plan(params: &SearchParams, collection_id: &str) -> SearchPlan {
+        SearchPlan {
+            collection_id: collection_id.to_string(),
+            collection_config: Some(CollectionConfig {
+                default_distance_metric: params.distance_metric.unwrap_or(DistanceMetric::Cosine),
+                vector_dimension: 128,
+                enable_quantization: false,
+                enable_metadata_filtering: params.filter_expression.is_some(),
+                estimated_document_count: 1000,
+            }),
+            filterable_columns: vec![],
+            available_quantization: vec![],
+            storage_info: StorageInfo {
+                is_cloud_storage: false,
+                storage_type: "Local".to_string(),
+                estimated_size_mb: 1.0,
+                file_count: 1,
+                supports_range_requests: false,
+                file_paths: None,
+            },
+        }
+    }
+
+    // Simply access results directly since OptimizedSearchRecord is private
+    // No extension trait needed
 
     fn create_test_context() -> CollectionContext {
         CollectionContext {
             collection_id: "test_collection".to_string(),
-            file_paths: vec![
-                "/tmp/test1.parquet".to_string(),
-                "/tmp/test2.parquet".to_string(),
-            ],
-            filterable_columns: vec![],
-            quantization_columns: vec![],
-            estimated_size_mb: 100.0,
-            estimated_document_count: 10000,
-            is_cloud_storage: false,
-            io_optimization_hints: None,
+            dimension: 128,
+            distance_metric: "cosine".to_string(),
+            quantization_config: None,
         }
     }
 
@@ -94,7 +115,7 @@ mod tests {
     async fn test_strategy_with_quantization() {
         let reader = create_test_reader().await;
         let mut context = create_test_context();
-        context.quantization_columns = vec!["pq8_embeddings".to_string()];
+        // Note: quantization_columns field removed from CollectionContext
 
         let params = SearchParams {
             query_vectors: Some(vec![vec![0.1; 128]]),
@@ -104,7 +125,8 @@ mod tests {
         };
 
         // With quantized columns, should use two-stage strategy
-        assert!(!context.quantization_columns.is_empty());
+        // Note: quantization_columns field removed from CollectionContext
+        assert_eq!(context.dimension, 128);
     }
 
     // Filter Expression Tests
@@ -459,19 +481,16 @@ mod tests {
 
         let context = CollectionContext {
             collection_id: "test_collection".to_string(),
-            file_paths: vec![format!("file://{}", file_path)],
-            filterable_columns: vec![],
-            quantization_columns: vec![],
-            estimated_size_mb: 1.0,
-            estimated_document_count: 5,
-            is_cloud_storage: false,
-            io_optimization_hints: None,
+            dimension: 128,
+            distance_metric: "cosine".to_string(),
+            quantization_config: None,
         };
 
-        let results = reader.search_vectors(&search_params, &context).await?;
+        let search_plan = convert_search_params_to_plan(&search_params, &context.collection_id);
+        let results = reader.search_vectors(&search_plan, &context).await?;
 
         // Verify
-        assert_eq!(results.len(), 5, "Should read all 5 vectors");
+        assert_eq!(results.results.len(), 5, "Should read all 5 vectors");
 
         Ok(())
     }
@@ -536,24 +555,21 @@ mod tests {
         // Create collection context
         let context = CollectionContext {
             collection_id: "test_collection".to_string(),
-            file_paths: vec![format!("file://{}", file_path)],
-            filterable_columns: vec![],
-            quantization_columns: vec![],
-            estimated_size_mb: 1.0,
-            estimated_document_count: 5,
-            is_cloud_storage: false,
-            io_optimization_hints: None,
+            dimension: 128,
+            distance_metric: "cosine".to_string(),
+            quantization_config: None,
         };
 
         // Search
-        let results = reader.search_vectors(&search_params, &context).await?;
+        let search_plan = convert_search_params_to_plan(&search_params, &context.collection_id);
+        let results = reader.search_vectors(&search_plan, &context).await?;
 
         // Verify
-        assert!(!results.is_empty(), "Should find results");
-        assert!(results.len() <= 3, "Should return at most 3 results");
+        assert!(!results.results.is_empty(), "Should find results");
+        assert!(results.results.len() <= 3, "Should return at most 3 results");
 
         // Debug output
-        for (i, result) in results.iter().enumerate() {
+        for (i, result) in results.results.iter().enumerate() {
             debug!(
                 "Result {}: id={}, similarity={:?}, score={:?}, semantic_similarity={:?}",
                 i, result.id, result.similarity, result.score, result.semantic_similarity
@@ -566,7 +582,7 @@ mod tests {
             debug!("  {} -> {:?}", vec.id, vec.vector);
         }
 
-        assert_eq!(results[0].id, "vec_0", "First result should be exact match");
+        assert_eq!(results.results[0].id, "vec_0", "First result should be exact match");
 
         Ok(())
     }
@@ -592,19 +608,16 @@ mod tests {
 
         let context = CollectionContext {
             collection_id: "test_collection".to_string(),
-            file_paths: vec![format!("file://{}", file_path)],
-            filterable_columns: vec![],
-            quantization_columns: vec![],
-            estimated_size_mb: 1.0,
-            estimated_document_count: 0,
-            is_cloud_storage: false,
-            io_optimization_hints: None,
+            dimension: 128,
+            distance_metric: "cosine".to_string(),
+            quantization_config: None,
         };
 
-        let results = reader.search_vectors(&search_params, &context).await?;
+        let search_plan = convert_search_params_to_plan(&search_params, &context.collection_id);
+        let results = reader.search_vectors(&search_plan, &context).await?;
 
         // Verify
-        assert_eq!(results.len(), 0, "Should handle empty file gracefully");
+        assert_eq!(results.results.len(), 0, "Should handle empty file gracefully");
 
         Ok(())
     }
@@ -624,16 +637,13 @@ mod tests {
 
         let context = CollectionContext {
             collection_id: "test_collection".to_string(),
-            file_paths: vec!["file:///non/existent/file.parquet".to_string()],
-            filterable_columns: vec![],
-            quantization_columns: vec![],
-            estimated_size_mb: 1.0,
-            estimated_document_count: 0,
-            is_cloud_storage: false,
-            io_optimization_hints: None,
+            dimension: 128,
+            distance_metric: "cosine".to_string(),
+            quantization_config: None,
         };
 
-        let result = reader.search_vectors(&search_params, &context).await;
+        let search_plan = convert_search_params_to_plan(&search_params, &context.collection_id);
+        let result = reader.search_vectors(&search_plan, &context).await;
 
         // Verify error
         assert!(result.is_err(), "Should error on missing file");
@@ -674,34 +684,31 @@ mod tests {
 
         let context = CollectionContext {
             collection_id: "test_collection".to_string(),
-            file_paths: vec![format!("file://{}", file_path)],
-            filterable_columns: vec![],
-            quantization_columns: vec![],
-            estimated_size_mb: 1.0,
-            estimated_document_count: 1,
-            is_cloud_storage: false,
-            io_optimization_hints: None,
+            dimension: 128,
+            distance_metric: "cosine".to_string(),
+            quantization_config: None,
         };
 
-        let results = reader.search_vectors(&search_params, &context).await?;
+        let search_plan = convert_search_params_to_plan(&search_params, &context.collection_id);
+        let results = reader.search_vectors(&search_plan, &context).await?;
 
         // Debug output
-        debug!("Found {} results from parquet file", results.len());
-        if !results.is_empty() {
+        debug!("Found {} results from parquet file", results.results.len());
+        if !results.results.is_empty() {
             debug!(
                 "First result: id={:?}, distance={:?}",
-                results[0].id, results[0].semantic_similarity
+                results.results[0].id, results.results[0].semantic_similarity
             );
         }
 
         // Verify
-        assert_eq!(results.len(), 1, "Should find 1 result");
-        assert_eq!(results[0].id, "debug_vec", "Should find debug_vec");
-        if let Some(distance) = results[0].semantic_similarity {
+        assert_eq!(results.results.len(), 1, "Should find 1 result");
+        assert_eq!(results.results[0].id, "debug_vec", "Should find debug_vec");
+        if let Some(distance) = &results.results[0].semantic_similarity {
             assert!(
-                distance < 0.01,
-                "Should have near-zero distance for exact match, got {}",
-                distance
+                distance.distance < 0.01,
+                "Should have near-zero distance for exact match, got {:.6}",
+                distance.distance
             );
         }
 

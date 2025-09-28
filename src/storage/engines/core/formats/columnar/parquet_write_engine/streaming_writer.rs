@@ -16,6 +16,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
+use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
@@ -33,7 +34,7 @@ use super::{
 
 /// Streaming Parquet writer optimized for columnar engines
 pub struct StreamingParquetWriter {
-    writer: ArrowWriter<File>,
+    writer: ArrowWriter<Vec<u8>>,
     config: ParquetWriterConfig,
     schema: Arc<Schema>,
     current_batch: Vec<VectorRecord>,
@@ -59,6 +60,9 @@ pub struct StreamingParquetWriter {
 
     /// Optional metadata collector for engine-specific sidecar files
     metadata_collector: Option<Box<dyn MetadataCollector>>,
+
+    /// Filesystem factory for cloud storage support
+    filesystem_factory: Arc<FilesystemFactory>,
 }
 
 impl StreamingParquetWriter {
@@ -69,8 +73,26 @@ impl StreamingParquetWriter {
         config: ParquetWriterConfig,
         filterable_columns: Option<&[crate::proto::proximadb_v1::FilterableColumnSpec]>,
     ) -> Result<Self> {
+        let filesystem_factory = Arc::new(FilesystemFactory::default());
+        Self::with_filesystem_factory(
+            file_path,
+            dimension,
+            config,
+            filterable_columns,
+            filesystem_factory,
+        )
+    }
+
+    /// Create new streaming writer with filesystem factory for cloud storage support
+    pub fn with_filesystem_factory<P: AsRef<Path>>(
+        file_path: P,
+        dimension: usize,
+        config: ParquetWriterConfig,
+        filterable_columns: Option<&[crate::proto::proximadb_v1::FilterableColumnSpec]>,
+        filesystem_factory: Arc<FilesystemFactory>,
+    ) -> Result<Self> {
         let file_path_str = file_path.as_ref().to_string_lossy().to_string();
-        info!("Creating streaming Parquet writer: {}", file_path_str);
+        info!("Creating streaming Parquet writer with filesystem API: {}", file_path_str);
 
         // Convert proto filterable columns to columnar format
         let columnar_filterable: Vec<ColumnarFilterableSpec> = filterable_columns
@@ -96,7 +118,7 @@ impl StreamingParquetWriter {
                         _ => 0,
                     },
                     indexed: spec.indexed,
-                    estimated_cardinality: spec.estimated_cardinality.unwrap_or(0) as i64,
+                    estimated_cardinality: spec.estimated_cardinality.map(|c| c as u32),  // Convert Option<usize> to Option<u32>
                     supports_range: false,
                 }
             })
@@ -111,9 +133,9 @@ impl StreamingParquetWriter {
         // Create writer properties with optimizations
         let props = create_writer_properties(&config)?;
 
-        // Open file and create writer
-        let file = File::create(&file_path)?;
-        let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))?;
+        // Create a write buffer instead of opening file directly
+        let write_buffer = Vec::new();
+        let writer = ArrowWriter::try_new(write_buffer, schema.clone(), Some(props))?;
 
         // Initialize native metadata handler if filterable columns are specified
         let native_metadata_handler = if config.filterable_metadata_columns.is_some() {
@@ -136,6 +158,7 @@ impl StreamingParquetWriter {
             metadata_samples: Vec::new(),
             filterable_columns: columnar_filterable,
             metadata_collector: None,
+            filesystem_factory,
         })
     }
 
@@ -264,7 +287,7 @@ impl StreamingParquetWriter {
             let estimated_items = self.config.bloom_filter_ndv.max(100000);
             // BloomFilter::new expects different parameters
             // Using default configuration for now
-            let bloom = crate::storage::engines::core::formats::columnar::id_index::BloomFilter::default();
+            let bloom = crate::storage::engines::core::formats::columnar::id_index::BloomFilter::new(1000, 0.01);  // expected_items, false_positive_rate
             self.id_bloom_filters.push(bloom);
         }
 
@@ -338,8 +361,18 @@ impl StreamingParquetWriter {
             self.flush_current_batch().await?;
         }
 
-        // Get file metadata before closing
-        let metadata = self.writer.finish()?;
+        // Finish writing and get the metadata
+        let _metadata = self.writer.finish()?;
+
+        // Extract the written data from the writer
+        let written_data = self.writer.into_inner()?;
+
+        // Write data to the filesystem using the filesystem API
+        let fs = self.filesystem_factory.get_filesystem(&self.file_path)?;
+        let path = FilesystemFactory::resolve_path(&self.file_path)?;
+
+        fs.write(&path, &written_data, None).await
+            .context("Failed to write Parquet data to filesystem")?;
 
         // Notify collector about finalization (use current_row_group + 1 as total)
         let total_row_groups = self.current_row_group + 1;
@@ -347,8 +380,11 @@ impl StreamingParquetWriter {
             collector.finalize(total_row_groups)?;
         }
 
-        // Calculate statistics
-        let file_size = std::fs::metadata(&self.file_path)?.len();
+        // Calculate statistics using filesystem metadata
+        let file_metadata = fs.metadata(&path).await
+            .context("Failed to get file metadata after write")?;
+        let file_size = file_metadata.size;
+
         let compression_ratio = if self.total_records_written > 0 {
             // Simplified calculation - actual implementation would be more sophisticated
             1.0
@@ -359,7 +395,7 @@ impl StreamingParquetWriter {
         let stats = StreamingParquetWriterStats {
             // File information
             file_path: self.file_path.clone(),
-            file_size: file_size,
+            file_size,
             total_row_groups: total_row_groups as usize,
             // Record statistics
             total_records: self.total_records_written as usize,
@@ -403,6 +439,7 @@ pub struct StreamingWriterBuilder {
     dimension: Option<usize>,
     config: ParquetWriterConfig,
     filterable_columns: Option<Vec<crate::proto::proximadb_v1::FilterableColumnSpec>>,
+    filesystem_factory: Option<Arc<FilesystemFactory>>,
 }
 
 impl StreamingWriterBuilder {
@@ -413,6 +450,7 @@ impl StreamingWriterBuilder {
             dimension: None,
             config: ParquetWriterConfig::default(),
             filterable_columns: None,
+            filesystem_factory: None,
         }
     }
 
@@ -440,6 +478,12 @@ impl StreamingWriterBuilder {
         self
     }
 
+    /// Set filesystem factory
+    pub fn with_filesystem_factory(mut self, filesystem_factory: Arc<FilesystemFactory>) -> Self {
+        self.filesystem_factory = Some(filesystem_factory);
+        self
+    }
+
     /// Build the writer
     pub fn build(self) -> Result<StreamingParquetWriter> {
         let file_path = self.file_path
@@ -447,11 +491,20 @@ impl StreamingWriterBuilder {
         let dimension = self.dimension
             .ok_or_else(|| anyhow!("Dimension is required"))?;
 
-        StreamingParquetWriter::new(
-            file_path,
-            dimension,
-            self.config,
-            self.filterable_columns.as_deref(),
-        )
+        match self.filesystem_factory {
+            Some(factory) => StreamingParquetWriter::with_filesystem_factory(
+                file_path,
+                dimension,
+                self.config,
+                self.filterable_columns.as_deref(),
+                factory,
+            ),
+            None => StreamingParquetWriter::new(
+                file_path,
+                dimension,
+                self.config,
+                self.filterable_columns.as_deref(),
+            ),
+        }
     }
 }

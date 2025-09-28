@@ -215,8 +215,11 @@ mod tests {
         let config = ParquetWriterConfig::default();
         let columns = vec![
             FilterableColumnSpec {
-                column_name: "category".to_string(),
-                data_type: "STRING".to_string(),
+                name: "category".to_string(),
+                data_type: 0, // STRING type
+                indexed: false,
+                supports_range: false,
+                estimated_cardinality: Some(100),
             },
         ];
 

@@ -12,6 +12,7 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
+use crate::storage::persistence::filesystem::FileSystem;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::constants::{FIELD_ID, FIELD_TIMESTAMP};
@@ -36,10 +37,12 @@ impl ParquetReader {
     }
 
     /// Read Parquet file and return all records
-    pub async fn read_all(&mut self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    pub fn read_all(&mut self, file_path: &str) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<VectorRecord>>> + Send + '_>> {
+        let file_path = file_path.to_string();
+        Box::pin(async move {
         info!("Reading all records from {}", file_path);
 
-        let file = File::open(file_path)
+        let file = File::open(&file_path)
             .context("Failed to open Parquet file")?;
 
         let reader = SerializedFileReader::new(file)?;
@@ -52,7 +55,7 @@ impl ParquetReader {
         );
 
         // Use UnifiedParquetReader for actual reading
-        let unified_reader = UnifiedParquetReader::new(vec![file_path.to_string()], 1024)?;
+        let unified_reader = UnifiedParquetReader::new(vec![file_path.clone()], 1024)?;
 
         // Read all records
         let records = unified_reader.read_all_records(0, None).await?;
@@ -63,6 +66,51 @@ impl ParquetReader {
         self.stats.row_groups_read += metadata.num_row_groups() as usize;
 
         Ok(records)
+        })
+    }
+
+    /// Read Parquet file using filesystem API
+    pub async fn read_all_with_filesystem(
+        &mut self,
+        file_path: &str,
+        filesystem: Arc<dyn FileSystem>,
+    ) -> Result<Vec<VectorRecord>> {
+        info!("Reading all records from {} using filesystem API", file_path);
+
+        // For now, we'll read the entire file into memory and create a byte slice
+        // This is not optimal for large files, but works with the current Parquet reader API
+        // TODO: In the future, implement streaming readers that work with async I/O
+        let file_data = filesystem.read(file_path).await
+            .context("Failed to read Parquet file from filesystem")?;
+
+        // Use bytes::Bytes which implements ChunkReader
+        let bytes = bytes::Bytes::from(file_data);
+        let reader = SerializedFileReader::new(bytes.clone())?;
+        let metadata = reader.metadata();
+
+        debug!(
+            "File has {} row groups with {} total rows",
+            metadata.num_row_groups(),
+            metadata.file_metadata().num_rows()
+        );
+
+        // Read data using Arrow ParquetRecordBatchReader
+        let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
+        let arrow_reader = builder.build()?;
+
+        let mut all_records = Vec::new();
+        for batch_result in arrow_reader {
+            let batch = batch_result?;
+            let records = self.batch_to_records(batch)?;
+            all_records.extend(records);
+        }
+
+        // Update statistics
+        self.stats.files_read += 1;
+        self.stats.records_read += all_records.len();
+        self.stats.row_groups_read += metadata.num_row_groups() as usize;
+
+        Ok(all_records)
     }
 
     /// Read specific row groups

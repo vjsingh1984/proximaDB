@@ -425,12 +425,14 @@ impl NovaColumnarSearch {
             // Compute distances for all vectors in batch
             // batch is Vec<VectorRecord>, process each record
             for record in batch {
-                // Compute distance for this record
-                let distance = crate::compute::distance_computation::UnifiedDistanceCompute::compute(
+                // Create distance compute instance and compute distance
+                let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(distance_metric.clone());
+                let distance_result = distance_compute.calculate_distance(
                     query_vector,
                     &record.vector,
-                    distance_metric,
-                )?;
+                    &distance_metric,
+                );
+                let distance = distance_result.distance;
 
                 all_candidates.push(SearchCandidate {
                     row_group_id: rg_idx,
@@ -441,18 +443,18 @@ impl NovaColumnarSearch {
             }
         }
 
-        // Sort and take top-k
-        all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        // Sort and take top-k (sort by similarity, descending)
+        all_candidates.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap());
         all_candidates.truncate(top_k);
 
         // Load full records
         let mut results = Vec::new();
-        for (candidate, distance) in all_candidates.iter() {
+        for candidate in all_candidates.iter() {
             if let Some(record) = self
                 .load_record_by_id(nova_file, &candidate.vector_id)
                 .await?
             {
-                results.push((record, *distance));
+                results.push((record, candidate.similarity));
             }
         }
 
@@ -748,38 +750,36 @@ impl NovaColumnarSearch {
                 .await?;
 
             // Compute exact distances using batch processing
-            for batch in batch {
-                // Collect all vectors from candidates for batch processing
-                let mut batch_records = Vec::new();
+            // Collect all vectors from candidates for batch processing
+            let mut batch_records = Vec::new();
 
-                for candidate in &group_candidates {
-                    if let Some(record) =
-                        // Find record by ID or index
-                        batch.get(candidate.row_offset as usize)
-                            .cloned()
-                            .ok_or_else(|| anyhow::anyhow!("Record not found at offset {}", candidate.row_offset))?
-                    {
-                        batch_records.push(record);
-                    }
+            for candidate in &group_candidates {
+                if let Some(record) =
+                    // Find record by ID or index
+                    batch.iter().find(|r| &r.id == candidate.vector_id.as_ref().unwrap_or(&String::new()))
+                        .cloned()
+                {
+                    batch_records.push(record);
                 }
+            }
 
-                // Batch compute distances if we have vectors
-                if !batch_records.is_empty() {
-                    // Collect vector references after all records are collected
-                    let batch_vectors: Vec<&[f32]> = batch_records.iter()
-                        .map(|r| r.vector.as_slice())
-                        .collect();
+            // Batch compute distances if we have vectors
+            if !batch_records.is_empty() {
+                // Collect vector references after all records are collected
+                let batch_vectors: Vec<&[f32]> = batch_records.iter()
+                    .map(|r| r.vector.as_slice())
+                    .collect();
 
-                    let distances = self.distance_compute.batch_distance_pooled_simd(
-                        query_vector,
-                        &batch_vectors,
-                        &distance_metric,
-                    );
+                let distance_compute = crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(distance_metric.clone());
+                let distances = distance_compute.batch_distance_pooled_simd(
+                    query_vector,
+                    &batch_vectors,
+                    &distance_metric,
+                );
 
-                    // Combine records with distances
-                    for (record, distance_result) in batch_records.into_iter().zip(distances.iter()) {
-                        final_results.push((record, distance_result.normalized_score));
-                    }
+                // Combine records with distances
+                for (record, distance_result) in batch_records.into_iter().zip(distances.iter()) {
+                    final_results.push((record, distance_result.distance));
                 }
             }
         }

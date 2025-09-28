@@ -10,6 +10,7 @@ use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::{ComparisonOperator, FilterExpression};
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Column-oriented filter evaluator with predicate pushdown
 pub struct VIPERColumnFilterEvaluator {
@@ -17,13 +18,25 @@ pub struct VIPERColumnFilterEvaluator {
     column_cache: HashMap<String, Vec<serde_json::Value>>,
     /// Track which columns are loaded
     loaded_columns: HashSet<String>,
+    /// Filesystem factory for cloud storage support
+    filesystem_factory: Arc<FilesystemFactory>,
 }
 
 impl VIPERColumnFilterEvaluator {
     pub fn new() -> Self {
+        let filesystem_factory = Arc::new(FilesystemFactory::default());
         Self {
             column_cache: HashMap::new(),
             loaded_columns: HashSet::new(),
+            filesystem_factory,
+        }
+    }
+
+    pub fn with_filesystem_factory(filesystem_factory: Arc<FilesystemFactory>) -> Self {
+        Self {
+            column_cache: HashMap::new(),
+            loaded_columns: HashSet::new(),
+            filesystem_factory,
         }
     }
 
@@ -287,11 +300,11 @@ impl VIPERColumnFilterEvaluator {
 
             // Use UnifiedParquetReader to read specific column
             // For metadata column reading, dimension is not needed
-            let reader =
-                crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
-                    vec![parquet_file.to_string()],
-                    0  // Dimension not needed for metadata column reading
-                )?;
+            let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
+                vec![parquet_file.to_string()],
+                0, // Dimension not needed for metadata column reading
+                self.filesystem_factory.clone(),
+            )?;
 
             // Get collection context to check if this is a filterable column
             let collection_context = reader.get_collection_context().await;
@@ -457,12 +470,22 @@ pub async fn evaluate_metadata_filter_with_config(
 /// Selective vector reader that uses qualifying indices
 pub struct VIPERSelectiveReader {
     dimension: Option<usize>,
+    filesystem_factory: Arc<FilesystemFactory>,
 }
 
 impl VIPERSelectiveReader {
     pub fn new() -> Self {
+        let filesystem_factory = Arc::new(FilesystemFactory::default());
         Self {
-            dimension: None  // Will be detected from data when needed
+            dimension: None, // Will be detected from data when needed
+            filesystem_factory,
+        }
+    }
+
+    pub fn with_filesystem_factory(filesystem_factory: Arc<FilesystemFactory>) -> Self {
+        Self {
+            dimension: None,
+            filesystem_factory,
         }
     }
 
@@ -519,9 +542,10 @@ impl VIPERSelectiveReader {
         row_indices: &[usize]
     ) -> Result<Vec<VectorRecord>> {
         // For selective reading, dimension is not needed - Parquet has the schema
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
             vec![file_path.to_string()],
-            0  // Dimension will be read from Parquet schema
+            0, // Dimension will be read from Parquet schema
+            self.filesystem_factory.clone(),
         )?;
 
         // Perform selective row reading

@@ -331,7 +331,7 @@ mod tests {
         // Fast path: all filterable
         let filters = vec![
             MetadataFilter {
-                conditions: vec![FilterCondition::Equals("category".to_string(), "electronics".to_string())],
+                conditions: vec![FilterCondition::Equals("category".to_string(), serde_json::Value::String("electronics".to_string()))],
                 logic: FilterLogic::And,
             },
         ];
@@ -342,7 +342,7 @@ mod tests {
         // Slow path: non-filterable
         let filters = vec![
             MetadataFilter {
-                conditions: vec![FilterCondition::Equals("custom_field".to_string(), "value".to_string())],
+                conditions: vec![FilterCondition::Equals("custom_field".to_string(), serde_json::Value::String("value".to_string()))],
                 logic: FilterLogic::And,
             },
         ];
@@ -353,14 +353,12 @@ mod tests {
         // Mixed path
         let filters = vec![
             MetadataFilter {
-                column_name: "category".to_string(),
-                operator: "=".to_string(),
-                value: SqlValue::from("electronics"),
+                conditions: vec![FilterCondition::Equals("category".to_string(), serde_json::Value::String("electronics".to_string()))],
+                logic: FilterLogic::And,
             },
             MetadataFilter {
-                column_name: "custom_field".to_string(),
-                operator: ">".to_string(),
-                value: SqlValue::from(100),
+                conditions: vec![FilterCondition::Range("custom_field".to_string(), serde_json::Value::Number(serde_json::Number::from(100)), serde_json::Value::Number(serde_json::Number::from(i64::MAX)))],
+                logic: FilterLogic::And,
             },
         ];
 
@@ -377,9 +375,8 @@ mod tests {
 
         let filters = vec![
             MetadataFilter {
-                column_name: "unknown_field".to_string(),
-                operator: "=".to_string(),
-                value: SqlValue::from("value"),
+                conditions: vec![FilterCondition::Equals("unknown_field".to_string(), serde_json::Value::String("value".to_string()))],
+                logic: FilterLogic::And,
             },
         ];
 

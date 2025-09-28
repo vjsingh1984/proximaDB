@@ -103,9 +103,17 @@ impl ParquetSchemaBuilder {
         // Filterable metadata columns (if specified)
         if let Some(ref columns) = self.filterable_columns {
             for col_spec in columns {
-                let data_type = Self::sql_type_to_arrow_type(&col_spec.data_type);
+                let data_type_str = match col_spec.data_type() {
+                    crate::proto::proximadb_v1::FilterableDataType::FilterableString => "STRING",
+                    crate::proto::proximadb_v1::FilterableDataType::FilterableInteger => "INTEGER",
+                    crate::proto::proximadb_v1::FilterableDataType::FilterableFloat => "FLOAT",
+                    crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean => "BOOLEAN",
+                    crate::proto::proximadb_v1::FilterableDataType::FilterableDatetime => "TIMESTAMP",
+                    _ => "STRING", // Default to string for arrays and unknown types
+                };
+                let data_type = Self::sql_type_to_arrow_type(data_type_str);
                 fields.push(Field::new(
-                    &col_spec.column_name,
+                    &col_spec.name,
                     data_type,
                     true, // nullable
                 ));
@@ -231,12 +239,18 @@ mod tests {
         let config = ParquetWriterConfig::default();
         let columns = vec![
             FilterableColumnSpec {
-                column_name: "category".to_string(),
-                data_type: "STRING".to_string(),
+                name: "category".to_string(),
+                data_type: 0, // STRING type
+                indexed: false,
+                supports_range: false,
+                estimated_cardinality: Some(100),
             },
             FilterableColumnSpec {
-                column_name: "score".to_string(),
-                data_type: "FLOAT".to_string(),
+                name: "score".to_string(),
+                data_type: 1, // FLOAT type
+                indexed: false,
+                supports_range: true,
+                estimated_cardinality: Some(50),
             },
         ];
 

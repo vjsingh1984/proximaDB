@@ -19,6 +19,8 @@ use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use crate::utils::StoragePath;
+use crate::core::search::unified_interface::{SearchPlan, CollectionConfig, StorageInfo};
+use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use arrow_array::{StringArray, Int32Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
@@ -34,6 +36,30 @@ fn create_test_config(_base_path: &str) -> ViperEngineConfig {
     config.enable_ml_clustering = false;
     config.flush_size_bytes = Some(1024 * 1024); // 1MB flush size
     config
+}
+
+/// Helper to convert SearchParams to SearchPlan
+fn convert_search_params_to_plan(params: &crate::core::search::SearchParams, collection_id: &str) -> SearchPlan {
+    SearchPlan {
+        collection_id: collection_id.to_string(),
+        collection_config: Some(CollectionConfig {
+            default_distance_metric: params.distance_metric.unwrap_or(DistanceMetric::Cosine),
+            vector_dimension: 128,
+            enable_quantization: false,
+            enable_metadata_filtering: params.filter_expression.is_some(),
+            estimated_document_count: 1000,
+        }),
+        filterable_columns: vec![],
+        available_quantization: vec![],
+        storage_info: StorageInfo {
+            is_cloud_storage: false,
+            storage_type: "Local".to_string(),
+            estimated_size_mb: 1.0,
+            file_count: 1,
+            supports_range_requests: false,
+            file_paths: None,
+        },
+    }
 }
 
 /// Set up storage assignment for test collection
@@ -851,7 +877,7 @@ async fn test_search_vectors_unified() {
                 .await
                 .unwrap(),
         );
-        let reader = UnifiedParquetReader::new(filesystem);
+        let reader = UnifiedParquetReader::new(vec![], 128).unwrap();
 
         // Find the parquet file
         let mut parquet_file = String::new();
@@ -878,19 +904,16 @@ async fn test_search_vectors_unified() {
 
             let context = CollectionContext {
                 collection_id: collection_id.to_string(),
-                file_paths: vec![parquet_file.clone()],
-                filterable_columns: vec![],
-                quantization_columns: vec![],
-                estimated_size_mb: 1.0,
-                estimated_document_count: 5,
-                is_cloud_storage: false,
-                io_optimization_hints: None,
+                dimension: 128,
+                distance_metric: "cosine".to_string(),
+                quantization_config: None,
             };
 
-            match reader.await.unwrap().search_vectors(&search_params, &context).await {
+            let search_plan = convert_search_params_to_plan(&search_params, &context.collection_id);
+            match reader.search_vectors(&search_plan, &context).await {
                 Ok(reader_results) => {
-                    debug!("Direct reader found {} results", reader_results.len());
-                    for (i, result) in reader_results.iter().take(3).enumerate() {
+                    debug!("Direct reader found {} results", reader_results.results.len());
+                    for (i, result) in reader_results.results.iter().take(3).enumerate() {
                         debug!(
                             "  Result {}: id={}, distance={:?}",
                             i, result.id, result.semantic_similarity

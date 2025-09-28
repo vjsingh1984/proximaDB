@@ -12,6 +12,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::index_based_filter::{
     IndexBasedDataReader, MetadataSource, ReadStrategy, ColumnMetadata, ColumnData
 };
+use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER-specific metadata source representing a parquet file
 pub struct VIPERParquetMetadataSource {
@@ -57,10 +58,20 @@ impl MetadataSource for VIPERParquetMetadataSource {
 impl VIPERParquetMetadataSource {
     /// Create metadata source by reading parquet file metadata
     pub async fn from_parquet_file(file_path: &str) -> Result<Self> {
+        let filesystem_factory = Arc::new(FilesystemFactory::default());
+        Self::from_parquet_file_with_filesystem(file_path, filesystem_factory).await
+    }
+
+    /// Create metadata source with filesystem factory support
+    pub async fn from_parquet_file_with_filesystem(
+        file_path: &str,
+        filesystem_factory: Arc<FilesystemFactory>,
+    ) -> Result<Self> {
         // For metadata reading, dimension is not needed - Parquet has schema
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
             vec![file_path.to_string()],
-            0  // Dimension not needed for metadata operations
+            0, // Dimension not needed for metadata operations
+            filesystem_factory,
         )?;
         
         // Read all records to build metadata cache (for now - could be optimized)
@@ -181,9 +192,10 @@ impl VIPERIndexBasedReader {
         indices: &[usize],
     ) -> Result<Vec<VectorRecord>> {
         // For reading records, we don't need dimension - Parquet has the schema
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
             vec![file_path.to_string()],
-            0  // Dimension not needed, will be read from Parquet schema
+            0, // Dimension not needed, will be read from Parquet schema
+            self.filesystem_factory.clone(),
         )?;
         
         // For now, read all and filter by indices
@@ -204,9 +216,10 @@ impl VIPERIndexBasedReader {
     /// Read full parquet file
     async fn read_full_file(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         // For reading records, we don't need dimension - Parquet has the schema
-        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::with_filesystem_factory(
             vec![file_path.to_string()],
-            0  // Dimension not needed, will be read from Parquet schema
+            0, // Dimension not needed, will be read from Parquet schema
+            self.filesystem_factory.clone(),
         )?;
         
         // TODO: Implement proper batch reading
