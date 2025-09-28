@@ -27,7 +27,7 @@ flowchart TD
     subgraph WORKLOADS["🏢 Your Application Workloads"]
         direction TB
         A["📱 Real-Time Apps<br/><small>Social media, messaging</small>"]
-        B["📊 Analytics<br/><small>Dashboards, reporting</small>"]
+        B["🕸️ Knowledge Graphs<br/><small>Vector + graph relationships</small>"]
         C["🛒 E-commerce<br/><small>Mixed operations</small>"]
         D["🎯 ML Systems<br/><small>Recommendations, AI</small>"]
         E["🗺️ Spatial Apps<br/><small>Maps, computer vision</small>"]
@@ -72,7 +72,7 @@ flowchart TD
     I --> J
 
     J -.->|Real-time| K
-    J -.->|Analytics| L
+    J -.->|Graph+Vector| L
     J -.->|Mixed| M
     J -.->|Speed| N
     J -.->|Spatial| O

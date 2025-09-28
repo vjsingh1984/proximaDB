@@ -106,7 +106,7 @@ pub struct ViperEngine {
 ```
 
 **Optimal Use Cases**:
-- Analytics workloads with columnar access patterns
+- Graph + vector workloads with relationship traversal patterns
 - Batch processing operations
 - Data warehousing scenarios
 - Time-series data with high compression requirements
@@ -313,7 +313,7 @@ auto_selection = true                 # Automatic level selection
 
 == Usage Examples
 
-=== VIPER Engine Analytics Query
+=== VIPER Engine Graph + Vector Query
 
 ```rust
 use proximadb::storage::engines::impls::viper::ViperEngine;
@@ -321,9 +321,9 @@ use proximadb::query::unified_query_optimizer::SearchParams;
 
 let viper = ViperEngine::new(config, filesystem, distance_compute).await?;
 
-// Analytical query with column pruning
+// Graph + vector query with relationship filtering
 let search_params = SearchParams {
-    vector: None,  // Analytics query without vector search
+    vector: Some(query_vector),  // Vector similarity with graph relationships
     filter_expression: Some(FilterExpression {
         clauses: vec![
             FilterClause {

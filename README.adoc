@@ -85,8 +85,8 @@ cargo run --release --bin proximadb-server
 |**Computer Vision**
 |Spatial indexing optimized for image embeddings. Hardware acceleration for high-dimensional vectors.
 
-|**Analytics & BI**
-|Columnar storage for fast aggregations. SQL-compatible interface for existing BI tools.
+|**Knowledge Graphs**
+|Graph relationships with vector embeddings for AI-powered knowledge discovery and reasoning.
 |===
 
 == Architecture That Adapts to You
@@ -115,7 +115,7 @@ flowchart TB
     subgraph ENGINES["🗄️ 6 Specialized Storage Engines"]
         direction LR
         G["📝 SST<br/><small>Real-time Updates</small>"]
-        H["📈 VIPER<br/><small>Analytics</small>"]
+        H["📈 VIPER<br/><small>Graph + Vector</small>"]
         I["⚖️ NOVA<br/><small>Balanced</small>"]
         J["⚡ SWIFT<br/><small>Ultra-Fast</small>"]
         K["🔄 RAPTOR<br/><small>Adaptive</small>"]
@@ -177,7 +177,7 @@ flowchart TB
 ProximaDB doesn't just store your vectors - it analyzes your access patterns and automatically chooses the best storage engine:
 
 - **Heavy Writes?** → SST engine optimizes for fast ingestion
-- **Analytics Queries?** → VIPER engine uses columnar compression
+- **Graph + Vector Queries?** → VIPER engine optimizes for complex relationships
 - **Mixed Workload?** → NOVA engine balances read/write performance
 - **Need Ultra-Low Latency?** → SWIFT engine maximizes cache efficiency
 - **Unpredictable Patterns?** → RAPTOR engine adapts in real-time

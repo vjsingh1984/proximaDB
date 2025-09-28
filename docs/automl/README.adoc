@@ -117,7 +117,7 @@ ProximaDB continuously monitors your application to understand how you use the d
 **Automatic Adaptation:**
 - **Write-Heavy Applications** (like content management): Optimized for fast data ingestion
 - **Search-Heavy Applications** (like recommendation engines): Optimized for query speed
-- **Analytics Workloads** (like business intelligence): Optimized for large-scale data processing
+- **Graph + Vector Workloads** (like knowledge graphs): Optimized for complex relationship queries
 - **Mixed Workloads** (like e-commerce): Balanced optimization for all operations
 
 === Predictive Performance Optimization
@@ -133,7 +133,7 @@ AutoML doesn't just react to problems - it predicts and prevents them:
 **Real-World Examples:**
 - **E-commerce during Black Friday**: AutoML detects increased traffic patterns weeks in advance and pre-optimizes for peak loads
 - **Content Platform Growth**: As your user-generated content grows, AutoML automatically adjusts compression and indexing strategies
-- **B2B Analytics Dashboard**: AutoML recognizes monthly reporting patterns and optimizes for those heavy analytical queries
+- **Knowledge Graph Platform**: AutoML recognizes complex graph traversal patterns and optimizes for relationship discovery queries
 
 === Smart Storage Engine Selection
 
@@ -147,7 +147,7 @@ flowchart LR
         direction TB
         A["📱 Social Media<br/><small>User feeds & profiles</small>"]
         B["🛒 E-commerce<br/><small>Products & orders</small>"]
-        C["📊 Analytics<br/><small>BI dashboards</small>"]
+        C["🕸️ Knowledge Graphs<br/><small>Vector + graph relationships</small>"]
         D["🎯 Recommendations<br/><small>Real-time ML</small>"]
         E["🗺️ Maps & Vision<br/><small>Spatial data</small>"]
         F["🧪 Research<br/><small>Experimental AI</small>"]
@@ -163,7 +163,7 @@ flowchart LR
     subgraph ENGINES["🗄️ Optimized Storage Engines"]
         direction TB
         K["📝 SST Engine<br/><small>Real-time updates</small>"]
-        L["📊 VIPER Engine<br/><small>Analytics queries</small>"]
+        L["📊 VIPER Engine<br/><small>Graph + vector queries</small>"]
         M["⚖️ NOVA Engine<br/><small>Mixed workloads</small>"]
         N["⚡ SWIFT Engine<br/><small>Ultra-low latency</small>"]
         O["🌍 HELIX Engine<br/><small>Spatial indexing</small>"]
@@ -182,7 +182,7 @@ flowchart LR
     I --> J
 
     J -.->|Write-heavy| K
-    J -.->|Analytics| L
+    J -.->|Graph+Vector| L
     J -.->|Balanced| M
     J -.->|Speed critical| N
     J -.->|Spatial data| O
@@ -215,7 +215,7 @@ flowchart LR
 **Real-World Engine Selection:**
 - **Social Media Platform** → SST Engine (frequent user profile updates, real-time feeds)
 - **E-commerce Site** → NOVA Engine (balanced read/write for products, orders, inventory)
-- **Business Intelligence** → VIPER Engine (columnar analytics for reporting and dashboards)
+- **Knowledge Graph System** → VIPER Engine (complex vector-graph relationship queries)
 - **Recommendation System** → SWIFT Engine (ultra-low latency for real-time suggestions)
 - **Computer Vision App** → HELIX Engine (spatial indexing for image similarity)
 - **AI Research Platform** → RAPTOR Engine (adaptive to experimental workload patterns)
