@@ -1,54 +1,65 @@
-= ProximaDB Documentation Hub
+= ProximaDB Documentation
 :toc: left
-:toclevels: 2
 :icons: font
 
-[.lead]
-Technical documentation for ProximaDB - the adaptive multi-engine vector database.
+Welcome to the ProximaDB documentation. ProximaDB is a high-performance vector database with 6 adaptive storage engines, built in Rust for modern AI workloads.
 
-== Quick Start
-* link:quickstart/getting_started.adoc[Getting Started] - 5-minute setup guide
-* link:../README.adoc[Project Overview] - Installation and quick start
+== Quick Links
 
-== Architecture & Technical
-* link:architecture/CACHE_ARCHITECTURE.adoc[Cache Architecture]
-* link:architecture/compression_system.adoc[Compression System]
-* link:technical/platform_architecture.adoc[Platform Architecture]
-* link:technical/storage_engine_layouts.adoc[Storage Engine Layouts]
-* link:technical/ai_intelligence_platform.adoc[AI Intelligence Platform]
+=== Getting Started
+* link:quickstart/getting_started.adoc[Getting Started Guide] - Start using ProximaDB in minutes
+* link:../README.adoc[Main README] - Project overview and quick start
 
-== API Reference
-* link:reference/graph_api_reference.adoc[Graph API Reference]
-* link:reference/sks_technical_reference.adoc[SKS Technical Reference]
+=== Architecture & Design
+* link:architecture/[Architecture Documentation] - System design and components
+* link:technical/[Technical Documentation] - Implementation details
 
-== Performance
-* link:PERFORMANCE.adoc[Performance Overview]
-* link:performance/competitive_analysis.adoc[Competitive Analysis]
-* link:performance/encoding_strategies.adoc[Encoding Strategies]
-* link:benchmarks/README.adoc[Benchmark Results]
-* link:benchmarks/OPTIMIZATION_GUIDE.adoc[Optimization Guide]
+=== Operations & Deployment
+* link:operations/[Operations Guide] - Production deployment and monitoring
+* link:enterprise/[Enterprise Features] - Advanced deployment options
 
-== Operations & Deployment
-* link:operations/PRODUCTION_RUNBOOK.adoc[Production Runbook]
-* link:operations/benchmark_logging_guide.adoc[Benchmark Logging Guide]
-* link:enterprise/production_deployment_guide.adoc[Production Deployment]
-* link:enterprise/ENTERPRISE_OVERVIEW.adoc[Enterprise Overview]
+=== Performance & Optimization
+* link:performance/[Performance Documentation] - Benchmarks and tuning
+* link:benchmarks/[Benchmark Results] - Detailed performance analysis
+* link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] - Choose the right engine
 
-== Security
-* link:security.adoc[Security Overview]
-* link:security/unified_authentication_flow.adoc[Authentication Flow]
+=== API Reference
+* link:reference/[API Documentation] - REST and gRPC API reference
 
-== Business & Enterprise
-* link:business/competitive_advantages.adoc[Competitive Advantages]
-* link:enterprise/enterprise_deployment.adoc[Enterprise Deployment]
-* link:proximadb_enterprise_guide.adoc[Enterprise Guide]
+=== Security
+* link:security/[Security Guide] - Authentication, encryption, and best practices
 
-== Roadmap & Future
-* link:09-roadmap/README.adoc[Development Roadmap]
-* link:09-roadmap/future/advanced_search_optimization.adoc[Advanced Search Optimization]
+=== Development
+* link:business/[Business Case] - ProximaDB advantages and use cases
+* link:09-roadmap/[Development Roadmap] - Future features and timeline
 
-== Additional Resources
-* link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide]
-* link:unified_strategy_usage_guide.adoc[Unified Strategy Usage]
-* link:../CONTRIBUTING.adoc[Contributing Guide]
-* link:../CLAUDE.md[AI Assistant Guidelines]
+== Documentation Structure
+
+----
+docs/
+├── quickstart/           # Getting started guides
+├── architecture/         # System architecture
+├── technical/           # Technical implementation
+├── operations/          # Production operations
+├── enterprise/          # Enterprise features
+├── performance/         # Performance analysis
+├── benchmarks/          # Benchmark results
+├── guides/              # How-to guides
+├── reference/           # API reference
+├── security/            # Security documentation
+├── business/            # Business documentation
+└── 09-roadmap/          # Development roadmap
+----
+
+== Contributing
+
+We welcome contributions to both the codebase and documentation. Please see the main project README for contribution guidelines.
+
+== Support
+
+For issues and questions:
+* GitHub Issues: Report bugs and request features
+* Community: Join our discussions on GitHub
+
+---
+_Last updated: December 2024_

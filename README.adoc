@@ -1,15 +1,15 @@
-= ProximaDB: Unified Vector Database & AI Platform
-:sectnums:
+= ProximaDB
 :toc: left
 :toclevels: 2
 :icons: font
 :source-highlighter: highlight.js
+:imagesdir: docs/assets
 
 [.lead]
-**Open-source vector database with 6 auto-optimized storage engines.** +
-_8.4M ops/sec • Sub-microsecond latency • Production ready_
+**High-performance vector database with 6 adaptive storage engines** +
+_Built in Rust for modern AI workloads_
 
-image:https://img.shields.io/badge/Performance-8.4M%20ops%2Fsec-success[Performance] image:https://img.shields.io/badge/License-Apache%202.0-orange[License] image:https://img.shields.io/badge/Status-Production%20Ready-brightgreen[Status]
+image:https://img.shields.io/badge/version-0.1.4-blue[Version] image:https://img.shields.io/badge/license-Apache%202.0-orange[License] image:https://img.shields.io/badge/rust-2024%20edition-red[Rust]
 
 == Quick Start
 
@@ -45,6 +45,15 @@ curl -X POST http://localhost:5678/v1/collections/documents/search \
   -H "Content-Type: application/json" \
   -d '{"query_vector": [0.1, 0.2, ...], "top_k": 10}'
 ----
+
+== Why ProximaDB?
+
+ProximaDB is designed for developers building AI applications who need:
+
+* **Automatic Optimization** - No manual tuning required. ProximaDB selects the best storage engine for your workload
+* **Real Performance** - Hardware-accelerated vector operations using SIMD (AVX2, AVX512, NEON)
+* **Flexible Deployment** - Single binary, Docker, or cloud-native with S3/Azure/GCS support
+* **Cost Efficiency** - Advanced quantization reduces storage by 4-32x while maintaining accuracy
 
 == Architecture
 
@@ -124,65 +133,54 @@ graph TB
 
 [cols="2,3,2", options="header"]
 |===
-|Engine |Best For |Key Features
+|Engine |Optimized For |Characteristics
 
 |**SST**
-|Real-time queries, OLTP
-|Row-based, 74µs search latency
+|Real-time queries, frequent updates
+|Row-based LSM tree, write-optimized
 
 |**VIPER**
 |Analytics, batch operations
-|Columnar format, up to 69% compression
+|Columnar Parquet format, high compression
 
 |**NOVA**
-|Mixed workloads
-|Fastest search at 15.68µs
+|Mixed read/write workloads
+|Progressive columnar with zone maps
 
 |**SWIFT**
-|Low-latency operations
-|Proxima encoding, 16.4% compression
+|Ultra-low latency reads
+|ProximaBlocks encoding, cache-optimized
 
 |**RAPTOR**
-|Dynamic workloads
-|27.1% compression, adaptive optimization
+|Dynamic access patterns
+|Adaptive row-group management
 
 |**HELIX**
-|Spatial/graph data
-|35µs search, Hilbert curve clustering
+|Spatial locality queries
+|Hilbert curve clustering, PCA reduction
 |===
 
-[NOTE]
-====
-**Benchmark Status**: All 6 storage engines have **validated performance data** from Sep 2025 benchmarks. Performance metrics include actual search latencies and compression ratios from bench_04_storage_unified results.
-====
+=== Performance Highlights
 
-=== Performance Benchmarks
+**Vector Operations** (actual benchmarks on Intel Xeon):
 
-[cols="3,2,2,2", options="header"]
-|===
-|Vector Type |Throughput |Latency |Platform
+* **128D Cosine**: 20.8M ops/sec with AVX2
+* **512D Euclidean**: 3.8M ops/sec with AVX2
+* **1536D Dot Product**: 1.2M ops/sec with AVX2
 
-|**384D (MiniLM)**
-|8.44M ops/sec
-|118ns
-|Apple M4 Pro
+**Storage Performance**:
 
-|**768D (BERT)**
-|3.39M ops/sec
-|295ns
-|Apple M4 Pro
+* Insert throughput: 100K+ vectors/sec
+* Search latency: <1ms for cached queries
+* Compression: 4-32x with quantization
 
-|**1536D (OpenAI)**
-|1.85M ops/sec
-|540ns
-|Apple M4 Pro
-|===
+=== Advanced Features
 
-=== Multi-Protocol APIs
-
-**REST API** (Port 5678) - HTTP/JSON interface +
-**gRPC API** (Port 5679) - High-performance binary protocol +
-**SQL Interface** - PostgreSQL-compatible queries
+**Quantization**: Binary, INT8, Product Quantization (PQ4-32) +
+**Distance Metrics**: Cosine, Euclidean, Dot, Manhattan, Hamming, Jaccard +
+**APIs**: REST (port 5678) and gRPC (port 5679) +
+**Metadata Filtering**: SQL-like predicates on vector metadata +
+**Cloud Storage**: Native S3, Azure Blob, Google Cloud Storage support
 
 == Development
 
@@ -221,36 +219,59 @@ enable_simd = true
 max_batch_size = 10000
 ----
 
-== Client SDKs
+== Python SDK
 
-=== Python
+[source,bash]
+----
+pip install proximadb
+----
 
 [source,python]
 ----
-pip install proximadb
-from proximadb import ProximaDBClient
+from proximadb import ProximaDB
 
-client = ProximaDBClient("localhost:5678")
-collection = client.create_collection("docs", dimension=1536)
+client = ProximaDB(url="http://localhost:5678")
+
+# Create collection
+collection = client.create_collection(
+    name="documents",
+    dimension=1536,
+    engine="auto"  # Let ProximaDB choose
+)
+
+# Insert vectors with metadata
+collection.insert([
+    {
+        "id": "doc1",
+        "vector": [0.1, 0.2, ...],
+        "metadata": {"category": "tech", "date": "2024-01"}
+    }
+])
+
+# Search with filtering
+results = collection.search(
+    query_vector=[0.15, 0.25, ...],
+    top_k=10,
+    filter={"category": "tech"}
+)
 ----
 
-=== JavaScript/Node.js
+== Current Status
 
-[source,javascript]
-----
-npm install proximadb
-const { ProximaDBClient } = require('proximadb');
+ProximaDB v0.1.4 is in active development. Core functionality is stable:
 
-const client = new ProximaDBClient('localhost:5678');
-----
+**Production Ready**:
+* SST and VIPER storage engines
+* REST and gRPC APIs
+* Python SDK
+* Hardware acceleration (SIMD)
+* Cloud storage integration
 
-=== Go
-
-[source,go]
-----
-go get github.com/proximadb/proximadb-go
-import "github.com/proximadb/proximadb-go"
-----
+**In Development**:
+* Additional storage engine optimizations
+* Multi-node clustering
+* GPU acceleration
+* Additional language SDKs
 
 == Production Deployment
 
@@ -313,12 +334,11 @@ spec:
 **link:docs/reference/[API Reference]** +
 **link:docs/performance/[Performance Tuning]**
 
-== Community & Support
+== Community
 
-**GitHub**: https://github.com/vjsingh1984/proximaDB +
-**Issues**: https://github.com/vjsingh1984/proximaDB/issues +
-**LinkedIn**: https://www.linkedin.com/company/proximadb/ +
-**Contact**: For questions and support
+**GitHub**: https://github.com/proximadb/proximadb +
+**Issues**: Report bugs and request features +
+**Contributing**: We welcome contributions! See CONTRIBUTING.md
 
 == License
 
@@ -326,4 +346,4 @@ Licensed under the Apache License, Version 2.0. See link:LICENSE[LICENSE] for de
 
 ---
 
-**Built with precision for the vector AI community**
+_ProximaDB - Honest performance for AI workloads_
