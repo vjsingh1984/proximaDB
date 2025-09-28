@@ -144,8 +144,8 @@ mod tests {
             primary_sort_key: None,
             compression_estimate: 0.0,
         };
-        assert_eq!(stats.vectors_sorted, 0);
-        assert_eq!(stats.sort_time_ms, 0);
+        assert_eq!(stats.records_sorted, 0);
+        assert_eq!(stats.sort_duration_ms, 0);
 
         // Test memory estimate structure exists
         let estimate = MemoryEstimate {

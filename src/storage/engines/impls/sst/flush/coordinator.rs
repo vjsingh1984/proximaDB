@@ -45,7 +45,7 @@ impl FlushCoordinator {
         self.validate_flush_parameters(&params)?;
 
         // Execute the flush
-        let result = self.engine.do_flush(params).await?;
+        let result = self.engine.flush_implementation(&params).await?;
 
         // Post-flush operations
         self.post_flush_operations(&result).await?;
@@ -111,6 +111,12 @@ mod tests {
             batch_ids: vec![],
             collection_id: Some("test".to_string()),
             collection_config: None,
+            force: false,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            estimated_size: 0,
         };
 
         assert!(coordinator.validate_flush_parameters(&params).is_err());

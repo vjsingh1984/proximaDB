@@ -95,7 +95,7 @@ impl SearchCoordinator {
         );
 
         // Simple heuristics for strategy selection
-        let strategy = if ctx.metadata.use_axis_indexes && vector_dimension > 512 {
+        let strategy = if has_filters && vector_dimension > 512 {
             SearchStrategy::Orchestrated {
                 reason: "High-dimensional query with index support".to_string(),
                 estimated_cost: 50.0,
@@ -118,11 +118,11 @@ impl SearchCoordinator {
     }
 
     /// Execute search based on the selected strategy
-    fn execute_search_strategy(
-        &self,
-        ctx: &StorageQueryContext,
+    fn execute_search_strategy<'a>(
+        &'a self,
+        ctx: &'a StorageQueryContext,
         strategy: SearchStrategy,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<OptimizedSearchRecord>>> + Send + '_>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<OptimizedSearchRecord>>> + Send + 'a>> {
         Box::pin(async move {
             match strategy {
                 SearchStrategy::Direct { reason, .. } => {
@@ -274,26 +274,39 @@ mod tests {
             vector: Some(vec![1.0, 2.0, 3.0]),
             top_k: Some(10),
             distance_metric: Some(DistanceMetric::Cosine),
-            include_vectors: Some(true),
-            include_metadata: Some(true),
             filter_expression: None,
-            sort_by: None,
-            search_mode: None,
-            timeout_seconds: None,
-            cursor: None,
-            quantization_level: None,
+            filters: None,
+            accuracy_threshold: Some(0.95),
+            include_expired: Some(false),
+            timeout_ms: Some(5000),
+            enable_two_stage: Some(true),
+            quantization_hint: None,
+            enable_clustering_hint: Some(true),
+            enable_metadata_filtering_hint: Some(true),
+            custom_hints: None,
+            requires_ordering: None,
+            runtime_hints: None,
+            enable_progressive_search: Some(false),
+            progressive_scenario: None,
+            progressive_recalls: None,
+            optimization_hint: None,
         });
 
-        let collection = Arc::new(crate::core::collections::Collection::new(
-            "test_collection".to_string(),
-            128,
-        ));
+        let collection = Arc::new(crate::proto::proximadb_v1::Collection {
+            id: "test_collection".to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                name: "test_collection".to_string(),
+                dimension: 128,
+                distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
+                storage_engine: crate::proto::proximadb_v1::StorageEngine::Sst as i32,
+                ..Default::default()
+            }),
+            stats: Some(crate::proto::proximadb_v1::CollectionStats::default()),
+            created_at: 0,
+            updated_at: 0,
+            storage_assignment: None,
+        });
 
-        let metadata = crate::storage::traits::QueryMetadata {
-            use_axis_indexes,
-            has_quantization,
-        };
-
-        StorageQueryContext::new(search_params, collection, metadata)
+        StorageQueryContext::new(search_params, collection)
     }
 }

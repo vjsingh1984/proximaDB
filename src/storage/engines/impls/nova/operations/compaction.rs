@@ -84,6 +84,7 @@ impl NovaCompactionOperations {
         // Write compacted file
         let output_path = self.generate_compacted_file_path(&params.collection_id.as_deref().unwrap_or("default"));
         let bytes_after = self.write_compacted_file(
+            &params,
             &output_path,
             all_records.clone(),
             128 * 1024 * 1024, // Default 128MB target size
@@ -140,15 +141,18 @@ impl NovaCompactionOperations {
     /// Write compacted file using HybridParquetWriter
     async fn write_compacted_file(
         &self,
+        params: &CompactionParameters,
         output_path: &str,
         records: Vec<VectorRecord>,
         target_size: u64,
     ) -> Result<u64> {
         use crate::storage::engines::core::formats::columnar::hybrid_writer::{HybridParquetWriter, HybridWriterConfig};
 
-        let dimension = records.first()
-            .and_then(|r| r.vector.as_ref().map(|v| v.len()))
-            .map(|v| v.len())
+        let dimension = params.collection_config
+            .as_ref()
+            .and_then(|collection| collection.config.as_ref())
+            .map(|config| config.dimension as usize)
+            .or_else(|| records.first().map(|r| r.vector.len()))
             .unwrap_or(768);
 
         let writer_config = ParquetWriterConfig {

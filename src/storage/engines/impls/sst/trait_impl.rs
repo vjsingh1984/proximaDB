@@ -25,6 +25,7 @@ use anyhow::Result;
 use tracing::{info, debug};
 
 use crate::storage::engines::impls::sst::core::SstEngine;
+use crate::storage::engines::impls::sst::SstError;
 use crate::storage::traits::{
     UnifiedStorageEngine, StorageEngineStrategy,
     FlushParameters, FlushResult,
@@ -32,6 +33,7 @@ use crate::storage::traits::{
     StorageQueryContext
 };
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::proto::proximadb_v1::VectorRecord;
 
 #[async_trait]
 impl UnifiedStorageEngine for SstEngine {
@@ -51,12 +53,10 @@ impl UnifiedStorageEngine for SstEngine {
         self.filesystem()
     }
 
-    /// Delegate flush to the flush module
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
         info!("🚀 SST: Starting flush operation");
-
-        // Use the modular flush implementation
-        self.do_flush(params.clone()).await
+        // Use the flush module implementation directly
+        self.flush_implementation(params).await
     }
 
     /// Delegate compaction to the compaction module
@@ -74,9 +74,11 @@ impl UnifiedStorageEngine for SstEngine {
                 entries_removed: Some(0),
                 bytes_read: Some(0),
                 bytes_written: Some(0),
+                input_files: Some(0),
+                output_files: Some(0),
                 duration_ms: Some(0),
-                metadata: std::collections::HashMap::new(),
-                error: None,
+                completed_at: chrono::Utc::now(),
+                engine_metrics: std::collections::HashMap::new(),
             })
         } else {
             Ok(CompactionResult {
@@ -86,9 +88,11 @@ impl UnifiedStorageEngine for SstEngine {
                 entries_removed: Some(0),
                 bytes_read: Some(0),
                 bytes_written: Some(0),
+                input_files: Some(0),
+                output_files: Some(0),
                 duration_ms: Some(0),
-                metadata: std::collections::HashMap::new(),
-                error: Some("Collection level compaction not implemented".to_string()),
+                completed_at: chrono::Utc::now(),
+                engine_metrics: std::collections::HashMap::new(),
             })
         }
     }

@@ -2002,7 +2002,7 @@ impl VectorOperationsService {
         
         for collection_id in collections {
             if let Some(collection) = self.collection_cache.get(&collection_id) {
-                match self.storage_engine.compact_collection(&collection_id, Some(&collection)).await {
+                match self.unified_engine().compact_collection(&collection_id, Some(&**collection)).await {
                     Ok(result) => {
                         info!("✅ Compacted collection {}: {} files processed", 
                               collection_id, result.output_files.unwrap_or(0));
@@ -2029,7 +2029,7 @@ impl VectorOperationsService {
 
         // Trigger compaction for this collection
         if let Some(collection) = self.collection_cache.get(collection_id) {
-            match self.storage_engine.compact_collection(collection_id, Some(&collection)).await {
+            match self.unified_engine().compact_collection(collection_id, Some(&**collection)).await {
                 Ok(result) => {
                     info!("✅ Compacted collection {}: {} files created, {} files processed", 
                           collection_id, result.output_files.unwrap_or(0), result.input_files.unwrap_or(0));

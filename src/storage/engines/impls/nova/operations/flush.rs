@@ -167,8 +167,7 @@ impl NovaFlushOperations {
 
         // Get dimension from actual vectors first, then fall back to config
         let dimension = params.vector_records.first()
-            .and_then(|r| r.vector.as_ref().map(|v| v.len()))
-            .map(|v| v.len())
+            .map(|r| r.vector.len())
             .or_else(|| params.collection_config.as_ref()
                 .and_then(|c| c.config.as_ref().map(|cfg| cfg.dimension as usize)))
             .ok_or_else(|| anyhow::anyhow!("Cannot determine vector dimension"))?;

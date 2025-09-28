@@ -57,7 +57,7 @@ impl SstEngine {
     /// 2. Sort vectors for optimal SSTable encoding
     /// 3. Write vectors to SSTable using atomic operations
     /// 4. Update metadata and trigger compaction if needed
-    pub async fn do_flush(&self, params: FlushParameters) -> Result<FlushResult> {
+    pub async fn flush_implementation(&self, params: &FlushParameters) -> Result<FlushResult> {
         let start_time = std::time::Instant::now();
 
         info!(

@@ -135,6 +135,7 @@ file_list.txt
 *.backup
 *.migrated
 *.old
+*.obsolete
 tmp/
 temp/
 demo/results/

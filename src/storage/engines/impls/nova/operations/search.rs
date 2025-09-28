@@ -149,40 +149,39 @@ impl NovaSearchOperations {
                 }
             });
 
-            let records = reader.read_all_records(10000, metadata_filter).await?;
+            let records = reader.read_all_records(10000, None).await?;
 
             // Compute distances and collect candidates
             for record in records {
-                if let Some(vector) = record.vector.as_ref() {
-                    let distance = self.distance_engine.distance_with_metric(
-                        query_vector,
-                        vector,
-                        &ctx.distance_metric(),
-                    );
+                let vector = &record.vector;
+                let distance = self.distance_engine.distance_with_metric(
+                    query_vector,
+                    vector,
+                    &ctx.distance_metric(),
+                );
 
-                    let search_record = OptimizedSearchRecord {
-                        id: record.id.clone(),
-                        vector_id: Some(record.id),
-                        score: 1.0 - distance, // Convert distance to similarity score
-                        similarity: Some(distance),
-                        vector: Some(Arc::new(vector.clone())),
-                        metadata: record.metadata.unwrap_or_else(HashMap::new),
-                        debug_info: None,
-                        version: record.version,
-                        timestamp: Some(record.timestamp),
-                        updated_at: None,
-                        expires_at: None,
-                        source: None,
-                        expanded_context: vec![],
-                        semantic_similarity: None,
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
-                    };
+                let search_record = OptimizedSearchRecord {
+                    id: record.id.clone(),
+                    vector_id: Some(record.id),
+                    score: 1.0 - distance, // Convert distance to similarity score
+                    similarity: Some(distance),
+                    vector: Some(Arc::new(vector.clone())),
+                    metadata: record.metadata,
+                    debug_info: None,
+                    version: record.version,
+                    timestamp: Some(record.timestamp),
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: vec![],
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                };
 
-                    // Add to candidates
-                    all_candidates.push((distance, search_record));
-                }
+                // Add to candidates
+                all_candidates.push((distance, search_record));
             }
         }
 
