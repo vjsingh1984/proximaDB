@@ -1,0 +1,299 @@
+/*
+ * Copyright 2025 Vijaykumar Singh
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Search Coordinator
+//!
+//! Coordinates complex search operations and manages search strategy selection
+//! for the SST engine. Provides intelligent routing between different search
+//! approaches based on query characteristics.
+
+use std::sync::Arc;
+use anyhow::Result;
+use tracing::{info, debug, warn};
+
+use crate::storage::engines::impls::sst::SstEngine;
+use crate::storage::traits::StorageQueryContext;
+use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::FilterExpression;
+use crate::compute::distance_computation::DistanceMetric;
+
+/// Search strategy enumeration
+#[derive(Debug, Clone)]
+pub enum SearchStrategy {
+    /// Direct search through SSTable files
+    Direct {
+        reason: String,
+        estimated_cost: f64,
+    },
+    /// Orchestrated search with advanced optimization
+    Orchestrated {
+        reason: String,
+        estimated_cost: f64,
+        use_indexes: bool,
+    },
+    /// Hybrid approach combining multiple strategies
+    Hybrid {
+        strategies: Vec<SearchStrategy>,
+        estimated_cost: f64,
+    },
+}
+
+/// Search coordinator for managing complex search operations
+pub struct SearchCoordinator {
+    engine: Arc<SstEngine>,
+}
+
+impl SearchCoordinator {
+    /// Create a new search coordinator
+    pub fn new(engine: Arc<SstEngine>) -> Self {
+        Self { engine }
+    }
+
+    /// Coordinate a search operation with intelligent strategy selection
+    pub async fn coordinate_search(
+        &self,
+        ctx: &StorageQueryContext,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        debug!("🎯 SearchCoordinator: Starting search coordination");
+
+        // Analyze query characteristics
+        let strategy = self.select_search_strategy(ctx).await?;
+        debug!("📋 Selected strategy: {:?}", strategy);
+
+        // Execute search based on selected strategy
+        let results = self.execute_search_strategy(ctx, strategy).await?;
+
+        // Post-process results
+        let optimized_results = self.post_process_results(results, ctx).await?;
+
+        info!("✅ SearchCoordinator: Search coordination completed successfully");
+        Ok(optimized_results)
+    }
+
+    /// Select optimal search strategy based on query characteristics
+    async fn select_search_strategy(&self, ctx: &StorageQueryContext) -> Result<SearchStrategy> {
+        let collection_id = ctx.collection_id();
+        let has_filters = ctx.search_params.filter_expression.is_some();
+        let vector_dimension = ctx.query_vector().map(|v| v.len()).unwrap_or(0);
+
+        debug!(
+            "🔍 Analyzing query: collection={}, has_filters={}, dimensions={}",
+            collection_id, has_filters, vector_dimension
+        );
+
+        // Simple heuristics for strategy selection
+        let strategy = if ctx.metadata.use_axis_indexes && vector_dimension > 512 {
+            SearchStrategy::Orchestrated {
+                reason: "High-dimensional query with index support".to_string(),
+                estimated_cost: 50.0,
+                use_indexes: true,
+            }
+        } else if has_filters {
+            SearchStrategy::Direct {
+                reason: "Filtered query benefits from bloom filter pipeline".to_string(),
+                estimated_cost: 100.0,
+            }
+        } else {
+            SearchStrategy::Direct {
+                reason: "Simple query, direct search is optimal".to_string(),
+                estimated_cost: 75.0,
+            }
+        };
+
+        info!("🎯 Selected search strategy: {:?}", strategy);
+        Ok(strategy)
+    }
+
+    /// Execute search based on the selected strategy
+    fn execute_search_strategy(
+        &self,
+        ctx: &StorageQueryContext,
+        strategy: SearchStrategy,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<OptimizedSearchRecord>>> + Send + '_>> {
+        Box::pin(async move {
+            match strategy {
+                SearchStrategy::Direct { reason, .. } => {
+                    info!("🔍 Executing direct search: {}", reason);
+                    self.engine.search_vectors_unified(ctx).await
+                }
+                SearchStrategy::Orchestrated { reason, use_indexes, .. } => {
+                    info!("🎯 Executing orchestrated search: {}, use_indexes: {}", reason, use_indexes);
+                    // For now, fall back to unified search since full orchestration is not yet implemented
+                    warn!("🔄 Orchestrated search not fully implemented, falling back to unified search");
+                    self.engine.search_vectors_unified(ctx).await
+                }
+                SearchStrategy::Hybrid { strategies, .. } => {
+                    info!("🔀 Executing hybrid search with {} strategies", strategies.len());
+                    // Execute the first strategy for now
+                    if let Some(first_strategy) = strategies.into_iter().next() {
+                        self.execute_search_strategy(ctx, first_strategy).await
+                    } else {
+                        self.engine.search_vectors_unified(ctx).await
+                    }
+                }
+            }
+        })
+    }
+
+    /// Post-process search results for optimization
+    async fn post_process_results(
+        &self,
+        mut results: Vec<OptimizedSearchRecord>,
+        ctx: &StorageQueryContext,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        debug!("🔧 Post-processing {} search results", results.len());
+
+        // Sort by score (ascending for distance-based metrics)
+        results.sort_by(|a, b| {
+            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Apply top-k limit
+        let k = ctx.top_k();
+        if results.len() > k {
+            results.truncate(k);
+            debug!("📊 Truncated results to top-{}", k);
+        }
+
+        // Apply score normalization if needed
+        if !results.is_empty() {
+            let max_score = results.iter()
+                .map(|r| r.score)
+                .fold(f32::NEG_INFINITY, f32::max);
+
+            if max_score > 0.0 {
+                for result in &mut results {
+                    result.score = result.score / max_score;
+                }
+                debug!("📈 Normalized scores by max score: {}", max_score);
+            }
+        }
+
+        debug!("✅ Post-processing completed, returning {} results", results.len());
+        Ok(results)
+    }
+
+    /// Estimate search cost for a given strategy
+    pub async fn estimate_search_cost(
+        &self,
+        ctx: &StorageQueryContext,
+        strategy: &SearchStrategy,
+    ) -> Result<f64> {
+        match strategy {
+            SearchStrategy::Direct { estimated_cost, .. } => Ok(*estimated_cost),
+            SearchStrategy::Orchestrated { estimated_cost, .. } => Ok(*estimated_cost),
+            SearchStrategy::Hybrid { estimated_cost, .. } => Ok(*estimated_cost),
+        }
+    }
+
+    /// Get search statistics for monitoring
+    pub async fn get_search_statistics(&self) -> Result<SearchStatistics> {
+        Ok(SearchStatistics {
+            total_searches: 0, // Would be tracked in a real implementation
+            avg_latency_ms: 0.0,
+            cache_hit_rate: 0.0,
+            strategy_distribution: std::collections::HashMap::new(),
+        })
+    }
+}
+
+/// Search statistics for monitoring and optimization
+#[derive(Debug, Clone)]
+pub struct SearchStatistics {
+    pub total_searches: u64,
+    pub avg_latency_ms: f64,
+    pub cache_hit_rate: f64,
+    pub strategy_distribution: std::collections::HashMap<String, u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::engines::impls::sst::SstConfig;
+    use crate::storage::persistence::filesystem::FilesystemFactory;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::query::unified_query_optimizer::SearchParams;
+
+    #[tokio::test]
+    async fn test_search_strategy_selection() {
+        let engine = create_test_engine().await;
+        let coordinator = SearchCoordinator::new(Arc::new(engine));
+
+        // Test direct strategy selection
+        let ctx = create_test_context(false, false);
+        let strategy = coordinator.select_search_strategy(&ctx).await.unwrap();
+
+        match strategy {
+            SearchStrategy::Direct { .. } => {
+                // Expected for simple query
+            }
+            _ => panic!("Expected Direct strategy for simple query"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cost_estimation() {
+        let engine = create_test_engine().await;
+        let coordinator = SearchCoordinator::new(Arc::new(engine));
+
+        let strategy = SearchStrategy::Direct {
+            reason: "Test".to_string(),
+            estimated_cost: 100.0,
+        };
+
+        let ctx = create_test_context(false, false);
+        let cost = coordinator.estimate_search_cost(&ctx, &strategy).await.unwrap();
+        assert_eq!(cost, 100.0);
+    }
+
+    async fn create_test_engine() -> SstEngine {
+        let config = SstConfig::default();
+        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(filesystem_config).await.unwrap());
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+
+        SstEngine::new_with_config(config, filesystem, distance_compute).await.unwrap()
+    }
+
+    fn create_test_context(use_indexes: bool, has_quantization: bool) -> StorageQueryContext {
+        let search_params = Arc::new(SearchParams {
+            query_vectors: None,
+            vector: Some(vec![1.0, 2.0, 3.0]),
+            top_k: Some(10),
+            distance_metric: Some(DistanceMetric::Cosine),
+            include_vectors: Some(true),
+            include_metadata: Some(true),
+            filter_expression: None,
+            sort_by: None,
+            search_mode: None,
+            timeout_seconds: None,
+            cursor: None,
+            quantization_level: None,
+        });
+
+        let collection = Arc::new(crate::core::collections::Collection::new(
+            "test_collection".to_string(),
+            128,
+        ));
+
+        let metadata = crate::storage::traits::QueryMetadata {
+            use_axis_indexes,
+            has_quantization,
+        };
+
+        StorageQueryContext::new(search_params, collection, metadata)
+    }
+}

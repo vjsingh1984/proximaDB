@@ -1,5 +1,0 @@
-test storage::engines::core::ops::proximaencoder::tests::test_bitpacking ... ok
-test storage::engines::core::ops::proximaencoder::tests::test_delta_encoding ... ok
-test storage::engines::core::ops::proximaencoder::tests::test_run_length_encoding ... ok
-test storage::engines::core::ops::proximaencoder::tests::test_scheme_selection ... ok
-test storage::engines::impls::raptor::p2_matrix_tests::tests::test_p2_matrix_proximaencoder ... ok
