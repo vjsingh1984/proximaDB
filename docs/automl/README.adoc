@@ -1,0 +1,431 @@
+= ProximaDB AutoML Framework
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+
+== Overview
+
+The ProximaDB AutoML Framework provides automated machine learning capabilities for database performance optimization, workload prediction, and intelligent parameter tuning. This framework automatically adapts the database configuration to optimize performance based on real workload patterns.
+
+== Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph AutoML["AutoML Framework"]
+        AML[AutoML Coordinator]
+        WLA[Workload Analyzer]
+        PP[Performance Predictor]
+        OP[Optimization Pipeline]
+        HT[Hyperparameter Tuner]
+    end
+
+    subgraph DB["Database Components"]
+        SE[Storage Engines]
+        QE[Query Engine]
+        CM[Cache Manager]
+        IM[Index Manager]
+    end
+
+    subgraph External["External Systems"]
+        MON[Monitoring]
+        LOG[Logging]
+        MET[Metrics]
+    end
+
+    WLA --> AML
+    PP --> AML
+    OP --> AML
+    HT --> AML
+
+    AML --> SE
+    AML --> QE
+    AML --> CM
+    AML --> IM
+
+    MON --> WLA
+    LOG --> WLA
+    MET --> PP
+
+    style AML fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style WLA fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style PP fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style OP fill:#8fc4f9,stroke:#6ba3e5,stroke-width:2px,color:#000
+    style HT fill:#a1d0fb,stroke:#7db8f7,stroke-width:2px,color:#000
+----
+
+== Core Components
+
+=== AutoML Coordinator
+
+The central orchestrator that manages all AutoML operations and coordinates between different subsystems.
+
+**Location**: `src/automl/mod.rs`
+
+**Key Responsibilities**:
+- Coordinate workload analysis and prediction
+- Trigger optimization pipelines
+- Manage hyperparameter tuning cycles
+- Track optimization metrics and status
+
+**Configuration**:
+[source,rust]
+----
+pub struct AutoMLConfig {
+    pub enabled: bool,
+    pub optimization_interval_seconds: u64,
+    pub workload_analysis_window_hours: u32,
+    pub prediction_horizon_minutes: u32,
+    pub tuning_budget_seconds: u64,
+}
+----
+
+=== Workload Analyzer
+
+Analyzes database workload patterns to identify optimization opportunities.
+
+**Location**: `src/automl/workload.rs`
+
+**Features**:
+- Real-time workload pattern detection
+- Query frequency and complexity analysis
+- Resource utilization monitoring
+- Trend identification and prediction
+
+**Workload Patterns**:
+- `SearchHeavy`: Predominant vector search operations
+- `InsertHeavy`: High volume data ingestion
+- `Mixed`: Balanced read/write workloads
+- `BatchProcessing`: Large analytical queries
+- `RealTime`: Low-latency requirements
+
+=== Performance Predictor
+
+Machine learning models that predict database performance under different configurations.
+
+**Location**: `src/automl/prediction.rs`
+
+**Models**:
+- **Regression Models**: Linear, polynomial, and ensemble regressors
+- **Time Series**: ARIMA and seasonal decomposition
+- **Neural Networks**: Deep learning for complex patterns
+- **Ensemble Methods**: Combining multiple model predictions
+
+**Metrics Predicted**:
+- Query latency
+- Throughput capacity
+- Memory usage
+- Storage efficiency
+- Cache hit rates
+
+=== Optimization Pipeline
+
+Automated optimization workflows that improve database performance.
+
+**Location**: `src/automl/optimization.rs`
+
+**Optimization Goals**:
+- `MinimizeLatency`: Reduce query response times
+- `MaximizeThroughput`: Increase operations per second
+- `BalancePerformance`: Optimize both latency and throughput
+- `ReduceMemoryUsage`: Minimize memory footprint
+- `ImproveStorageEfficiency`: Optimize storage utilization
+
+**Optimization Strategies**:
+- Storage engine selection
+- Cache configuration tuning
+- Index optimization
+- Compression algorithm selection
+- Quantization level adjustment
+
+=== Hyperparameter Tuner
+
+Automated hyperparameter optimization using advanced search algorithms.
+
+**Location**: `src/automl/tuning.rs`
+
+**Search Algorithms**:
+- **Bayesian Optimization**: Efficient global optimization
+- **Random Search**: Baseline random sampling
+- **Grid Search**: Exhaustive parameter space exploration
+- **Genetic Algorithm**: Evolutionary optimization
+- **Simulated Annealing**: Probabilistic search
+
+**Tunable Parameters**:
+- Storage engine configurations
+- Cache sizes and policies
+- Compaction thresholds
+- Quantization settings
+- Index parameters
+
+== Usage Examples
+
+=== Basic AutoML Setup
+
+[source,rust]
+----
+use proximadb::automl::{AutoMLCoordinator, AutoMLConfig};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = AutoMLConfig {
+        enabled: true,
+        optimization_interval_seconds: 3600, // 1 hour
+        workload_analysis_window_hours: 24,
+        prediction_horizon_minutes: 60,
+        tuning_budget_seconds: 1800, // 30 minutes
+    };
+
+    let automl = AutoMLCoordinator::new(config).await?;
+    automl.start().await?;
+
+    // AutoML will now automatically optimize the database
+    tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+
+    let status = automl.get_status().await;
+    println!("AutoML Status: {:?}", status);
+
+    let metrics = automl.get_metrics().await;
+    println!("AutoML Metrics: {:?}", metrics);
+
+    Ok(())
+}
+----
+
+=== Workload Analysis
+
+[source,rust]
+----
+use proximadb::automl::{WorkloadAnalyzer, WorkloadPattern};
+
+let analyzer = WorkloadAnalyzer::new().await?;
+analyzer.start_monitoring().await?;
+
+// Let it collect data for a while
+tokio::time::sleep(tokio::time::Duration::from_secs(300)).await;
+
+let pattern = analyzer.detect_current_pattern().await?;
+match pattern {
+    WorkloadPattern::SearchHeavy { search_ratio } => {
+        println!("Search-heavy workload detected: {}% searches", search_ratio * 100.0);
+    }
+    WorkloadPattern::InsertHeavy { insert_ratio } => {
+        println!("Insert-heavy workload detected: {}% inserts", insert_ratio * 100.0);
+    }
+    WorkloadPattern::Mixed { search_ratio, insert_ratio } => {
+        println!("Mixed workload: {}% searches, {}% inserts",
+                search_ratio * 100.0, insert_ratio * 100.0);
+    }
+    _ => println!("Other workload pattern detected"),
+}
+----
+
+=== Performance Prediction
+
+[source,rust]
+----
+use proximadb::automl::{PerformancePredictor, PredictionModel};
+
+let predictor = PerformancePredictor::new().await?;
+
+// Train model on historical data
+predictor.train_model(PredictionModel::Ensemble).await?;
+
+// Predict performance for a configuration
+let config_changes = vec![
+    ("cache_size_mb", 1024.0),
+    ("quantization_level", 2.0),
+    ("compaction_threshold", 0.8),
+];
+
+let prediction = predictor.predict_performance(&config_changes).await?;
+println!("Predicted latency: {:.2}ms", prediction.latency_ms);
+println!("Predicted throughput: {:.0} ops/sec", prediction.throughput_ops_per_sec);
+----
+
+=== Custom Optimization
+
+[source,rust]
+----
+use proximadb::automl::{OptimizationPipeline, OptimizationGoal};
+
+let pipeline = OptimizationPipeline::new(config).await?;
+
+// Run optimization for specific goal
+let result = pipeline.optimize(OptimizationGoal::MinimizeLatency).await?;
+
+println!("Optimization completed:");
+println!("  Improvement: {:.1}%", result.improvement_percentage);
+println!("  New configuration: {:?}", result.new_configuration);
+println!("  Duration: {:.1}s", result.optimization_duration_seconds);
+----
+
+== Configuration
+
+=== AutoML Configuration in config.toml
+
+[source,toml]
+----
+[automl]
+enabled = true
+optimization_interval_seconds = 3600
+workload_analysis_window_hours = 24
+prediction_horizon_minutes = 60
+tuning_budget_seconds = 1800
+
+[automl.workload_analyzer]
+enable_real_time_analysis = true
+pattern_detection_threshold = 0.8
+minimum_samples = 1000
+
+[automl.performance_predictor]
+model_type = "ensemble"
+training_data_retention_days = 30
+prediction_confidence_threshold = 0.85
+
+[automl.optimization_pipeline]
+enable_parallel_optimization = true
+max_concurrent_optimizations = 3
+rollback_on_performance_degradation = true
+
+[automl.hyperparameter_tuner]
+search_algorithm = "bayesian"
+max_iterations = 100
+convergence_tolerance = 0.01
+----
+
+== Integration with Storage Engines
+
+=== SST Engine Integration
+
+The AutoML framework integrates with the modularized SST engine to optimize:
+
+- **Flush Operations**: Optimal batch sizes and frequencies
+- **Search Strategy**: Bloom filter vs. full scan decisions
+- **Compaction Timing**: When to trigger compaction operations
+
+=== NOVA Engine Integration
+
+AutoML optimizes NOVA's progressive search capabilities:
+
+- **Quantization Levels**: Automatic selection based on accuracy requirements
+- **Zone Map Configuration**: Optimal zone sizes and strategies
+- **Hierarchical Statistics**: Tuning for different workload patterns
+
+=== VIPER Engine Integration
+
+Columnar storage optimization:
+
+- **Compression Algorithms**: Automatic selection based on data characteristics
+- **Dictionary Encoding**: Threshold tuning for categorical data
+- **Bloom Filter Configuration**: Optimal false positive rates
+
+== Monitoring and Metrics
+
+=== AutoML Status Monitoring
+
+[source,rust]
+----
+pub struct AutoMLStatus {
+    pub enabled: bool,
+    pub active_optimizations: usize,
+    pub total_optimizations: u64,
+    pub average_improvement: f64,
+    pub last_optimization: Option<chrono::DateTime<chrono::Utc>>,
+}
+----
+
+=== Performance Metrics
+
+[source,rust]
+----
+pub struct AutoMLMetrics {
+    pub predictions_made: u64,
+    pub predictions_accurate: u64,
+    pub optimizations_successful: u64,
+    pub optimizations_failed: u64,
+    pub average_optimization_time_ms: f64,
+    pub total_runtime_saved_ms: u64,
+}
+----
+
+=== REST API Endpoints
+
+The AutoML framework exposes monitoring endpoints:
+
+- `GET /v1/automl/status` - Current AutoML status
+- `GET /v1/automl/metrics` - Performance metrics
+- `POST /v1/automl/optimize` - Trigger manual optimization
+- `GET /v1/automl/predictions` - Recent predictions
+- `POST /v1/automl/config` - Update configuration
+
+== Best Practices
+
+=== Production Deployment
+
+1. **Gradual Rollout**: Enable AutoML on non-critical workloads first
+2. **Monitoring**: Set up alerts for optimization failures
+3. **Rollback Strategy**: Always maintain ability to revert changes
+4. **Resource Limits**: Set bounds on optimization resource usage
+
+=== Performance Considerations
+
+1. **Optimization Frequency**: Balance between responsiveness and overhead
+2. **Model Training**: Schedule intensive training during low-traffic periods
+3. **Prediction Caching**: Cache predictions to reduce computation overhead
+4. **Resource Allocation**: Reserve CPU/memory for optimization tasks
+
+=== Troubleshooting
+
+==== Common Issues
+
+1. **Optimization Not Triggered**
+   - Check workload analysis window size
+   - Verify sufficient data for pattern detection
+   - Review optimization thresholds
+
+2. **Poor Predictions**
+   - Increase training data retention period
+   - Adjust model selection criteria
+   - Review feature engineering
+
+3. **Performance Degradation**
+   - Enable rollback on degradation
+   - Review optimization goals alignment
+   - Check resource constraints
+
+==== Debug Logging
+
+Enable detailed AutoML logging:
+
+[source,toml]
+----
+[logging]
+level = "debug"
+modules = ["proximadb::automl"]
+----
+
+== Future Enhancements
+
+=== Planned Features
+
+1. **Federated Learning**: Cross-deployment knowledge sharing
+2. **Reinforcement Learning**: Advanced optimization strategies
+3. **Explainable AI**: Understanding optimization decisions
+4. **Multi-Objective Optimization**: Simultaneous optimization of multiple goals
+5. **Cost-Based Optimization**: Including infrastructure costs in decisions
+
+=== Research Directions
+
+1. **Online Learning**: Continuous model updates during operation
+2. **Transfer Learning**: Applying knowledge across different deployments
+3. **Anomaly Detection**: Identifying unusual workload patterns
+4. **Causal Inference**: Understanding causation vs. correlation in optimizations
+
+== Conclusion
+
+The ProximaDB AutoML Framework represents a significant advancement in autonomous database management, providing intelligent, data-driven optimization capabilities that adapt to changing workload patterns. By leveraging machine learning and automated optimization techniques, the framework ensures optimal database performance with minimal manual intervention.
+
+The modular design integrates seamlessly with ProximaDB's storage engines, providing comprehensive optimization across all system components while maintaining the flexibility to adapt to diverse workload requirements.

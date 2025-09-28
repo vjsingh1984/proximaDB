@@ -354,40 +354,46 @@ make docs-update-gaps       # Update critical documentation gaps
 
 ## Architecture Overview
 
-ProximaDB is a unified vector database with 6 specialized storage engines that auto-optimize for different workloads.
+ProximaDB is a unified vector database with 6 specialized storage engines that auto-optimize for different workloads, now enhanced with AutoML capabilities and fully modularized engine architectures.
 
 ### Core Components
-- **Storage Layer** (`src/storage/`): 6 engines (SST, VIPER, NOVA, SWIFT, RAPTOR, HELIX) implementing `UnifiedStorageEngine`
+- **Storage Layer** (`src/storage/`): 6 modularized engines implementing `UnifiedStorageEngine`
 - **Compute Layer** (`src/compute/`): Unified quantization and hardware-accelerated distance computation
 - **API Layer** (`src/api_handlers/`): REST (port 5678) and gRPC (port 5679) servers
 - **Index Layer** (`src/index/`): AXIS engine with multiple index types (HNSW, IVF, PQ, etc.)
 - **Services Layer** (`src/services/`): CollectionService, VectorOperationsService, EventLogService
+- **AutoML Layer** (`src/automl/`): Automated performance optimization and workload prediction
 
 ### Storage Engine Specializations
 
-- **SST Engine**: Row-based, write-optimized with three-stage filtering
-  - Best for: Real-time queries, frequent updates
-  - Location: `src/storage/engines/impls/sst/`
+- **SST Engine**: Row-based, write-optimized with three-stage filtering (Modularized)
+  - **Architecture**: Fully modularized with flush/, search/, collections, blocks, utils modules
+  - **Best for**: Real-time queries, frequent updates
+  - **Location**: `src/storage/engines/impls/sst/`
+  - **Key modules**: core.rs, flush/, search/, trait_impl.rs, utils.rs, blocks.rs
 
 - **VIPER Engine**: Columnar Parquet format with advanced quantization
-  - Best for: Analytics, batch operations, compression
-  - Location: `src/storage/engines/impls/viper/`
+  - **Features**: Branched filtering, bloom filter optimization, dictionary encoding
+  - **Best for**: Analytics, batch operations, compression
+  - **Location**: `src/storage/engines/impls/viper/`
 
-- **NOVA Engine**: Progressive columnar storage with multi-level quantization
-  - Best for: Mixed workloads, progressive search
-  - Location: `src/storage/engines/impls/nova/`
+- **NOVA Engine**: Progressive columnar storage with multi-level quantization (Refactored)
+  - **Architecture**: Operations-based modular design with flush, compaction, search modules
+  - **Best for**: Mixed workloads, progressive search
+  - **Location**: `src/storage/engines/impls/nova/`
+  - **Key modules**: operations/flush.rs, operations/compaction.rs, operations/search.rs
 
 - **SWIFT Engine**: High-speed row-based with Proxima encoding
-  - Best for: Low-latency operations
-  - Location: `src/storage/engines/impls/swift/`
+  - **Best for**: Low-latency operations
+  - **Location**: `src/storage/engines/impls/swift/`
 
 - **RAPTOR Engine**: Adaptive row-group management with PxK optimization
-  - Best for: Dynamic workloads
-  - Location: `src/storage/engines/impls/raptor/`
+  - **Best for**: Dynamic workloads
+  - **Location**: `src/storage/engines/impls/raptor/`
 
 - **HELIX Engine**: Locality-optimized storage with Hilbert curve clustering
-  - Best for: Workloads requiring spatial locality and efficient range queries
-  - Location: `src/storage/engines/impls/helix/`
+  - **Best for**: Workloads requiring spatial locality and efficient range queries
+  - **Location**: `src/storage/engines/impls/helix/`
 
 ### Key Design Patterns
 - Proto-first pipeline with VectorRecord as native format
