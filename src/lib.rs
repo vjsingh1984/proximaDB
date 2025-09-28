@@ -136,6 +136,10 @@ pub mod executive;
 
 /// AXIS indexing engine with support for multiple algorithms (HNSW, IVF, LSH, etc.)
 pub mod index;
+
+/// AutoML Framework for automated optimization and tuning
+pub mod automl;
+
 // Unified metrics module - combines advanced persistent metrics with real-time monitoring
 pub mod metrics;
 pub mod monitoring;

@@ -495,7 +495,7 @@ class ProximaDBClient:
         if config.description:
             config_data["description"] = config.description
         
-        response = self._make_request("POST", "/api/v1/collection", json=request_data)
+        response = self._make_request("POST", "/api/v1/collections", json=request_data)
         response_data = response.json()
         
         # Handle unified API response format
@@ -527,8 +527,8 @@ class ProximaDBClient:
     def get_collection(self, collection_id: str) -> Collection:
         """Get collection metadata"""
         # Use the updated GET endpoint
-        logger.debug(f"Collection get request to GET /api/v1/collection/{collection_id}")
-        response = self._make_request("GET", f"/api/v1/collection/{collection_id}")
+        logger.debug(f"Collection get request to GET /api/v1/collections/{collection_id}")
+        response = self._make_request("GET", f"/api/v1/collections/{collection_id}")
         response_data = response.json()
         
         # Server returns simplified format:
@@ -625,8 +625,8 @@ class ProximaDBClient:
     def delete_collection(self, collection_id: str) -> bool:
         """Delete a collection"""
         # Use standard REST DELETE endpoint
-        logger.debug(f"Collection delete request to DELETE /api/v1/collection/{collection_id}")
-        response = self._make_request("DELETE", f"/api/v1/collection/{collection_id}")
+        logger.debug(f"Collection delete request to DELETE /api/v1/collections/{collection_id}")
+        response = self._make_request("DELETE", f"/api/v1/collections/{collection_id}")
         return response.json().get("success", False)
     
     def get_collection_stats(self, collection_id: str) -> CollectionStats:

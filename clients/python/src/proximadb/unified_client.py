@@ -57,7 +57,9 @@ from .exceptions import (
 from .auth import ProximaDBAuth, AuthConfig, AuthMethod
 
 try:
-    from . import proximadb_pb2 as pb2
+    from .v1 import collection_types_pb2 as v1_collection_types_pb2
+    from .v1 import vector_types_pb2 as v1_vector_types_pb2
+    from .v1 import types_pb2 as v1_types_pb2
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
@@ -388,10 +390,9 @@ class ProximaDBClient:
             if routing_config is None:
                 routing_config = RoutingConfig(
                     strategy=self.routing_strategy,
-                    default_protocol=Protocol.GRPC if GRPC_AVAILABLE else Protocol.REST,
-                    enable_adaptive_routing=True,
                     enable_fallback=True,
-                    enable_load_balancing=True
+                    enable_load_balancing=True,
+                    enable_adaptive_learning=True
                 )
             
             # Create operation router
@@ -589,6 +590,7 @@ class ProximaDBClient:
                 protocol=protocol,
                 success=success,
                 response_time_ms=response_time_ms,
+                operation_name=operation_name,
                 error=error,
                 throughput_ops_per_sec=throughput_ops_per_sec
             )
@@ -647,27 +649,33 @@ class ProximaDBClient:
         return self._client
     
     # Type conversion helpers
-    def _proto_to_pydantic_collection(self, proto_collection: 'pb2.Collection') -> Collection:
+    def _proto_to_pydantic_collection(self, proto_collection) -> Collection:
         """Convert proto Collection to Pydantic Collection"""
+        # Handle v1 proto collection structure - could be CollectionConfig directly or Collection with config
+        if hasattr(proto_collection, 'config'):
+            proto_config = proto_collection.config
+        else:
+            proto_config = proto_collection
+
         config = CollectionConfig(
-            name=proto_collection.config.name,
-            dimension=proto_collection.config.dimension,
-            distance_metric=self._proto_to_pydantic_distance_metric(proto_collection.config.distance_metric),
-            storage_engine=self._proto_to_pydantic_storage_engine(proto_collection.config.storage_engine),
-            storage_config=proto_collection.config.storage_config if proto_collection.config.HasField('storage_config') else None,
-            quantization=proto_collection.config.quantization if proto_collection.config.HasField('quantization') else None,
-            primary_index=proto_collection.config.primary_index if proto_collection.config.primary_index else None,
-            auto_index_selection=proto_collection.config.auto_index_selection if proto_collection.config.auto_index_selection else None,
-            description=proto_collection.config.description if proto_collection.config.description else None,
-            tags=list(proto_collection.config.tags) if proto_collection.config.tags else None,
-            owner=proto_collection.config.owner if proto_collection.config.owner else None,
+            name=proto_config.name,
+            dimension=proto_config.dimension,
+            distance_metric=self._proto_to_pydantic_distance_metric(proto_config.distance_metric) if hasattr(proto_config, 'distance_metric') else DistanceMetric.COSINE,
+            storage_engine=self._proto_to_pydantic_storage_engine(proto_config.storage_engine) if hasattr(proto_config, 'storage_engine') else StorageEngine.VIPER,
+            storage_config=None,  # Simplified for now - proto storage_config needs conversion
+            quantization=None,  # Simplified for now - proto quantization needs conversion
+            primary_index=proto_config.primary_index if hasattr(proto_config, 'primary_index') and proto_config.primary_index else None,
+            auto_index_selection=proto_config.auto_index_selection if hasattr(proto_config, 'auto_index_selection') and proto_config.auto_index_selection else None,
+            description=proto_config.description if hasattr(proto_config, 'description') and proto_config.description else None,
+            tags=list(proto_config.tags) if hasattr(proto_config, 'tags') and proto_config.tags else None,
+            owner=proto_config.owner if hasattr(proto_config, 'owner') and proto_config.owner else None,
         )
         
         return Collection(
-            id=proto_collection.id,
+            id=getattr(proto_collection, 'id', ''),
             config=config,
-            created_at=proto_collection.created_at,
-            updated_at=proto_collection.updated_at,
+            created_at=getattr(proto_collection, 'created_at', None),
+            updated_at=getattr(proto_collection, 'updated_at', None),
         )
     
     def _proto_to_pydantic_distance_metric(self, proto_metric: int) -> DistanceMetric:
@@ -692,10 +700,14 @@ class ProximaDBClient:
     def _proto_to_pydantic_storage_engine(self, proto_engine: int) -> StorageEngine:
         """Convert proto StorageEngine to Pydantic StorageEngine"""
         mapping = {
-            1: StorageEngine.VIPER,
-            2: StorageEngine.SST,
-            3: StorageEngine.MMAP,
-            4: StorageEngine.HYBRID,
+            1: StorageEngine.VIPER,   # VIPER
+            2: StorageEngine.SST,     # SST
+            3: StorageEngine.NOVA,    # NOVA
+            4: StorageEngine.HELIX,   # HELIX
+            5: StorageEngine.SWIFT,   # SWIFT
+            6: StorageEngine.RAPTOR,  # RAPTOR
+            7: StorageEngine.MMAP,    # MMAP
+            8: StorageEngine.HYBRID,  # HYBRID
         }
         return mapping.get(proto_engine, StorageEngine.VIPER)
     
@@ -711,9 +723,9 @@ class ProximaDBClient:
         }
         return mapping.get(proto_algo, IndexingAlgorithm.HNSW)
     
-    def _pydantic_to_proto_collection_config(self, config: CollectionConfig) -> 'pb2.CollectionConfig':
+    def _pydantic_to_proto_collection_config(self, config: CollectionConfig):
         """Convert Pydantic CollectionConfig to proto CollectionConfig"""
-        proto_config = pb2.CollectionConfig(
+        proto_config = v1_collection_types_pb2.CollectionConfig(
             name=config.name,
             dimension=config.dimension,
             distance_metric=self._pydantic_to_proto_distance_metric(config.distance_metric),
@@ -748,31 +760,35 @@ class ProximaDBClient:
     def _pydantic_to_proto_distance_metric(self, metric: DistanceMetric) -> int:
         """Convert Pydantic DistanceMetric to proto DistanceMetric"""
         mapping = {
-            DistanceMetric.COSINE: pb2.DistanceMetric.COSINE,
-            DistanceMetric.EUCLIDEAN: pb2.DistanceMetric.EUCLIDEAN,
-            DistanceMetric.DOT_PRODUCT: pb2.DistanceMetric.DOT_PRODUCT,
-            DistanceMetric.HAMMING: pb2.DistanceMetric.HAMMING,
-            DistanceMetric.MANHATTAN: pb2.DistanceMetric.MANHATTAN,
-            DistanceMetric.JACCARD: pb2.DistanceMetric.JACCARD,
-            DistanceMetric.CUSTOM: pb2.DistanceMetric.CUSTOM,
-            DistanceMetric.CHEBYSHEV: pb2.DistanceMetric.CHEBYSHEV,
-            DistanceMetric.CANBERRA: pb2.DistanceMetric.CANBERRA,
-            DistanceMetric.MINKOWSKI: pb2.DistanceMetric.MINKOWSKI,
-            DistanceMetric.ANGULAR: pb2.DistanceMetric.ANGULAR,
-            DistanceMetric.BRAY_CURTIS: pb2.DistanceMetric.BRAY_CURTIS,
-            DistanceMetric.HELLINGER: pb2.DistanceMetric.HELLINGER,
+            DistanceMetric.COSINE: 1,        # COSINE
+            DistanceMetric.EUCLIDEAN: 2,     # EUCLIDEAN
+            DistanceMetric.DOT_PRODUCT: 3,   # DOT_PRODUCT
+            DistanceMetric.HAMMING: 4,       # HAMMING
+            DistanceMetric.MANHATTAN: 5,     # MANHATTAN
+            DistanceMetric.JACCARD: 6,       # JACCARD
+            DistanceMetric.CUSTOM: 13,       # CUSTOM
+            DistanceMetric.CHEBYSHEV: 8,     # CHEBYSHEV
+            DistanceMetric.CANBERRA: 9,      # CANBERRA
+            DistanceMetric.MINKOWSKI: 10,    # MINKOWSKI
+            DistanceMetric.ANGULAR: 7,       # ANGULAR
+            DistanceMetric.BRAY_CURTIS: 11,  # BRAY_CURTIS
+            DistanceMetric.HELLINGER: 12,    # HELLINGER
         }
-        return mapping.get(metric, pb2.DistanceMetric.COSINE)
+        return mapping.get(metric, 1)  # Default to COSINE
     
     def _pydantic_to_proto_storage_engine(self, engine: StorageEngine) -> int:
         """Convert Pydantic StorageEngine to proto StorageEngine"""
         mapping = {
-            StorageEngine.VIPER: pb2.StorageEngine.VIPER,
-            StorageEngine.SST: pb2.StorageEngine.SST,
-            StorageEngine.MMAP: pb2.StorageEngine.MMAP,
-            StorageEngine.HYBRID: pb2.StorageEngine.HYBRID,
+            StorageEngine.VIPER: 1,    # VIPER
+            StorageEngine.SST: 2,      # SST
+            StorageEngine.NOVA: 3,     # NOVA
+            StorageEngine.HELIX: 4,    # HELIX
+            StorageEngine.SWIFT: 5,    # SWIFT
+            StorageEngine.RAPTOR: 6,   # RAPTOR
+            StorageEngine.MMAP: 7,     # MMAP
+            StorageEngine.HYBRID: 8,   # HYBRID
         }
-        return mapping.get(engine, pb2.StorageEngine.VIPER)
+        return mapping.get(engine, 1)  # Default to VIPER
     
     def _pydantic_to_proto_indexing_algorithm(self, algo: IndexingAlgorithm) -> int:
         """Convert Pydantic IndexingAlgorithm to proto IndexingAlgorithm"""

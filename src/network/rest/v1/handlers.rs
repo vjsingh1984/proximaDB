@@ -100,9 +100,14 @@ pub async fn collection_operation(
     State(state): State<AppState>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<JsonResponse<proximadb_v1::CollectionResponse>> {
+    info!("🔵 REST API: collection_operation called with payload: {}", serde_json::to_string_pretty(&value).unwrap_or_else(|_| "invalid json".to_string()));
+
     // Parse the JSON value into CollectionRequest
-    let request: CollectionRequest = serde_json::from_value(value)
-        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
+    let request: CollectionRequest = serde_json::from_value(value.clone())
+        .map_err(|e| {
+            error!("🔴 REST API: Failed to parse CollectionRequest from payload: {:?}. Error: {}", value, e);
+            ApiError::InvalidArgument(format!("Invalid request format: {}", e))
+        })?;
 
     let operation = match CollectionOperation::try_from(request.operation) {
         Ok(op) => op,
@@ -525,6 +530,8 @@ pub async fn explain_sql(
 pub fn create_router(state: AppState) -> axum::Router {
     use axum::routing::{delete, get, post};
 
+    info!("🔵 REST API: Creating router with collection endpoints...");
+
     // Initialize SKS in-memory store (v1) using the same storage engine as vector operations
     let entities_router = {
         use crate::storage::entity_store::{CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore};
@@ -545,7 +552,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         entities::configure_routes().with_state(entity_state)
     };
 
-    axum::Router::new()
+    let router = axum::Router::new()
         // Vector operations
         .route("/api/v1/search", post(vector_search))
         .route("/api/v1/vectors/batch", post(vector_batch))
@@ -580,7 +587,15 @@ pub fn create_router(state: AppState) -> axum::Router {
         )
         // SKS entity endpoints (storage-coupled path)
         .nest("/api", entities_router)
-        .with_state(state)
+        .with_state(state);
+
+    info!("✅ REST API: Router created with routes:");
+    info!("   POST   /api/v1/collections (collection_operation)");
+    info!("   GET    /api/v1/collections (list_collections)");
+    info!("   GET    /api/v1/collections/:id (get_collection)");
+    info!("   DELETE /api/v1/collections/:id (delete_collection)");
+
+    router
 }
 
 /// Comprehensive health check handler

@@ -10,13 +10,12 @@ import grpc
 import requests
 from urllib.parse import urlparse, urljoin
 
-from .proto.proximadb.v1 import (
+from .v1 import (
     vector_pb2,
     vector_pb2_grpc,
-    collection_pb2,
     collection_pb2_grpc,
-    vector_types_pb2,
     collection_types_pb2,
+    vector_types_pb2,
     types_pb2,
     sql_pb2_grpc,
     graph_pb2,

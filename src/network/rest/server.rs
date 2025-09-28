@@ -97,6 +97,7 @@ impl RestServer {
     /// Start the REST server
     pub async fn start(self) -> anyhow::Result<()> {
         tracing::info!("🌐 Starting REST server on {}", self.bind_addr);
+        tracing::info!("🔧 REST server using v1 handlers with collection endpoints enabled");
 
         tracing::info!("✅ REST server listening on {}", self.bind_addr);
         tracing::info!("🗜️  Compression enabled: deflate, gzip, zstd, brotli (in priority order)");

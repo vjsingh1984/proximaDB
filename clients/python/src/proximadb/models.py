@@ -59,17 +59,20 @@ class DistanceMetric(str, Enum):
 
 
 class StorageEngine(str, Enum):
-    """Storage engines for REST API
-    
-    Note: Server supports VIPER and SST. Unsupported engines
-    will fallback to VIPER (server behavior, not client validation).
-    
+    """Storage engines for ProximaDB
+
+    ProximaDB supports 6 specialized storage engines that auto-optimize for different workloads.
+
     Default: VIPER (server default, columnar analytics engine)
     """
-    VIPER = "viper"  # Columnar storage with Parquet format (DEFAULT)
-    SST = "sst"      # Row-based storage with SSTable format
-    MMAP = "mmap"    # Fallback: VIPER (server decides)
-    HYBRID = "hybrid" # Fallback: VIPER (server decides)
+    VIPER = "viper"    # Columnar Parquet format with advanced quantization (DEFAULT)
+    SST = "sst"        # Row-based, write-optimized with three-stage filtering
+    NOVA = "nova"      # Progressive columnar storage with multi-level quantization
+    HELIX = "helix"    # Locality-optimized storage with Hilbert curve clustering
+    SWIFT = "swift"    # High-speed row-based with FastLanes encoding
+    RAPTOR = "raptor"  # Adaptive row-group management with PxK optimization
+    MMAP = "mmap"      # Memory-mapped storage
+    HYBRID = "hybrid"  # Hybrid storage approach
 
 
 class IndexingAlgorithm(str, Enum):

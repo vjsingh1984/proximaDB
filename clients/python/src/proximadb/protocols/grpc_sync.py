@@ -126,7 +126,27 @@ class ProximaDBSyncGrpcClient:
         except Exception as e:
             logger.error(f"gRPC {operation_name} failed: {e}")
             raise ProximaDBError(f"{operation_name} failed: {e}")
-    
+
+    def _execute_collection_with_pool(self, operation_name: str, operation_func):
+        """Execute collection operation using connection pool with CollectionService"""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError("gRPC not available. Install with: pip install grpcio grpcio-tools")
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                # Create CollectionService stub for collection operations
+                stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
+
+                # Execute the operation with timeout
+                return operation_func(stub)
+
+        except grpc.RpcError as e:
+            logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"{operation_name} RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC {operation_name} failed: {e}")
+            raise ProximaDBError(f"{operation_name} failed: {e}")
+
     def get_pool_metrics(self):
         """Get connection pool performance metrics"""
         if self._connection_pool:
@@ -331,8 +351,8 @@ class ProximaDBSyncGrpcClient:
             Collection creation result
         """
         def _create_collection_operation(stub):
-            # Build collection config
-            config = pb2.CollectionConfig(
+            # Build collection config using v1 types
+            config = v1_collection_types_pb2.CollectionConfig(
                 name=name,
                 dimension=dimension
             )
@@ -342,7 +362,7 @@ class ProximaDBSyncGrpcClient:
             # Indexing algorithm is configured via IndexConfig; prefer index_configs param
             # If a simple algorithm enum is provided without configs, create a basic index config
             if indexing_algorithm is not None and not index_configs:
-                ic = pb2.IndexConfig(
+                ic = v1_collection_types_pb2.IndexConfig(
                     index_name=f"{name}_primary",
                     algorithm=indexing_algorithm,
                     is_primary=True,
@@ -358,53 +378,43 @@ class ProximaDBSyncGrpcClient:
                 # Field name in proto is `quantization`
                 config.quantization.CopyFrom(quantization_config)
             
-            # Use CollectionOperation with CREATE operation
-            request = pb2.CollectionRequest(
-                operation=pb2.COLLECTION_CREATE,
-                collection_config=config
-            )
-            response = stub.CollectionOperation(request, timeout=self.timeout)
+            # Use CollectionService.CreateCollection method from v1 API
+            # CreateCollection expects CollectionConfig directly, not wrapped in a request
+            response = stub.CreateCollection(config, timeout=self.timeout)
             return response
-        
-        return self._execute_with_pool("create_collection", _create_collection_operation)
+
+        return self._execute_collection_with_pool("create_collection", _create_collection_operation)
     
     def get_collection(self, name: str) -> Any:
         """Get collection metadata"""
         def _get_collection_operation(stub):
-            request = pb2.CollectionRequest(
-                operation=pb2.COLLECTION_GET,
+            request = v1_collection_types_pb2.GetCollectionRequest(
                 collection_id=name
             )
-            response = stub.CollectionOperation(request, timeout=self.timeout)
-            if response.collection:
-                return response.collection
-            else:
-                raise ProximaDBError(f"Collection {name} not found")
-        
-        return self._execute_with_pool("get_collection", _get_collection_operation)
+            response = stub.GetCollection(request, timeout=self.timeout)
+            return response
+
+        return self._execute_collection_with_pool("get_collection", _get_collection_operation)
     
     def list_collections(self) -> List[Any]:
         """List all collections"""
         def _list_collections_operation(stub):
-            request = pb2.CollectionRequest(
-                operation=pb2.COLLECTION_LIST
-            )
-            response = stub.CollectionOperation(request, timeout=self.timeout)
+            request = v1_collection_types_pb2.ListCollectionsRequest()
+            response = stub.ListCollections(request, timeout=self.timeout)
             return list(response.collections)
-        
-        return self._execute_with_pool("list_collections", _list_collections_operation)
+
+        return self._execute_collection_with_pool("list_collections", _list_collections_operation)
     
     def delete_collection(self, collection_id: str) -> Dict[str, Any]:
         """Delete collection"""
         def _delete_collection_operation(stub):
-            request = pb2.CollectionRequest(
-                operation=pb2.COLLECTION_DELETE,
+            request = v1_collection_types_pb2.DeleteCollectionRequest(
                 collection_id=collection_id
             )
-            response = stub.CollectionOperation(request, timeout=self.timeout)
+            response = stub.DeleteCollection(request, timeout=self.timeout)
             return {"status": "deleted", "collection_id": collection_id, "success": response.success}
-        
-        return self._execute_with_pool("delete_collection", _delete_collection_operation)
+
+        return self._execute_collection_with_pool("delete_collection", _delete_collection_operation)
     
     # Vector Operations - Unified Interface
     def insert_vectors(

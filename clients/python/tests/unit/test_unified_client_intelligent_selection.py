@@ -190,26 +190,38 @@ class TestUnifiedClientIntelligentSelection:
     
     def test_operation_result_recording(self, config):
         """Test operation result recording for metrics"""
-        with patch('proximadb.unified_client.create_protocol_selector') as mock_create:
+        with patch('proximadb.unified_client.create_protocol_selector') as mock_create, \
+             patch('proximadb.unified_client.OperationRouter') as mock_router_class:
+
             mock_selector = Mock()
             mock_selector.get_client.return_value = Mock()
             mock_selector.select_protocol.return_value = Protocol.GRPC
             mock_create.return_value = mock_selector
-            
+
+            mock_router = Mock()
+            mock_router_class.return_value = mock_router
+
             client = ProximaDBClient(
                 config=config,
-                enable_intelligent_selection=True
+                enable_intelligent_selection=True,
+                enable_operation_routing=True
             )
-            
+
             # Record successful operation
             client._record_operation_result(
-                success=True, 
-                latency_ms=25.0, 
-                operation_type="search"
+                operation_name="search",
+                protocol=Protocol.GRPC,
+                success=True,
+                response_time_ms=25.0
             )
-            
-            mock_selector.record_operation_result.assert_called_with(
-                Protocol.GRPC, True, 25.0, "search"
+
+            mock_router.record_operation_result.assert_called_with(
+                protocol=Protocol.GRPC,
+                success=True,
+                response_time_ms=25.0,
+                operation_name="search",
+                error=None,
+                throughput_ops_per_sec=0.0
             )
     
     def test_client_close_with_selector(self, config):

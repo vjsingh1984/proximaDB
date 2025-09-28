@@ -11,10 +11,7 @@ data_dir = "/tmp/proximadb/data"
 metadata_url = "file:///tmp/proximadb/metadata"
 
 # Storage locations
-[[storage.storage_locations]]
-url = "file:///tmp/proximadb/data"
-weight = 1
-tags = ["local", "test"]
+storage_locations = ["file:///tmp/proximadb/data"]
 
 # Assignment configuration
 [storage.assignment_config]
@@ -43,7 +40,7 @@ compression_enabled = true  # Enable compression by default
 compression_level = 3  # Balanced speed/compression (1-22)
 cache_size_mb = 128
 max_files_per_level = 10
-level_size_multiplier = 10.0
+level_size_multiplier = 10
 max_levels = 7
 background_thread_count = 4
 data_directory = "/tmp/proximadb/sst_data"
@@ -147,66 +144,5 @@ ca_file = ""    # Path to CA certificate for mTLS
 
 # Cache Configuration
 [cache]
-# Total memory budget for all caches (MB)
 total_memory_mb = 512
-
-# Enable cache warming service
-enable_warming = false  # Disabled by default, enable for production with predictable workloads
-
-# Memory rebalancing configuration
-[cache.rebalancing]
-enabled = true
-interval_seconds = 300  # Rebalance every 5 minutes
-min_hit_rate_threshold = 0.1  # Don't allocate memory to caches with < 10% hit rate
-
-# Eviction configuration
-[cache.eviction]
-enabled = true
-check_interval_seconds = 60
-batch_size = 100
-memory_threshold_percent = 90  # Trigger eviction when > 90% memory used
-
-# Default eviction policies (can have multiple)
-[[cache.eviction.policies]]
-type = "lru"
-max_items = 10000
-batch_size = 100
-
-[[cache.eviction.policies]]
-type = "ttl"
-max_age_seconds = 3600  # 1 hour
-cleanup_interval_seconds = 300  # 5 minutes
-
-# Per-cache-type configuration
-[cache.types.vector]
-initial_allocation_mb = 200
-min_allocation_mb = 50
-max_allocation_mb = 400
-
-[cache.types.query]
-initial_allocation_mb = 150
-min_allocation_mb = 30
-max_allocation_mb = 300
-
-[cache.types.metadata]
-initial_allocation_mb = 50
-min_allocation_mb = 10
-max_allocation_mb = 100
-
-[cache.types.index]
-initial_allocation_mb = 50
-min_allocation_mb = 10
-max_allocation_mb = 100
-
-[cache.types.filter]
-initial_allocation_mb = 50
-min_allocation_mb = 10
-max_allocation_mb = 100
-
-# Cache warming configuration (only if enabled)
-[cache.warming]
-strategies = ["popularity", "time_based"]  # Available: popularity, collection, similarity, time_based
-warm_on_startup = false
-warm_batch_size = 100
-popularity_threshold = 10  # Items accessed > 10 times
-time_window_hours = 24  # Look at last 24 hours of access patterns
+enable_warming = false

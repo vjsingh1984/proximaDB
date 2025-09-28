@@ -146,6 +146,7 @@ class GrpcConnectionPool:
     ):
         self.endpoint = endpoint
         self.pool_size = pool_size
+        self.max_message_size = max_message_size
         
         # Create resource pool with factory
         factory = GrpcChannelFactory(
@@ -170,6 +171,9 @@ class GrpcConnectionPool:
         self._lock = threading.RLock()
         
         logger.info(f"Initialized gRPC connection pool: {pool_size} channels to {endpoint}")
+
+        # Pre-create min_size connections for immediate availability
+        self._warm_up_pool()
     
     def get_channel(self) -> grpc.Channel:
         """Get next available healthy channel using round-robin"""
@@ -186,24 +190,51 @@ class GrpcConnectionPool:
     
     def get_metrics(self) -> PoolMetrics:
         """Get current pool performance metrics"""
-        pool_metrics = self._pool.get_metrics()
-        health_status = self._pool.health_check()
-        
-        # Convert ResourcePool metrics to PoolMetrics
+        pool_stats = self._pool.get_stats()
+
+        # Convert ResourcePool stats to PoolMetrics
+        total_created = pool_stats.get('resources_created', 0)
+        active_resources = pool_stats.get('active', 0)
+        idle_resources = pool_stats.get('idle', 0)
+
+        # Determine health status based on available resources
+        if idle_resources > 0 or active_resources > 0:
+            health_status = PoolHealth.HEALTHY
+        elif total_created > 0:
+            health_status = PoolHealth.DEGRADED
+        else:
+            health_status = PoolHealth.UNHEALTHY
+
         metrics = PoolMetrics(
-            total_connections=pool_metrics['total_created'],
-            active_connections=pool_metrics['active_resources'],
-            idle_connections=pool_metrics['available_resources'],
-            failed_connections=pool_metrics.get('failed_acquisitions', 0),
-            requests_served=pool_metrics['total_acquisitions'],
-            health_status=PoolHealth.HEALTHY if health_status['healthy'] else 
-                         PoolHealth.DEGRADED if health_status['available_count'] > 0 else 
-                         PoolHealth.UNHEALTHY,
+            total_connections=total_created,
+            active_connections=active_resources,
+            idle_connections=idle_resources,
+            failed_connections=0,  # Not available in current stats
+            requests_served=pool_stats.get('total_acquisitions', 0),
+            health_status=health_status,
             last_health_check=time.time()
         )
-        
+
         return metrics
-    
+
+    def _warm_up_pool(self) -> None:
+        """Pre-create connections to warm up the pool"""
+        try:
+            # Acquire and release connections to populate the pool
+            channels = []
+            for _ in range(min(self.pool_size, 5)):  # Limit warming to avoid overwhelming server
+                try:
+                    channel = self._pool.acquire(timeout=1.0)
+                    channels.append(channel)
+                except Exception:
+                    break  # Stop warming if we can't create connections
+
+            # Return all channels to pool
+            for channel in channels:
+                self._pool.release(channel)
+        except Exception as e:
+            logger.warning(f"Pool warm-up failed: {e}")
+
     def close(self) -> None:
         """Close all channels in the pool"""
         logger.info(f"Closing gRPC connection pool")

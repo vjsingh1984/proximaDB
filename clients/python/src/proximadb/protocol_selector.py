@@ -24,10 +24,16 @@ ProtocolSelector = IntelligentRouter
 def create_protocol_selector(
     config: ClientConfig,
     strategy: SelectionStrategy = SelectionStrategy.BALANCED,
+    grpc_factory=None,
+    rest_factory=None,
     **kwargs
 ) -> ProtocolSelector:
     """Create a protocol selector with backward-compatible interface"""
-    routing_config = RoutingConfig(strategy=strategy, **kwargs)
+    # Filter out client factory functions from RoutingConfig kwargs
+    routing_kwargs = {k: v for k, v in kwargs.items()
+                     if k not in ['grpc_factory', 'rest_factory']}
+
+    routing_config = RoutingConfig(strategy=strategy, **routing_kwargs)
     return ProtocolSelector(config=routing_config, client_config=config)
 
 __all__ = [
