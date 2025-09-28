@@ -557,8 +557,9 @@ impl NovaEngine {
         params: &FlushParameters,
         collection_id: &str,
     ) -> Result<u64> {
-        use crate::storage::engines::core::formats::columnar::parquet_writer::{
-            StreamingParquetWriter, ParquetWriterConfig,
+        use crate::storage::engines::core::formats::columnar::{
+            parquet_write_engine::ParquetWriterConfig,
+            hybrid_writer::{HybridParquetWriter, HybridWriterConfig},
         };
         use super::nova_meta_collector::{NovaMetadataCollector, NovaCollectorConfig};
 
@@ -582,30 +583,24 @@ impl NovaEngine {
         bloom_columns.extend(filterable_columns.iter().map(|c| c.name.clone()));
 
         let writer_config = ParquetWriterConfig {
-            compression: CompressionAlgorithm::Zstd,
+            compression: parquet::basic::Compression::ZSTD(Default::default()),
             row_group_size: 50_000, // 50K vectors per row group
             write_batch_size: 10_000,
             enable_bloom_filters: true,
             bloom_filter_fpp: 0.01, // 1% false positive rate
-            expected_ndv: Some(1000000), // Expect up to 1M unique IDs
-            bloom_filter_columns: bloom_columns,
-            enable_column_statistics: true,
+            bloom_filter_ndv: 1000000, // Expect up to 1M unique IDs
+            enable_statistics: true,
             enable_page_index: true,
-            enable_column_index: true,
-            enable_offset_index: true,
-            page_index_granularity: 1000,
             enable_dictionary: true,
-            dictionary_threshold: 0.5,
-            enable_delta_encoding: false,
-            quantization: super::QuantizationConfig::default(),
+            quantization: crate::proto::proximadb_v1::QuantizationConfig::default(),
             id_less_storage: false, // Keep IDs for compatibility
             page_size: 8192,
-            enable_byte_stream_split: false,
-            enable_pq_sorting: false,
-            pq_sorting_segments: 16,
-            pq_sorting_codebook_size: 256,
-            enable_native_metadata: false,
-            metadata_inference_samples: 100,
+            sort_columns: vec![], // No sorting for now
+            filterable_metadata_columns: Some(filterable_columns.iter().map(|c| c.name.clone()).collect()),
+            compression_level: None,
+            max_records_per_file: None,
+            target_file_size_bytes: None,
+            enable_async_io: false,
         };
 
         // Create NOVA metadata collector for sidecar generation
@@ -615,26 +610,30 @@ impl NovaEngine {
             sample_rate: 0.1, // Sample 10% for expensive statistics
         });
 
-        // Create streaming writer with metadata collector
-        let mut writer = StreamingParquetWriter::new(
-            file_path,
+        // Configure HybridParquetWriter for adaptive optimization
+        let hybrid_config = HybridWriterConfig {
+            base_config: writer_config,
+            ..Default::default()
+        };
+
+        // Use HybridParquetWriter with integrated disk cache and metadata collection
+        // This handles:
+        // 1. Writing to temp file
+        // 2. Collecting metadata during write
+        // 3. Finalizing the writer
+        // 4. Uploading to cloud/local storage
+        // 5. Populating disk cache for future reads
+        // 6. Returning metadata collector for sidecar generation
+        let (stats, collector) = HybridParquetWriter::write_with_cache(
+            &params.vector_records,
             nova_file.metadata.dimension,
-            writer_config,
-            None, // TODO: Add filterable columns support to NOVA
-        )?;
+            hybrid_config,
+            file_path,
+            &self.filesystem,
+            Some(filterable_columns),
+            Some(Box::new(nova_collector)),
+        ).await?;
 
-        // Set metadata collector
-        writer.set_metadata_collector(Box::new(nova_collector));
-
-        // Write VectorRecords directly - StreamingParquetWriter handles conversion
-        let batch_size = 10_000;
-        for chunk in params.vector_records.chunks(batch_size) {
-            // No conversion needed - StreamingParquetWriter accepts VectorRecords directly
-            writer.write_batch(chunk).await?;
-        }
-
-        // Finalize and get collector for sidecar
-        let (stats, collector) = writer.finalize().await?;
         let bytes_written = stats.file_size;
 
         // Write sidecar metadata file if collector has data
@@ -642,13 +641,20 @@ impl NovaEngine {
             let sidecar_path = format!("{}.{}", file_path, collector.sidecar_extension());
             let sidecar_data = collector.serialize_metadata()?;
 
-            // Write sidecar using filesystem
+            // Write sidecar using filesystem (this also gets cached)
             let fs = self.filesystem.get_filesystem(&self.determine_fs_url(file_path))?;
             fs.write(&sidecar_path, &sidecar_data, None).await?;
 
-            info!("NOVA: Wrote sidecar metadata ({} bytes) to {}",
+            info!("NOVA: Wrote sidecar metadata ({} bytes) to {} with disk cache",
                   sidecar_data.len(), sidecar_path);
         }
+
+        debug!(
+            "NOVA: Wrote {} records to {} with disk cache ({}MB)",
+            stats.total_records,
+            file_path,
+            bytes_written / 1024 / 1024
+        );
 
         info!("NOVA: Successfully wrote {} bytes to {} with {} row groups",
               bytes_written, file_path, stats.total_row_groups);
@@ -1071,7 +1077,7 @@ impl UnifiedStorageEngine for NovaEngine {
     }
 
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
-        use crate::storage::engines::core::formats::columnar::parquet_writer::{
+        use crate::storage::engines::core::formats::columnar::parquet_write_engine::{
             StreamingParquetWriter, ParquetWriterConfig,
         };
         use super::nova_meta_collector::{NovaMetadataCollector, NovaCollectorConfig};
@@ -1156,30 +1162,24 @@ impl UnifiedStorageEngine for NovaEngine {
         bloom_columns_compact.extend(filterable_columns.iter().map(|c| c.name.clone()));
 
         let writer_config = ParquetWriterConfig {
-            compression: CompressionAlgorithm::Zstd,
+            compression: parquet::basic::Compression::ZSTD(Default::default()),
             row_group_size: 100_000, // Larger row groups for compacted files
             write_batch_size: 20_000,
             enable_bloom_filters: true,
             bloom_filter_fpp: 0.01,
-            expected_ndv: Some(2000000), // Larger for compacted files
-            bloom_filter_columns: bloom_columns_compact,
-            enable_column_statistics: true,
+            bloom_filter_ndv: 2000000, // Larger for compacted files
+            enable_statistics: true,
             enable_page_index: true,
-            enable_column_index: true,
-            enable_offset_index: true,
-            page_index_granularity: 2000,
             enable_dictionary: true,
-            dictionary_threshold: 0.5,
-            enable_delta_encoding: false,
-            quantization: super::QuantizationConfig::default(),
+            quantization: crate::proto::proximadb_v1::QuantizationConfig::default(),
             id_less_storage: false,
             page_size: 8192,
-            enable_byte_stream_split: false,
-            enable_pq_sorting: false,
-            pq_sorting_segments: 16,
-            pq_sorting_codebook_size: 256,
-            enable_native_metadata: false,
-            metadata_inference_samples: 100,
+            sort_columns: vec![], // No sorting for now
+            filterable_metadata_columns: Some(filterable_columns.iter().map(|c| c.name.clone()).collect()),
+            compression_level: None,
+            max_records_per_file: None,
+            target_file_size_bytes: None,
+            enable_async_io: false,
         };
 
         // Generate output filename
@@ -1195,15 +1195,19 @@ impl UnifiedStorageEngine for NovaEngine {
             sample_rate: 0.05, // Lower sample rate for compaction
         });
 
-        // Create streaming writer
-        let mut writer = StreamingParquetWriter::new(
+        // Use HybridParquetWriter for adaptive optimization during compaction
+        use crate::storage::engines::core::formats::columnar::hybrid_writer::{HybridParquetWriter, HybridWriterConfig};
+        let hybrid_config = HybridWriterConfig {
+            base_config: writer_config,
+            ..Default::default()
+        };
+        let mut writer = HybridParquetWriter::new(
             &output_path,
             dimension as usize,
-            writer_config,
-            None, // TODO: Add filterable columns support to NOVA compaction
+            hybrid_config,
         )?;
 
-        writer.set_metadata_collector(Box::new(nova_collector));
+        writer.set_metadata_collector(Box::new(nova_collector)).await;
 
         // Read and merge all input files
         // NOTE: Compaction does NOT use sidecar metadata because:

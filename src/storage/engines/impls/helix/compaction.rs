@@ -139,7 +139,7 @@ impl LeveledCompactor {
                 &self.filesystem,
                 &file_path,
                 chunk,
-                self.config.fastlane_block_size,
+                self.config.proxima_block_size,
                 crate::storage::engines::constants::HELIX_MAGIC,
                 Some(chunk_keys),
             )
@@ -176,7 +176,7 @@ impl LeveledCompactor {
                 created_at: chrono::Utc::now(),
                 blocks: extract_helix_metadata(
                     chunk,
-                    self.config.fastlane_block_size,
+                    self.config.proxima_block_size,
                     Some(chunk_keys),
                 )
                 .into_iter()
@@ -286,7 +286,7 @@ impl LeveledCompactor {
                 &self.filesystem,
                 &file_path,
                 chunk,
-                self.config.fastlane_block_size,
+                self.config.proxima_block_size,
                 crate::storage::engines::constants::HELIX_MAGIC,
                 Some(chunk_keys),
             )
@@ -322,7 +322,7 @@ impl LeveledCompactor {
                 created_at: chrono::Utc::now(),
                 blocks: extract_helix_metadata(
                     chunk,
-                    self.config.fastlane_block_size,
+                    self.config.proxima_block_size,
                     Some(chunk_keys),
                 )
                 .into_iter()
@@ -446,7 +446,7 @@ impl LeveledCompactor {
                 &self.filesystem,
                 &file_path,
                 chunk,
-                self.config.fastlane_block_size,
+                self.config.proxima_block_size,
                 crate::storage::engines::constants::HELIX_MAGIC,
                 Some(chunk_keys),
             )
@@ -487,7 +487,7 @@ impl LeveledCompactor {
                 created_at: chrono::Utc::now(),
                 blocks: extract_helix_metadata(
                     chunk,
-                    self.config.fastlane_block_size,
+                    self.config.proxima_block_size,
                     Some(chunk_keys),
                 )
                 .into_iter()

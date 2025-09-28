@@ -48,47 +48,14 @@ impl ColumnarBatchOperations {
     }
 
     /// Batch read vectors by IDs across multiple files
+    /// TODO: Re-implement when UnifiedParquetReader.batch_id_lookup is available
     pub async fn batch_read_by_ids(
         &self,
-        file_paths: &[String],
-        ids: &[String],
+        _file_paths: &[String],
+        _ids: &[String],
     ) -> Result<Vec<VectorRecord>> {
-        info!(
-            "Batch reading {} IDs across {} files",
-            ids.len(),
-            file_paths.len()
-        );
-
-        // Check cache first
-        let cache_key = self.generate_cache_key(file_paths, ids);
-        if let Some(cached) = self.get_cached_result(&cache_key).await {
-            if !cached.is_expired() {
-                debug!("Cache hit for batch read operation");
-                return Ok(cached.records);
-            }
-        }
-
-        // Group IDs by potential file locations for optimization
-        let grouped_reads = self.optimize_read_plan(file_paths, ids).await?;
-
-        let mut all_results = Vec::new();
-
-        // Process each file group
-        for (file_path, file_ids) in grouped_reads {
-            debug!("Reading {} IDs from file: {}", file_ids.len(), file_path);
-
-            let file_results = self
-                .parquet_reader
-                .batch_id_lookup(&[file_path.clone()], &file_ids)
-                .await?;
-
-            all_results.extend(file_results);
-        }
-
-        // Cache the results
-        self.cache_result(cache_key, &all_results).await;
-
-        Ok(all_results)
+        // TODO: Re-implement when batch_id_lookup API is available
+        Err(anyhow::anyhow!("BatchOperations temporarily disabled due to API changes"))
     }
 
     /// Batch write vectors to columnar format

@@ -1,4 +1,4 @@
-use proximadb::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaScheme};
+use proximadb::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
 
 fn main() {
     println!("🔍 Debug: Source Indices Encoding/Decoding");
@@ -16,7 +16,7 @@ fn main() {
             println!("Encoded bytes: {:?}", &encoded_data[..std::cmp::min(20, encoded_data.len())]);
 
             // Decode back
-            use proximadb::storage::engines::core::ops::proxima_encoding::ProximaDecoder;
+            use proximadb::storage::engines::core::ops::proximaencoder::ProximaDecoder;
             let decoder = ProximaDecoder::new_from_data(&encoded_data);
             match decoder.decode_i64(&encoded_data, None) {
                 Ok(decoded) => {

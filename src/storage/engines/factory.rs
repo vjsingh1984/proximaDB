@@ -255,7 +255,7 @@ impl StorageEngineFactory {
     /// - PCA dimension reduction (768 → 128)
     /// - Hilbert curve space-filling for locality
     /// - Liquid clustering for dynamic reorganization
-    /// - FastLane encoding for SIMD operations
+    /// - Proxima encoding for SIMD operations
     ///
     /// HELIX excels at high-dimensional data by reducing dimensions
     /// while preserving 95%+ of variance.

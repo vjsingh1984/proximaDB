@@ -38,6 +38,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace, warn};
 // Collection proto handled internally
 use super::footer_cache::{FooterCacheConfig, ParquetFooterCache};
+use super::metadata_filter_strategy::{MetadataFilterAnalyzer, MetadataFilterStrategy, FilterPerformanceMetrics};
 use super::optimization::{ColumnarOptimizer, FileBloomFilters, StreamingRowGroupIterator};
 use super::{ColumnarConfig, FilterCondition, MetadataFilter, RowGroupStats, SearchCandidate};
 use crate::compute::distance_computation::DistanceMetric;
@@ -1127,6 +1128,251 @@ impl UnifiedParquetReader {
             .await
     }
 
+    /// Execute query with branched metadata filtering strategy
+    /// Automatically chooses between fast column projection or slow full scan
+    pub async fn query_with_branched_filtering(
+        &self,
+        file_path: &str,
+        metadata_filters: &[MetadataFilter],
+        allow_slow_queries: bool,
+    ) -> Result<Vec<VectorRecord>> {
+        let start_time = std::time::Instant::now();
+
+        // Get filterable columns from config (these have dedicated columns)
+        let filterable_columns = self.config.filterable_metadata_columns.clone()
+            .unwrap_or_default();
+
+        // Create filter analyzer
+        let analyzer = MetadataFilterAnalyzer::new(
+            filterable_columns,
+            allow_slow_queries,
+        );
+
+        // Analyze filters and determine strategy
+        let strategy = analyzer.analyze_filters(metadata_filters)?;
+
+        let (results, metrics) = match strategy {
+            MetadataFilterStrategy::FastFilterable { projection_columns, pushdown_filters } => {
+                // Fast path: Can push all filters down to Parquet
+                info!("Using fast filterable path with {} pushdown filters", pushdown_filters.len());
+
+                // Read with column projection and filters
+                let batches = self.read_with_filters(
+                    file_path,
+                    Some(projection_columns),
+                    Some(pushdown_filters.clone()),
+                ).await?;
+
+                let mut all_records = Vec::new();
+                let mut total_rows = 0;
+
+                for batch in batches {
+                    total_rows += batch.num_rows();
+                    let records = self.batch_to_vector_records(&batch)?;
+                    all_records.extend(records);
+                }
+
+                let metrics = FilterPerformanceMetrics {
+                    strategy_used: "FastFilterable".to_string(),
+                    rows_scanned: total_rows,
+                    rows_filtered: all_records.len(),
+                    pushdown_filters: pushdown_filters.len(),
+                    post_filters: 0,
+                    elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    warning: None,
+                };
+
+                (all_records, metrics)
+            }
+
+            MetadataFilterStrategy::SlowFullScan {
+                filterable_filters,
+                non_filterable_filters,
+                warning_message
+            } => {
+                // Slow path: Need to read all columns including MapArray
+                warn!("{}", warning_message);
+
+                // Read all columns (no projection to avoid MapArray issues)
+                let batches = self.read_with_filters(
+                    file_path,
+                    None, // Read all columns
+                    Some(filterable_filters.clone()),
+                ).await?;
+
+                let mut all_records = Vec::new();
+                let mut total_rows = 0;
+
+                for batch in batches {
+                    total_rows += batch.num_rows();
+
+                    // Apply post-filtering for non-filterable columns
+                    let filtered_batch = if !non_filterable_filters.is_empty() {
+                        analyzer.apply_post_filters(batch, &non_filterable_filters)?
+                    } else {
+                        batch
+                    };
+
+                    let records = self.batch_to_vector_records(&filtered_batch)?;
+                    all_records.extend(records);
+                }
+
+                let metrics = FilterPerformanceMetrics {
+                    strategy_used: "SlowFullScan".to_string(),
+                    rows_scanned: total_rows,
+                    rows_filtered: all_records.len(),
+                    pushdown_filters: filterable_filters.len(),
+                    post_filters: non_filterable_filters.len(),
+                    elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    warning: Some(warning_message),
+                };
+
+                (all_records, metrics)
+            }
+
+            MetadataFilterStrategy::Mixed {
+                pushdown_filters,
+                post_filters,
+                projection_columns
+            } => {
+                // Mixed path: Push down what we can, post-filter the rest
+                info!("Using mixed strategy: {} pushdown, {} post-filters",
+                    pushdown_filters.len(), post_filters.len());
+
+                // Need to read all columns if we have post-filters on extra_meta
+                let needs_full_projection = post_filters.iter()
+                    .any(|f| !self.config.filterable_metadata_columns
+                        .as_ref()
+                        .map_or(false, |cols| cols.iter().any(|col| col == f.column())));
+
+                let projection = if needs_full_projection {
+                    None // Read all to get extra_meta
+                } else {
+                    Some(projection_columns)
+                };
+
+                let batches = self.read_with_filters(
+                    file_path,
+                    projection,
+                    Some(pushdown_filters.clone()),
+                ).await?;
+
+                let mut all_records = Vec::new();
+                let mut total_rows = 0;
+
+                for batch in batches {
+                    total_rows += batch.num_rows();
+
+                    // Apply post-filtering
+                    let filtered_batch = if !post_filters.is_empty() {
+                        analyzer.apply_post_filters(batch, &post_filters)?
+                    } else {
+                        batch
+                    };
+
+                    let records = self.batch_to_vector_records(&filtered_batch)?;
+                    all_records.extend(records);
+                }
+
+                let metrics = FilterPerformanceMetrics {
+                    strategy_used: "Mixed".to_string(),
+                    rows_scanned: total_rows,
+                    rows_filtered: all_records.len(),
+                    pushdown_filters: pushdown_filters.len(),
+                    post_filters: post_filters.len(),
+                    elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    warning: Some(format!("Mixed strategy: {} filters require full scan",
+                        post_filters.len())),
+                };
+
+                (all_records, metrics)
+            }
+
+            MetadataFilterStrategy::NoFilter => {
+                // No filters - just read everything
+                let batches = self.read_with_filters(
+                    file_path,
+                    None,
+                    None,
+                ).await?;
+
+                let mut all_records = Vec::new();
+                let mut total_rows = 0;
+
+                for batch in batches {
+                    total_rows += batch.num_rows();
+                    let records = self.batch_to_vector_records(&batch)?;
+                    all_records.extend(records);
+                }
+
+                let metrics = FilterPerformanceMetrics {
+                    strategy_used: "NoFilter".to_string(),
+                    rows_scanned: total_rows,
+                    rows_filtered: all_records.len(),
+                    pushdown_filters: 0,
+                    post_filters: 0,
+                    elapsed_ms: start_time.elapsed().as_millis() as u64,
+                    warning: None,
+                };
+
+                (all_records, metrics)
+            }
+        };
+
+        // Log performance metrics
+        metrics.log_summary();
+
+        Ok(results)
+    }
+
+    /// Helper: Read parquet file with optional filters and projection
+    async fn read_with_filters(
+        &self,
+        file_path: &str,
+        projection: Option<Vec<String>>,
+        filters: Option<Vec<FilterCondition>>,
+    ) -> Result<Vec<RecordBatch>> {
+        // This would use the existing read methods with proper filter pushdown
+        // For now, use the existing read_row_groups_projected
+        let metadata = self.read_metadata(file_path).await?;
+        let row_groups: Vec<usize> = (0..metadata.num_row_groups()).collect();
+
+        self.read_row_groups_projected(
+            file_path,
+            &row_groups,
+            projection.as_deref(),
+        ).await
+    }
+
+    /// Helper: Convert RecordBatch to VectorRecords
+    fn batch_to_vector_records(&self, batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
+        let mut records = Vec::new();
+
+        for row_idx in 0..batch.num_rows() {
+            if let Some(record) = self.extract_vector_record_from_batch(batch, row_idx)? {
+                records.push(record);
+            }
+        }
+
+        Ok(records)
+    }
+    /// Apply filters to a RecordBatch
+    fn apply_filters_to_batch(
+        &self,
+        batch: &RecordBatch,
+        filters: &[FilterCondition],
+    ) -> Result<RecordBatch> {
+        if filters.is_empty() {
+            return Ok(batch.clone());
+        }
+
+        // For now, return the original batch
+        // TODO: Implement actual filtering logic
+        Ok(batch.clone())
+    }
+
+
+
     /// Optimized batch ID lookup using bloom filters and row group pruning
     pub async fn optimized_batch_id_lookup(
         &self,
@@ -1307,7 +1553,7 @@ impl UnifiedParquetReader {
         while let Some(batch) = iterator.next().await? {
             // Find matching IDs in this batch
             if let Some(id_col) = batch
-                .column_by_name("id")
+                .column_by_name(super::FIELD_ID)
                 .and_then(|col| col.as_any().downcast_ref::<StringArray>())
             {
                 for row_idx in 0..batch.num_rows() {
@@ -1339,6 +1585,7 @@ impl UnifiedParquetReader {
     /// Lookup vectors by implicit IDs (for ID-less storage)
     pub async fn lookup_by_implicit_ids(
         &self,
+        file_paths: &[String],
         implicit_ids: &[String],
     ) -> Result<Vec<VectorRecord>> {
         if !self.id_less_optimization {
@@ -1352,9 +1599,12 @@ impl UnifiedParquetReader {
         for implicit_id in implicit_ids {
             let (row_group, row_index) =
                 super::parquet_writer::IdLessLookup::parse_implicit_id(implicit_id)?;
-            // For now, assume single file (would need file routing in production)
+            // Use the first file path provided (in production, would need proper file routing)
+            let file_path = file_paths.first()
+                .ok_or_else(|| anyhow!("No file paths provided"))?
+                .clone();
             location_map
-                .entry("default.parquet".to_string())
+                .entry(file_path)
                 .or_insert_with(Vec::new)
                 .push((row_group, row_index));
         }

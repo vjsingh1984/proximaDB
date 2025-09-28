@@ -105,7 +105,7 @@ pub struct SstableMetadata {
     pub level_counts: Vec<usize>,
     /// Total size per level in bytes
     pub level_sizes: Vec<u64>,
-    /// FastLane block size
+    /// Proxima block size
     pub block_size: usize,
     /// Bloom filter configuration
     pub bloom_filter_bits: u32,

@@ -154,7 +154,7 @@ pub struct HelixCompactionConfig {
     pub memory_optimization_level: String,
 
     /// Proxima encoding for vectors
-    pub use_proxima_encoding: bool,
+    pub use_proximaencoder: bool,
 
     /// Tree rebalancing threshold
     pub tree_rebalance_threshold: f64,
@@ -167,7 +167,7 @@ impl Default for HelixCompactionConfig {
     fn default() -> Self {
         Self {
             memory_optimization_level: "aggressive".to_string(),
-            use_proxima_encoding: true,
+            use_proximaencoder: true,
             tree_rebalance_threshold: 0.7,
             cache_warmup: true,
         }

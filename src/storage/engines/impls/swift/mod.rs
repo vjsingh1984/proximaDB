@@ -183,7 +183,7 @@ use crate::core::bloom::SstableBloomFilter;
 use crate::storage::engines::core::ops::unified_proxima_simd::{
     UnifiedProximaSIMD, EngineProfile, SIMDConfig,
 };
-use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
+use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
 // NOTE: Quantization now uses unified engine from compute module
 
 // Import Proxima common structures (SWIFT uses hierarchical structure)

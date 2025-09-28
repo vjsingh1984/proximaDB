@@ -53,7 +53,7 @@ pub struct RaptorConfig {
     pub rowgroup_size: usize,
     pub compression: CompressionCodec,
     pub compression_level: u32,
-    pub use_proxima_encoding: bool, // Enable Proxima SIMD encoding
+    pub use_proximaencoder: bool, // Enable Proxima SIMD encoding
 
     // SIMD settings
     pub enable_simd: bool,
@@ -145,7 +145,7 @@ impl Default for RaptorConfig {
             // - Graph edges use dictionary encoding
             compression: CompressionCodec::Zstd(constants::compression::DEFAULT_ZSTD_LEVEL),
             compression_level: constants::compression::DEFAULT_ZSTD_LEVEL as u32,
-            use_proxima_encoding: true, // Enable Proxima for SIMD-optimized encoding
+            use_proximaencoder: true, // Enable Proxima for SIMD-optimized encoding
 
             enable_simd: true,
             simd_lanes: constants::memory::DEFAULT_SIMD_LANES,

@@ -4,7 +4,7 @@
 // functionality that is reused across all storage engines (SST, SWIFT, RAPTOR, PRISM)
 // to eliminate code duplication and ensure consistency.
 
-use super::proxima_encoding::{ProximaDecoder, ProximaEncoder, ProximaScheme};
+use super::proximaencoder::{ProximaDecoder, ProximaEncoder, ProximaScheme};
 use anyhow::Result;
 use std::io::{Read, Write};
 

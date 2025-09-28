@@ -742,11 +742,11 @@ fn benchmark_encoding_configuration(
     }
     let grouped_serialize_ms = grouped_serialize_times.iter().sum::<f64>() / iterations as f64;
 
-    // Calculate compression ratios
+    // Calculate compression ratios (compressed/uncompressed - lower is better)
     let original_size = vector_count * dimension * 4; // f32 = 4 bytes
-    let columnar_compression_ratio = original_size as f64 / columnar_serialized.len() as f64;
-    let fullvector_compression_ratio = original_size as f64 / fullvector_serialized.len() as f64;
-    let grouped_compression_ratio = original_size as f64 / grouped_serialized.len() as f64;
+    let columnar_compression_ratio = columnar_serialized.len() as f64 / original_size as f64;
+    let fullvector_compression_ratio = fullvector_serialized.len() as f64 / original_size as f64;
+    let grouped_compression_ratio = grouped_serialized.len() as f64 / original_size as f64;
 
     Ok(EncodingBenchmarkResult {
         vector_count,
@@ -890,7 +890,7 @@ fn print_encoding_matrix(
         print!("{:<10} |", format!("{} Col", vc));
         for &dim in dimensions {
             if let Some(result) = results.iter().find(|r| r.vector_count == vc && r.dimension == dim) {
-                print!(" {:>12.2}x", result.columnar_compression_ratio);
+                print!(" {:>12.1}%", result.columnar_compression_ratio * 100.0);
             } else {
                 print!(" {:>12}", "N/A");
             }
@@ -901,7 +901,7 @@ fn print_encoding_matrix(
         print!("{:<10} |", format!("{} Row", vc));
         for &dim in dimensions {
             if let Some(result) = results.iter().find(|r| r.vector_count == vc && r.dimension == dim) {
-                print!(" {:>12.2}x", result.rowwise_compression_ratio);
+                print!(" {:>12.1}%", result.rowwise_compression_ratio * 100.0);
             } else {
                 print!(" {:>12}", "N/A");
             }
@@ -2556,7 +2556,7 @@ fn create_vector_records_from_vecs_2(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord
 }
 
 // Simple columnar serialization for benchmarking
-fn serialize_columnar_simple(encoded: &proximadb::storage::engines::core::ops::proxima_encoding::ColumnarEncodedVectors) -> Result<Vec<u8>> {
+fn serialize_columnar_simple(encoded: &proximadb::storage::engines::core::ops::proximaencoder::ColumnarEncodedVectors) -> Result<Vec<u8>> {
     use std::io::Write;
     let mut bytes = Vec::new();
 
@@ -2578,7 +2578,7 @@ fn serialize_columnar_simple(encoded: &proximadb::storage::engines::core::ops::p
 }
 
 // Simple columnar deserialization for benchmarking
-fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::core::ops::proxima_encoding::ProximaDecoder) -> Result<Vec<Vec<f32>>> {
+fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::core::ops::proximaencoder::ProximaDecoder) -> Result<Vec<Vec<f32>>> {
     use std::io::Read;
     let mut cursor = std::io::Cursor::new(data);
     let mut buf = [0u8; 4];
@@ -2629,7 +2629,7 @@ fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::co
 }
 
 // Simple row-wise serialization for benchmarking
-fn serialize_rowwise_simple(encoded: &proximadb::storage::engines::core::ops::proxima_encoding::RowWiseEncodedVectors) -> Result<Vec<u8>> {
+fn serialize_rowwise_simple(encoded: &proximadb::storage::engines::core::ops::proximaencoder::RowWiseEncodedVectors) -> Result<Vec<u8>> {
     use std::io::Write;
     let mut bytes = Vec::new();
 
@@ -2691,7 +2691,7 @@ fn decode_rowwise_simple(data: &[u8]) -> Result<Vec<Vec<f32>>> {
 }
 
 // Helper function to serialize columnar encoded vectors
-fn serialize_columnar_encoded(encoded: &proximadb::storage::engines::core::ops::proxima_encoding::ColumnarEncodedVectors) -> Result<Vec<u8>> {
+fn serialize_columnar_encoded(encoded: &proximadb::storage::engines::core::ops::proximaencoder::ColumnarEncodedVectors) -> Result<Vec<u8>> {
     use std::io::Write;
     use proximadb::core::compression::CompressionAlgorithm;
 
@@ -2732,7 +2732,7 @@ fn serialize_columnar_encoded(encoded: &proximadb::storage::engines::core::ops::
 }
 
 // Helper function to serialize row-wise encoded vectors
-fn serialize_rowwise_encoded(encoded: &proximadb::storage::engines::core::ops::proxima_encoding::RowWiseEncodedVectors) -> Result<Vec<u8>> {
+fn serialize_rowwise_encoded(encoded: &proximadb::storage::engines::core::ops::proximaencoder::RowWiseEncodedVectors) -> Result<Vec<u8>> {
     use std::io::Write;
     let mut bytes = Vec::new();
 
@@ -3015,22 +3015,22 @@ fn benchmark_encoding_statistical_with_compression(
     println!("  Test: {} vectors × {} dimensions, {:?} compression",
         vector_count, dimension, compression_config.algorithm);
 
-    // Find best strategies
+    // Find best strategies (lower ratio is better)
     let mut best_compression_strategy = "TransposeFieldEncoded";
     let mut best_compression_ratio = transpose_field_ratio;
-    if transpose_block_ratio > best_compression_ratio {
+    if transpose_block_ratio < best_compression_ratio {
         best_compression_strategy = "TransposeBlockCompressed";
         best_compression_ratio = transpose_block_ratio;
     }
-    if rowwise_ratio > best_compression_ratio {
+    if rowwise_ratio < best_compression_ratio {
         best_compression_strategy = "FullVector";
         best_compression_ratio = rowwise_ratio;
     }
-    if grouped_field_ratio > best_compression_ratio {
+    if grouped_field_ratio < best_compression_ratio {
         best_compression_strategy = "GroupedFieldEncoded";
         best_compression_ratio = grouped_field_ratio;
     }
-    if grouped_block_ratio > best_compression_ratio {
+    if grouped_block_ratio < best_compression_ratio {
         best_compression_strategy = "GroupedBlockCompressed";
         best_compression_ratio = grouped_block_ratio;
     }
@@ -3055,15 +3055,15 @@ fn benchmark_encoding_statistical_with_compression(
     }
 
     println!("\n  ✅ BEST PERFORMERS:");
-    println!("    • Compression: {} ({:.2}x ratio, {:.1}% space saved)",
-        best_compression_strategy, best_compression_ratio,
-        (1.0 - 1.0/best_compression_ratio) * 100.0);
+    println!("    • Compression: {} ({:.1}% of original, {:.1}% space saved)",
+        best_compression_strategy, best_compression_ratio * 100.0,
+        (1.0 - best_compression_ratio) * 100.0);
     println!("    • Encode Speed: {} ({:.2} ms)", best_encode_strategy, best_encode_time / 1000.0);
 
     println!("\n  🎯 RECOMMENDATIONS BY USE CASE:");
-    if best_compression_ratio > 3.0 {
+    if best_compression_ratio < 0.33 {
         println!("    • Cloud Storage: Use {} (saves ~{:.0}% costs)",
-            best_compression_strategy, (1.0 - 1.0/best_compression_ratio) * 100.0);
+            best_compression_strategy, (1.0 - best_compression_ratio) * 100.0);
     }
     if dimension > 128 {
         println!("    • High Dimensions: GroupedFieldEncoded optimal (cache-friendly 32D chunks)");
@@ -3298,7 +3298,7 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
 
     println!("\n🔵 WORM (Write-Once-Read-Many) Workload:");
     println!("  • Recommendation: {} with COLUMNAR layout", best_compression.algorithm);
-    println!("  • Rationale: Best compression ratio ({:.1}x), slow writes acceptable", best_compression.columnar_ratio);
+    println!("  • Rationale: Best compression ratio ({:.1}% of original), slow writes acceptable", best_compression.columnar_ratio * 100.0);
 
     println!("\n🟢 High-Write Workload:");
     println!("  • Recommendation: {} with ROW-WISE layout", fastest_compress.algorithm);

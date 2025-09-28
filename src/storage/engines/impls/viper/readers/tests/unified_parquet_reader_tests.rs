@@ -8,9 +8,8 @@ mod tests {
     use crate::compute::distance_computation::engine::SimilarityResult;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
     use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value};
-    use crate::storage::engines::core::formats::columnar::{
-        CollectionContext, UnifiedParquetReader,
-    };
+    use crate::storage::engines::core::formats::columnar::CollectionContext;
+    use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use anyhow::Result;
     use arrow_array::{Array, Float32Array, Int64Array, RecordBatch, StringArray};
@@ -26,7 +25,7 @@ mod tests {
     async fn create_test_reader() -> UnifiedParquetReader {
         let config = FilesystemConfig::default();
         let filesystem = Arc::new(FilesystemFactory::new(config).await.unwrap());
-        UnifiedParquetReader::new(filesystem).await.unwrap()
+        UnifiedParquetReader::new(filesystem, 128).await.unwrap()
     }
 
     fn create_test_context() -> CollectionContext {
@@ -267,7 +266,7 @@ mod tests {
             Field::new("id", DataType::Utf8, true),
             Field::new("collection_id", DataType::Utf8, false),
             Field::new(
-                crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32,
+                "vector_fp32",
                 DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
                 true,
             ),

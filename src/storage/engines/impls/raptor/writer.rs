@@ -71,7 +71,7 @@ use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaScheme};
+use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 
 // Import AXIS clustering for reuse
@@ -1468,7 +1468,7 @@ impl IvfClusteringBuilder {
             .collect();
 
         // Apply Proxima encoding for SIMD optimization
-        use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         let scheme = ProximaScheme::BitPacked { bits: 8 }; // Efficient for sparse data
         let proxima_encoder = ProximaEncoder::new(scheme);
         let compressed_data = proxima_encoder
@@ -1591,7 +1591,7 @@ impl RaptorWriter {
             .collect();
 
         // Apply Proxima encoding using unified encoder
-        use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         let scheme = if max_distance - min_distance < 0.1 {
             // Small range - use delta encoding
             ProximaScheme::Delta {
@@ -1671,7 +1671,7 @@ impl RaptorWriter {
             .collect();
 
         // Apply Proxima encoding
-        use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         let scheme = ProximaScheme::BitPacked { bits: 8 };
         let proxima_encoder = ProximaEncoder::new(scheme);
         let encoded = proxima_encoder.encode_binary(&quantized_distances)?;
@@ -3739,7 +3739,7 @@ impl RaptorWriter {
     }
 
     fn encode_batch_with_proxima(&self, batch: &RecordBatch, marker: u8) -> Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proxima_encoding::ProximaEncoder;
+        use crate::storage::engines::core::ops::proximaencoder::ProximaEncoder;
         use std::io::Write;
 
         // Extract vectors from RecordBatch

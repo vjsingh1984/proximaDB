@@ -6,7 +6,7 @@ mod tests {
     use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
     // P2Matrix not available in infrastructure module
     // use crate::infrastructure::P2Matrix;
-    use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
+    use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
     use anyhow::Result;
     use tempfile::TempDir;
 
@@ -142,10 +142,10 @@ mod tests {
 
     /// Test P² matrix with Proxima encoding
     #[tokio::test]
-    async fn test_p2_matrix_proxima_encoding() -> Result<()> {
+    async fn test_p2_matrix_proximaencoder() -> Result<()> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        use crate::storage::engines::core::ops::proxima_encoding::ProximaEncoder;
+        use crate::storage::engines::core::ops::proximaencoder::ProximaEncoder;
 
         // Create larger set of vectors to test compression
         let mut vectors = Vec::new();
@@ -175,7 +175,7 @@ mod tests {
         // Apply Proxima encoding
         let proxima_encoder = ProximaEncoder::new(ProximaScheme::Dictionary);
         let quantized_i64: Vec<i64> = quantized.iter().map(|&v| v as i64).collect();
-        let scheme = crate::storage::engines::core::ops::proxima_encoding::analyze_and_choose_scheme(&quantized_i64);
+        let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme(&quantized_i64);
         let quantized_i8: Vec<i8> = quantized.iter().map(|&v| v as i8).collect();
         let encoded = proxima_encoder.encode_int8(&quantized_i8)?;
 

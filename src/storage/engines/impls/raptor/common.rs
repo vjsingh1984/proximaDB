@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 // Re-export ProximaScheme for use in RAPTOR modules
-pub use crate::storage::engines::core::ops::proxima_encoding::ProximaScheme;
+pub use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
 
 // ====== Core RowGroup Structure (unified from rowgroup.rs and compaction.rs) ======
 
@@ -521,7 +521,7 @@ pub use crate::proto::proximadb_v1::SqlValue as MetadataValue;
 
 // ====== Proxima Encoding Schemes (shared) ======
 
-// ProximaScheme moved to crate::storage::engines::core::ops::proxima_encoding
+// ProximaScheme moved to crate::storage::engines::core::ops::proximaencoder
 // Use that unified implementation instead of this duplicate
 
 // ====== Compaction Configuration (moved from config.rs duplicate) ======
@@ -1733,7 +1733,7 @@ pub struct ProximaMetadata {
     pub compressed_size: u32,
 }
 
-// ProximaScheme now imported from common::proxima_encoding module for code reuse
+// ProximaScheme now imported from common::proximaencoder module for code reuse
 
 /// Sparse entry in P×K matrix for boundary vectors only
 #[derive(Debug, Clone, Serialize, Deserialize)]

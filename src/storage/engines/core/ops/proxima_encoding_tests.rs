@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::storage::engines::core::ops::proxima_encoding::{
+    use crate::storage::engines::core::ops::proximaencoder::{
         ProximaEncoder, ProximaDecoder, ProximaScheme, ProximaMetadata
     };
     

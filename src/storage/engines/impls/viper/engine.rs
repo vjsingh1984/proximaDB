@@ -543,16 +543,9 @@ impl ViperEngine {
 
     /// Optimized column reading with universal memory management
     async fn read_column_optimized(file_path: &str, column_idx: usize) -> Result<Vec<u8>> {
-        // Create filesystem factory for reading
-        let filesystem_config =
-            crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
-                .await?,
-        );
-
-        // Create unified parquet reader
-        let reader = super::readers::UnifiedParquetReader::new(filesystem_factory).await?;
+        // For column reading, we don't need dimension - Parquet has schema info
+        // Use 0 to indicate dimension is not needed for this operation
+        let reader = super::readers::UnifiedParquetReader::new(vec![file_path.to_string()], 0)?;
 
         // Read the actual column data from the Parquet file
         // Note: Using read_row_groups_projected to get all data
@@ -658,14 +651,9 @@ impl ViperEngine {
         row_group_idx: usize,
         optimizer: &UniversalPerformanceOptimizer,
     ) -> Result<Vec<u8>> {
-        // Create filesystem and reader for actual Parquet access
-        let filesystem_config =
-            crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = Arc::new(
-            crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
-                .await?,
-        );
-        let reader = super::readers::UnifiedParquetReader::new(filesystem_factory).await?;
+        // For row group reading, we don't need dimension - Parquet has schema info
+        // Use 0 to indicate dimension is not needed for this operation
+        let reader = super::readers::UnifiedParquetReader::new(vec![file_path.to_string()], 0)?;
 
         // Read vectors from the specific row group
         // Note: UnifiedParquetReader currently reads all data, but in production
@@ -2060,10 +2048,16 @@ impl UnifiedStorageEngine for ViperEngine {
         // Caches Parquet metadata, bloom filters, and frequently accessed blocks
         let unified_fs = self.filesystem.clone();
 
-        // Create the Parquet reader using filesystem_factory
-        let parquet_reader = crate::storage::engines::core::formats::columnar::parquet_query_engine::UnifiedParquetReader::new(
-            self.filesystem_factory.clone()
-        ).await?;
+        // Create the Parquet reader with file paths
+        // Get dimension from collection config or use default
+        let dimension = collection_opt
+            .as_ref()
+            .and_then(|c| c.config.as_ref())
+            .map(|cfg| cfg.dimension)
+            .unwrap_or(128);
+        let parquet_reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+            parquet_files.clone(), dimension
+        )?;
 
         // Create collection context for the reader
         // Get filterable columns from collection config if available
@@ -2073,15 +2067,14 @@ impl UnifiedStorageEngine for ViperEngine {
             .map(|cfg| cfg.filterable_columns.clone())
             .unwrap_or_else(Vec::new);
 
-        let collection_context = crate::storage::engines::core::formats::columnar::parquet_query_engine::CollectionContext {
+        let collection_context = crate::storage::engines::core::formats::columnar::columnar_query_engine::CollectionContext {
             collection_id: collection_id.to_string(),
-            file_paths: parquet_files.clone(),
-            filterable_columns: filterable_column_specs,
-            quantization_columns: vec![],
-            estimated_size_mb: 0.0,
-            estimated_document_count: 0,
-            is_cloud_storage: storage_url.starts_with("s3://") || storage_url.starts_with("gs://") || storage_url.starts_with("azure://"),
-            io_optimization_hints: None,
+            dimension,
+            distance_metric: "cosine".to_string(), // TODO: Get from config
+            quantization_config: collection_opt
+                .as_ref()
+                .and_then(|c| c.config.as_ref())
+                .and_then(|cfg| cfg.quantization.clone()),
         };
 
         // Create search params
@@ -2109,9 +2102,21 @@ impl UnifiedStorageEngine for ViperEngine {
         };
 
         // Perform search using the reader's search_vectors method
-        debug!("Calling parquet_reader.search_vectors with {} files", collection_context.file_paths.len());
+        debug!("Calling parquet_reader.search_vectors with collection {}", collection_context.collection_id);
+        // Convert search_params to SearchPlan
+        let search_plan = crate::core::search::SearchPlan {
+            collection_id: collection_id.to_string(),
+            dimension,
+            query_vector: query_vector.to_vec(),
+            top_k: top_k_value,  // Use the top_k_value from earlier in the function
+            distance_metric: crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,  // Use proto enum
+            filters: None,
+            include_vectors: false,
+            include_metadata: true,
+        };
+
         let search_results = parquet_reader
-            .search_vectors(&search_params, &collection_context)
+            .search_vectors(&search_plan, &collection_context)
             .await?;
         debug!("parquet_reader.search_vectors returned {} results", search_results.len());
 

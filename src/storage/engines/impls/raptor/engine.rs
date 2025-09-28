@@ -881,7 +881,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
     }
 
     fn deserialize_proxima_batch(&self, data: &[u8], marker: u8) -> Result<RecordBatch> {
-        use crate::storage::engines::core::ops::proxima_encoding::{
+        use crate::storage::engines::core::ops::proximaencoder::{
             ProximaDecoder, ProximaScheme,
         };
         use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
@@ -1038,7 +1038,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             cursor.read_exact(&mut values_data)?;
 
             // Decode values using Proxima
-            use crate::storage::engines::core::ops::proxima_encoding::{
+            use crate::storage::engines::core::ops::proximaencoder::{
                 ProximaDecoder, ProximaScheme,
             };
             let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
@@ -1085,7 +1085,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             let mut values_data = vec![0u8; values_len];
             cursor.read_exact(&mut values_data)?;
 
-            use crate::storage::engines::core::ops::proxima_encoding::{
+            use crate::storage::engines::core::ops::proximaencoder::{
                 ProximaDecoder, ProximaScheme,
             };
             let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {

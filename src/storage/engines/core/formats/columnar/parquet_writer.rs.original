@@ -298,7 +298,7 @@ impl StreamingParquetWriter {
         let mut fields = Vec::new();
 
         // Core fields - ID column is REQUIRED for customer APIs
-        fields.push(Field::new("id", DataType::Utf8, false)); // NOT NULL
+        fields.push(Field::new(super::FIELD_ID, DataType::Utf8, false)); // NOT NULL
 
         // Optional: Row group offset for internal optimizations (when id_less_storage is enabled)
         if config.id_less_storage {
@@ -306,8 +306,8 @@ impl StreamingParquetWriter {
         }
 
         // Row group offset (implicit ID for ID-less storage)
-        fields.push(Field::new("row_group_offset", DataType::UInt32, false));
-        fields.push(Field::new("row_index", DataType::UInt32, false));
+        fields.push(Field::new(super::FIELD_ROW_GROUP_OFFSET, DataType::UInt32, false));
+        fields.push(Field::new(super::FIELD_ROW_INDEX, DataType::UInt32, false));
 
         // Vector data (FP32)
         fields.push(Field::new(
@@ -753,6 +753,7 @@ impl StreamingParquetWriter {
         // ID column (ALWAYS REQUIRED for customer APIs)
         let ids: Vec<Option<String>> = records.iter().map(|r| Some(r.id.clone())).collect();
         arrays.push(Arc::new(StringArray::from(ids)));
+        debug!("Added ID array - total arrays: {}", arrays.len());
 
         // Row group offset and row index (for ID-less storage)
         let row_group_offsets: Vec<u32> = (0..num_records)
@@ -762,15 +763,18 @@ impl StreamingParquetWriter {
 
         arrays.push(Arc::new(UInt32Array::from(row_group_offsets)));
         arrays.push(Arc::new(UInt32Array::from(row_indices)));
+        debug!("Added offset arrays - total arrays: {}", arrays.len());
 
         // Vector data (FP32)
         let vectors = self.create_vector_array(records)?;
         arrays.push(vectors);
+        debug!("Added vector array - total arrays: {}", arrays.len());
 
         // Quantized vectors
         if self.config.quantization.enable_binary {
             let binary_vectors = self.create_binary_vector_array(records)?;
             arrays.push(binary_vectors);
+            debug!("Added binary vector array - total arrays: {}", arrays.len());
         }
 
         if self.config.quantization.enable_int8 {
@@ -778,25 +782,30 @@ impl StreamingParquetWriter {
             arrays.push(int8_vectors);
             arrays.push(scales);
             arrays.push(zero_points);
+            debug!("Added INT8 arrays - total arrays: {}", arrays.len());
         }
 
         if self.config.quantization.enable_pq {
             let (pq_vectors, codebooks) = self.create_pq_vector_arrays(records)?;
             arrays.push(pq_vectors);
             arrays.push(codebooks);
+            debug!("Added PQ arrays - total arrays: {}", arrays.len());
         }
 
         // Metadata fields
         let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp as i64).collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
+        debug!("Added timestamp array - total arrays: {}", arrays.len());
 
         let versions: Vec<Option<i64>> = records
             .iter()
             .map(|r| r.version.map(|v| v as i64))
             .collect();
         arrays.push(Arc::new(Int64Array::from(versions)));
+        debug!("Added version array - total arrays: {}", arrays.len());
 
         // Add filterable metadata columns as individual arrays
+        eprintln!("Processing {} filterable columns", self.filterable_columns.len());
         for col in &self.filterable_columns {
             use super::schema::FilterableData;
 
@@ -951,108 +960,8 @@ impl StreamingParquetWriter {
             arrays.push(array);
         }
 
-        // Use native metadata types if handler is configured
-        if let Some(ref handler) = self.native_metadata_handler {
-            // Check if type inference has been performed
-            let stats = handler.get_optimization_stats();
-            if stats.total_fields > 0 {
-                // Use native types for metadata
-                let metadata_maps: Vec<serde_json::Map<String, serde_json::Value>> = records
-                    .iter()
-                    .map(|r| {
-                        let mut map = serde_json::Map::new();
-                        for (key, sql_value) in &r.metadata {
-                            // Convert SqlValue to JSON value
-                            let json_value = match &sql_value.value {
-                                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                                    serde_json::Value::String(s.clone())
-                                }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
-                                    if let Some(n) = serde_json::Number::from_f64(*f) {
-                                        serde_json::Value::Number(n)
-                                    } else {
-                                        serde_json::Value::Null
-                                    }
-                                }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                                    serde_json::Value::Bool(*b)
-                                }
-                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                                    serde_json::Value::Number(serde_json::Number::from(*i))
-                                }
-                                _ => serde_json::Value::Null,
-                            };
-                            map.insert(key.clone(), json_value);
-                        }
-                        map
-                    })
-                    .collect();
-
-                let native_arrays = handler.metadata_to_arrow_arrays(&metadata_maps)?;
-
-                // Add native metadata arrays to the batch
-                for (_field_name, array) in native_arrays {
-                    arrays.push(array);
-                }
-
-                debug!(
-                    "Using native metadata types for {} fields",
-                    stats.total_fields
-                );
-            } else {
-                // Fall back to Map type if type inference not done yet
-                // We still use Map type for consistency with schema
-                let mut keys_builder = arrow_array::builder::StringBuilder::new();
-                let mut values_builder = arrow_array::builder::StringBuilder::new();
-                let mut offsets = vec![0i32];
-                let mut entry_count = 0i32;
-
-                for r in records.iter() {
-                    if !r.metadata.is_empty() {
-                        // Add all metadata entries as a single JSON string entry
-                        // This maintains compatibility while using Map structure
-                        keys_builder.append_value("_json_metadata");
-                        let json_str = serde_json::to_string(&r.metadata).unwrap_or_else(|_| "{}".to_string());
-                        values_builder.append_value(&json_str);
-                        entry_count += 1;
-                    }
-                    offsets.push(entry_count);
-                }
-
-                // Create struct array for Map entries
-                let keys_array = keys_builder.finish();
-                let values_array = values_builder.finish();
-                let struct_array = arrow_array::StructArray::from(vec![
-                    (
-                        Arc::new(Field::new("key", DataType::Utf8, false)),
-                        Arc::new(keys_array) as ArrayRef,
-                    ),
-                    (
-                        Arc::new(Field::new("value", DataType::Utf8, true)),
-                        Arc::new(values_array) as ArrayRef,
-                    ),
-                ]);
-
-                // Create Map array
-                let map_array = arrow_array::MapArray::try_new(
-                    Arc::new(Field::new(
-                        "entries",
-                        DataType::Struct(vec![
-                            Field::new("key", DataType::Utf8, false),
-                            Field::new("value", DataType::Utf8, true),
-                        ].into()),
-                        false,
-                    )),
-                    arrow_buffer::OffsetBuffer::new(arrow_buffer::ScalarBuffer::from(offsets)),
-                    struct_array,
-                    None,
-                    false,
-                ).context("Failed to create Map array for fallback metadata")?;
-
-                arrays.push(Arc::new(map_array));
-            }
-        } else {
-            // Use native Map type for metadata - much faster than JSON
+        // Always use Map type for extra metadata to ensure schema consistency
+        // Native metadata handler can be used for type inference but shouldn't add extra arrays
             let mut keys_builder = arrow_array::builder::StringBuilder::new();
             let mut values_builder = arrow_array::builder::StringBuilder::new();
             let mut offsets = vec![0i32];
@@ -1119,18 +1028,30 @@ impl StreamingParquetWriter {
             ).context("Failed to create Map array")?;
 
             arrays.push(Arc::new(map_array));
-        }
 
         debug!("Created {} arrays for RecordBatch", arrays.len());
         for (i, array) in arrays.iter().enumerate() {
             debug!("  Array {}: {} rows, type: {:?}", i, array.len(), array.data_type());
         }
 
+        // Debug information before moving arrays
+        eprintln!("Creating RecordBatch:");
+        eprintln!("  Schema fields: {}", self.schema.fields().len());
+        for (i, field) in self.schema.fields().iter().enumerate() {
+            eprintln!("    {}: {} (type: {:?})", i, field.name(), field.data_type());
+        }
+        eprintln!("  Arrays: {}", arrays.len());
+        for (i, array) in arrays.iter().enumerate() {
+            eprintln!("    {}: type={:?}, len={}", i, array.data_type(), array.len());
+        }
+
         let array_count = arrays.len();
+        let schema_field_count = self.schema.fields().len();
+
         RecordBatch::try_new(self.schema.clone(), arrays)
             .map_err(|e| {
                 eprintln!("RecordBatch creation failed!");
-                eprintln!("  Schema fields: {}", self.schema.fields().len());
+                eprintln!("  Schema fields: {}", schema_field_count);
                 eprintln!("  Arrays provided: {}", array_count);
                 eprintln!("  Error: {}", e);
                 anyhow::anyhow!("Failed to create RecordBatch: {}", e)
@@ -2088,5 +2009,284 @@ mod tests {
         assert_eq!(codebook.segments, 2);
         assert_eq!(codebook.segment_size, 2);
         assert_eq!(codebook.centroids.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_streaming_writer_basic() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_streaming_basic.parquet");
+
+        let config = ParquetWriterConfig {
+            write_batch_size: 10,
+            row_group_size: 100,
+            enable_bloom_filters: true,
+            ..Default::default()
+        };
+
+        let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+
+        // Write records one by one (streaming mode)
+        for i in 0..50 {
+            let record = VectorRecord {
+                id: format!("stream_{}", i),
+                vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
+            };
+
+            writer.write_record(record).await.unwrap();
+        }
+
+        let (stats, _) = writer.finalize().await.unwrap();
+
+        assert_eq!(stats.total_records, 50);
+        assert!(stats.file_size > 0);
+        assert_eq!(stats.total_row_groups, 1); // Should be 1 row group for 50 records
+        assert!(stats.bloom_filter_count > 0);
+    }
+
+    #[tokio::test]
+    async fn test_batch_writer_basic() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_batch_basic.parquet");
+
+        let config = ParquetWriterConfig {
+            write_batch_size: 1000,
+            row_group_size: 5000,
+            enable_bloom_filters: false,
+            ..Default::default()
+        };
+
+        let mut writer = BatchParquetWriter::new(&file_path, 256, config);
+
+        // Create a batch of records
+        let mut records = Vec::new();
+        for i in 0..1000 {
+            records.push(VectorRecord {
+                id: format!("batch_{}", i),
+                vector: (0..256).map(|j| (i * j) as f32 * 0.001).collect(),
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
+            });
+        }
+
+        // Write all at once (batch mode)
+        let (stats, _) = writer.write_all(&records).await.unwrap();
+
+        assert_eq!(stats.total_records, 1000);
+        assert!(stats.file_size > 0);
+        assert_eq!(stats.total_row_groups, 1); // Should be 1 row group for 1000 records
+        assert_eq!(stats.bloom_filter_count, 0); // Bloom filters disabled
+    }
+
+    #[tokio::test]
+    async fn test_streaming_with_metadata() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_streaming_metadata.parquet");
+
+        let config = ParquetWriterConfig {
+            write_batch_size: 20,
+            enable_bloom_filters: true,
+            enable_native_metadata: true,
+            ..Default::default()
+        };
+
+        let mut writer = StreamingParquetWriter::new(&file_path, 64, config, None).unwrap();
+
+        for i in 0..30 {
+            let mut metadata = std::collections::HashMap::new();
+            metadata.insert(
+                "category".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        format!("cat_{}", i % 5)
+                    )),
+                },
+            );
+            metadata.insert(
+                "score".to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                        (i as f64) * 0.1
+                    )),
+                },
+            );
+
+            let record = VectorRecord {
+                id: format!("meta_{}", i),
+                vector: (0..64).map(|j| (i + j) as f32).collect(),
+                metadata,
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
+            };
+
+            writer.write_record(record).await.unwrap();
+        }
+
+        let (stats, _) = writer.finalize().await.unwrap();
+
+        assert_eq!(stats.total_records, 30);
+        assert!(stats.bloom_filter_count > 0);
+    }
+
+    #[tokio::test]
+    async fn test_batch_with_compression() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_batch_compression.parquet");
+
+        let config = ParquetWriterConfig {
+            write_batch_size: 500,
+            compression: crate::core::compression::CompressionAlgorithm::Zstd,
+            ..Default::default()
+        };
+
+        let mut writer = BatchParquetWriter::new(&file_path, 128, config);
+
+        let mut records = Vec::new();
+        for i in 0..500 {
+            records.push(VectorRecord {
+                id: format!("compressed_{}", i),
+                vector: (0..128).map(|_| 1.0).collect(), // Highly compressible data
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
+            });
+        }
+
+        let (stats, _) = writer.write_all(&records).await.unwrap();
+
+        assert_eq!(stats.total_records, 500);
+        assert!(stats.compression_ratio < 1.0); // Should have good compression (ratio < 1.0 means compressed is smaller)
+    }
+
+    #[tokio::test]
+    async fn test_streaming_with_quantization() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_streaming_quantization.parquet");
+
+        let mut quantization = QuantizationConfig::default();
+        quantization.enable_binary = true;
+        quantization.enable_int8 = true;
+
+        let config = ParquetWriterConfig {
+            write_batch_size: 25,
+            quantization,
+            ..Default::default()
+        };
+
+        let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+
+        for i in 0..25 {
+            let record = VectorRecord {
+                id: format!("quant_{}", i),
+                vector: (0..128).map(|j| ((i + j) as f32).sin()).collect(),
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
+            };
+
+            writer.write_record(record).await.unwrap();
+        }
+
+        let (stats, _) = writer.finalize().await.unwrap();
+
+        assert_eq!(stats.total_records, 25);
+        assert!(stats.file_size > 0);
+    }
+
+    #[tokio::test]
+    async fn test_id_less_storage() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_id_less.parquet");
+
+        let config = ParquetWriterConfig {
+            write_batch_size: 100,
+            id_less_storage: true,
+            ..Default::default()
+        };
+
+        let mut writer = StreamingParquetWriter::new(&file_path, 64, config, None).unwrap();
+
+        for i in 0..100 {
+            let record = VectorRecord {
+                id: format!("will_be_implicit_{}", i), // IDs will be replaced
+                vector: (0..64).map(|j| (i * j) as f32).collect(),
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
+            };
+
+            writer.write_record(record).await.unwrap();
+        }
+
+        let (stats, _) = writer.finalize().await.unwrap();
+
+        assert_eq!(stats.total_records, 100);
+        // With ID-less storage, file should be smaller
+        assert!(stats.file_size > 0);
+    }
+
+    #[tokio::test]
+    async fn test_large_batch_performance() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_large_batch.parquet");
+
+        let config = ParquetWriterConfig {
+            write_batch_size: 10000,
+            row_group_size: 10000,
+            ..Default::default()
+        };
+
+        let mut writer = BatchParquetWriter::new(&file_path, 256, config);
+
+        let mut records = Vec::new();
+        for i in 0..10000 {
+            records.push(VectorRecord {
+                id: format!("large_{}", i),
+                vector: (0..256).map(|j| (i ^ j) as f32).collect(),
+                metadata: std::collections::HashMap::new(),
+                timestamp: i as i64,
+                updated_at: None,
+                expires_at: None,
+                version: Some(1),
+                quantized_vector: vec![],
+                source: None,
+            });
+        }
+
+        let start = std::time::Instant::now();
+        let (stats, _) = writer.write_all(&records).await.unwrap();
+        let duration = start.elapsed();
+
+        assert_eq!(stats.total_records, 10000);
+        assert!(stats.file_size > 0);
+        println!("Large batch write took: {:?}", duration);
+        assert!(duration.as_secs() < 10); // Should complete within 10 seconds
     }
 }

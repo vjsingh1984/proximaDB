@@ -9,10 +9,12 @@
 //! with dynamic schema generation and metadata separation.
 
 use anyhow::{Context, Result};
+use uuid::Uuid;
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
 use crate::storage::engines::core::formats::columnar::{
-    ParquetWriterConfig, StreamingParquetWriter,
-    FIELD_ID, FIELD_VECTOR_FP32
+    constants::{FIELD_ID, FIELD_VECTOR_FP32},
+    ParquetWriterConfig,
+    StreamingParquetWriter,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,7 +33,7 @@ use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType,
 };
 
-use crate::core::{String, VectorRecord};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
 
@@ -307,17 +309,18 @@ impl Flush {
             }
         };
 
-        // Step 3: Atomic write/move of Parquet data using unified filesystem strategy
-        info!(
-            "🔄 VIPER: Step 3 - Atomically writing/moving Parquet file: {}",
-            parquet_filename
-        );
-
-        // Check if we have a file path or raw data
+        // Step 3: Check if HybridParquetWriter already handled atomic write
         let final_file_path = if parquet_data_or_path.len() > 4
+            && &parquet_data_or_path[0..4] == &[0xFF, 0xFF, 0xFF, 0xFF]
+        {
+            // HybridParquetWriter already wrote the file atomically
+            let path_str = String::from_utf8_lossy(&parquet_data_or_path[4..]);
+            info!("✅ VIPER: Step 3 - Parquet already written atomically by HybridParquetWriter: {}", path_str);
+            path_str.to_string()
+        } else if parquet_data_or_path.len() > 4
             && &parquet_data_or_path[0..4] == &[0xFA, 0xCE, 0xF1, 0x1E]
         {
-            // Extract temp file path from marker
+            // Legacy path: Extract temp file path from marker
             let temp_path_str = String::from_utf8_lossy(&parquet_data_or_path[4..]);
             let temp_path = std::path::Path::new(temp_path_str.as_ref());
 
@@ -510,13 +513,7 @@ impl Flush {
            This was creating arrays for RecordBatch that was never actually used.
            StreamingParquetWriter accepts VectorRecord directly. */
 
-        // Create a temporary file for StreamingParquetWriter
-        let temp_dir = std::env::temp_dir();
-        let temp_file_path = temp_dir.join(format!(
-            "viper_flush_{}.parquet.tmp",
-            crate::utils::uuid::Uuid::new_v4()
-        ));
-        debug!("Creating temporary Parquet file: {:?}", temp_file_path);
+        // Prepare to use HybridParquetWriter's flush method directly
 
         debug!("🔍 VIPER FLUSH: Using core compression directly");
         debug!("   Collection: {}", collection_id);
@@ -565,7 +562,7 @@ impl Flush {
         // Map core compression to Parquet compression using shared function
         let compression_algo =
             crate::storage::engines::core::formats::columnar::common::map_core_to_parquet_compression(
-                compression_algorithm,
+                compression_algorithm.clone(),
                 Some(compression_level as i32),
             )?;
         debug!("   Selected Parquet compression: {:?}", compression_algo);
@@ -657,19 +654,19 @@ impl Flush {
 
         let writer_config = ParquetWriterConfig {
             row_group_size: viper_config.row_group_size,
+            page_size: 1024 * 1024, // 1MB pages
+            write_batch_size: 10000,
+            compression: compression_algo,
+            compression_level: Some(compression_level as i32),
+            enable_dictionary: true,
             enable_bloom_filters: true, // Enable for efficient ID and metadata lookups
             bloom_filter_fpp: 0.01,
-            expected_ndv: Some(records.len()),
-            bloom_filter_columns: bloom_columns,
-            compression: compression_algorithm,
-            enable_column_statistics: true,
+            bloom_filter_ndv: records.len() as u64,
+            enable_statistics: true,
             enable_page_index: true,
-            enable_column_index: true,
-            enable_offset_index: true,
-            page_index_granularity: 10000,
-            enable_dictionary: true,
-            dictionary_threshold: 0.5,
-            enable_delta_encoding: true,
+            sort_columns: vec![], // Can be populated with filterable columns if needed
+            id_less_storage: false, // Keep IDs for customer APIs
+            filterable_metadata_columns: Some(filterable_columns.clone()),
             quantization: crate::proto::proximadb_v1::QuantizationConfig {
                 enabled: is_quantized,
                 strategy: 0, // SMART_DEFAULTS
@@ -694,17 +691,9 @@ impl Flush {
                 int8_threshold: 0.3,
                 pq_threshold: 0.1,
             },
-            id_less_storage: false, // Keep IDs for customer APIs
-            write_batch_size: 10000,
-            page_size: 1024 * 1024, // 1MB pages
-            enable_byte_stream_split: !is_quantized,
-            enable_pq_sorting: false,
-            pq_sorting_segments: 16,
-            pq_sorting_codebook_size: 256,
-            // TODO: Re-enable native metadata after fixing schema update logic
-            // Currently disabled due to schema mismatch when metadata fields are dynamically added
-            enable_native_metadata: false,
-            metadata_inference_samples: 100,
+            max_records_per_file: None,
+            target_file_size_bytes: None,
+            enable_async_io: false,
         };
 
         // Get dimension from the first record
@@ -741,31 +730,67 @@ impl Flush {
             }
         }
 
-        let mut writer = StreamingParquetWriter::new(&temp_file_path, dimension, writer_config, filterable_columns)?;
+        // Get storage assignment from collection config - fail fast if not present
+        let storage_assignment = collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .ok_or_else(|| anyhow::anyhow!(
+                "Collection '{}' has no storage assignment. All collections must have storage assignments.",
+                collection_id
+            ))?;
 
-        // Write all records using the columnar writer's optimized batching
-        writer.write_batch(records).await?;
-
-        // Finalize the writer to flush all data
-        let stats = writer.finalize().await?;
-
-        debug!("   ✅ VIPER Parquet written using StreamingParquetWriter:");
-        debug!("      File: {:?}", temp_file_path);
-        debug!("      Records: {}", stats.0.total_records);
-        debug!("      Row groups: {}", stats.0.total_row_groups);
-        debug!("      File size: {} bytes", stats.0.file_size);
-        debug!("      Compression ratio: {:.2}", stats.0.compression_ratio);
-        debug!("      Bloom filters: {}", stats.0.bloom_filter_count);
-
-        info!(
-            "📝 VIPER FLUSH: Created Parquet file with bloom filters at {:?}",
-            temp_file_path
+        // Get storage base path
+        let data_url = format!(
+            "{}/{}/data",
+            storage_assignment.base_location, collection_id
         );
 
-        // Return temp file path for atomic move
-        // Wrap in a special marker to indicate this is a file path, not buffer data
-        let mut result = vec![0xFA, 0xCE, 0xF1, 0x1E]; // Magic bytes to indicate file path mode
-        result.extend_from_slice(temp_file_path.to_string_lossy().as_bytes());
+        // Generate filename using FilenameCodec
+        let codec = FilenameCodec::new();
+        let filename = codec.generate(0, &crate::storage::engines::VIPER_FILE_EXT[1..]);
+
+        // Construct final path
+        let final_path = std::path::PathBuf::from(format!("{}/{}", data_url, filename));
+
+        // Construct final URL
+        let final_url = format!("{}/{}", data_url, filename);
+
+        // Use HybridParquetWriter with integrated disk cache support
+        use crate::storage::engines::core::formats::columnar::hybrid_writer::{HybridParquetWriter, HybridWriterConfig};
+        let hybrid_config = HybridWriterConfig {
+            base_config: writer_config,
+            ..Default::default()
+        };
+
+        // Use the integrated write_with_cache method that handles:
+        // 1. Writing to temp file
+        // 2. Finalizing the writer
+        // 3. Uploading to cloud with disk cache population
+        let (stats, _collector) = HybridParquetWriter::write_with_cache(
+            records,
+            dimension,
+            hybrid_config,
+            &final_url,
+            &self.filesystem_factory,
+            filterable_columns.clone(),
+            None, // VIPER doesn't use metadata collectors for sidecar files
+        ).await?;
+
+        debug!("   ✅ VIPER Parquet written with disk cache:");
+        debug!("      Cloud URL: {}", final_url);
+        debug!("      Records: {}", stats.total_records);
+        debug!("      Row groups: {}", stats.total_row_groups);
+        debug!("      File size: {} bytes", stats.file_size);
+        debug!("      Disk cache: POPULATED (future reads avoid cloud costs)");
+
+        info!(
+            "📝 VIPER FLUSH: Wrote Parquet file to {} with disk cache",
+            final_url
+        );
+
+        // Return final path as success marker - file written and cached
+        let mut result = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Magic bytes to indicate already written
+        result.extend_from_slice(final_url.as_bytes());
         Ok(result)
     }
 

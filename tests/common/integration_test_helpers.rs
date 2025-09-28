@@ -663,7 +663,7 @@ pub mod operations {
             use proximadb::proto::proximadb_v1::CompressionAlgorithm;
 
             // Map to Parquet-supported algorithms
-            let algorithm = match compression_algo {
+            let _algorithm = match compression_algo {
                 "none" | "uncompressed" => CompressionAlgorithm::CompressionNone as i32,
                 "zstd" => CompressionAlgorithm::CompressionZstd as i32,
                 "snappy" => CompressionAlgorithm::CompressionSnappy as i32,

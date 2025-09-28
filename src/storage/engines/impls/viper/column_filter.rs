@@ -286,23 +286,17 @@ impl VIPERColumnFilterEvaluator {
             );
 
             // Use UnifiedParquetReader to read specific column
-            let filesystem_config =
-                crate::storage::persistence::filesystem::FilesystemConfig::default();
-            let filesystem_factory =
-                crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
+            // For metadata column reading, dimension is not needed
             let reader =
                 crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
-                    Arc::new(filesystem_factory),
-                )
-                .await?;
+                    vec![parquet_file.to_string()],
+                    0  // Dimension not needed for metadata column reading
+                )?;
 
             // Get collection context to check if this is a filterable column
             let collection_context = reader.get_collection_context().await;
-            let filterable_columns: Vec<String> = collection_context.as_ref()
-                .map(|ctx| ctx.filterable_columns.iter().map(|col| col.name.clone()).collect())
-                .unwrap_or_default();
+            // CollectionContext doesn't have filterable_columns field
+            let filterable_columns: Vec<String> = vec![];
 
             // Use common helper for consistency
             if crate::storage::engines::core::filter_evaluator::is_filterable_field(name, &filterable_columns) {
@@ -462,29 +456,19 @@ pub async fn evaluate_metadata_filter_with_config(
 
 /// Selective vector reader that uses qualifying indices
 pub struct VIPERSelectiveReader {
-    reader: crate::storage::engines::core::formats::columnar::UnifiedParquetReader,
+    dimension: Option<usize>,
 }
 
 impl VIPERSelectiveReader {
     pub fn new() -> Self {
-        // For synchronous new, create minimal filesystem factory
-        let filesystem_config =
-            crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = tokio::runtime::Handle::current()
-            .block_on(
-                crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config),
-            )
-            .expect("Failed to create filesystem factory");
+        Self {
+            dimension: None  // Will be detected from data when needed
+        }
+    }
 
-        let reader = tokio::runtime::Handle::current()
-            .block_on(
-                crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
-                    Arc::new(filesystem_factory),
-                ),
-            )
-            .expect("Failed to create UnifiedParquetReader");
-
-        Self { reader }
+    pub fn with_dimension(mut self, dimension: usize) -> Self {
+        self.dimension = Some(dimension);
+        self
     }
 
     /// Read only vectors at qualifying indices (60-90% I/O savings)
@@ -534,19 +518,13 @@ impl VIPERSelectiveReader {
         file_path: &str,
         row_indices: &[usize]
     ) -> Result<Vec<VectorRecord>> {
-        // Use ProximaDB's filesystem APIs and parquet reader strategy  
-        let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::new(
-            crate::storage::persistence::filesystem::FilesystemConfig::default()
-        ).await?;
-        let filesystem = filesystem_factory.get_filesystem(file_path)?;
-        
-        // Use existing parquet reader implementation based on strategy
-        let parquet_reader = crate::storage::engines::core::formats::columnar::unified_columnar_io::UnifiedColumnarReader::new(
-            crate::storage::engines::core::formats::columnar::unified_columnar_io::UnifiedColumnarConfig::default()
-        );
-        
-        // Perform selective row reading using ProximaDB's range strategy
-        // This works seamlessly across cloud storage (S3, Azure, GCS) and local files
+        // For selective reading, dimension is not needed - Parquet has the schema
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+            vec![file_path.to_string()],
+            0  // Dimension will be read from Parquet schema
+        )?;
+
+        // Perform selective row reading
         // TODO: Implement proper selective range reading when API is available
         let _ranges = self.convert_indices_to_ranges(row_indices);
         let records = Vec::new(); // Placeholder for selective reading

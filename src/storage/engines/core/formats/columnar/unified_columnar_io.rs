@@ -31,7 +31,7 @@ use parquet::file::properties::WriterProperties;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fs::File;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -158,6 +158,51 @@ impl UnifiedColumnarReader {
             parquet_metadata_cache: std::sync::RwLock::new(std::collections::HashMap::new()),
             stats: std::sync::RwLock::new(IoStatistics::default()),
         }
+    }
+
+    /// Scan a data directory for all Parquet files
+    pub fn scan_data_directory(&self, data_dir: &Path) -> Result<Vec<PathBuf>> {
+        let mut parquet_files = Vec::new();
+
+        if !data_dir.exists() {
+            return Ok(parquet_files);
+        }
+
+        // List all files in the directory
+        for entry in std::fs::read_dir(data_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+
+            // Check if it's a Parquet file
+            if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                parquet_files.push(path);
+            }
+        }
+
+        // Sort files by name for consistent ordering
+        parquet_files.sort();
+
+        debug!("Found {} Parquet files in {:?}", parquet_files.len(), data_dir);
+        Ok(parquet_files)
+    }
+
+    /// Process all files in a data directory
+    pub async fn process_directory(
+        &self,
+        data_dir: &Path,
+        strategy: &ScanStrategy,
+    ) -> Result<Vec<Box<dyn ScanIterator>>> {
+        let files = self.scan_data_directory(data_dir)?;
+        let mut results = Vec::new();
+
+        for file_path in files {
+            if let Some(path_str) = file_path.to_str() {
+                let iterator = self.read_with_strategy(path_str, strategy).await?;
+                results.push(iterator);
+            }
+        }
+
+        Ok(results)
     }
 
     /// Read using appropriate format based on scan strategy
@@ -342,7 +387,7 @@ impl UnifiedColumnarReader {
         // 2. Large files where throughput matters
         // 3. When no filtering is needed
 
-        // Simple heuristic: check file size
+        // Check actual file size
         if let Ok(metadata) = std::fs::metadata(file_path) {
             metadata.len() > 100 * 1024 * 1024 // > 100MB
         } else {
@@ -775,10 +820,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_format_selection() {
+        use tempfile::tempdir;
+
+        // Test basic format selection logic
         let config = UnifiedColumnarConfig::default();
         let reader = UnifiedColumnarReader::new(config);
 
-        // Large file should use IPC
-        assert!(reader.should_use_ipc_for_scan("/large_file.parquet"));
+        // Create temp directory and files to test
+        let dir = tempdir().unwrap();
+
+        // Test directory scanning (should handle empty directory)
+        let files = reader.scan_data_directory(dir.path()).unwrap();
+        assert_eq!(files.len(), 0); // Empty directory
+
+        // Create a dummy parquet file
+        let test_file = dir.path().join("test.parquet");
+        std::fs::write(&test_file, b"dummy").unwrap();
+
+        let files = reader.scan_data_directory(dir.path()).unwrap();
+        assert_eq!(files.len(), 1); // Should find the file
+
+        // Small file should not use IPC
+        assert!(!reader.should_use_ipc_for_scan(test_file.to_str().unwrap()));
     }
 }

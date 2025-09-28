@@ -49,22 +49,8 @@
 //! - **Bloom Filter Cache**: Cached bloom filters per row group
 //! - **Index Statistics**: Track hit rates and performance metrics
 
-// Field name constants for consistent columnar storage - inlined at compile time
-// These MUST be used across all Parquet operations (flush, compact, search, schema)
-pub const FIELD_ID: &str = "id";
-pub const FIELD_VECTOR_FP32: &str = "vector_fp32";
-pub const FIELD_VECTOR_INT8: &str = "vector_int8";
-pub const FIELD_VECTOR_PQ: &str = "vector_pq";
-pub const FIELD_VERSION: &str = "version";
-pub const FIELD_TIMESTAMP: &str = "timestamp";
-pub const FIELD_EXTRA_META: &str = "extra_meta";  // Non-filterable metadata stored as JSON
-// Note: Filterable metadata fields are stored as individual columns with their actual names
-pub const FIELD_ROW_GROUP_OFFSET: &str = "row_group_offset";
-pub const FIELD_ROW_INDEX: &str = "row_index";
-pub const FIELD_INT8_SCALE: &str = "int8_scale";
-pub const FIELD_INT8_ZERO_POINT: &str = "int8_zero_point";
-pub const FIELD_EXPIRES_AT: &str = "expires_at";
-pub const FIELD_IS_DELETED: &str = "is_deleted";
+// Field name constants have been moved to the constants module to avoid duplication
+// Re-exported below for backward compatibility
 
 // ### 4. Schema & Metadata Management
 // - **ColumnarSchema**: Unified schema creation and validation
@@ -97,11 +83,15 @@ pub const FIELD_IS_DELETED: &str = "is_deleted";
 // - 90% faster similarity search with progressive quantization
 // - Zero code duplication between engines for core columnar operations
 
+pub mod constants; // Column name constants
 pub mod id_index;
+pub mod metadata_filter_strategy;
 pub mod optimization;
-pub mod parquet_query_engine; // High-level query logic (formerly parquet_reader)
-pub mod parquet_writer;
 pub mod unified_columnar_io; // NEW: Consolidated Parquet and Arrow IPC operations
+
+// Modular components with semantic names (replacing old monolithic files)
+pub mod parquet_write_engine;  // Columnar write operations and Parquet file generation
+pub mod columnar_query_engine;  // Columnar read operations and query execution
 // Quantization now handled by unified compute module
 pub mod batch_operations;
 pub mod columnar_schema;
@@ -130,9 +120,24 @@ mod examples_test;
 // Comprehensive tests for ID-aware columnar storage
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod simple_branched_test;
 
 // Re-export common compression mapping function
 pub use common::map_core_to_parquet_compression;
+
+// Re-export column name constants
+pub use constants::{
+    FIELD_ID, FIELD_COLLECTION_ID, FIELD_VECTOR_FP32,
+    FIELD_VECTOR_BINARY, FIELD_VECTOR_INT8, FIELD_VECTOR_PQ,
+    FIELD_INT8_SCALES, FIELD_INT8_ZERO_POINTS, FIELD_INT8_SCALE, FIELD_INT8_ZERO_POINT,
+    FIELD_PQ_CODEBOOK,
+    FIELD_ROW_GROUP_OFFSET, FIELD_ROW_INDEX,
+    FIELD_TIMESTAMP, FIELD_UPDATED_AT, FIELD_EXPIRES_AT, FIELD_VERSION,
+    FIELD_EXTRA_META, FIELD_SOURCE, FIELD_SCHEMA_VERSION, FIELD_IS_DELETED,
+    PARQUET_EXTENSION, VIPER_FILE_EXTENSION,
+    DEFAULT_ROW_GROUP_SIZE, DEFAULT_PAGE_SIZE, DEFAULT_WRITE_BATCH_SIZE,
+};
 
 // Re-exports for convenience
 pub use id_index::{ColumnarIdIndex, IndexStats, ParquetLocation};
@@ -140,30 +145,46 @@ pub use optimization::{ColumnarOptimizer, ProgressiveSearchConfig, StreamingRowG
 pub use unified_compaction::{
     UnifiedColumnarCompaction, ColumnarCompactionResult, VersionContinuityMode,
 };
-pub use parquet_query_engine::{
-    CollectionContext,
-    FilterValue,
-    PagePruningInfo,
-    PageRange,
-    QuantizationMethod,
+// Re-export from columnar_query_engine module
+pub use columnar_query_engine::{
+    // Core query types with semantic names
+    ParquetQueryEngine,
+    ParquetReader,
+    QueryConfig,
+    QueryStatistics,
+    CacheStrategy,
+    FilterPath,
+    BranchedFilterExecutor,
+
+    // Unified reader types (for backward compatibility)
+    UnifiedParquetReader,
     ReaderConfig,
     ReadingStrategy,
-    // VIPER-specific exports now consolidated
     ReadingStrategySelector,
-    RowGroupAccessPattern,
     SchemaMapping,
-    SearchType,
+    CollectionContext,
+    FilterValue,
+    QuantizationMethod,
     SeekRange,
-    Stage2Strategy,
-    UnifiedParquetReader,
     VectorPosition,
+    Stage2Strategy,
+    SearchType,
+    RowGroupAccessPattern,
+    PagePruningInfo,
+    PageRange,
 };
-pub use parquet_writer as ParquetWriter;
-pub use parquet_writer::{
-    BatchParquetWriter, IdLessLookup, ParquetWriterConfig, StreamingParquetWriter,
+
+// Re-export from parquet_write_engine module
+pub use parquet_write_engine::{
+    BatchParquetWriter,
+    IdLessLookup,
+    ParquetWriterConfig,
+    StreamingParquetWriter,
     StreamingParquetWriterStats,
+    ParquetWriter,
 };
 // Quantization now handled by unified compute module
+pub use self::metadata_filter_strategy::{MetadataFilterAnalyzer, MetadataFilterStrategy, FilterPerformanceMetrics};
 pub use batch_operations::ColumnarBatchOperations;
 pub use columnar_schema::ColumnarSchema;
 pub use footer_cache::{CacheStats, FooterCacheConfig, ParquetFooterCache, WarmingStrategy};
@@ -188,7 +209,8 @@ pub use parquet_io_layer::{
     ReaderStatsSummary as ParquetReaderStats, RowGroupMetadata,
     SharedParquetFormatReader as ParquetIOLayer,
 };
-pub use parquet_query_engine as ParquetQueryEngine;
+// Alias for backward compatibility - module-level
+pub use columnar_query_engine as ParquetQueryEngineModule;
 
 // NEW: Export zero-copy metadata serialization components
 pub use parquet_metadata::{
@@ -256,6 +278,8 @@ pub struct ColumnarConfig {
 
     /// Optimization thresholds
     pub optimization_thresholds: OptimizationThresholds,
+    /// Filterable metadata columns (have dedicated columns in Parquet)
+    pub filterable_metadata_columns: Option<Vec<String>>,
 }
 
 // DEPRECATED: Replaced with proto-generated config
@@ -363,6 +387,19 @@ pub enum FilterCondition {
     IsNotNull(String),
 }
 
+impl FilterCondition {
+    /// Get the column name from the filter condition
+    pub fn column(&self) -> &str {
+        match self {
+            FilterCondition::Equals(col, _) => col,
+            FilterCondition::Range(col, _, _) => col,
+            FilterCondition::In(col, _) => col,
+            FilterCondition::IsNull(col) => col,
+            FilterCondition::IsNotNull(col) => col,
+        }
+    }
+}
+
 /// Row group statistics for optimization
 #[derive(Debug, Clone)]
 pub struct RowGroupStats {
@@ -436,9 +473,9 @@ pub fn create_columnar_schema(
 
     let mut fields = vec![
         // Core fields - ID is ALWAYS required for customer APIs
-        Field::new("id", DataType::Utf8, false), // NOT NULL - critical for get_by_id, delete_by_id APIs
+        Field::new(FIELD_ID, DataType::Utf8, false), // NOT NULL - critical for get_by_id, delete_by_id APIs
         Field::new(
-            "vector",
+            FIELD_VECTOR_FP32,
             DataType::FixedSizeBinary(dimension as i32 * 4),
             false,
         ),
@@ -474,6 +511,7 @@ pub fn create_columnar_schema(
             DataType::FixedSizeBinary(config.pq_segments as i32),
             true,
         ));
+        fields.push(Field::new("pq_codebook", DataType::Binary, true));
     }
 
     // Add filterable metadata columns
@@ -481,6 +519,23 @@ pub fn create_columnar_schema(
         // Infer type from first value (in production, use schema registry)
         fields.push(Field::new(column, DataType::Utf8, true));
     }
+
+    // Add extra metadata field for non-filterable metadata
+    fields.push(Field::new(
+        FIELD_EXTRA_META,
+        DataType::Map(
+            Arc::new(Field::new(
+                "entries",
+                DataType::Struct(vec![
+                    Field::new("key", DataType::Utf8, false),
+                    Field::new("value", DataType::Utf8, true),
+                ].into()),
+                false,
+            )),
+            false, // not sorted
+        ),
+        true, // nullable
+    ));
 
     Arc::new(Schema::new(fields))
 }
@@ -509,6 +564,7 @@ impl Default for ColumnarConfig {
             max_cache_size_bytes: 512 * 1024 * 1024, // 512MB
             quantization: QuantizationConfig::default(),
             optimization_thresholds: OptimizationThresholds::default(),
+            filterable_metadata_columns: None,
         }
     }
 }
@@ -537,11 +593,21 @@ impl ColumnarFactory {
         config: ColumnarConfig,
         enable_id_less_optimization: bool,
     ) -> Result<UnifiedParquetReader> {
-        if enable_id_less_optimization {
-            Ok(UnifiedParquetReader::with_id_less_mode(filesystem, config).await?)
-        } else {
-            Ok(UnifiedParquetReader::with_config(filesystem, config).await?)
-        }
+        // Note: UnifiedParquetReader now takes file_paths and dimension
+        // This factory method needs to be updated based on actual usage
+        // Convert ColumnarConfig to ReaderConfig
+        let reader_config = ReaderConfig {
+            enable_pushdown_predicates: config.enable_predicate_pushdown,
+            enable_row_group_pruning: config.enable_row_group_pruning,
+            enable_page_index: true,
+            batch_size: 1024,
+            cache_metadata: true,
+            parallel_row_groups: false, // Add missing field
+        };
+
+        // Create reader with empty paths and 0 dimension - caller will set actual values
+        let reader = UnifiedParquetReader::new(vec![], 0)?;
+        Ok(reader.with_config(reader_config))
     }
 
     /// Create streaming Parquet writer with all optimizations
@@ -654,17 +720,22 @@ mod inline_tests {
 
     #[test]
     fn test_create_columnar_schema() {
-        let config = QuantizationConfig::default();
+        // Test with quantization enabled
+        let mut config = QuantizationConfig::default();
+        config.enable_binary = true;
+        config.enable_int8 = true;
+        config.enable_pq = true;
+
         let filterable = vec!["category".to_string(), "price".to_string()];
 
         let schema = create_columnar_schema(768, &config, &filterable);
 
         // Check core fields
-        assert!(schema.field_with_name("id").is_ok());
-        assert!(schema.field_with_name("vector").is_ok());
+        assert!(schema.field_with_name(FIELD_ID).is_ok());
+        assert!(schema.field_with_name(FIELD_VECTOR_FP32).is_ok());
         assert!(schema.field_with_name("timestamp").is_ok());
 
-        // Check quantized fields
+        // Check quantized fields (only present when enabled)
         assert!(schema.field_with_name("vector_binary").is_ok());
         assert!(schema.field_with_name("vector_int8").is_ok());
         assert!(schema.field_with_name("vector_pq").is_ok());
@@ -678,11 +749,12 @@ mod inline_tests {
     fn test_quantization_config() {
         let config = QuantizationConfig::default();
 
-        assert!(config.enable_binary);
-        assert!(config.enable_int8);
-        assert!(config.enable_pq);
-        assert_eq!(config.pq_segments, 16);
-        assert_eq!(config.pq_bits, 8);
+        // Proto defaults are all false/0
+        assert!(!config.enable_binary);
+        assert!(!config.enable_int8);
+        assert!(!config.enable_pq);
+        assert_eq!(config.pq_segments, 0);
+        assert_eq!(config.pq_bits, 0);
     }
 
     #[test]
@@ -761,10 +833,10 @@ mod inline_tests {
         assert!(config.enable_row_group_pruning);
         assert_eq!(config.max_cache_size_bytes, 512 * 1024 * 1024);
 
-        // Test quantization defaults
-        assert!(config.quantization.enable_binary);
-        assert!(config.quantization.enable_int8);
-        assert!(config.quantization.enable_pq);
+        // Test quantization defaults - proto defaults are all false
+        assert!(!config.quantization.enable_binary);
+        assert!(!config.quantization.enable_int8);
+        assert!(!config.quantization.enable_pq);
 
         // Test optimization thresholds
         assert_eq!(

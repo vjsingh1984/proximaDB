@@ -106,7 +106,7 @@ use crate::core::compression::{
 };
 
 // Proxima encoding delegation
-use crate::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaScheme};
+use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
 
 /// Proxima encoding markers as constants
 mod encoding_markers {

@@ -29,7 +29,7 @@ use proximadb::compute::distance_computation::engine::{
 use proximadb::storage::engines::impls::sst::{
     SstEntry, SstableWriter,
 };
-use proximadb::storage::engines::core::formats::proxima_blocks::{
+use proximadb::storage::engines::core::formats::proximablocks::{
     ProximaDataBlock,
 };
 use proximadb::storage::persistence::filesystem::{

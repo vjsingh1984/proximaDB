@@ -62,19 +62,12 @@ pub async fn viper_optimization_example() -> Result<()> {
         ..Default::default()
     };
 
-    // Write data with all optimizations enabled
+    // Write data using HybridParquetWriter
     {
-        let mut writer = ColumnarFactory::create_streaming_writer(
-            &file_path,
-            768,
-            recommendations.use_bloom_filters,
-            recommendations.use_id_less_storage,
-            quantization,
-        )?;
-
         println!("✍️  Writing 10,000 vectors with optimizations...");
 
         // Generate sample vectors
+        let mut records = Vec::new();
         for i in 0..10_000 {
             let vector: Vec<f32> = (0..768).map(|j| ((i + j) as f32) * 0.001).collect();
 
@@ -108,16 +101,51 @@ pub async fn viper_optimization_example() -> Result<()> {
                 version: Some(1),
             };
 
-            writer.write_record(record).await?;
+            records.push(record);
         }
 
-        let (stats, _collector) = writer.finalize().await?;
+        // Use HybridParquetWriter to write data
+        let filesystem_factory = FilesystemFactory::new(FilesystemConfig::default()).await?;
+        let hybrid_config = super::hybrid_writer::HybridWriterConfig {
+            base_config: ParquetWriterConfig {
+                enable_bloom_filters: recommendations.use_bloom_filters,
+                id_less_storage: recommendations.use_id_less_storage,
+                quantization,
+                compression: crate::core::compression::CompressionAlgorithm::Snappy,
+                row_group_size: recommendations.row_group_size,
+                ..Default::default()
+            },
+            initial_mode: super::hybrid_writer::WriterMode::Batch,
+            enable_auto_switch: true,
+            mode_switch_threshold: 1000,
+            pattern_window_size: 100,
+            streaming_threshold: 100.0,
+            batch_threshold: 1000,
+            max_buffer_size: 100 * 1024 * 1024, // 100MB
+            buffer_time_limit: std::time::Duration::from_secs(30),
+            enable_concurrent_writes: false,
+            max_concurrent_writers: 1,
+            optimize_row_group_size: true,
+            min_row_group_size: 5000,
+            max_row_group_size: 50000,
+        };
+
+        let (stats, _collector) = super::hybrid_writer::HybridParquetWriter::write_with_cache(
+            &records,
+            768,
+            hybrid_config,
+            file_path.to_str().unwrap(),
+            &filesystem_factory,
+            None, // No filterable columns for this example
+            None, // No metadata collector
+        ).await?;
 
         println!("✅ VIPER Write Complete:");
         println!("  - File size: {} bytes", stats.file_size);
         println!("  - Row groups: {}", stats.total_row_groups);
         println!("  - Compression ratio: {:.2}x", stats.compression_ratio);
         println!("  - Bloom filters: {}", stats.bloom_filter_count);
+        println!("  - File path: {}", file_path.display());
     }
 
     // Read data with optimized reader
@@ -171,7 +199,7 @@ pub async fn viper_optimization_example() -> Result<()> {
         };
 
         let lookup_results = if recommendations.use_id_less_storage {
-            reader.lookup_by_implicit_ids(&test_ids).await?
+            reader.lookup_by_implicit_ids(&[file_path.to_str().unwrap().to_string()], &test_ids).await?
         } else {
             reader
                 .optimized_batch_id_lookup(&[file_path.to_str().unwrap().to_string()], &test_ids)
@@ -237,22 +265,12 @@ pub async fn nova_optimization_example() -> Result<()> {
         ..Default::default()
     };
 
-    // Write optimized for NOVA's analytical patterns
+    // Write optimized for NOVA's analytical patterns using HybridParquetWriter
     {
-        let config = ParquetWriterConfig {
-            row_group_size: recommendations.row_group_size, // Larger row groups
-            enable_bloom_filters: recommendations.use_bloom_filters,
-            id_less_storage: recommendations.use_id_less_storage,
-            quantization: quantization,
-            compression: crate::core::compression::CompressionAlgorithm::Zstd, // Better compression
-            ..Default::default()
-        };
-
-        let mut writer = StreamingParquetWriter::new(&file_path, 1024, config, None)?;
-
         println!("✍️  Writing 25,000 high-dimensional vectors...");
 
         // Generate higher dimensional vectors
+        let mut records = Vec::new();
         for i in 0..25_000 {
             let vector: Vec<f32> = (0..1024)
                 .map(|j| {
@@ -303,10 +321,44 @@ pub async fn nova_optimization_example() -> Result<()> {
                 version: Some(1),
             };
 
-            writer.write_record(record).await?;
+            records.push(record);
         }
 
-        let (stats, _collector) = writer.finalize().await?;
+        // Use HybridParquetWriter for writing
+        let filesystem_factory = FilesystemFactory::new(FilesystemConfig::default()).await?;
+        let hybrid_config = super::hybrid_writer::HybridWriterConfig {
+            base_config: ParquetWriterConfig {
+                enable_bloom_filters: recommendations.use_bloom_filters,
+                id_less_storage: recommendations.use_id_less_storage,
+                quantization,
+                compression: crate::core::compression::CompressionAlgorithm::Zstd, // Better compression
+                row_group_size: recommendations.row_group_size, // Larger row groups
+                ..Default::default()
+            },
+            initial_mode: super::hybrid_writer::WriterMode::Batch, // Use batch mode for our 25k records
+            enable_auto_switch: true,
+            mode_switch_threshold: 1000,
+            pattern_window_size: 100,
+            streaming_threshold: 100.0,
+            batch_threshold: 1000,
+            max_buffer_size: 200 * 1024 * 1024, // 200MB
+            buffer_time_limit: std::time::Duration::from_secs(60),
+            enable_concurrent_writes: false,
+            max_concurrent_writers: 1,
+            optimize_row_group_size: true,
+            min_row_group_size: 10000,
+            max_row_group_size: 100000,
+        };
+
+        let (stats, _collector) = super::hybrid_writer::HybridParquetWriter::write_with_cache(
+            &records,
+            1024,
+            hybrid_config,
+            file_path.to_str().unwrap(),
+            &filesystem_factory,
+            None, // No filterable columns for this example
+            None, // No metadata collector for NOVA in this example
+        ).await?;
 
         println!("✅ NOVA Write Complete:");
         println!(
@@ -320,6 +372,7 @@ pub async fn nova_optimization_example() -> Result<()> {
             "  - Storage savings vs uncompressed: {:.1}%",
             (1.0 - 1.0 / stats.compression_ratio) * 100.0
         );
+        println!("  - File path: {}", file_path.display());
     }
 
     // NOVA's analytical read patterns
@@ -344,11 +397,7 @@ pub async fn nova_optimization_example() -> Result<()> {
             .create_streaming_iterator(
                 file_path.to_str().unwrap(),
                 None, // No filter for full scan
-                Some(vec![
-                    "vector_pq".to_string(),     // Use PQ for initial filtering
-                    "vector_fp32".to_string(),   // FP32 for final results
-                    super::FIELD_EXTRA_META.to_string(), // Non-filterable metadata
-                ]),
+                None, // Read all columns to avoid MapArray projection issue
             )
             .await?;
 
@@ -487,14 +536,14 @@ mod tests {
     async fn test_viper_optimization_example() {
         // Test that the example runs without errors
         let result = viper_optimization_example().await;
-        assert!(result.is_ok(), "VIPER example should complete successfully");
+        assert!(result.is_ok(), "VIPER example failed: {:?}", result.err());
     }
 
     #[tokio::test]
     async fn test_nova_optimization_example() {
         // Test that the example runs without errors
         let result = nova_optimization_example().await;
-        assert!(result.is_ok(), "NOVA example should complete successfully");
+        assert!(result.is_ok(), "NOVA example failed: {:?}", result.err());
     }
 
     #[tokio::test]

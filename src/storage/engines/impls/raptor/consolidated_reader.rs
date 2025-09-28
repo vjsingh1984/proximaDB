@@ -18,7 +18,7 @@ use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistan
 use crate::core::search::results::OptimizedSearchRecord;
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
-use crate::storage::engines::core::ops::proxima_encoding::{ProximaDecoder, ProximaScheme};
+use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -292,7 +292,7 @@ impl RaptorReader {
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
         // Initialize Proxima decoder based on config
-        let proxima_scheme = if config.use_proxima_encoding {
+        let proxima_scheme = if config.use_proximaencoder {
             ProximaScheme::BitPacked { bits: 32 }
         } else {
             ProximaScheme::BitPacked { bits: 32 } // Default to raw
@@ -1454,7 +1454,7 @@ impl RaptorReader {
             min_distance: 0.0,
             max_distance: 2.0,
             compression:
-                crate::storage::engines::core::ops::proxima_encoding::ProximaScheme::BitPacked {
+                crate::storage::engines::core::ops::proximaencoder::ProximaScheme::BitPacked {
                     bits: 8,
                 },
             compressed_size: 64000,
@@ -3564,7 +3564,7 @@ impl RaptorReader {
         let mut cursor = std::io::Cursor::new(&vector_data);
 
         // Import Proxima decoder
-        use crate::storage::engines::core::ops::proxima_encoding::{ProximaDecoder, ProximaScheme};
+        use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
         let proxima_decoder = ProximaDecoder::new(ProximaScheme::BitPacked { bits: 16 });
 
         // Read columnar vectors (transposed format)

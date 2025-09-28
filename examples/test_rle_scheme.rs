@@ -1,4 +1,4 @@
-use proximadb::storage::engines::core::ops::proxima_encoding::*;
+use proximadb::storage::engines::core::ops::proximaencoder::*;
 
 fn main() {
     println!("Testing RLE Scheme Selection\n");

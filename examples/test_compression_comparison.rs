@@ -1,4 +1,4 @@
-use proximadb::storage::engines::core::formats::proxima_blocks::{
+use proximadb::storage::engines::core::formats::proximablocks::{
     BlockCompressionConfig, VectorEncodingLayout, ProximaDataBlock
 };
 use proximadb::core::compression::CompressionAlgorithm;

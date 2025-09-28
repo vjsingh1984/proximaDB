@@ -17,7 +17,7 @@ use crate::index::axis::clustering::{
     ReusableClusteringEngine,
 };
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaScheme};
+use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -40,7 +40,7 @@ impl RaptorCompactor {
         filesystem: Arc<dyn FileSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
-        let proxima_scheme = if config.use_proxima_encoding {
+        let proxima_scheme = if config.use_proximaencoder {
             ProximaScheme::BitPacked { bits: 32 }
         } else {
             ProximaScheme::BitPacked { bits: 32 }

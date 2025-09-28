@@ -57,13 +57,11 @@ impl MetadataSource for VIPERParquetMetadataSource {
 impl VIPERParquetMetadataSource {
     /// Create metadata source by reading parquet file metadata
     pub async fn from_parquet_file(file_path: &str) -> Result<Self> {
-        let filesystem_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem_factory = crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
+        // For metadata reading, dimension is not needed - Parquet has schema
         let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
-            Arc::new(filesystem_factory)
-        );
+            vec![file_path.to_string()],
+            0  // Dimension not needed for metadata operations
+        )?;
         
         // Read all records to build metadata cache (for now - could be optimized)
         // TODO: Implement proper batch reading for large files
@@ -154,6 +152,7 @@ impl VIPERParquetMetadataSource {
 /// VIPER-specific index-based data reader
 pub struct VIPERIndexBasedReader {
     filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    dimension: usize, // Store dimension for reader
 }
 
 impl VIPERIndexBasedReader {
@@ -163,21 +162,29 @@ impl VIPERIndexBasedReader {
         let filesystem_factory = tokio::runtime::Handle::current()
             .block_on(crate::storage::persistence::filesystem::FilesystemFactory::new(filesystem_config))
             .expect("Failed to create filesystem factory");
-        
+
         Self {
             filesystem_factory: Arc::new(filesystem_factory),
+            dimension: 0, // Will be detected from actual data
         }
     }
-    
+
+    pub fn with_dimension(mut self, dimension: usize) -> Self {
+        self.dimension = dimension;
+        self
+    }
+
     /// Selectively read specific rows from parquet file using indices
     async fn read_rows_by_indices(
         &self,
         file_path: &str,
         indices: &[usize],
     ) -> Result<Vec<VectorRecord>> {
+        // For reading records, we don't need dimension - Parquet has the schema
         let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
-            Arc::clone(&self.filesystem_factory)
-        );
+            vec![file_path.to_string()],
+            0  // Dimension not needed, will be read from Parquet schema
+        )?;
         
         // For now, read all and filter by indices
         // TODO: Implement true selective reading at parquet level
@@ -196,9 +203,11 @@ impl VIPERIndexBasedReader {
     
     /// Read full parquet file
     async fn read_full_file(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+        // For reading records, we don't need dimension - Parquet has the schema
         let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
-            Arc::clone(&self.filesystem_factory)
-        );
+            vec![file_path.to_string()],
+            0  // Dimension not needed, will be read from Parquet schema
+        )?;
         
         // TODO: Implement proper batch reading
         Ok(Vec::new()) // Placeholder

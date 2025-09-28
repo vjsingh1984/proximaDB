@@ -13,7 +13,7 @@ use super::config::RaptorConfig;
 use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::proxima_encoding::ProximaEncoder;
+use crate::storage::engines::core::ops::proximaencoder::ProximaEncoder;
 use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
 use crate::storage::engines::core::formats::proximablocks::{BlockCompressionConfig, VectorEncodingLayout};
 use crate::core::compression::CompressionAlgorithm;

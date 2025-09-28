@@ -1,4 +1,4 @@
-use proximadb::storage::engines::core::ops::proxima_encoding::{ProximaEncoder, ProximaDecoder, ProximaScheme};
+use proximadb::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaDecoder, ProximaScheme};
 
 fn main() -> anyhow::Result<()> {
     // Create test data - first 64 values
