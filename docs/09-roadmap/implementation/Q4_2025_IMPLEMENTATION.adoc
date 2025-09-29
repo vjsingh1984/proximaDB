@@ -1,438 +1,466 @@
-= Q4 2025 Implementation Guide: AutoML Integration & LLM Support
+= Q4 2025 Implementation Guide: AutoML Integration & LLM Support (Corrected)
 :toc: left
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
 
 [.lead]
-**Detailed implementation instructions for Q4 2025 features: AutoML Integration and Native LLM Support**
+**Corrected implementation for Q4 2025 features aligned with ProximaDB's architecture**
 
 == AutoML Integration
 
 === Overview
-Implement automated model optimization including automatic index selection, dynamic quantization level selection, workload-aware storage engine selection, and performance prediction.
+Implement automated optimization that works within ProximaDB's collection-bound engine architecture, leveraging existing infrastructure.
+
+=== Key Architecture Principles
+* Collections remain bound to their engines - no cross-engine migration
+* Use existing UnifiedMetrics for workload analysis
+* Leverage CollectionConfig for optimization decisions
+* Integrate with UnifiedCache for performance tracking
+* Build on existing quantization and index infrastructure
 
 === Implementation Steps
 
-==== Step 1: Create AutoML Framework
-Location: `src/automl/mod.rs`
+==== Step 1: Workload-Aware Optimization
+File: `src/automl/workload/collection_optimizer.rs`
 
 [source,rust]
 ----
-// Module structure
-src/automl/
-├── optimizer/
-│   ├── mod.rs              // Main optimizer
-│   ├── index_selector.rs   // Automatic index selection
-│   ├── quantization_selector.rs  // Quantization optimization
-│   ├── engine_selector.rs  // Storage engine selection
-│   └── hyperparameter.rs   // Hyperparameter tuning
-├── workload/
-│   ├── mod.rs              // Workload analysis
-│   ├── pattern_detector.rs // Query pattern detection
-│   ├── predictor.rs        // Performance prediction
-│   └── profiler.rs         // Workload profiling
-├── models/
-│   ├── mod.rs              // ML models
-│   ├── cost_model.rs       // Cost prediction
-│   ├── latency_model.rs    // Latency prediction
-│   └── throughput_model.rs // Throughput prediction
-└── learning/
-    ├── mod.rs              // Online learning
-    ├── feedback.rs         // Feedback loop
-    └── adaptation.rs       // Dynamic adaptation
-----
+use crate::metrics::unified::UnifiedMetrics;
+use crate::storage::cache::orchestrator::CacheOrchestrator;
+use crate::models::collection::CollectionConfig;
+use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 
-==== Step 2: Implement Workload Analyzer
-File: `src/automl/workload/mod.rs`
-
-[source,rust]
-----
-use std::collections::VecDeque;
-
-#[derive(Clone, Debug)]
-pub struct WorkloadAnalyzer {
-    query_history: Arc<RwLock<VecDeque<QueryTrace>>>,
-    pattern_detector: Arc<PatternDetector>,
-    statistics: Arc<RwLock<WorkloadStatistics>>,
-    ml_predictor: Arc<PerformancePredictor>,
+/// AutoML optimizer that works within collection boundaries
+pub struct CollectionOptimizer {
+    metrics: Arc<UnifiedMetrics>,
+    cache: Arc<CacheOrchestrator>,
+    quantization_engine: Arc<UnifiedQuantizationEngine>,
+    optimization_history: Arc<RwLock<HashMap<String, OptimizationHistory>>>,
 }
 
-#[derive(Clone, Debug)]
-pub struct QueryTrace {
-    pub query_id: String,
-    pub timestamp: DateTime<Utc>,
-    pub query_type: QueryType,
-    pub vector_dimension: usize,
-    pub top_k: usize,
-    pub filters: Vec<MetadataFilter>,
-    pub latency_ms: f32,
-    pub records_scanned: usize,
-    pub cache_hits: usize,
-    pub engine_used: EngineType,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OptimizationHistory {
+    pub collection: String,
+    pub engine_type: EngineType,  // Fixed - cannot change
+    pub optimizations_applied: Vec<OptimizationRecord>,
+    pub performance_metrics: PerformanceMetrics,
 }
 
-#[derive(Clone, Debug)]
-pub struct WorkloadStatistics {
-    pub query_rate: f64,
-    pub avg_latency: f32,
-    pub p99_latency: f32,
-    pub read_write_ratio: f32,
-    pub hot_keys: Vec<String>,
-    pub common_filters: HashMap<String, usize>,
-    pub peak_hours: Vec<u8>,
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OptimizationRecord {
+    pub timestamp: i64,
+    pub optimization_type: OptimizationType,
+    pub parameters: HashMap<String, Value>,
+    pub impact: PerformanceImpact,
 }
 
-impl WorkloadAnalyzer {
-    pub async fn analyze(&self) -> Result<WorkloadProfile> {
-        let history = self.query_history.read().await;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum OptimizationType {
+    IndexCreation { index_type: String },
+    QuantizationEnabled { levels: Vec<String> },
+    CacheStrategy { strategy: String },
+    FlushThreshold { new_threshold: usize },
+    CompactionSchedule { schedule: String },
+}
 
-        // Detect query patterns
-        let patterns = self.pattern_detector.detect_patterns(&history)?;
-
-        // Calculate statistics
-        let stats = self.calculate_statistics(&history)?;
-
-        // Predict future workload
-        let predictions = self.ml_predictor.predict_next_hour(&history).await?;
-
-        Ok(WorkloadProfile {
-            patterns,
-            statistics: stats,
-            predictions,
-            recommendations: self.generate_recommendations(&patterns, &stats)?,
+impl CollectionOptimizer {
+    /// Analyze collection and suggest optimizations
+    pub async fn analyze_collection(
+        &self,
+        collection_config: &CollectionConfig,
+    ) -> Result<OptimizationPlan> {
+        self.metrics.record_operation("automl.analyze_collection").await;
+        
+        // Get workload statistics from UnifiedMetrics
+        let stats = self.get_workload_stats(&collection_config.name).await?;
+        
+        // Analyze within engine constraints
+        let mut recommendations = Vec::new();
+        
+        // Index optimization (within engine)
+        if let Some(index_rec) = self.analyze_index_needs(&stats, collection_config).await? {
+            recommendations.push(index_rec);
+        }
+        
+        // Quantization optimization
+        if let Some(quant_rec) = self.analyze_quantization_needs(&stats, collection_config).await? {
+            recommendations.push(quant_rec);
+        }
+        
+        // Cache optimization
+        if let Some(cache_rec) = self.analyze_cache_patterns(&stats, collection_config).await? {
+            recommendations.push(cache_rec);
+        }
+        
+        // Engine-specific tuning
+        if let Some(engine_rec) = self.tune_engine_parameters(&stats, collection_config).await? {
+            recommendations.push(engine_rec);
+        }
+        
+        Ok(OptimizationPlan {
+            collection: collection_config.name.clone(),
+            engine_type: collection_config.engine_type,  // Cannot change
+            recommendations,
+            estimated_improvement: self.estimate_improvement(&recommendations),
         })
     }
 
-    pub async fn track_query(&self, trace: QueryTrace) {
-        let mut history = self.query_history.write().await;
-
-        // Keep sliding window of last 10,000 queries
-        if history.len() >= 10000 {
-            history.pop_front();
+    async fn get_workload_stats(&self, collection: &str) -> Result<WorkloadStats> {
+        // Query UnifiedMetrics for collection statistics
+        let cache_key = format!("workload_stats:{}", collection);
+        
+        if let Some(cached) = self.cache.get::<WorkloadStats>(&cache_key).await? {
+            return Ok(cached);
         }
-        history.push_back(trace.clone());
-
-        // Update statistics incrementally
-        self.update_statistics(&trace).await;
-
-        // Trigger optimization if patterns change
-        if self.detect_pattern_change(&trace).await {
-            self.trigger_optimization().await;
-        }
+        
+        let stats = WorkloadStats {
+            query_rate: self.metrics.get_rate("search", collection).await?,
+            insert_rate: self.metrics.get_rate("insert", collection).await?,
+            avg_latency: self.metrics.get_avg("latency", collection).await?,
+            p99_latency: self.metrics.get_percentile("latency", collection, 99.0).await?,
+            cache_hit_rate: self.metrics.get_rate("cache_hit", collection).await?,
+            common_filters: self.analyze_filter_patterns(collection).await?,
+            vector_dimensions_used: self.analyze_dimension_usage(collection).await?,
+            time_patterns: self.analyze_temporal_patterns(collection).await?,
+        };
+        
+        self.cache.put(&cache_key, &stats).await?;
+        Ok(stats)
     }
 
-    fn generate_recommendations(
+    async fn analyze_index_needs(
         &self,
-        patterns: &[QueryPattern],
-        stats: &WorkloadStatistics,
-    ) -> Result<Vec<Recommendation>> {
-        let mut recommendations = Vec::new();
-
-        // Index recommendations
-        for pattern in patterns {
-            if pattern.frequency > 100 && pattern.avg_latency > 50.0 {
-                recommendations.push(Recommendation::CreateIndex {
-                    index_type: self.select_index_type(pattern),
-                    estimated_improvement: self.estimate_improvement(pattern),
-                });
+        stats: &WorkloadStats,
+        config: &CollectionConfig,
+    ) -> Result<Option<Recommendation>> {
+        // Check if collection already has indexes
+        let existing_indexes = &config.index_config.indexes;
+        
+        // Analyze query patterns
+        let query_patterns = self.extract_query_patterns(stats);
+        
+        // Recommend index only if beneficial
+        if stats.query_rate > 100.0 && stats.p99_latency > 50.0 {
+            // Check which index type would work best with the engine
+            let recommended_index = match config.engine_type {
+                EngineType::SST | EngineType::SWIFT => {
+                    // Row-based engines benefit from HNSW
+                    if !existing_indexes.contains(&"hnsw".to_string()) {
+                        Some("hnsw")
+                    } else {
+                        None
+                    }
+                },
+                EngineType::VIPER | EngineType::NOVA => {
+                    // Columnar engines benefit from IVF
+                    if !existing_indexes.contains(&"ivf".to_string()) {
+                        Some("ivf")
+                    } else {
+                        None
+                    }
+                },
+                EngineType::RAPTOR => {
+                    // Adaptive engine can use either
+                    if stats.query_rate > stats.insert_rate * 10.0 {
+                        Some("hnsw")  // Read-heavy
+                    } else {
+                        Some("lsh")   // Balanced
+                    }
+                },
+                EngineType::HELIX => {
+                    // Spatial engine benefits from spatial indexes
+                    Some("spatial_hnsw")
+                },
+            };
+            
+            if let Some(index_type) = recommended_index {
+                return Ok(Some(Recommendation {
+                    type_: RecommendationType::CreateIndex,
+                    description: format!("Create {} index for improved query performance", index_type),
+                    config_changes: hashmap!{
+                        "index.type" => Value::String(index_type.to_string()),
+                        "index.parameters" => self.get_index_parameters(index_type, stats),
+                    },
+                    estimated_impact: PerformanceImpact {
+                        latency_reduction: 0.5,  // 50% reduction
+                        throughput_increase: 2.0,  // 2x throughput
+                    },
+                }));
             }
         }
-
-        // Quantization recommendations
-        if stats.read_write_ratio > 10.0 {
-            recommendations.push(Recommendation::EnableQuantization {
-                levels: vec![QuantizationLevel::Binary, QuantizationLevel::Int8],
-                reason: "Read-heavy workload detected".to_string(),
-            });
-        }
-
-        // Engine recommendations
-        if self.should_change_engine(stats) {
-            recommendations.push(Recommendation::ChangeEngine {
-                from: self.current_engine(),
-                to: self.recommended_engine(stats),
-                reason: self.engine_change_reason(stats),
-            });
-        }
-
-        Ok(recommendations)
+        
+        Ok(None)
     }
-}
 
-pub struct PatternDetector {
-    clustering_model: Arc<DBSCANModel>,
-    sequence_detector: Arc<SequenceDetector>,
-}
-
-impl PatternDetector {
-    pub fn detect_patterns(&self, history: &VecDeque<QueryTrace>) -> Result<Vec<QueryPattern>> {
-        // Cluster queries by similarity
-        let clusters = self.clustering_model.cluster(history)?;
-
-        // Detect sequential patterns
-        let sequences = self.sequence_detector.find_sequences(history)?;
-
-        // Combine into patterns
-        let mut patterns = Vec::new();
-
-        for cluster in clusters {
-            patterns.push(QueryPattern {
-                id: generate_pattern_id(),
-                query_type: cluster.dominant_type,
-                frequency: cluster.size,
-                avg_latency: cluster.avg_latency,
-                characteristics: cluster.characteristics,
-            });
+    async fn analyze_quantization_needs(
+        &self,
+        stats: &WorkloadStats,
+        config: &CollectionConfig,
+    ) -> Result<Option<Recommendation>> {
+        // Check if quantization is already enabled
+        if config.quantization.enabled {
+            // Possibly optimize quantization levels
+            return self.optimize_quantization_levels(stats, config).await;
         }
-
-        Ok(patterns)
+        
+        // Recommend quantization for read-heavy workloads
+        if stats.query_rate > stats.insert_rate * 5.0 {
+            // Determine best quantization levels based on accuracy requirements
+            let levels = if stats.avg_latency > 100.0 {
+                // Need aggressive optimization
+                vec!["binary", "int8"]
+            } else if stats.avg_latency > 50.0 {
+                // Moderate optimization
+                vec!["int8", "pq8"]
+            } else {
+                // Light optimization
+                vec!["pq16"]
+            };
+            
+            return Ok(Some(Recommendation {
+                type_: RecommendationType::EnableQuantization,
+                description: "Enable quantization for faster search".to_string(),
+                config_changes: hashmap!{
+                    "quantization.enabled" => Value::Bool(true),
+                    "quantization.levels" => Value::Array(levels.iter().map(|l| Value::String(l.to_string())).collect()),
+                    "quantization.precompute" => Value::Bool(true),
+                },
+                estimated_impact: PerformanceImpact {
+                    latency_reduction: 0.7,
+                    throughput_increase: 3.0,
+                },
+            }));
+        }
+        
+        Ok(None)
     }
-}
-----
 
-==== Step 3: Implement Automatic Index Selection
-File: `src/automl/optimizer/index_selector.rs`
+    async fn analyze_cache_patterns(
+        &self,
+        stats: &WorkloadStats,
+        config: &CollectionConfig,
+    ) -> Result<Option<Recommendation>> {
+        // Analyze cache effectiveness
+        if stats.cache_hit_rate < 0.5 && stats.query_rate > 50.0 {
+            // Poor cache hit rate, analyze why
+            let cache_analysis = self.analyze_cache_misses(&config.name).await?;
+            
+            let recommendation = match cache_analysis.miss_reason {
+                CacheMissReason::CacheTooSmall => {
+                    Recommendation {
+                        type_: RecommendationType::AdjustCache,
+                        description: "Increase cache size for better hit rate".to_string(),
+                        config_changes: hashmap!{
+                            "cache.size_mb" => Value::Number(cache_analysis.recommended_size),
+                        },
+                        estimated_impact: PerformanceImpact {
+                            latency_reduction: 0.3,
+                            throughput_increase: 1.5,
+                        },
+                    }
+                },
+                CacheMissReason::PoorEvictionPolicy => {
+                    Recommendation {
+                        type_: RecommendationType::AdjustCache,
+                        description: "Switch to adaptive cache eviction".to_string(),
+                        config_changes: hashmap!{
+                            "cache.eviction_policy" => Value::String("adaptive".to_string()),
+                        },
+                        estimated_impact: PerformanceImpact {
+                            latency_reduction: 0.2,
+                            throughput_increase: 1.3,
+                        },
+                    }
+                },
+                _ => return Ok(None),
+            };
+            
+            return Ok(Some(recommendation));
+        }
+        
+        Ok(None)
+    }
 
-[source,rust]
-----
-pub struct AutoIndexSelector {
-    workload_analyzer: Arc<WorkloadAnalyzer>,
-    cost_model: Arc<CostModel>,
-    index_builder: Arc<IndexBuilder>,
-}
+    async fn tune_engine_parameters(
+        &self,
+        stats: &WorkloadStats,
+        config: &CollectionConfig,
+    ) -> Result<Option<Recommendation>> {
+        // Engine-specific tuning
+        match config.engine_type {
+            EngineType::SST => {
+                // Tune SST flush thresholds
+                if stats.insert_rate > 100.0 {
+                    return Ok(Some(Recommendation {
+                        type_: RecommendationType::TuneEngine,
+                        description: "Adjust SST flush threshold for write-heavy workload".to_string(),
+                        config_changes: hashmap!{
+                            "engine.sst.flush_threshold" => Value::Number(10000),
+                            "engine.sst.compaction_interval" => Value::Number(300),
+                        },
+                        estimated_impact: PerformanceImpact {
+                            latency_reduction: 0.1,
+                            throughput_increase: 1.2,
+                        },
+                    }));
+                }
+            },
+            EngineType::VIPER => {
+                // Tune VIPER column compression
+                if stats.query_rate > stats.insert_rate * 10.0 {
+                    return Ok(Some(Recommendation {
+                        type_: RecommendationType::TuneEngine,
+                        description: "Enable aggressive compression for read-heavy workload".to_string(),
+                        config_changes: hashmap!{
+                            "engine.viper.compression" => Value::String("zstd".to_string()),
+                            "engine.viper.compression_level" => Value::Number(9),
+                        },
+                        estimated_impact: PerformanceImpact {
+                            latency_reduction: 0.0,  // No latency improvement
+                            throughput_increase: 1.1,  // Slight throughput gain from reduced I/O
+                        },
+                    }));
+                }
+            },
+            // Add other engine-specific optimizations
+            _ => {}
+        }
+        
+        Ok(None)
+    }
 
-impl AutoIndexSelector {
-    pub async fn optimize_indexes(
+    /// Apply optimization plan
+    pub async fn apply_optimization(
+        &self,
+        plan: &OptimizationPlan,
+        collection_service: &CollectionService,
+    ) -> Result<()> {
+        self.metrics.record_operation("automl.apply_optimization").await;
+        
+        for recommendation in &plan.recommendations {
+            // Apply configuration changes
+            let mut config = collection_service.get_collection_config(&plan.collection).await?;
+            
+            // TODO: Apply recommendation changes to config
+            // This would involve updating the collection configuration
+            // based on the recommendation.config_changes
+            
+            // Track optimization
+            self.record_optimization(&plan.collection, recommendation).await?;
+        }
+        
+        Ok(())
+    }
+
+    async fn record_optimization(
         &self,
         collection: &str,
-        constraints: IndexConstraints,
-    ) -> Result<IndexPlan> {
-        // Analyze workload
-        let profile = self.workload_analyzer.analyze().await?;
-
-        // Generate candidate indexes
-        let candidates = self.generate_candidates(&profile, collection)?;
-
-        // Evaluate each candidate
-        let mut evaluated = Vec::new();
-        for candidate in candidates {
-            let benefit = self.evaluate_index(&candidate, &profile).await?;
-            evaluated.push((candidate, benefit));
-        }
-
-        // Select optimal set within constraints
-        let selected = self.select_optimal_set(evaluated, constraints)?;
-
-        Ok(IndexPlan {
-            indexes_to_create: selected.to_create,
-            indexes_to_drop: selected.to_drop,
-            estimated_improvement: selected.total_benefit,
-            implementation_steps: self.generate_steps(&selected),
-        })
-    }
-
-    async fn evaluate_index(
-        &self,
-        index: &CandidateIndex,
-        profile: &WorkloadProfile,
-    ) -> Result<IndexBenefit> {
-        // Estimate query improvement
-        let query_improvement = self.cost_model
-            .estimate_query_improvement(index, &profile.patterns)
-            .await?;
-
-        // Calculate storage cost
-        let storage_cost = self.estimate_storage_cost(index)?;
-
-        // Calculate maintenance cost
-        let maintenance_cost = self.estimate_maintenance_cost(index, profile)?;
-
-        Ok(IndexBenefit {
-            query_speedup: query_improvement,
-            storage_overhead: storage_cost,
-            maintenance_overhead: maintenance_cost,
-            net_benefit: query_improvement - storage_cost * 0.1 - maintenance_cost * 0.2,
-        })
-    }
-
-    fn select_optimal_set(
-        &self,
-        candidates: Vec<(CandidateIndex, IndexBenefit)>,
-        constraints: IndexConstraints,
-    ) -> Result<OptimalIndexSet> {
-        // Knapsack problem: maximize benefit within storage constraint
-        let mut dp = vec![vec![0.0; constraints.max_storage_mb + 1]; candidates.len() + 1];
-
-        for i in 1..=candidates.len() {
-            let (index, benefit) = &candidates[i - 1];
-            let size = index.estimated_size_mb;
-
-            for w in 0..=constraints.max_storage_mb {
-                if size <= w {
-                    dp[i][w] = dp[i - 1][w].max(
-                        dp[i - 1][w - size] + benefit.net_benefit
-                    );
-                } else {
-                    dp[i][w] = dp[i - 1][w];
-                }
-            }
-        }
-
-        // Backtrack to find selected indexes
-        let mut selected = Vec::new();
-        let mut w = constraints.max_storage_mb;
-
-        for i in (1..=candidates.len()).rev() {
-            if dp[i][w] != dp[i - 1][w] {
-                selected.push(candidates[i - 1].0.clone());
-                w -= candidates[i - 1].0.estimated_size_mb;
-            }
-        }
-
-        Ok(OptimalIndexSet {
-            to_create: selected,
-            to_drop: self.find_obsolete_indexes(&selected)?,
-            total_benefit: dp[candidates.len()][constraints.max_storage_mb],
-        })
-    }
-
-    pub async fn auto_create_index(&self, index: CandidateIndex) -> Result<()> {
-        match index.index_type {
-            IndexType::HNSW => {
-                self.index_builder.build_hnsw(HNSWConfig {
-                    collection: index.collection,
-                    m: 16,
-                    ef_construction: 200,
-                    max_elements: 1_000_000,
-                }).await?;
-            },
-            IndexType::IVF => {
-                self.index_builder.build_ivf(IVFConfig {
-                    collection: index.collection,
-                    n_lists: 1024,
-                    n_probes: 10,
-                }).await?;
-            },
-            IndexType::LSH => {
-                self.index_builder.build_lsh(LSHConfig {
-                    collection: index.collection,
-                    n_tables: 10,
-                    n_bits: 16,
-                }).await?;
-            },
-        }
-
+        recommendation: &Recommendation,
+    ) -> Result<()> {
+        let record = OptimizationRecord {
+            timestamp: Utc::now().timestamp_millis(),
+            optimization_type: self.recommendation_to_type(recommendation),
+            parameters: recommendation.config_changes.clone(),
+            impact: recommendation.estimated_impact.clone(),
+        };
+        
+        let mut history = self.optimization_history.write().await;
+        history.entry(collection.to_string())
+            .or_insert_with(|| OptimizationHistory {
+                collection: collection.to_string(),
+                engine_type: EngineType::SST,  // Will be set properly
+                optimizations_applied: Vec::new(),
+                performance_metrics: PerformanceMetrics::default(),
+            })
+            .optimizations_applied.push(record);
+        
         Ok(())
     }
 }
-----
 
-==== Step 4: Implement Dynamic Quantization Selection
-File: `src/automl/optimizer/quantization_selector.rs`
-
-[source,rust]
-----
-pub struct AutoQuantizationSelector {
-    quality_evaluator: Arc<QualityEvaluator>,
-    performance_model: Arc<PerformanceModel>,
-    storage_calculator: Arc<StorageCalculator>,
+/// Automatic quantization level selection
+pub struct AdaptiveQuantizationSelector {
+    cache: Arc<CacheOrchestrator>,
+    metrics: Arc<UnifiedMetrics>,
+    quantization_engine: Arc<UnifiedQuantizationEngine>,
 }
 
-impl AutoQuantizationSelector {
-    pub async fn select_optimal_quantization(
+impl AdaptiveQuantizationSelector {
+    /// Select optimal quantization level for a query
+    pub async fn select_level(
         &self,
-        collection: &str,
-        requirements: QuantizationRequirements,
-    ) -> Result<QuantizationConfig> {
-        // Sample vectors for quality evaluation
-        let sample_vectors = self.sample_vectors(collection, 1000).await?;
-
-        // Evaluate each quantization level
-        let mut evaluations = Vec::new();
-
-        for level in &[
-            QuantizationLevel::Binary,
-            QuantizationLevel::Int8,
-            QuantizationLevel::PQ(4),
-            QuantizationLevel::PQ(8),
-            QuantizationLevel::PQ(16),
-        ] {
-            let eval = self.evaluate_level(
-                &sample_vectors,
-                level,
-                &requirements,
-            ).await?;
-            evaluations.push((*level, eval));
+        query: &SearchRequest,
+        collection_config: &CollectionConfig,
+    ) -> Result<Option<QuantizationLevel>> {
+        // Check if quantization is enabled
+        if !collection_config.quantization.enabled {
+            return Ok(None);
         }
-
-        // Select best configuration
-        let selected = self.select_best_configuration(evaluations, requirements)?;
-
-        Ok(QuantizationConfig {
-            enabled: true,
-            levels: selected.levels,
-            precompute: selected.precompute,
-            adaptive: true,
-            quality_threshold: requirements.min_recall,
-        })
-    }
-
-    async fn evaluate_level(
-        &self,
-        vectors: &[Vec<f32>],
-        level: &QuantizationLevel,
-        requirements: &QuantizationRequirements,
-    ) -> Result<QuantizationEvaluation> {
-        // Measure quality loss
-        let quality_metrics = self.quality_evaluator
-            .evaluate(vectors, level)
-            .await?;
-
-        // Predict performance
-        let performance = self.performance_model
-            .predict_quantized_performance(vectors.len(), level)
-            .await?;
-
-        // Calculate storage
-        let storage = self.storage_calculator
-            .calculate_storage(vectors.len(), vectors[0].len(), level)?;
-
-        Ok(QuantizationEvaluation {
-            level: *level,
-            recall_at_10: quality_metrics.recall_at_10,
-            recall_at_100: quality_metrics.recall_at_100,
-            search_speedup: performance.speedup_factor,
-            storage_reduction: storage.reduction_percentage,
-            memory_usage: storage.memory_bytes,
-        })
-    }
-
-    pub async fn adaptive_quantization(
-        &self,
-        query: &SearchQuery,
-    ) -> Result<QuantizationLevel> {
-        // Predict query difficulty
-        let difficulty = self.predict_query_difficulty(query).await?;
-
-        // Select quantization based on difficulty and requirements
-        match difficulty {
+        
+        // Check for precomputed quantization
+        if collection_config.quantization.precomputed {
+            // Use precomputed levels based on query characteristics
+            return self.select_precomputed_level(query, collection_config).await;
+        }
+        
+        // Dynamic selection based on query difficulty
+        let difficulty = self.estimate_query_difficulty(query).await?;
+        
+        let level = match difficulty {
             QueryDifficulty::Easy => {
-                // Use aggressive quantization for easy queries
-                Ok(QuantizationLevel::Binary)
+                // Use aggressive quantization
+                Some(QuantizationLevel::Binary)
             },
             QueryDifficulty::Medium => {
-                // Balance quality and speed
-                Ok(QuantizationLevel::Int8)
+                // Balance speed and accuracy
+                Some(QuantizationLevel::Int8)
             },
             QueryDifficulty::Hard => {
-                // Prioritize quality for hard queries
+                // Prioritize accuracy
                 if query.top_k <= 10 {
-                    Ok(QuantizationLevel::PQ(16))
+                    Some(QuantizationLevel::PQ8)
                 } else {
-                    Ok(QuantizationLevel::PQ(32))
+                    None  // Use full precision
                 }
             },
+        };
+        
+        // Record decision for learning
+        self.record_quantization_decision(query, level.clone()).await?;
+        
+        Ok(level)
+    }
+
+    async fn select_precomputed_level(
+        &self,
+        query: &SearchRequest,
+        config: &CollectionConfig,
+    ) -> Result<Option<QuantizationLevel>> {
+        // Check which precomputed levels are available
+        let available_levels = &config.quantization.precomputed_levels;
+        
+        // Select based on query requirements
+        if query.top_k <= 10 && available_levels.contains(&"binary".to_string()) {
+            Ok(Some(QuantizationLevel::Binary))
+        } else if query.top_k <= 100 && available_levels.contains(&"int8".to_string()) {
+            Ok(Some(QuantizationLevel::Int8))
+        } else if available_levels.contains(&"pq8".to_string()) {
+            Ok(Some(QuantizationLevel::PQ8))
+        } else {
+            Ok(None)
+        }
+    }
+
+    // TODO: Implement ML-based difficulty estimation when ready
+    async fn estimate_query_difficulty(&self, query: &SearchRequest) -> Result<QueryDifficulty> {
+        // For now, use heuristics
+        if query.top_k <= 10 && query.metadata_filter.is_none() {
+            Ok(QueryDifficulty::Easy)
+        } else if query.top_k <= 100 {
+            Ok(QueryDifficulty::Medium)
+        } else {
+            Ok(QueryDifficulty::Hard)
         }
     }
 }
@@ -441,636 +469,534 @@ impl AutoQuantizationSelector {
 == LLM Integration
 
 === Overview
-Implement native LLM support including built-in embedding generation, RAG support, semantic caching, and integration with major LLM providers.
+Implement LLM support that works with ProximaDB's collection architecture, using collections for embeddings and cache.
 
 === Implementation Steps
 
-==== Step 1: Create LLM Framework
-File: `src/llm/mod.rs`
+==== Step 1: Embedding Service Integration
+File: `src/llm/embeddings/proximadb_embeddings.rs`
 
 [source,rust]
 ----
-// Module structure
-src/llm/
-├── providers/
-│   ├── mod.rs           // Provider traits
-│   ├── openai.rs        // OpenAI integration
-│   ├── anthropic.rs     // Anthropic integration
-│   ├── google.rs        // Google AI integration
-│   └── local.rs         // Local model support
-├── embeddings/
-│   ├── mod.rs           // Embedding generation
-│   ├── batch.rs         // Batch processing
-│   └── cache.rs         // Embedding cache
-├── rag/
-│   ├── mod.rs           // RAG pipeline
-│   ├── retriever.rs     // Document retrieval
-│   ├── augmenter.rs     // Context augmentation
-│   └── generator.rs     // Response generation
-└── cache/
-    ├── mod.rs           // Semantic caching
-    ├── similarity.rs    // Cache similarity
-    └── eviction.rs      // Cache eviction
-----
+use crate::services::collection_service::CollectionService;
+use crate::proto::proximadb::VectorRecord;
 
-==== Step 2: Implement Embedding Service
-File: `src/llm/embeddings/mod.rs`
-
-[source,rust]
-----
-use async_trait::async_trait;
+/// Embedding service that uses ProximaDB collections
+pub struct ProximaDBEmbeddingService {
+    collection_service: Arc<CollectionService>,
+    cache: Arc<CacheOrchestrator>,
+    metrics: Arc<UnifiedMetrics>,
+    providers: HashMap<String, Arc<dyn EmbeddingProvider>>,
+}
 
 #[async_trait]
 pub trait EmbeddingProvider: Send + Sync {
-    async fn generate_embedding(&self, text: &str) -> Result<Vec<f32>>;
+    async fn generate(&self, text: &str) -> Result<Vec<f32>>;
     async fn generate_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
     fn dimension(&self) -> usize;
     fn model_name(&self) -> &str;
 }
 
-pub struct UnifiedEmbeddingService {
-    providers: HashMap<String, Arc<dyn EmbeddingProvider>>,
-    default_provider: String,
-    cache: Arc<EmbeddingCache>,
-    batch_processor: Arc<BatchProcessor>,
-}
-
-impl UnifiedEmbeddingService {
-    pub async fn embed_text(
-        &self,
-        text: &str,
-        options: EmbeddingOptions,
-    ) -> Result<EmbeddedText> {
-        // Check cache first
-        let cache_key = self.generate_cache_key(text, &options);
-        if let Some(cached) = self.cache.get(&cache_key).await? {
-            return Ok(cached);
-        }
-
-        // Select provider
-        let provider = self.get_provider(&options.provider)?;
-
-        // Generate embedding
-        let embedding = provider.generate_embedding(text).await?;
-
-        // Post-process if needed
-        let processed = if let Some(target_dim) = options.target_dimension {
-            self.reduce_dimension(&embedding, target_dim)?
-        } else {
-            embedding
-        };
-
-        // Cache result
-        let result = EmbeddedText {
-            text: text.to_string(),
-            embedding: processed,
-            model: provider.model_name().to_string(),
-            timestamp: Utc::now(),
-        };
-
-        self.cache.put(cache_key, result.clone()).await?;
-
-        Ok(result)
-    }
-
-    pub async fn embed_documents(
+impl ProximaDBEmbeddingService {
+    /// Generate and store embeddings in a collection
+    pub async fn embed_and_store(
         &self,
         documents: Vec<Document>,
-        options: EmbeddingOptions,
-    ) -> Result<Vec<EmbeddedDocument>> {
-        // Group by cacheable/non-cacheable
-        let (cached, uncached) = self.separate_cached(documents).await?;
-
-        // Process uncached in batches
-        let mut embedded = cached;
-
-        for batch in uncached.chunks(options.batch_size.unwrap_or(100)) {
-            let texts: Vec<_> = batch.iter().map(|d| d.content.clone()).collect();
-
-            let embeddings = self.batch_processor
-                .process_batch(texts, &options)
-                .await?;
-
-            for (doc, embedding) in batch.iter().zip(embeddings.iter()) {
-                embedded.push(EmbeddedDocument {
+        collection_name: &str,
+        provider_name: &str,
+    ) -> Result<Vec<String>> {
+        self.metrics.record_operation("llm.embed_and_store").await;
+        
+        // Get collection config
+        let config = self.collection_service.get_collection_config(collection_name).await?;
+        
+        // Get embedding provider
+        let provider = self.providers.get(provider_name)
+            .ok_or_else(|| anyhow!("Provider not found"))?;
+        
+        // Verify dimension matches
+        if config.dimension != provider.dimension() {
+            return Err(anyhow!("Dimension mismatch: collection {} vs provider {}", 
+                config.dimension, provider.dimension()));
+        }
+        
+        // Process in batches
+        let mut records = Vec::new();
+        let batch_size = 100;
+        
+        for chunk in documents.chunks(batch_size) {
+            // Extract texts
+            let texts: Vec<String> = chunk.iter().map(|d| d.content.clone()).collect();
+            
+            // Check cache for existing embeddings
+            let (cached, uncached) = self.separate_cached(&texts, provider_name).await?;
+            
+            // Generate embeddings for uncached
+            let mut embeddings = cached;
+            if !uncached.is_empty() {
+                let new_embeddings = provider.generate_batch(&uncached).await?;
+                
+                // Cache new embeddings
+                for (text, embedding) in uncached.iter().zip(new_embeddings.iter()) {
+                    let cache_key = format!("embedding:{}:{}", provider_name, hash(text));
+                    self.cache.put(&cache_key, embedding).await?;
+                    embeddings.push(embedding.clone());
+                }
+            }
+            
+            // Create VectorRecords
+            for (doc, embedding) in chunk.iter().zip(embeddings.iter()) {
+                let record = VectorRecord {
                     id: doc.id.clone(),
-                    content: doc.content.clone(),
-                    embedding: embedding.clone(),
-                    metadata: doc.metadata.clone(),
-                    chunks: self.create_chunks(doc, &options).await?,
-                });
+                    values: embedding.clone(),
+                    metadata: hashmap!{
+                        "content" => Value::String(doc.content.clone()),
+                        "title" => Value::String(doc.title.clone()),
+                        "source" => Value::String(doc.source.clone()),
+                        "embedding_model" => Value::String(provider.model_name().to_string()),
+                        "timestamp" => Value::Number(Utc::now().timestamp()),
+                    },
+                    timestamp: Utc::now().timestamp_millis(),
+                    ..Default::default()
+                };
+                records.push(record);
             }
         }
-
-        Ok(embedded)
+        
+        // Store in collection using its bound engine
+        let response = self.collection_service.insert_records(collection_name, records).await?;
+        
+        Ok(response.ids)
     }
 
-    async fn create_chunks(
+    async fn separate_cached(
         &self,
-        document: &Document,
-        options: &EmbeddingOptions,
-    ) -> Result<Vec<TextChunk>> {
-        let chunker = TextChunker::new(ChunkingStrategy {
-            method: options.chunking_method.clone().unwrap_or_default(),
-            max_tokens: options.max_chunk_tokens.unwrap_or(512),
-            overlap: options.chunk_overlap.unwrap_or(50),
-        });
-
-        let chunks = chunker.chunk_text(&document.content)?;
-
-        // Embed each chunk
-        let mut embedded_chunks = Vec::new();
-        for chunk in chunks {
-            let embedding = self.embed_text(&chunk.text, options.clone()).await?;
-            embedded_chunks.push(TextChunk {
-                text: chunk.text,
-                embedding: embedding.embedding,
-                start_offset: chunk.start,
-                end_offset: chunk.end,
-            });
+        texts: &[String],
+        provider: &str,
+    ) -> Result<(Vec<Vec<f32>>, Vec<String>)> {
+        let mut cached = Vec::new();
+        let mut uncached = Vec::new();
+        
+        for text in texts {
+            let cache_key = format!("embedding:{}:{}", provider, hash(text));
+            if let Some(embedding) = self.cache.get::<Vec<f32>>(&cache_key).await? {
+                cached.push(embedding);
+            } else {
+                uncached.push(text.clone());
+            }
         }
-
-        Ok(embedded_chunks)
+        
+        Ok((cached, uncached))
     }
 }
 ----
 
-==== Step 3: Implement RAG Pipeline
-File: `src/llm/rag/mod.rs`
+==== Step 2: RAG Pipeline Using Collections
+File: `src/llm/rag/collection_rag.rs`
 
 [source,rust]
 ----
-pub struct RAGPipeline {
-    retriever: Arc<DocumentRetriever>,
-    augmenter: Arc<ContextAugmenter>,
-    generator: Arc<ResponseGenerator>,
-    reranker: Option<Arc<Reranker>>,
-}
-
-impl RAGPipeline {
-    pub async fn generate(
-        &self,
-        query: RAGQuery,
-    ) -> Result<RAGResponse> {
-        // Step 1: Retrieve relevant documents
-        let retrieved = self.retriever
-            .retrieve(&query.question, query.retrieval_config)
-            .await?;
-
-        // Step 2: Rerank if configured
-        let ranked = if let Some(reranker) = &self.reranker {
-            reranker.rerank(retrieved, &query.question).await?
-        } else {
-            retrieved
-        };
-
-        // Step 3: Augment context
-        let context = self.augmenter
-            .augment(ranked, query.augmentation_config)
-            .await?;
-
-        // Step 4: Generate response
-        let response = self.generator
-            .generate(
-                &query.question,
-                &context,
-                query.generation_config,
-            )
-            .await?;
-
-        Ok(RAGResponse {
-            answer: response.text,
-            sources: context.sources,
-            confidence: response.confidence,
-            tokens_used: response.tokens,
-            latency_breakdown: self.get_latency_breakdown(),
-        })
-    }
-}
-
-pub struct DocumentRetriever {
-    vector_store: Arc<dyn UnifiedStorageEngine>,
-    embedding_service: Arc<UnifiedEmbeddingService>,
-    hybrid_search: Option<Arc<HybridSearch>>,
-}
-
-impl DocumentRetriever {
-    pub async fn retrieve(
-        &self,
-        query: &str,
-        config: RetrievalConfig,
-    ) -> Result<Vec<RetrievedDocument>> {
-        // Generate query embedding
-        let query_embedding = self.embedding_service
-            .embed_text(query, EmbeddingOptions::default())
-            .await?;
-
-        // Perform vector search
-        let vector_results = self.vector_store
-            .search(SearchRequest {
-                query_vector: query_embedding.embedding,
-                top_k: config.top_k * 2,  // Overretrieve for reranking
-                collection_id: config.collection.clone(),
-                ..Default::default()
-            })
-            .await?;
-
-        // Perform hybrid search if enabled
-        let results = if let Some(hybrid) = &self.hybrid_search {
-            hybrid.search(
-                query,
-                query_embedding.embedding,
-                vector_results,
-                &config,
-            ).await?
-        } else {
-            self.convert_to_documents(vector_results).await?
-        };
-
-        // Apply filters
-        let filtered = self.apply_filters(results, &config.filters)?;
-
-        Ok(filtered)
-    }
-}
-
-pub struct ResponseGenerator {
+/// RAG pipeline that uses ProximaDB collections
+pub struct CollectionRAGPipeline {
+    collection_service: Arc<CollectionService>,
+    embedding_service: Arc<ProximaDBEmbeddingService>,
     llm_provider: Arc<dyn LLMProvider>,
-    prompt_templates: HashMap<String, PromptTemplate>,
-    token_limiter: Arc<TokenLimiter>,
+    cache: Arc<CacheOrchestrator>,
+    metrics: Arc<UnifiedMetrics>,
 }
 
-impl ResponseGenerator {
-    pub async fn generate(
+impl CollectionRAGPipeline {
+    /// Execute RAG query against a collection
+    pub async fn query(
         &self,
         question: &str,
-        context: &AugmentedContext,
-        config: GenerationConfig,
-    ) -> Result<GeneratedResponse> {
-        // Build prompt
-        let prompt = self.build_prompt(question, context, &config)?;
-
-        // Check token limits
-        let truncated_prompt = self.token_limiter
-            .truncate_to_limit(prompt, config.max_prompt_tokens)?;
-
-        // Generate response
-        let response = self.llm_provider
-            .generate(LLMRequest {
-                prompt: truncated_prompt,
-                max_tokens: config.max_response_tokens,
-                temperature: config.temperature,
-                top_p: config.top_p,
-                stop_sequences: config.stop_sequences,
-                stream: config.stream,
-            })
+        collection_name: &str,
+        config: RAGConfig,
+    ) -> Result<RAGResponse> {
+        let start = Instant::now();
+        self.metrics.record_operation("llm.rag.query").await;
+        
+        // Step 1: Check semantic cache
+        if let Some(cached) = self.check_semantic_cache(question, collection_name).await? {
+            self.metrics.record_cache_hit("llm.rag.semantic_cache").await;
+            return Ok(cached);
+        }
+        
+        // Step 2: Generate question embedding
+        let question_embedding = self.embedding_service
+            .providers.get(&config.embedding_provider)
+            .ok_or_else(|| anyhow!("Provider not found"))?
+            .generate(question)
             .await?;
-
-        // Post-process response
-        let processed = self.post_process(response, context)?;
-
-        Ok(processed)
+        
+        // Step 3: Retrieve relevant documents from collection
+        let search_request = SearchRequest {
+            query_vector: question_embedding,
+            top_k: config.retrieval_top_k,
+            metadata_filter: config.metadata_filter,
+            ..Default::default()
+        };
+        
+        let search_response = self.collection_service
+            .search(collection_name, search_request)
+            .await?;
+        
+        // Step 4: Build context from retrieved documents
+        let context = self.build_context(search_response.results, &config).await?;
+        
+        // Step 5: Generate response
+        let prompt = self.build_rag_prompt(question, &context, &config)?;
+        
+        let llm_response = self.llm_provider.generate(LLMRequest {
+            prompt,
+            max_tokens: config.max_response_tokens,
+            temperature: config.temperature,
+            ..Default::default()
+        }).await?;
+        
+        // Step 6: Create response
+        let response = RAGResponse {
+            answer: llm_response.text,
+            sources: context.sources,
+            confidence: self.calculate_confidence(&context, &llm_response),
+            latency_ms: start.elapsed().as_millis() as u64,
+            tokens_used: llm_response.tokens_used,
+        };
+        
+        // Step 7: Cache response
+        self.cache_response(question, collection_name, &response).await?;
+        
+        Ok(response)
     }
 
-    fn build_prompt(
+    async fn check_semantic_cache(
         &self,
         question: &str,
-        context: &AugmentedContext,
-        config: &GenerationConfig,
-    ) -> Result<String> {
-        let template = self.prompt_templates
-            .get(&config.prompt_template)
-            .ok_or_else(|| anyhow!("Template not found"))?;
-
-        template.render(hashmap! {
-            "question" => question,
-            "context" => &context.text,
-            "sources" => &context.sources,
-            "instructions" => &config.system_prompt,
-        })
-    }
-}
-----
-
-==== Step 4: Implement Semantic Cache
-File: `src/llm/cache/mod.rs`
-
-[source,rust]
-----
-pub struct SemanticCache {
-    vector_store: Arc<dyn UnifiedStorageEngine>,
-    embedding_service: Arc<UnifiedEmbeddingService>,
-    similarity_threshold: f32,
-    ttl: Duration,
-}
-
-impl SemanticCache {
-    pub async fn get(
-        &self,
-        query: &str,
-        context: Option<&str>,
-    ) -> Result<Option<CachedResponse>> {
-        // Generate query embedding
-        let query_embedding = self.embedding_service
-            .embed_text(query, EmbeddingOptions::default())
+        collection: &str,
+    ) -> Result<Option<RAGResponse>> {
+        // Use a special cache collection for semantic similarity
+        let cache_collection = format!("{}_rag_cache", collection);
+        
+        // Check if cache collection exists
+        if !self.collection_service.collection_exists(&cache_collection).await? {
+            return Ok(None);
+        }
+        
+        // Generate question embedding
+        let embedding = self.embedding_service
+            .providers.get("default")
+            .ok_or_else(|| anyhow!("Default provider not found"))?
+            .generate(question)
             .await?;
-
-        // Search for similar cached queries
-        let results = self.vector_store
-            .search(SearchRequest {
-                query_vector: query_embedding.embedding,
-                top_k: 5,
-                collection_id: "llm_cache".to_string(),
-                metadata_filter: self.build_context_filter(context),
-                ..Default::default()
-            })
+        
+        // Search for similar questions
+        let search_request = SearchRequest {
+            query_vector: embedding,
+            top_k: 1,
+            metadata_filter: Some(MetadataFilter::GreaterThan {
+                field: "timestamp".to_string(),
+                value: Value::Number((Utc::now() - Duration::hours(24)).timestamp()),
+            }),
+            ..Default::default()
+        };
+        
+        let results = self.collection_service
+            .search(&cache_collection, search_request)
             .await?;
-
-        // Check if any result is similar enough
-        for result in results.results {
-            if result.distance > self.similarity_threshold {
-                // Check TTL
-                if let Some(cached) = self.retrieve_cached(&result.id).await? {
-                    if cached.is_valid() {
-                        return Ok(Some(cached));
-                    }
+        
+        if let Some(result) = results.results.first() {
+            // Check similarity threshold
+            if result.distance > 0.95 {  // Very similar
+                // Deserialize cached response
+                if let Some(response_str) = result.metadata.get("response") {
+                    let cached_response: RAGResponse = serde_json::from_str(
+                        response_str.as_str().unwrap_or("")
+                    )?;
+                    return Ok(Some(cached_response));
                 }
             }
         }
-
+        
         Ok(None)
     }
 
-    pub async fn put(
+    async fn build_context(
         &self,
-        query: &str,
-        context: Option<&str>,
-        response: &str,
-        metadata: HashMap<String, Value>,
+        results: Vec<SearchResult>,
+        config: &RAGConfig,
+    ) -> Result<RAGContext> {
+        let mut context_parts = Vec::new();
+        let mut sources = Vec::new();
+        
+        for (i, result) in results.iter().take(config.context_top_k).enumerate() {
+            // Extract content from metadata
+            let content = result.metadata.get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            
+            let source = result.metadata.get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            
+            context_parts.push(format!("[{}] {}", i + 1, content));
+            sources.push(Source {
+                id: result.id.clone(),
+                title: result.metadata.get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("").to_string(),
+                url: source.to_string(),
+                relevance: result.score,
+            });
+        }
+        
+        Ok(RAGContext {
+            text: context_parts.join("\n\n"),
+            sources,
+            total_tokens: self.estimate_tokens(&context_parts.join(" ")),
+        })
+    }
+
+    fn build_rag_prompt(
+        &self,
+        question: &str,
+        context: &RAGContext,
+        config: &RAGConfig,
+    ) -> Result<String> {
+        let prompt = format!(
+            "{}\n\nContext:\n{}\n\nQuestion: {}\n\nAnswer:",
+            config.system_prompt.as_deref().unwrap_or(
+                "Answer the question based on the provided context. \
+                 If the answer cannot be found in the context, say so."
+            ),
+            context.text,
+            question
+        );
+        
+        Ok(prompt)
+    }
+
+    async fn cache_response(
+        &self,
+        question: &str,
+        collection: &str,
+        response: &RAGResponse,
     ) -> Result<()> {
-        // Generate embedding
-        let embedding = self.embedding_service
-            .embed_text(query, EmbeddingOptions::default())
-            .await?;
-
-        // Create cache entry
-        let entry = CacheEntry {
-            id: generate_cache_id(),
-            query: query.to_string(),
-            context: context.map(|s| s.to_string()),
-            response: response.to_string(),
-            embedding: embedding.embedding,
-            timestamp: Utc::now(),
-            ttl: self.ttl,
-            metadata,
-            access_count: 1,
-        };
-
-        // Store in vector database
-        self.vector_store
-            .insert(vec![entry.to_vector_record()?])
-            .await?;
-
-        // Trigger cleanup if needed
-        self.cleanup_expired().await?;
-
-        Ok(())
-    }
-
-    pub async fn invalidate_pattern(&self, pattern: &str) -> Result<usize> {
-        // Find all entries matching pattern
-        let matches = self.find_matching_entries(pattern).await?;
-
-        // Delete them
-        for entry_id in &matches {
-            self.vector_store.delete(entry_id).await?;
-        }
-
-        Ok(matches.len())
-    }
-
-    async fn cleanup_expired(&self) -> Result<()> {
-        let expired = self.vector_store
-            .search(SearchRequest {
-                collection_id: "llm_cache".to_string(),
-                metadata_filter: Some(MetadataFilter::LessThan {
-                    field: "expiry_time".to_string(),
-                    value: Value::Number(Utc::now().timestamp_millis()),
-                }),
+        // Create cache collection if it doesn't exist
+        let cache_collection = format!("{}_rag_cache", collection);
+        
+        if !self.collection_service.collection_exists(&cache_collection).await? {
+            // Create cache collection with same dimension as main collection
+            let main_config = self.collection_service
+                .get_collection_config(collection)
+                .await?;
+            
+            let cache_config = CollectionConfig {
+                name: cache_collection.clone(),
+                dimension: main_config.dimension,
+                engine_type: EngineType::SST,  // Use SST for cache (fast writes)
                 ..Default::default()
-            })
-            .await?;
-
-        for result in expired.results {
-            self.vector_store.delete(&result.id).await?;
+            };
+            
+            self.collection_service.create_collection(cache_config).await?;
         }
-
+        
+        // Generate embedding for question
+        let embedding = self.embedding_service
+            .providers.get("default")
+            .ok_or_else(|| anyhow!("Default provider not found"))?
+            .generate(question)
+            .await?;
+        
+        // Store in cache collection
+        let cache_record = VectorRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            values: embedding,
+            metadata: hashmap!{
+                "question" => Value::String(question.to_string()),
+                "response" => Value::String(serde_json::to_string(response)?),
+                "timestamp" => Value::Number(Utc::now().timestamp()),
+            },
+            timestamp: Utc::now().timestamp_millis(),
+            ..Default::default()
+        };
+        
+        self.collection_service.insert_records(&cache_collection, vec![cache_record]).await?;
+        
         Ok(())
     }
-}
-----
-
-==== Step 5: Testing
-File: `tests/automl_llm_test.rs`
-
-[source,rust]
-----
-#[tokio::test]
-async fn test_automl_index_selection() {
-    let analyzer = create_test_workload_analyzer();
-
-    // Simulate workload
-    for _ in 0..1000 {
-        analyzer.track_query(generate_test_query()).await;
-    }
-
-    // Run AutoML optimizer
-    let optimizer = AutoIndexSelector::new(analyzer);
-    let plan = optimizer.optimize_indexes(
-        "test_collection",
-        IndexConstraints {
-            max_storage_mb: 1000,
-            max_build_time_sec: 3600,
-        },
-    ).await.unwrap();
-
-    // Should recommend appropriate indexes
-    assert!(!plan.indexes_to_create.is_empty());
-    assert!(plan.estimated_improvement > 0.2);  // 20% improvement
-}
-
-#[tokio::test]
-async fn test_adaptive_quantization() {
-    let selector = AutoQuantizationSelector::new();
-
-    // Easy query - should use aggressive quantization
-    let easy_query = SearchQuery {
-        query_vector: vec![0.5; 1536],
-        top_k: 10,
-        ..Default::default()
-    };
-
-    let level = selector.adaptive_quantization(&easy_query).await.unwrap();
-    assert_eq!(level, QuantizationLevel::Binary);
-
-    // Hard query - should use minimal quantization
-    let hard_query = SearchQuery {
-        query_vector: create_complex_vector(),
-        top_k: 100,
-        metadata_filter: Some(create_complex_filter()),
-        ..Default::default()
-    };
-
-    let level = selector.adaptive_quantization(&hard_query).await.unwrap();
-    assert!(matches!(level, QuantizationLevel::PQ(16) | QuantizationLevel::PQ(32)));
-}
-
-#[tokio::test]
-async fn test_rag_pipeline() {
-    let pipeline = create_test_rag_pipeline().await;
-
-    // Index documents
-    let documents = vec![
-        Document {
-            id: "doc1".to_string(),
-            content: "ProximaDB is a vector database with 6 storage engines".to_string(),
-            metadata: hashmap!{ "topic" => "database" },
-        },
-        Document {
-            id: "doc2".to_string(),
-            content: "The SST engine is optimized for real-time queries".to_string(),
-            metadata: hashmap!{ "topic" => "engines" },
-        },
-    ];
-
-    for doc in documents {
-        pipeline.index_document(doc).await.unwrap();
-    }
-
-    // Ask question
-    let response = pipeline.generate(RAGQuery {
-        question: "What is ProximaDB and how many engines does it have?".to_string(),
-        retrieval_config: RetrievalConfig {
-            top_k: 5,
-            collection: "test_docs".to_string(),
-            ..Default::default()
-        },
-        generation_config: GenerationConfig {
-            max_response_tokens: 100,
-            temperature: 0.7,
-            ..Default::default()
-        },
-        ..Default::default()
-    }).await.unwrap();
-
-    assert!(response.answer.contains("6") || response.answer.contains("six"));
-    assert!(!response.sources.is_empty());
-}
-
-#[tokio::test]
-async fn test_semantic_cache() {
-    let cache = SemanticCache::new(0.95);  // 95% similarity threshold
-
-    // Store response
-    cache.put(
-        "What is the capital of France?",
-        None,
-        "The capital of France is Paris.",
-        HashMap::new(),
-    ).await.unwrap();
-
-    // Similar query should hit cache
-    let cached = cache.get(
-        "What's the capital city of France?",
-        None,
-    ).await.unwrap();
-
-    assert!(cached.is_some());
-    assert_eq!(cached.unwrap().response, "The capital of France is Paris.");
-
-    // Different query should miss cache
-    let missed = cache.get(
-        "What is the capital of Germany?",
-        None,
-    ).await.unwrap();
-
-    assert!(missed.is_none());
 }
 ----
 
 === Configuration
-File: `config/automl.toml`
+
+==== AutoML Configuration
+File: `config/config.toml`
 
 [source,toml]
 ----
 [automl]
 enabled = true
-learning_rate = 0.001
-feedback_collection = true
-online_learning = true
+analysis_interval_minutes = 30
+apply_recommendations = false  # Manual approval required
+min_improvement_threshold = 0.2  # 20% improvement required
 
 [automl.workload]
 history_size = 10000
 pattern_detection = true
-anomaly_detection = true
-prediction_horizon_hours = 24
+temporal_analysis = true
 
 [automl.optimization]
-index_selection = true
-quantization_selection = true
-engine_selection = true
-cache_tuning = true
-
-[automl.constraints]
-max_index_storage_gb = 100
-max_optimization_time_sec = 300
-min_improvement_threshold = 0.1
+index_budget_mb = 1000
+quantization_quality_threshold = 0.95
+cache_size_auto_adjust = true
+engine_parameter_tuning = true
 
 [llm]
+enabled = true
 default_provider = "openai"
-embedding_cache_size = 10000
-semantic_cache_enabled = true
+cache_ttl_hours = 24
 
 [llm.providers.openai]
 api_key = "${OPENAI_API_KEY}"
-model = "gpt-4-turbo"
-embedding_model = "text-embedding-3-large"
-max_retries = 3
-timeout_sec = 30
-
-[llm.providers.anthropic]
-api_key = "${ANTHROPIC_API_KEY}"
-model = "claude-3-opus"
-max_tokens = 4096
+model = "text-embedding-3-large"
+dimension = 3072
+max_batch_size = 100
 
 [llm.providers.local]
-model_path = "/models/llama2-7b"
-device = "cuda"
-quantization = "int8"
+model_path = "/models/sentence-transformers/all-MiniLM-L6-v2"
+dimension = 384
+device = "cpu"
 
-[rag]
-chunk_size = 512
-chunk_overlap = 50
-retrieval_top_k = 10
-reranking_enabled = true
-hybrid_search = true
-
-[semantic_cache]
-enabled = true
+[llm.rag]
+default_retrieval_top_k = 10
+default_context_top_k = 5
+max_context_tokens = 2000
+semantic_cache_enabled = true
 similarity_threshold = 0.95
-ttl_hours = 24
-max_size_gb = 10
-eviction_policy = "lru"
 ----
 
-=== Success Metrics
+=== Testing
 
-- **AutoML**: 30% average performance improvement
-- **Index Selection**: < 5 minutes to optimal configuration
-- **LLM Latency**: < 100ms for cached responses
-- **RAG Quality**: > 90% answer accuracy
-- **Cost Reduction**: 50% reduction in LLM API calls via caching
+[source,rust]
+----
+#[tokio::test]
+async fn test_automl_optimization() {
+    let service = create_test_service().await;
+    
+    // Create test collection
+    let config = CollectionConfig {
+        name: "test_automl".to_string(),
+        dimension: 1536,
+        engine_type: EngineType::VIPER,  // Fixed to VIPER
+        ..Default::default()
+    };
+    
+    service.create_collection(config).await.unwrap();
+    
+    // Simulate workload
+    for _ in 0..1000 {
+        let _ = service.search("test_automl", generate_test_query()).await;
+    }
+    
+    // Run AutoML analysis
+    let optimizer = CollectionOptimizer::new(
+        service.metrics.clone(),
+        service.cache.clone(),
+    );
+    
+    let plan = optimizer.analyze_collection(&config).await.unwrap();
+    
+    // Should recommend optimizations within engine constraints
+    assert!(!plan.recommendations.is_empty());
+    assert_eq!(plan.engine_type, EngineType::VIPER);  // Engine unchanged
+    
+    // Apply optimizations
+    optimizer.apply_optimization(&plan, &service).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_rag_pipeline() {
+    let service = create_test_service().await;
+    
+    // Create RAG collection
+    let config = CollectionConfig {
+        name: "knowledge_base".to_string(),
+        dimension: 1536,
+        engine_type: EngineType::NOVA,  // Good for mixed workloads
+        ..Default::default()
+    };
+    
+    service.create_collection(config).await.unwrap();
+    
+    // Add documents
+    let embedding_service = ProximaDBEmbeddingService::new(service.clone());
+    
+    let documents = vec![
+        Document {
+            id: "doc1".to_string(),
+            title: "ProximaDB Architecture".to_string(),
+            content: "ProximaDB uses 6 specialized storage engines...".to_string(),
+            source: "docs/architecture.md".to_string(),
+        },
+    ];
+    
+    embedding_service.embed_and_store(
+        documents,
+        "knowledge_base",
+        "openai",
+    ).await.unwrap();
+    
+    // Test RAG query
+    let rag = CollectionRAGPipeline::new(service.clone());
+    
+    let response = rag.query(
+        "What storage engines does ProximaDB use?",
+        "knowledge_base",
+        RAGConfig::default(),
+    ).await.unwrap();
+    
+    assert!(response.answer.contains("6"));
+    assert!(!response.sources.is_empty());
+    
+    // Second query should hit cache
+    let cached_response = rag.query(
+        "What storage engines does ProximaDB use?",
+        "knowledge_base",
+        RAGConfig::default(),
+    ).await.unwrap();
+    
+    assert_eq!(response.answer, cached_response.answer);
+}
+----
+
+=== Production Considerations
+
+1. **AutoML**:
+   - Start with analysis-only mode before enabling automatic optimization
+   - Monitor optimization impact via UnifiedMetrics
+   - Set conservative improvement thresholds
+   - Maintain optimization history for rollback
+
+2. **LLM Integration**:
+   - Use collection-based caching for cost efficiency
+   - Implement rate limiting for external providers
+   - Monitor embedding costs and cache hit rates
+   - Use appropriate collection engines (SST for cache, NOVA/VIPER for knowledge bases)
+
+3. **Performance**:
+   - Batch embedding generation for efficiency
+   - Use precomputed embeddings when possible
+   - Cache RAG responses with semantic similarity
+   - Monitor token usage and costs
+
+4. **TODO - Future Enhancements**:
+   - ML-based query difficulty estimation
+   - Learned index selection models
+   - Fine-tuning support for local models
+   - Streaming RAG responses
+   - Multi-turn conversation support
+   - Hybrid search (vector + keyword) for RAG
 
 ---
 
-_This implementation brings AI-native capabilities to ProximaDB with automated optimization and LLM support._
+_This corrected implementation ensures AutoML and LLM features work within ProximaDB's collection-engine architecture, leveraging all existing infrastructure._

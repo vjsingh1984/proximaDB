@@ -571,7 +571,7 @@ pub struct MatrixTrinityLayout {
 
 === Common API Surface
 
-All row-based engines implement the `UnifiedStorageEngine` trait:
+All storage engines implement the `UnifiedStorageEngine` trait:
 
 ```rust
 #[async_trait]

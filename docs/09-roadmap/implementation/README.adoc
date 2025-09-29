@@ -11,7 +11,7 @@
 
 **Current Status** (December 2024): 85% of planned roadmap features already implemented
 **Critical Priority**: Index algorithm implementations
-**See**: link:CURRENT_STATUS_2024.adoc[📊 Current Implementation Status] | link:PRIORITY_ACTION_PLAN.adoc[🎯 Action Plan]
+**See**: link:PRIORITY_ACTION_PLAN.adoc[🎯 Action Plan] | link:archive/[📂 Archived Versions]
 
 == 📋 **Implementation Status Overview**
 
@@ -30,41 +30,36 @@
 
 == 📚 **Available Implementation Guides**
 
-=== **Corrected Implementation Guides** (Use These)
-These guides are aligned with ProximaDB's actual architecture:
+=== **2025 Quarterly Implementation Guides**
+Current implementation roadmap aligned with ProximaDB's actual architecture:
 
-* link:Q1_2025_IMPLEMENTATION_CORRECTED.adoc[**Q1 2025: Search Optimization & Quantization (Corrected)**]
+* link:Q1_2025_IMPLEMENTATION.adoc[**Q1 2025: Search Optimization & Quantization**]
   - **Focus**: Complete index algorithm implementations
   - **Architecture**: Collection-bound engines, no cross-engine routing
   - **Status**: Quantization COMPLETE ✅, Indexes MISSING ❌
 
-* link:Q2_2025_IMPLEMENTATION_CORRECTED.adoc[**Q2 2025: Graph Database & Multi-Modal Search (Corrected)**]
+* link:Q2_2025_IMPLEMENTATION.adoc[**Q2 2025: Graph Database & Multi-Modal Search**]
   - **Focus**: Multi-modal fusion algorithms
   - **Architecture**: Graph operations within collection boundaries
   - **Status**: Graph COMPLETE ✅, Multi-modal framework ready 🔄
 
-* link:Q3_2025_IMPLEMENTATION_CORRECTED.adoc[**Q3 2025: Advanced Security & Distributed Operations (Corrected)**]
+* link:Q3_2025_IMPLEMENTATION.adoc[**Q3 2025: Advanced Security & Distributed Operations**]
   - **Focus**: Distributed operations assessment
   - **Architecture**: Security at collection level, distribution via sharding
   - **Status**: Security COMPLETE ✅, Distributed TBD ❓
 
-* link:Q4_2025_IMPLEMENTATION_CORRECTED.adoc[**Q4 2025: AutoML Integration & LLM Support (Corrected)**]
+* link:Q4_2025_IMPLEMENTATION.adoc[**Q4 2025: AutoML Integration & LLM Support**]
   - **Focus**: Formal AutoML framework development
   - **Architecture**: AutoML within engine boundaries, LLM uses collections
   - **Status**: LLM COMPLETE ✅, AutoML MISSING ❌
 
-=== **Original Implementation Guides** (Reference Only)
-These contain the original plans before architectural corrections:
-
-* link:Q1_2025_IMPLEMENTATION.adoc[Q1 2025: Search Optimization & Quantization (Original)]
-* link:Q2_2025_IMPLEMENTATION.adoc[Q2 2025: Graph Database & Multi-Modal Search (Original)]
-* link:Q3_2025_IMPLEMENTATION.adoc[Q3 2025: Advanced Security & Distributed Operations (Original)]
-* link:Q4_2025_IMPLEMENTATION.adoc[Q4 2025: AutoML Integration & LLM Support (Original)]
-
-=== **Status Documents**
-* link:CORRECTED_STATUS_2024.adoc[**📊 Current Implementation Status**] - Comprehensive analysis with AutoML completion
+=== **Core Documentation**
 * link:PRIORITY_ACTION_PLAN.adoc[**🎯 Priority Action Plan**] - Updated with completed items
 * link:AUTOML_COMPLETE.adoc[**🤖 AutoML Framework Guide**] - Complete AutoML implementation documentation
+* link:VIPER_OPTIMIZATION_STRATEGY.adoc[**📊 VIPER Engine Optimization**] - Columnar storage strategy
+
+=== **Archived Documentation**
+Previous versions and historical status reports are available in link:archive/[archive/]
 
 == 🚀 **Getting Started**
 
@@ -87,18 +82,18 @@ These contain the original plans before architectural corrections:
 
 === **For Strategic Planning**
 
-1. **Review Current Status**
-   - Read link:CURRENT_STATUS_2024.adoc[Current Implementation Status]
-   - Understand what's already built vs what's missing
-
-2. **Priority Planning**
+1. **Priority Planning**
    - Follow link:PRIORITY_ACTION_PLAN.adoc[Priority Action Plan]
    - Focus resources on critical path items
 
-3. **Architecture Understanding**
+2. **Architecture Understanding**
    - Key principle: Collections are bound to specific engines
    - No cross-engine data routing
    - Use existing UnifiedCache, UnifiedMetrics, UnifiedCachingFilesystem
+
+3. **Review Quarterly Guides**
+   - Q1-Q4 implementation guides provide detailed feature roadmaps
+   - Each guide includes migration paths and testing requirements
 
 == 🏗️ **Architecture Principles**
 
@@ -173,4 +168,6 @@ This documentation is actively maintained. Last updated: **January 2025**
 
 **Quick Start**: Review link:AUTOML_COMPLETE.adoc[🤖 AutoML Framework Guide] for the latest implementation.
 
-**Deep Dive**: See link:CORRECTED_STATUS_2024.adoc[📊 Current Status] for comprehensive platform overview with 98%+ completion.
+**Deep Dive**: See link:PRIORITY_ACTION_PLAN.adoc[🎯 Priority Action Plan] for current development priorities.
+
+**Historical Reference**: link:archive/[Archive folder] contains previous versions and status reports.
