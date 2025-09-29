@@ -77,7 +77,6 @@ fn generate_vectors(count: usize, dimension: usize, model: EmbeddingModel) -> Ve
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         })
         .collect()

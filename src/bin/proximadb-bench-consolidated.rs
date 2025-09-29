@@ -3109,7 +3109,6 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
                 updated_at: Some(i as i64),
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             }
         })

@@ -897,7 +897,6 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             expires_at: Some(chrono::Utc::now().timestamp() + (30 * 24 * 60 * 60)), // 30 days
             version: None, // None for tombstone
             // rank removed -  None,
-            quantized_vector: Vec::new(),
             source: None,
         };
 

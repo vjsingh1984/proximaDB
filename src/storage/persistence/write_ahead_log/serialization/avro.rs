@@ -350,7 +350,6 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                         Value::Int(ver) => Some(*ver as i64),
                                         _ => None,
                                     }),
-                                quantized_vector: vec![],
                                 source: None,
                             });
                         }
