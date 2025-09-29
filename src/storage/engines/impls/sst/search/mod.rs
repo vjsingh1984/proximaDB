@@ -228,17 +228,20 @@ impl SstEngine {
     async fn discover_sstable_files(&self, storage_url: &str) -> Result<Vec<String>> {
         let mut files = Vec::new();
 
-        // Parse collection path to extract base URL and collection ID
-        let (base_url, collection_id) = self.parse_storage_url(storage_url)?;
-        let data_url = crate::utils::StoragePath::collection_data_path(&base_url, &collection_id);
+        // storage_url is already the correct data directory path from collection_storage_path()
+        // No need to parse and reconstruct - use it directly
+        let data_url = storage_url;
+
+        debug!("🔍 SST discover_sstable_files: Looking for .sst files in {}", data_url);
 
         // List files in the collection directory
-        let fs = self.filesystem().get_filesystem(&data_url)?;
-        let entries = fs.list(&data_url).await?;
+        let fs = self.filesystem().get_filesystem(data_url)?;
+        let entries = fs.list(data_url).await?;
 
         for entry in entries {
             if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
                 files.push(entry.url);
+                debug!("   Found SST file: {}", entry.name);
             }
         }
 
