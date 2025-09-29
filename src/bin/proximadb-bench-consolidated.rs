@@ -2965,11 +2965,13 @@ fn benchmark_encoding_statistical_with_compression(
     let grouped_field_size = if !grouped_field_serialized.is_empty() { grouped_field_serialized.len() } else { 0 };
     let grouped_block_size = if !grouped_block_serialized.is_empty() { grouped_block_serialized.len() } else { 0 };
 
-    let transpose_field_ratio = original_size as f64 / transpose_field_size as f64;
-    let transpose_block_ratio = original_size as f64 / transpose_block_size as f64;
-    let rowwise_ratio = original_size as f64 / rowwise_size as f64;
-    let grouped_field_ratio = if grouped_field_size > 0 { original_size as f64 / grouped_field_size as f64 } else { 0.0 };
-    let grouped_block_ratio = if grouped_block_size > 0 { original_size as f64 / grouped_block_size as f64 } else { 0.0 };
+    // Compression ratio: 1 - (compressed/uncompressed)
+    // Standard definition: higher is better, negative means expansion
+    let transpose_field_ratio = 1.0 - (transpose_field_size as f64 / original_size as f64);
+    let transpose_block_ratio = 1.0 - (transpose_block_size as f64 / original_size as f64);
+    let rowwise_ratio = 1.0 - (rowwise_size as f64 / original_size as f64);
+    let grouped_field_ratio = if grouped_field_size > 0 { 1.0 - (grouped_field_size as f64 / original_size as f64) } else { 0.0 };
+    let grouped_block_ratio = if grouped_block_size > 0 { 1.0 - (grouped_block_size as f64 / original_size as f64) } else { 0.0 };
 
     let transpose_field_size_mb = transpose_field_size as f64 / (1024.0 * 1024.0);
     let transpose_block_size_mb = transpose_block_size as f64 / (1024.0 * 1024.0);
@@ -2981,27 +2983,27 @@ fn benchmark_encoding_statistical_with_compression(
     println!("\n  ┌──────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
     println!("  │ Strategy             │ Encode (ms)  │ Decode (ms)  │ Size (MB)    │ Compression  │");
     println!("  ├──────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
-    println!("  │ TransposeFieldEncoded│ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+    println!("  │ TransposeFieldEncoded│ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
         transpose_field_encode_times.0 / 1000.0, transpose_field_encode_times.1 / 1000.0,
         transpose_field_decode_times.0 / 1000.0, transpose_field_decode_times.1 / 1000.0,
-        transpose_field_size_mb, transpose_field_ratio);
-    println!("  │ TransposeBlockCompr. │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+        transpose_field_size_mb, transpose_field_ratio * 100.0);
+    println!("  │ TransposeBlockCompr. │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
         transpose_block_encode_times.0 / 1000.0, transpose_block_encode_times.1 / 1000.0,
         transpose_block_decode_times.0 / 1000.0, transpose_block_decode_times.1 / 1000.0,
-        transpose_block_size_mb, transpose_block_ratio);
-    println!("  │ FullVector           │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+        transpose_block_size_mb, transpose_block_ratio * 100.0);
+    println!("  │ FullVector           │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
         rowwise_encode_times.0 / 1000.0, rowwise_encode_times.1 / 1000.0,
         rowwise_decode_times.0 / 1000.0, rowwise_decode_times.1 / 1000.0,
-        rowwise_size_mb, rowwise_ratio);
+        rowwise_size_mb, rowwise_ratio * 100.0);
     if grouped_field_size > 0 {
-        println!("  │ GroupedFieldEncoded  │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+        println!("  │ GroupedFieldEncoded  │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
             grouped_field_encode_times.0 / 1000.0, grouped_field_encode_times.1 / 1000.0,
             grouped_field_decode_times.0 / 1000.0, grouped_field_decode_times.1 / 1000.0,
-            grouped_field_size_mb, grouped_field_ratio);
-        println!("  │ GroupedBlockCompr.   │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>11.2}x │",
+            grouped_field_size_mb, grouped_field_ratio * 100.0);
+        println!("  │ GroupedBlockCompr.   │ {:>6.2} ±{:4.2} │ {:>6.2} ±{:4.2} │ {:>12.2} │ {:>10.1}% │",
             grouped_block_encode_times.0 / 1000.0, grouped_block_encode_times.1 / 1000.0,
             grouped_block_decode_times.0 / 1000.0, grouped_block_decode_times.1 / 1000.0,
-            grouped_block_size_mb, grouped_block_ratio);
+            grouped_block_size_mb, grouped_block_ratio * 100.0);
     }
     println!("  └──────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
 
@@ -3050,9 +3052,8 @@ fn benchmark_encoding_statistical_with_compression(
     }
 
     println!("\n  ✅ BEST PERFORMERS:");
-    println!("    • Compression: {} ({:.1}% of original, {:.1}% space saved)",
-        best_compression_strategy, best_compression_ratio * 100.0,
-        (1.0 - best_compression_ratio) * 100.0);
+    println!("    • Compression: {} ({:.1}% reduction)",
+        best_compression_strategy, best_compression_ratio * 100.0);
     println!("    • Encode Speed: {} ({:.2} ms)", best_encode_strategy, best_encode_time / 1000.0);
 
     println!("\n  🎯 RECOMMENDATIONS BY USE CASE:");
