@@ -379,8 +379,8 @@ impl UnifiedColumnarCompaction {
                     binary_builder.append_null();
                 }
             }
-            columns.push((constants::FIELD_VECTOR_BINARY.to_string(), Arc::new(binary_builder.finish())));
-            info!("✅ Added {} column with recalculated binary quantization", constants::FIELD_VECTOR_BINARY);
+            columns.push((constants::FIELD_Q_BINARY.to_string(), Arc::new(binary_builder.finish())));
+            info!("✅ Added {} column with recalculated binary quantization", constants::FIELD_Q_BINARY);
         }
 
         // Add INT8 quantized column if present
@@ -393,8 +393,8 @@ impl UnifiedColumnarCompaction {
                     int8_builder.append_null();
                 }
             }
-            columns.push((constants::FIELD_VECTOR_INT8.to_string(), Arc::new(int8_builder.finish())));
-            info!("✅ Added {} column with recalculated INT8 quantization", constants::FIELD_VECTOR_INT8);
+            columns.push((constants::FIELD_Q_INT8.to_string(), Arc::new(int8_builder.finish())));
+            info!("✅ Added {} column with recalculated INT8 quantization", constants::FIELD_Q_INT8);
         }
 
         // Add PQ quantized column if present
@@ -407,36 +407,36 @@ impl UnifiedColumnarCompaction {
                     pq_builder.append_null();
                 }
             }
-            columns.push((constants::FIELD_VECTOR_PQ.to_string(), Arc::new(pq_builder.finish())));
-            info!("✅ Added {} column with retrained PQ codebooks", constants::FIELD_VECTOR_PQ);
+            columns.push((constants::FIELD_Q_PQ8.to_string(), Arc::new(pq_builder.finish())));
+            info!("✅ Added {} column with retrained PQ codebooks", constants::FIELD_Q_PQ8);
         }
 
         // Create new schema with quantized columns
         let mut fields = batch.schema().fields().to_vec();
 
         // Add new fields if they don't exist
-        if !fields.iter().any(|f| f.name() == constants::FIELD_VECTOR_BINARY) &&
-           columns.iter().any(|(name, _)| name == constants::FIELD_VECTOR_BINARY) {
+        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_BINARY) &&
+           columns.iter().any(|(name, _)| name == constants::FIELD_Q_BINARY) {
             fields.push(Arc::new(arrow::datatypes::Field::new(
-                constants::FIELD_VECTOR_BINARY,
+                constants::FIELD_Q_BINARY,
                 arrow::datatypes::DataType::Binary,
                 true
             )));
         }
 
-        if !fields.iter().any(|f| f.name() == constants::FIELD_VECTOR_INT8) &&
-           columns.iter().any(|(name, _)| name == constants::FIELD_VECTOR_INT8) {
+        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_INT8) &&
+           columns.iter().any(|(name, _)| name == constants::FIELD_Q_INT8) {
             fields.push(Arc::new(arrow::datatypes::Field::new(
-                constants::FIELD_VECTOR_INT8,
+                constants::FIELD_Q_INT8,
                 arrow::datatypes::DataType::Binary,
                 true
             )));
         }
 
-        if !fields.iter().any(|f| f.name() == constants::FIELD_VECTOR_PQ) &&
-           columns.iter().any(|(name, _)| name == constants::FIELD_VECTOR_PQ) {
+        if !fields.iter().any(|f| f.name() == constants::FIELD_Q_PQ8) &&
+           columns.iter().any(|(name, _)| name == constants::FIELD_Q_PQ8) {
             fields.push(Arc::new(arrow::datatypes::Field::new(
-                constants::FIELD_VECTOR_PQ,
+                constants::FIELD_Q_PQ8,
                 arrow::datatypes::DataType::Binary,
                 true
             )));

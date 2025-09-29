@@ -565,9 +565,9 @@ impl UnifiedParquetReader {
 
         // Check for quantized vector columns first (for pre-filtering optimization)
         // Only check if quantization is enabled in collection config
-        let has_binary_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_BINARY).is_ok();
-        let has_int8_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_INT8).is_ok();
-        let has_pq_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_PQ).is_ok();
+        let has_binary_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY).is_ok();
+        let has_int8_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8).is_ok();
+        let has_pq_vectors = quantization_enabled && schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8).is_ok();
 
         // Always need ID
         if let Ok(idx) = schema.index_of("id") {
@@ -578,17 +578,17 @@ impl UnifiedParquetReader {
         if needs_vectors && (has_binary_vectors || has_int8_vectors || has_pq_vectors) {
             // Read quantized vectors for fast approximate filtering
             if has_binary_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_BINARY) {
+                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY) {
                     projection.push(idx);
                 }
             }
             if has_int8_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_INT8) {
+                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8) {
                     projection.push(idx);
                 }
             }
             if has_pq_vectors {
-                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_PQ) {
+                if let Ok(idx) = schema.index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8) {
                     projection.push(idx);
                 }
             }
@@ -712,9 +712,9 @@ impl UnifiedParquetReader {
         use arrow_array::{StringArray, Float32Array, FixedSizeListArray, ListArray, Int64Array, BinaryArray, UInt8Array};
 
         // Check if we have quantized vectors for pre-filtering
-        let has_binary = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_BINARY).is_some();
-        let has_int8 = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_INT8).is_some();
-        let has_pq8 = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_PQ).is_some();
+        let has_binary = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY).is_some();
+        let has_int8 = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8).is_some();
+        let has_pq8 = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8).is_some();
 
         let quantized_prefilter = has_binary || has_int8 || has_pq8;
         if quantized_prefilter {
@@ -733,21 +733,21 @@ impl UnifiedParquetReader {
 
         // Extract quantized vectors if available (for pre-filtering)
         let binary_vectors = if has_binary {
-            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_BINARY)
+            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY)
                 .and_then(|c| c.as_any().downcast_ref::<BinaryArray>())
         } else {
             None
         };
 
         let int8_vectors = if has_int8 {
-            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_INT8)
+            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8)
                 .and_then(|c| c.as_any().downcast_ref::<BinaryArray>())
         } else {
             None
         };
 
         let pq8_vectors = if has_pq8 {
-            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_PQ)
+            batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8)
                 .and_then(|c| c.as_any().downcast_ref::<BinaryArray>())
         } else {
             None
