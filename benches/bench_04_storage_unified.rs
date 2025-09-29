@@ -208,8 +208,8 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
     for (engine_name, engine) in engines {
         for (compress_name, compress_value) in &compressions {
-            // Collection ID format: {engine}_{compression}
-            let collection_id = format!("{}_{}", engine_name, compress_name);
+            // Collection ID format: {engine}-{compression} (use hyphen for URL compatibility)
+            let collection_id = format!("{}-{}", engine_name, compress_name);
             // Base path: engines will append collection_id to this
             let base_path = get_base_path();
 
@@ -383,7 +383,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             let savings = (1.0 - ratio) * 100.0;
 
             // Step 2: Pure vector search benchmark
-            let mut pure_group = c.benchmark_group(format!("pure_{}_{}", engine_name, compress_name));
+            let mut pure_group = c.benchmark_group(format!("pure_{}-{}", engine_name, compress_name));
             pure_group.measurement_time(Duration::from_secs(5));
             pure_group.sample_size(40);
             pure_group.warm_up_time(Duration::from_secs(1));
@@ -519,7 +519,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             pure_group.finish();
 
             // Step 3: Metadata-filtered search benchmark
-            let mut filtered_group = c.benchmark_group(format!("filter_{}_{}", engine_name, compress_name));
+            let mut filtered_group = c.benchmark_group(format!("filter_{}-{}", engine_name, compress_name));
             filtered_group.measurement_time(Duration::from_secs(5));
             filtered_group.sample_size(40);
             filtered_group.warm_up_time(Duration::from_secs(1));
@@ -691,7 +691,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
         // Remove all test directories
         for engine in ["sst", "viper", "nova", "swift", "raptor", "helix"] {
             for compression in ["none", "zstd", "lz4", "snappy"] {
-                let test_path = format!("{}/{}_{}", base_path, engine, compression);
+                let test_path = format!("{}/{}-{}", base_path, engine, compression);
                 let _ = fs.remove_dir_all(&test_path).await;
             }
         }
@@ -866,7 +866,7 @@ fn bench_large_scale_search(c: &mut Criterion) {
                 });
 
                 // Benchmark search
-                let mut group = c.benchmark_group(format!("search_{}_{}_{}",engine_name, compress_name, batch_size_name));
+                let mut group = c.benchmark_group(format!("search_{}-{}-{}",engine_name, compress_name, batch_size_name));
                 group.measurement_time(Duration::from_secs(5));
                 group.sample_size(40);
                 group.warm_up_time(Duration::from_secs(1));
@@ -975,7 +975,7 @@ fn bench_insertion_performance(c: &mut Criterion) {
         group.bench_function(engine_name, |b| {
             b.iter(|| {
                 runtime.block_on(async {
-                    let collection_id = format!("insert_{}", engine_name);
+                    let collection_id = format!("insert-{}", engine_name);
                     let base_path = format!("{}/insert/{}", get_base_path(), engine_name);
 
                     // Clean before each iteration using filesystem API
