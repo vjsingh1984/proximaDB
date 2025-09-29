@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use proximadb::storage::engines::core::formats::proxima_blocks::{
+use proximadb::storage::engines::core::formats::proximablocks::{
     ProximaDataBlock, BlockCompressionConfig, VectorEncodingLayout,
 };
 use proximadb::storage::engines::core::ops::unified_proxima_simd::{
@@ -285,7 +285,7 @@ fn bench_compression_ratios(c: &mut Criterion) {
 
                     // Calculate compression ratio
                     let compressed_size = if let Some(ref encoded) = block.encoded_vectors {
-                        encoded.iter().map(|v| v.len()).sum::<usize>()
+                        encoded.iter().map(|v: &Vec<u8>| v.len()).sum::<usize>()
                     } else {
                         original_size
                     };
