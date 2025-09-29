@@ -148,7 +148,7 @@ async fn benchmark_engine_configuration(
 
                 let start_flush = Instant::now();
                 let flush_params = FlushParameters {
-                    collection_id: Some("bench_collection".to_string()),
+                    collection_id: Some("bench-collection".to_string()),
                     vector_records: vectors,
                     force: true,
                     ..Default::default()
@@ -197,7 +197,7 @@ async fn benchmark_engine_configuration(
 
                 let start_flush = Instant::now();
                 let flush_params = FlushParameters {
-                    collection_id: Some("bench_collection".to_string()),
+                    collection_id: Some("bench-collection".to_string()),
                     vector_records: vectors,
                     force: true,
                     ..Default::default()
