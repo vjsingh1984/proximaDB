@@ -203,7 +203,6 @@ async fn test_atomic_wal_to_storage_flow() {
             expires_at: None,
             version: None,
             source: None,
-            quantized_vector: vec![],
             ..Default::default()
         },
         VectorRecord {
@@ -215,7 +214,6 @@ async fn test_atomic_wal_to_storage_flow() {
             expires_at: None,
             version: None,
             source: None,
-            quantized_vector: vec![],
             ..Default::default()
         },
     ];
