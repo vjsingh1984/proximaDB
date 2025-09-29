@@ -85,7 +85,7 @@ impl FlushOptimizer {
             // Use VectorRecord directly (no conversion overhead)
             let mut vector_record = vector;
             // Store sequence_number in version field
-            vector_record.version = Some(sequence_number as i64);
+            vector_record.version = Some(sequence_number as u32);
 
             sorted_records.push((key, vector_record));
         }
@@ -127,7 +127,7 @@ impl FlushOptimizer {
                 // Use VectorRecord directly (no conversion overhead)
                 let mut vector_record = vector.clone();
                 // Store sequence_number in version field
-                vector_record.version = Some(sequence_number as i64);
+                vector_record.version = Some(sequence_number as u32);
 
                 batch_records.push((key, vector_record));
             }

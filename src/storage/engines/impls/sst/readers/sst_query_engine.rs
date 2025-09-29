@@ -3380,7 +3380,7 @@ impl UnifiedSstableReader {
                         timestamp: record.timestamp,
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
-                        version: record.version.map(|v| v as i64),
+                        version: record.version,
                             source: None,
                     }));
                 }

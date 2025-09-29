@@ -105,7 +105,7 @@ pub struct OptimizedSearchRecord {
     /// Debug information for result
     pub debug_info: Option<SearchDebugInfo>,
     /// Version for MVCC
-    pub version: Option<i64>,
+    pub version: Option<u32>,
     /// Record timestamp
     pub timestamp: Option<i64>,
     /// Update timestamp
@@ -219,7 +219,7 @@ impl OptimizedSearchRecord {
     }
 
     /// Builder method to add version info
-    pub fn with_version_info(mut self, version: i64, timestamp: i64) -> Self {
+    pub fn with_version_info(mut self, version: u32, timestamp: i64) -> Self {
         self.version = Some(version);
         self.timestamp = Some(timestamp);
         self

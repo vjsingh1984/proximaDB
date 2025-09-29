@@ -141,7 +141,7 @@ message SearchVectorRecord {
   double score = 2;
   repeated float vector = 3;
   map<string, SqlValue> metadata = 4;
-  optional int64 version = 5;
+  optional uint32 version = 5;
   // Additional fields for compatibility
   optional float similarity = 6;
   optional int64 timestamp = 7;

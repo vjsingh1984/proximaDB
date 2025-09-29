@@ -888,7 +888,8 @@ impl AxisEventLogConsumer {
                                 for row_idx in 0..batch.num_rows() {
                                     // Check extraction mode to determine what data to extract
                                     let has_fp32 = vector_column.is_some();
-                                    let has_quantized = quantized_column.is_some();
+                                    // Note: quantized vectors are now internalized in storage, not in input records
+                                    let has_quantized = false;
 
                                     let should_extract = match extraction_mode {
                                         ExtractionMode::Fp32Only => has_fp32,
@@ -957,7 +958,7 @@ impl AxisEventLogConsumer {
                                             vector,
                                             // quantized_vector field removed - internalized in storage
                                             metadata: std::collections::HashMap::new(), // TODO: Extract metadata columns
-                                            version: Some(version),
+                                            version: Some(version as u32),
                                             timestamp: timestamp,
                                             expires_at: None,
                                             updated_at: None,

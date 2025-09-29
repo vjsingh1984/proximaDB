@@ -2339,8 +2339,8 @@ pub struct SearchVectorRecord {
     pub vector: ::prost::alloc::vec::Vec<f32>,
     #[prost(map = "string, message", tag = "4")]
     pub metadata: ::std::collections::HashMap<::prost::alloc::string::String, SqlValue>,
-    #[prost(int64, optional, tag = "5")]
-    pub version: ::core::option::Option<i64>,
+    #[prost(uint32, optional, tag = "5")]
+    pub version: ::core::option::Option<u32>,
     /// Additional fields for compatibility
     #[prost(float, optional, tag = "6")]
     pub similarity: ::core::option::Option<f32>,
