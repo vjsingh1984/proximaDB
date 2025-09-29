@@ -67,6 +67,8 @@ mod tests {
                 supports_range_requests: false,
                 file_paths: None,
             },
+            metadata_filters: vec![],
+            query_vector: params.vector.clone(),
         }
     }
 

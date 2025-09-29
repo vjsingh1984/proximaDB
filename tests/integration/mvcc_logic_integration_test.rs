@@ -39,7 +39,7 @@ fn create_search_result(id: &str, version: u32, timestamp: u32, score: f32) -> O
         quantization_info: None,
         engine_stats: None,
         index_path: None,
-        version: Some(version as i64),
+        version: Some(version),
         timestamp: Some(timestamp as i64),
         ..Default::default()
     }

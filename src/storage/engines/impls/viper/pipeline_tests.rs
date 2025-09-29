@@ -209,8 +209,7 @@ use crate::compute::quantization::types::*;
         assert_eq!(record.vector, vector);
         assert_eq!(record.metadata.len(), 2);
         assert_eq!(record.version, Some(1));
-        // Fields updated in proto update
-        assert!(record.quantized_vector.is_empty());
+        // quantized_vector field removed - internalized in storage
         assert_eq!(record.source, Some("test".to_string()));
     }
 

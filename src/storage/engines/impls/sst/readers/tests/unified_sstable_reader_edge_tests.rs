@@ -510,7 +510,7 @@ mod edge_tests {
                 timestamp: version,
                 updated_at: Some(version),
                 expires_at: None,
-                version: Some(version as i64),
+                version: Some(version as u32),
                 source: None,
                 // level field removed from VectorRecord
             });

@@ -65,6 +65,8 @@ fn convert_search_params_to_plan(params: &crate::core::search::SearchParams, col
             supports_range_requests: false,
             file_paths: None,
         },
+        metadata_filters: vec![],
+        query_vector: params.vector.clone(),
     }
 }
 
