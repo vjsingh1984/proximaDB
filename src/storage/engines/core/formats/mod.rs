@@ -8,6 +8,9 @@ pub mod common_quantization;
 pub mod quantized_schema;
 pub mod codebook_metadata;
 
+#[cfg(test)]
+mod codebook_integration_test;
+
 // Proxima block-columnar formats are used by SST and SWIFT (vectors are columnar-encoded within blocks)
 // Pure columnar formats are used by VIPER and NOVA (Parquet-based)
 
