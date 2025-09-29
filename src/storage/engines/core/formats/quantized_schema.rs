@@ -753,8 +753,8 @@ mod tests {
 
         match &schema.storage_mapping {
             StorageMapping::Parquet { column_mapping, .. } => {
-                assert!(column_mapping.contains_key("vector_fp32"));
-                assert!(column_mapping.contains_key("vector_binary_quantized"));
+                assert!(column_mapping.contains_key(FIELD_VECTOR_FP32));
+                assert!(column_mapping.contains_key(FIELD_Q_BINARY));
             },
             _ => panic!("Expected Parquet storage mapping"),
         }
