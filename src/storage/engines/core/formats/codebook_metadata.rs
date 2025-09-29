@@ -432,7 +432,7 @@ pub struct ProximaBlockFooter {
 
 impl ProximaBlockFooter {
     pub const MAGIC: [u8; 8] = *b"PROXBLK1";
-    pub const FOOTER_SIZE: usize = 64; // Fixed size footer
+    pub const FOOTER_SIZE: usize = 60; // Fixed size footer (8+8+8+8+8+8+8+4)
 
     /// Write footer to buffer
     pub fn write_to_buffer(&self, buffer: &mut BytesMut) {
