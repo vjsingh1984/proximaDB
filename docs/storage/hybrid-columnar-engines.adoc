@@ -337,7 +337,7 @@ impl ThreeStageFilter {
 - **Space Amplification**: 1.2-1.5x due to LSM tree structure
 - **Bloom Filter Overhead**: <2% of total storage
 
-== SWIFT Engine: High-Speed Row Storage
+== SWIFT Engine: High-Speed Hybrid Columnar Storage
 
 === Architecture Overview
 
@@ -567,7 +567,7 @@ pub struct MatrixTrinityLayout {
 - **Space Overhead**: <10% for all matrices combined
 - **I/O Optimization**: Single read for K² matrix, parallel reads for P² matrices
 
-== Unified Row-Engine Interface
+== Unified Storage Engine Interface
 
 === Common API Surface
 
