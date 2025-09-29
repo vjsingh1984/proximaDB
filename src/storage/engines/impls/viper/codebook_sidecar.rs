@@ -12,20 +12,21 @@ use crate::storage::engines::core::formats::codebook_metadata::{
     CodebookSerializer, QuantizationCodebookMetadata,
 };
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::FileSystem;
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 
 /// VIPER-specific codebook sidecar manager
 pub struct ViperCodebookSidecarManager {
     serializer: CodebookSerializer,
     collection_id: String,
-    filesystem: Arc<UnifiedCachingFilesystem>,
+    filesystem: Arc<dyn FileSystem>,
 }
 
 impl ViperCodebookSidecarManager {
     /// Create new VIPER codebook sidecar manager
     pub fn new(
         collection_id: String,
-        filesystem: Arc<UnifiedCachingFilesystem>,
+        filesystem: Arc<dyn FileSystem>,
     ) -> Self {
         Self {
             serializer: CodebookSerializer::new(),
@@ -56,7 +57,7 @@ impl ViperCodebookSidecarManager {
 
         // Write through unified filesystem
         self.filesystem
-            .write(sidecar_path.to_str().unwrap(), json.as_bytes())
+            .write(sidecar_path.to_str().unwrap(), json.as_bytes(), None)
             .await
             .context("Failed to write codebook sidecar file")?;
 
@@ -123,13 +124,17 @@ impl ViperCodebookSidecarManager {
 
     /// List all sidecar files in a directory
     pub async fn list_sidecars(&self, directory: &Path) -> Result<Vec<PathBuf>> {
-        let pattern = format!("{}/*.codebook.json", directory.display());
-        let files = self.filesystem
-            .list(&pattern)
+        let dir_entries = self.filesystem
+            .list(directory.to_str().unwrap())
             .await
             .context("Failed to list codebook sidecar files")?;
 
-        Ok(files.into_iter().map(PathBuf::from).collect())
+        // Filter for codebook files
+        Ok(dir_entries
+            .into_iter()
+            .filter(|entry| entry.name.ends_with(".codebook.json"))
+            .map(|entry| PathBuf::from(entry.name))
+            .collect())
     }
 
     /// Validate sidecar consistency with Parquet file
@@ -230,7 +235,7 @@ impl NovaCodebookSidecarManager {
     /// Create NOVA-specific manager with progressive support
     pub fn new(
         collection_id: String,
-        filesystem: Arc<UnifiedCachingFilesystem>,
+        filesystem: Arc<dyn FileSystem>,
         enable_progressive: bool,
     ) -> Self {
         Self {
@@ -257,7 +262,7 @@ impl NovaCodebookSidecarManager {
         let json = self.base.serializer.serialize_for_sidecar(metadata)?;
 
         self.base.filesystem
-            .write(sidecar_path.to_str().unwrap(), json.as_bytes())
+            .write(sidecar_path.to_str().unwrap(), json.as_bytes(), None)
             .await
             .context("Failed to write progressive codebook sidecar")?;
 
@@ -281,12 +286,15 @@ impl NovaCodebookSidecarManager {
             .unwrap_or_default()
             .to_string_lossy();
 
-        let pattern = format!("{}/{}.*.codebook.json", directory.display(), base_name);
-        let files = self.base.filesystem.list(&pattern).await?;
+        let dir_entries = self.base.filesystem.list(directory.to_str().unwrap()).await?;
+        let pattern = format!("{}.*.codebook.json", base_name);
 
         let mut results = Vec::new();
-        for file_path in files {
-            let path = PathBuf::from(&file_path);
+        for entry in dir_entries {
+            if !entry.name.contains(&pattern) {
+                continue;
+            }
+            let path = PathBuf::from(&entry.name);
             if let Ok(Some(metadata)) = self.base.read_sidecar(&path).await {
                 // Extract level from filename
                 let level = path
@@ -313,8 +321,9 @@ mod tests {
     #[tokio::test]
     async fn test_viper_sidecar_write_read() {
         let temp_dir = TempDir::new().unwrap();
-        let fs_factory = FilesystemFactory::new_for_testing(temp_dir.path().to_path_buf());
-        let filesystem = fs_factory.get_unified_caching_filesystem("local").await.unwrap();
+        let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let fs_factory = FilesystemFactory::new(config).await.unwrap();
+        let filesystem = fs_factory.get_unified_caching_filesystem("file:///tmp", "test_collection".to_string(), "viper".to_string()).unwrap();
 
         let manager = ViperCodebookSidecarManager::new(
             "test_collection".to_string(),

@@ -4029,6 +4029,7 @@ dependencies = [
  "chrono",
  "clap",
  "config",
+ "crc32fast",
  "criterion",
  "crossbeam",
  "crossbeam-epoch",

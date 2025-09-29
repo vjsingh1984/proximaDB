@@ -7,6 +7,7 @@ use anyhow::Result;
 use arrow::datatypes::Schema;
 use std::sync::Arc;
 use std::collections::HashMap;
+use tracing::{debug, info, trace};
 use crate::proto::proximadb_v1::{VectorRecord, MetadataFilter};
 use crate::core::search::unified_interface::SearchPlan;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};

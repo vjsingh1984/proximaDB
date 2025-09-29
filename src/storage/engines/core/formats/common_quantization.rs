@@ -499,15 +499,15 @@ mod tests {
 
         assert_eq!(quantized_file.file_id, "test_file_001");
         assert_eq!(quantized_file.collection_id, "test_collection");
-        assert!(quantized_file.has_quantization_level(&UnifiedQuantizationLevel::Binary));
-        assert!(quantized_file.has_quantization_level(&UnifiedQuantizationLevel::INT8));
-        assert!(!quantized_file.has_quantization_level(&UnifiedQuantizationLevel::PQ8));
+        assert!(quantized_file.has_quantization_level(&QuantizationLevel::Binary));
+        assert!(quantized_file.has_quantization_level(&QuantizationLevel::Int8));
+        assert!(!quantized_file.has_quantization_level(&QuantizationLevel::PQ8));
     }
 
     #[test]
     fn test_quantized_vector_data_memory_usage() {
         let mut data = QuantizedVectorData::empty();
-        data.binary_vectors = Some(vec![vec![0u8; 32], vec![1u8; 32]]); // 2 vectors, 32 bytes each
+        data.q_binary = Some(vec![vec![0u8; 32], vec![1u8; 32]]); // 2 vectors, 32 bytes each
 
         assert_eq!(data.memory_usage(), 64);
         assert!(data.has_any_quantization());

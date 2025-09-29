@@ -46,7 +46,7 @@ sqlparser = "0.44"
 async-recursion = "1.0"
 
 # Checksums
-# crc32fast = "1.4"  # Replaced with internal implementation
+crc32fast = "1.4"  # Used for SST codebook checksum
 
 # System information
 libc = "0.2"

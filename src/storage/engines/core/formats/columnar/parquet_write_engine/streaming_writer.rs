@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 
 use crate::proto::proximadb_v1::VectorRecord;
