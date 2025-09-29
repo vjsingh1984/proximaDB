@@ -60,7 +60,8 @@ impl SstEngine {
     pub async fn flush_implementation(&self, params: &FlushParameters) -> Result<FlushResult> {
         // Check if quantization is enabled in collection config
         let quantization_enabled = params.collection_config.as_ref()
-            .and_then(|c| c.config.quantization.as_ref())
+            .and_then(|c| c.config.as_ref())
+            .and_then(|cfg| cfg.quantization.as_ref())
             .map(|q| q.enabled)
             .unwrap_or(false);
 

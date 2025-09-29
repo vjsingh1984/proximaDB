@@ -461,7 +461,7 @@ impl UnifiedProgressiveSearchPipeline {
         }
 
         // Sort and keep top candidates
-        candidates.sort_by(|a, b| {
+        candidates.sort_by(|a: &StageCandidate, b: &StageCandidate| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -491,7 +491,7 @@ impl UnifiedProgressiveSearchPipeline {
             // For now, skip INT8 stage if quantization not available in memory
         }
 
-        candidates.sort_by(|a, b| {
+        candidates.sort_by(|a: &StageCandidate, b: &StageCandidate| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -522,7 +522,7 @@ impl UnifiedProgressiveSearchPipeline {
             // For now, skip PQ stage if quantization not available in memory
         }
 
-        candidates.sort_by(|a, b| {
+        candidates.sort_by(|a: &StageCandidate, b: &StageCandidate| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -557,7 +557,7 @@ impl UnifiedProgressiveSearchPipeline {
             });
         }
 
-        candidates.sort_by(|a, b| {
+        candidates.sort_by(|a: &StageCandidate, b: &StageCandidate| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)

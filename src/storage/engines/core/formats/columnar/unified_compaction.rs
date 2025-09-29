@@ -279,8 +279,7 @@ impl UnifiedColumnarCompaction {
         // Get distance metric from config
         let distance_metric = collection_config
             .and_then(|c| c.config.as_ref())
-            .and_then(|c| c.distance_metric.as_ref())
-            .and_then(|m| DistanceMetric::from_str_name(m))
+            .and_then(|c| DistanceMetric::try_from(c.distance_metric).ok())
             .unwrap_or(DistanceMetric::Cosine);
 
         // Create storage quantization config based on collection settings
@@ -301,9 +300,9 @@ impl UnifiedColumnarCompaction {
             config.fast_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8());
 
             // PQ only if explicitly enabled due to training cost
-            if q_config.product_quantization {
+            if q_config.enable_pq {
                 config.primary_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
-                    q_config.num_subquantizers as usize
+                    q_config.pq_segments.max(1) as usize
                 ));
             }
         }
@@ -341,9 +340,7 @@ impl UnifiedColumnarCompaction {
 
         // Process in batches to leverage SIMD and reduce memory pressure
         for chunk in vectors.chunks(batch_config.batch_size) {
-            // Get pooled memory buffer for this batch
-            // This provides aligned memory for SIMD operations
-            let _pooled_buffer = memory_pool.allocate(chunk.len() * vectors[0].len() * 4)?;
+            // Memory pool provides aligned memory for SIMD operations internally
 
             // The StorageQuantizationEngine internally uses:
             // - Unified memory pools for zero-copy operations
@@ -373,10 +370,10 @@ impl UnifiedColumnarCompaction {
         }
 
         // Add binary quantized column if present
-        if quantized_results.iter().any(|r| r.binary_data.is_some()) {
+        if quantized_results.iter().any(|r| r.filter.is_some()) {
             let mut binary_builder = BinaryBuilder::new();
             for result in &quantized_results {
-                if let Some(binary) = &result.binary_data {
+                if let Some(binary) = &result.filter {
                     binary_builder.append_value(binary);
                 } else {
                     binary_builder.append_null();
@@ -387,10 +384,10 @@ impl UnifiedColumnarCompaction {
         }
 
         // Add INT8 quantized column if present
-        if quantized_results.iter().any(|r| r.int8_data.is_some()) {
+        if quantized_results.iter().any(|r| r.fast.is_some()) {
             let mut int8_builder = BinaryBuilder::new();
             for result in &quantized_results {
-                if let Some(int8) = &result.int8_data {
+                if let Some(int8) = &result.fast {
                     int8_builder.append_value(int8);
                 } else {
                     int8_builder.append_null();
@@ -401,10 +398,10 @@ impl UnifiedColumnarCompaction {
         }
 
         // Add PQ quantized column if present
-        if quantized_results.iter().any(|r| r.pq_data.is_some()) {
+        if quantized_results.iter().any(|r| r.primary.is_some()) {
             let mut pq_builder = BinaryBuilder::new();
             for result in &quantized_results {
-                if let Some(pq) = &result.pq_data {
+                if let Some(pq) = &result.primary {
                     pq_builder.append_value(pq);
                 } else {
                     pq_builder.append_null();
