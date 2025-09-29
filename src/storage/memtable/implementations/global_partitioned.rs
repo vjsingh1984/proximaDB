@@ -225,7 +225,7 @@ impl CollectionPartition {
         }
 
         let current_time = chrono::Utc::now().timestamp_micros();
-        let mut latest_record: Option<(VectorRecord, u64, Option<i64>)> = None; // (record, sequence, version)
+        let mut latest_record: Option<(VectorRecord, u64, Option<u32>)> = None; // (record, sequence, version)
 
         // Search through all batches to find the latest version
         for batch in self.wal_batches.values() {
@@ -322,7 +322,7 @@ impl CollectionPartition {
     fn get_all_vectors(&self) -> Vec<VectorRecord> {
         use std::collections::HashMap;
 
-        let mut id_to_latest: HashMap<String, (VectorRecord, u64, Option<i64>)> = HashMap::new(); // (record, sequence, version)
+        let mut id_to_latest: HashMap<String, (VectorRecord, u64, Option<u32>)> = HashMap::new(); // (record, sequence, version)
         let mut vectors_without_id = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();
 
@@ -410,7 +410,7 @@ impl CollectionPartition {
     ) -> Vec<(SimilarityResult, VectorRecord)> {
         use std::collections::HashMap;
 
-        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<i64>)> =
+        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<u32>)> =
             HashMap::new(); // (score, record, sequence, version)
         let mut results_without_id: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
         let current_time = chrono::Utc::now().timestamp_micros();

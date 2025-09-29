@@ -251,7 +251,7 @@ impl ProximaEntityStore {
                         timestamp: 0i64,
                         updated_at: Some(0i64),
                         expires_at: Some(0i64),
-                        version: Some(1i64),
+                        version: Some(1u32),
                         source: None,
                     }
                 })

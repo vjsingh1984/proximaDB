@@ -651,7 +651,7 @@ impl AdvancedSearchOptimizer {
                         .map(|arc| (**arc).clone())
                         .unwrap_or_default(),
                     metadata: std::collections::HashMap::new(), // Would convert metadata
-                    version: r.version.map(|v| v as i64),
+                    version: r.version,
                     timestamp: r.timestamp.map(|t| t as i64),
                     source: None, // TODO: Convert SourceContent to Option<String> when needed
                     expanded_context: r

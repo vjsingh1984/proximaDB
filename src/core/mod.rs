@@ -293,7 +293,7 @@ impl VectorRecordSerialization for VectorRecord {
             timestamp: other_fields.timestamp as i64,
             updated_at: other_fields.updated_at.map(|t| t as i64),
             expires_at: other_fields.expires_at.map(|t| t as i64),
-            version: other_fields.version.map(|v| v as i64),
+            version: other_fields.version,
             source: None,
         })
     }

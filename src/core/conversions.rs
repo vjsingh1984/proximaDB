@@ -210,7 +210,7 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
             score: native.score as f64,
             vector: native.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
             metadata: native.metadata,
-            version: native.version.map(|v| v as i64),
+            version: native.version,
             similarity: native.similarity,
             timestamp: native.timestamp.map(|t| t as i64),
             source: native.source.as_ref().and_then(|sc| match &sc.data {
@@ -272,7 +272,7 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
             score: native.score as f64,
             vector: native.vector.as_ref().map(|v| (**v).clone()).unwrap_or_default(),
             metadata: native.metadata.clone(),
-            version: native.version.map(|v| v as i64),
+            version: native.version,
             similarity: native.similarity,
             timestamp: native.timestamp.map(|t| t as i64),
             source: native.source.as_ref().and_then(|sc| match &sc.data {

@@ -1098,7 +1098,7 @@ impl ViperEngine {
                             timestamp: timestamp as i64,
                             updated_at: Some(updated_at as i64),
                             expires_at: expires_at.map(|v| v as i64),
-                            version: Some(version as i64),
+                            version: Some(version as u32),
                             source: None,
                         };
                         // Check if this is a better match than what we have

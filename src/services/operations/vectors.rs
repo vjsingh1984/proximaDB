@@ -355,7 +355,7 @@ impl VectorOperationsService {
                     score: 1.0,
                     vector: rec.vector,
                     metadata: rec.metadata,
-                    version: rec.updated_at.map(|x| x as i64),
+                    version: rec.version,
                     similarity: None,
                     timestamp: Some(rec.timestamp),
                     source: None,

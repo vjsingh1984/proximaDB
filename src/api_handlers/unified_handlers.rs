@@ -492,7 +492,7 @@ impl UnifiedHandlers {
                     score: 1.0,
                     vector: vector_record.vector,
                     metadata: vector_record.metadata,
-                    version: vector_record.updated_at.map(|x| x as i64),
+                    version: vector_record.version,
                     engine_stats: std::collections::HashMap::new(),
                     expanded_context: Vec::new(),
                     index_path: None,
