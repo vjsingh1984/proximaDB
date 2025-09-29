@@ -380,17 +380,9 @@ impl UniversalSearchPipeline {
 
         let mut filtered = Vec::new();
         for record in records {
-            if !record.quantized_vector.is_empty() {
-                // Calculate binary similarity using distance compute
-                // For now, skip binary filtering if we can't compute similarity
-                let similarity = 1.0; // TODO: Implement binary similarity
-                if similarity >= threshold {
-                    filtered.push(record);
-                }
-            } else {
-                // No binary quantization, include by default
-                filtered.push(record);
-            }
+            // quantized_vector removed - internalized in storage
+            // For now, include all records without binary filtering
+            filtered.push(record);
         }
 
         Ok(filtered)

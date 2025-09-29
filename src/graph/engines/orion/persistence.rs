@@ -148,7 +148,7 @@ impl OrionPersistence {
                 .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
 
             // Initialize WAL writer
-            let wal_writer = UnifiedWALWriter::new(wal_path.to_string_lossy().to_string())
+            let wal_writer = UnifiedWALWriter::new(wal_path.to_string_lossy().to_string()).await
                 .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
 
             (Some(wal_path), Some(Arc::new(tokio::sync::Mutex::new(wal_writer))))
@@ -376,7 +376,7 @@ impl OrionPersistence {
         if let Some(ref wal_path) = self.wal_path {
             use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALReader;
 
-            let reader = UnifiedWALReader::new(wal_path.to_string_lossy().to_string())
+            let reader = UnifiedWALReader::new(wal_path.to_string_lossy().to_string()).await
                 .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
             let entries = reader.read_all().await
                 .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;

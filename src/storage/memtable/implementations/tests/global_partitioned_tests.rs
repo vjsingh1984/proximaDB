@@ -23,7 +23,6 @@ async fn test_global_partitioned_batch_operations() {
         updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -35,7 +34,6 @@ async fn test_global_partitioned_batch_operations() {
         updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -90,7 +88,6 @@ async fn test_global_partitioned_multi_collection() {
             updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }]),
         timestamp: std::time::SystemTime::now(),
@@ -110,7 +107,6 @@ async fn test_global_partitioned_multi_collection() {
             updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }]),
         timestamp: std::time::SystemTime::now(),
@@ -162,7 +158,6 @@ async fn test_mvcc_and_logical_deletes() {
         updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -175,7 +170,6 @@ async fn test_mvcc_and_logical_deletes() {
         updated_at: Some(now),
         expires_at: None,
         version: Some(2), // Higher version
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -188,7 +182,6 @@ async fn test_mvcc_and_logical_deletes() {
         updated_at: Some(now),
         expires_at: Some(now - 1), // Expired 1 second ago
         version: Some(3),          // Highest version (delete)
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -277,7 +270,6 @@ async fn test_global_partitioned_deletion_via_expiry() {
         updated_at: Some(now),
         expires_at: Some(now - 1), // Expired 1 second ago
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -290,7 +282,6 @@ async fn test_global_partitioned_deletion_via_expiry() {
         updated_at: Some(now),
         expires_at: Some(now + 3600), // Expires in 1 hour (in seconds)
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -382,7 +373,6 @@ fn create_test_vector(id: &str, _collection_id: &str, vector: Vec<f32>) -> Vecto
         updated_at: Some(now),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     }
 }

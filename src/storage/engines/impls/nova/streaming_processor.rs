@@ -488,7 +488,6 @@ impl StreamingRowGroupProcessor {
                 metadata: std::collections::HashMap::new(),
                 timestamp: 0,
                 updated_at: None,
-                quantized_vector: Vec::new(),
                 expires_at: None,
                 version: None,
                 source: None,

@@ -469,8 +469,8 @@ impl ColumnarSchemaBuilder {
             // Fixed-size binary for better performance and compression
             DataType::FixedSizeBinary(config.dimension as i32 * 4)
         } else {
-            // List of floats for flexibility
-            DataType::List(Arc::new(Field::new("item", DataType::Float32, false)))
+            // FixedSizeList for known dimension vectors
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), config.dimension as i32)
         };
 
         fields.push(Field::new("vector", vector_type, false));

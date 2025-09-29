@@ -41,7 +41,7 @@ async fn test_id_column_always_preserved() {
     // Write test records with IDs
     let test_records = create_test_records(100);
     writer.write_batch(&test_records).await.unwrap();
-    let (stats, _collector) = writer.finalize().await.unwrap();
+    let (stats, _data, _collector) = writer.finalize().await.unwrap();
 
     assert_eq!(stats.total_records, 100);
     assert!(stats.file_size > 0);
@@ -79,7 +79,7 @@ async fn test_id_less_storage_warning() {
 
     let test_records = create_test_records(50);
     writer.write_batch(&test_records).await.unwrap();
-    let (_stats, _collector) = writer.finalize().await.unwrap();
+    let (_stats, _data, _collector) = writer.finalize().await.unwrap();
 
     // Even with id_less_storage = true, ID column should still be present
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
@@ -123,13 +123,12 @@ async fn test_parquet_flush_and_read_pattern() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         })
         .collect();
 
     writer.write_batch(&test_records).await.unwrap();
-    let (stats, _) = writer.finalize().await.unwrap();
+    let (stats, _data, _collector) = writer.finalize().await.unwrap();
 
     assert_eq!(stats.total_records, 300);
     assert!(stats.bloom_filter_count > 0);
@@ -247,7 +246,6 @@ async fn test_branched_filtering_fast_vs_slow_path() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         });
     }
@@ -265,7 +263,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
     writer.write_batch(&test_records).await.unwrap();
-    let (stats, _) = writer.finalize().await.unwrap();
+    let (stats, _data, _collector) = writer.finalize().await.unwrap();
     assert_eq!(stats.total_records, 200);
 
     // Read back and verify schema
@@ -480,14 +478,13 @@ async fn test_multi_file_directory_scan() {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: Vec::new(),
                     source: None,
                 }
             })
             .collect();
 
         writer.write_batch(&test_records).await.unwrap();
-        let (stats, _) = writer.finalize().await.unwrap();
+        let (stats, _data, _collector) = writer.finalize().await.unwrap();
         assert_eq!(stats.total_records, batch_size);
         total_written += batch_size;
 
@@ -580,14 +577,13 @@ async fn test_dictionary_encoding_optimization() {
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: Vec::new(),
                 source: None,
             }
         })
         .collect();
 
     writer.write_batch(&test_records).await.unwrap();
-    let (stats, _collector) = writer.finalize().await.unwrap();
+    let (stats, _data, _collector) = writer.finalize().await.unwrap();
 
     assert_eq!(stats.total_records, 1000);
 
@@ -631,7 +627,6 @@ async fn test_dictionary_encoding_optimization() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         },
         VectorRecord {
@@ -642,7 +637,6 @@ async fn test_dictionary_encoding_optimization() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         },
     ];
@@ -677,7 +671,6 @@ async fn test_customer_api_compatibility() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         },
         VectorRecord {
@@ -688,7 +681,6 @@ async fn test_customer_api_compatibility() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         },
         VectorRecord {
@@ -699,13 +691,12 @@ async fn test_customer_api_compatibility() {
             updated_at: None,
             expires_at: None,
             version: Some(2),
-            quantized_vector: Vec::new(),
             source: None,
         },
     ];
 
     writer.write_batch(&test_records).await.unwrap();
-    let (_stats, _collector) = writer.finalize().await.unwrap();
+    let (_stats, _data, _collector) = writer.finalize().await.unwrap();
 
     // Test get_by_id equivalent
     let filesystem_config = FilesystemConfig::default();
@@ -739,7 +730,6 @@ async fn test_customer_api_compatibility() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         },
     ];
@@ -760,7 +750,6 @@ async fn test_customer_api_compatibility() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         },
         VectorRecord {
@@ -771,7 +760,6 @@ async fn test_customer_api_compatibility() {
             updated_at: None,
             expires_at: None,
             version: Some(2),
-            quantized_vector: Vec::new(),
             source: None,
         },
     ];
@@ -808,7 +796,7 @@ async fn test_row_group_offset_optimization() {
 
     let test_records = create_test_records(250); // Multiple row groups
     writer.write_batch(&test_records).await.unwrap();
-    let (_stats, _collector) = writer.finalize().await.unwrap();
+    let (_stats, _data, _collector) = writer.finalize().await.unwrap();
 
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
 
@@ -850,7 +838,6 @@ async fn test_row_group_offset_optimization() {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         },
     ];
@@ -882,7 +869,6 @@ fn create_test_records(count: usize) -> Vec<VectorRecord> {
                 updated_at: None,
                 expires_at: None,
                 version: Some(((i % 5) + 1) as i64),
-                quantized_vector: Vec::new(),
                 source: None,
             }
         })
@@ -1080,7 +1066,6 @@ fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<Vec
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: Vec::new(),
                 source: None,
             });
         }

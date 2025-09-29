@@ -388,7 +388,6 @@ fn benchmark_vector_operations(dimensions: &[usize], num_vectors: usize) -> Resu
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 })
                 .collect();
@@ -824,7 +823,6 @@ fn create_vector_records_from_vecs(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord> 
             updated_at: Some(i as i64),
             expires_at: None,
             version: None,
-            quantized_vector: vec![],
             source: None,
         })
         .collect()
@@ -1472,7 +1470,6 @@ fn benchmark_vector_creation_statistical(sample_size: usize) {
                         updated_at: Some(i as i64),
                         expires_at: None,
                         version: Some(1),
-                        quantized_vector: vec![],
                         source: None,
                     })
                     .collect();
@@ -1558,7 +1555,6 @@ fn benchmark_metadata_operations_statistical(sample_size: usize) {
                 updated_at: Some(i as i64),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             }
         })
@@ -2151,7 +2147,6 @@ fn benchmark_storage_encoding(
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: Vec::new(),
                 source: None,
             })
             .collect();
@@ -2549,7 +2544,6 @@ fn create_vector_records_from_vecs_2(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord
             updated_at: Some(i as i64),
             expires_at: None,
             version: None,
-            quantized_vector: vec![],
             source: None,
         })
         .collect()

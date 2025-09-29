@@ -46,7 +46,6 @@ mod tests {
             updated_at: Some(Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }
     }
@@ -251,7 +250,6 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: Some(1234567999),
             version: Some(2),
-            quantized_vector: vec![],
             source: None,
         };
 
@@ -428,7 +426,6 @@ mod tests {
             updated_at: Some(Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         };
 

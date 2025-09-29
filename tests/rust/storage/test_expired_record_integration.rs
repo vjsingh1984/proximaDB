@@ -214,7 +214,7 @@ async fn test_viper_expired_record_compaction() -> Result<()> {
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Utf8, false),
         Field::new("collection_id", DataType::Utf8, false),
-        Field::new("vector", DataType::List(Arc::new(Field::new("item", DataType::Float32, false))), false),
+        Field::new("vector", DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), 3), false),
         Field::new("timestamp", DataType::Int64, false),
         Field::new("created_at", DataType::Int64, false),
         Field::new("updated_at", DataType::Int64, false),

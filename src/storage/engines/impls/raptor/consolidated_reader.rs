@@ -883,7 +883,8 @@ impl RaptorReader {
                     if let Some(u8_array) =
                         quant_list.as_primitive_opt::<arrow_array::types::UInt8Type>()
                     {
-                        record.quantized_vector = u8_array.values().to_vec();
+                        // quantized_vector removed - internalized in storage
+                        // Store quantized data internally if needed
                     }
                 }
             }

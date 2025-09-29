@@ -367,7 +367,6 @@ mod tests {
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             },
             VectorRecord {
@@ -378,7 +377,6 @@ mod tests {
                 updated_at: Some(0),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             },
         ];
@@ -425,7 +423,6 @@ mod tests {
                     updated_at: Some(0),
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 })
                 .unwrap();

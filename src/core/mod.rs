@@ -157,7 +157,6 @@ struct VectorRecordOtherFields {
     pub updated_at: Option<u32>,
     pub expires_at: Option<u32>,
     pub version: Option<u32>,
-    pub quantized_vector: Option<Vec<u8>>,
 }
 
 /// Extension trait for VectorRecord to add optimized serialization methods
@@ -213,7 +212,7 @@ impl VectorRecordSerialization for VectorRecord {
             updated_at: self.updated_at.map(|t| t as u32),
             expires_at: self.expires_at.map(|t| t as u32),
             version: self.version.map(|v| v as u32),
-            quantized_vector: Some(self.quantized_vector.clone()),
+            // quantized_vector removed - internalized in storage
         };
         let bincode_data = bincode::serialize(&other_fields)?;
 
@@ -295,7 +294,6 @@ impl VectorRecordSerialization for VectorRecord {
             updated_at: other_fields.updated_at.map(|t| t as i64),
             expires_at: other_fields.expires_at.map(|t| t as i64),
             version: other_fields.version.map(|v| v as i64),
-            quantized_vector: other_fields.quantized_vector.unwrap_or_default(),
             source: None,
         })
     }

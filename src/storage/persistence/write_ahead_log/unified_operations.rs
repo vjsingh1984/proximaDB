@@ -193,19 +193,18 @@ pub struct UnifiedWALWriter {
 
 impl UnifiedWALWriter {
     /// Create a new unified WAL writer
-    pub fn new(base_path: String) -> anyhow::Result<Self> {
+    pub async fn new(base_path: String) -> anyhow::Result<Self> {
         // Create filesystem factory with default config
         let filesystem = Arc::new(
-            tokio::runtime::Handle::current()
-                .block_on(FilesystemFactory::new(FilesystemConfig::default()))
+            FilesystemFactory::new(FilesystemConfig::default())
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?
         );
 
         // Ensure base directory exists
         let base_url = format!("file://{}", base_path);
         let fs = filesystem.get_filesystem(&base_url)?;
-        tokio::runtime::Handle::current()
-            .block_on(fs.create_dir_all(&base_url))?;
+        fs.create_dir_all(&base_url).await?;
 
         Ok(Self {
             base_path,
@@ -330,11 +329,11 @@ pub struct UnifiedWALReader {
 
 impl UnifiedWALReader {
     /// Create a new WAL reader
-    pub fn new(base_path: String) -> anyhow::Result<Self> {
+    pub async fn new(base_path: String) -> anyhow::Result<Self> {
         // Create filesystem factory with default config
         let filesystem = Arc::new(
-            tokio::runtime::Handle::current()
-                .block_on(FilesystemFactory::new(FilesystemConfig::default()))
+            FilesystemFactory::new(FilesystemConfig::default())
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to create filesystem: {}", e))?
         );
 
@@ -425,7 +424,7 @@ mod tests {
         let path = temp_dir.path().to_str().unwrap().to_string();
 
         // Create writer
-        let mut writer = UnifiedWALWriter::new(path.clone()).unwrap();
+        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
 
         // Test graph operation
         let graph_op = UnifiedWALOperation::GraphOp(GraphOperation::CreateNode {
@@ -466,7 +465,7 @@ mod tests {
         writer.sync().await.unwrap();
 
         // Read back
-        let reader = UnifiedWALReader::new(path).unwrap();
+        let reader = UnifiedWALReader::new(path).await.unwrap();
         let entries = reader.read_all().await.unwrap();
 
         assert_eq!(entries.len(), 2);

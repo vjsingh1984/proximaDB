@@ -252,7 +252,6 @@ fn extract_records_from_batch(
             metadata: HashMap::new(), // Would extract if needed
             timestamp: 0,         // Would extract from timestamp column
             updated_at: None,
-            quantized_vector: Vec::new(),
             expires_at: None,
             version: None,
             source: None, // No source information in batch data

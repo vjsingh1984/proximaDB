@@ -510,7 +510,6 @@ impl SstEntry {
                 updated_at: None,
                 expires_at: Some(0), // Expired immediately
                 version: None,
-                quantized_vector: vec![],
                 source: None, // No source for tombstone
             },
             sst_meta: SstMetadata {
@@ -1331,7 +1330,6 @@ mod block_utils {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None, // No source information available from legacy format
             });
         }

@@ -1056,7 +1056,6 @@ impl StorageEngine {
                                 updated_at: v.updated_at,
                                 expires_at: v.expires_at,
                                 version: v.version,
-                                quantized_vector: Vec::new(),
                                 source: None,
                             }
                         })

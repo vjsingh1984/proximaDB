@@ -320,7 +320,6 @@ impl UnifiedNOVAReader {
                 timestamp,
                 version,
                 expires_at: None,
-                quantized_vector: vec![],
                 source: None,
                 updated_at: Some(timestamp), // Use timestamp as updated_at for now
             };

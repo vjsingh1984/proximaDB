@@ -291,7 +291,7 @@ mod tests {
         vectors: Vec<VectorRecord>,
         vector_dim: usize,
     ) -> Result<()> {
-        use arrow_array::builder::{Float32Builder, ListBuilder, StringBuilder};
+        use arrow_array::builder::{Float32Builder, ListBuilder, StringBuilder, FixedSizeListBuilder};
         use tokio::fs;
         use tracing::{debug, error, info};
 
@@ -306,7 +306,7 @@ mod tests {
             Field::new("collection_id", DataType::Utf8, false),
             Field::new(
                 "vector_fp32",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), vector_dim as i32),
                 true,
             ),
             Field::new("version", DataType::Int8, true),
@@ -333,10 +333,10 @@ mod tests {
         let mut updated_at_values: Vec<Option<i64>> = Vec::new();
         let mut expires_at_values: Vec<i64> = Vec::new();
 
-        // Build vector list array
-        let mut vector_builder = ListBuilder::with_capacity(
+        // Build vector list array using FixedSizeListBuilder
+        let mut vector_builder = FixedSizeListBuilder::new(
             Float32Builder::with_capacity(vectors.len() * vector_dim),
-            vectors.len(),
+            vector_dim as i32,
         );
 
         // Build metadata array
@@ -465,7 +465,6 @@ mod tests {
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: Some("test".to_string()),
             };
             vectors.push(vector);
@@ -682,7 +681,6 @@ mod tests {
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: Some("test".to_string()),
         };
 

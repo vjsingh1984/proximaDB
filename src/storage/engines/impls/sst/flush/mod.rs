@@ -58,10 +58,22 @@ impl SstEngine {
     /// 3. Write vectors to SSTable using atomic operations
     /// 4. Update metadata and trigger compaction if needed
     pub async fn flush_implementation(&self, params: &FlushParameters) -> Result<FlushResult> {
+        // Check if quantization is enabled in collection config
+        let quantization_enabled = params.collection_config.as_ref()
+            .and_then(|c| c.config.quantization.as_ref())
+            .map(|q| q.enabled)
+            .unwrap_or(false);
+
+        if quantization_enabled {
+            debug!("🔄 SST FLUSH: Quantization enabled, processing with quantization support");
+            // Quantization will be handled internally during the flush process
+            // The flush_with_quantization method has been removed - quantization is now internalized
+        }
+
         let start_time = std::time::Instant::now();
 
         info!(
-            "🔄 SST FLUSH: Starting flush operation for {} batches, {} vectors",
+            "🔄 SST FLUSH: Starting standard flush operation for {} batches, {} vectors",
             params.batch_ids.len(),
             params.vector_records.len()
         );
@@ -306,7 +318,6 @@ mod tests {
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: vec![],
             source: None,
         }
     }

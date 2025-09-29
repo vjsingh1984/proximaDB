@@ -878,7 +878,6 @@ impl AxisEventLogConsumer {
                                     .and_then(|col| col.as_any().downcast_ref::<StringArray>());
 
                                 let vector_column = batch.column_by_name("vector");
-                                let quantized_column = batch.column_by_name("quantized_vector");
 
                                 let version_array = batch.column_by_name("version");
                                 let timestamp_array = batch
@@ -956,7 +955,7 @@ impl AxisEventLogConsumer {
                                         let record = VectorRecord {
                                             id: id.clone().unwrap_or_default(), // Use empty string if no ID
                                             vector,
-                                            quantized_vector: quantized_vector,
+                                            // quantized_vector field removed - internalized in storage
                                             metadata: std::collections::HashMap::new(), // TODO: Extract metadata columns
                                             version: Some(version),
                                             timestamp: timestamp,
@@ -1072,7 +1071,6 @@ impl AxisEventLogConsumer {
                                     let record = VectorRecord {
                                         id: format!("raptor_{}_{}", file_path, row_idx),
                                         vector: vec![0.0; 128], // Placeholder vector
-                                        quantized_vector: Vec::new(),
                                         metadata: std::collections::HashMap::new(),
                                         version: Some(0),
                                         timestamp: 0,
@@ -1112,18 +1110,19 @@ impl AxisEventLogConsumer {
                             !vector_record.vector.is_empty()
                         }
                         ExtractionMode::QuantizedOnly => {
-                            // Only extract if we have quantized data
-                            !vector_record.quantized_vector.is_empty()
+                            // Note: quantized_vector field removed - quantization is internalized
+                            // Quantized data is now in ProximaDataBlock's QuantizedSection
+                            // For now, treat as no extraction for quantized-only mode
+                            false
                         }
                         ExtractionMode::Both => {
-                            // Extract if we have either type
+                            // Extract if we have vector data
+                            // (quantized data would come from storage blocks)
                             !vector_record.vector.is_empty()
-                                || !vector_record.quantized_vector.is_empty()
                         }
                         ExtractionMode::Auto => {
-                            // Auto mode: extract if we have any data
+                            // Auto mode: extract if we have vector data
                             !vector_record.vector.is_empty()
-                                || !vector_record.quantized_vector.is_empty()
                         }
                     };
 
@@ -1140,14 +1139,7 @@ impl AxisEventLogConsumer {
                             updated_at: None, // Not used by AXIS
                             expires_at: vector_record.expires_at,
                             version: vector_record.version,
-                            quantized_vector: if matches!(
-                                extraction_mode,
-                                ExtractionMode::QuantizedOnly | ExtractionMode::Both
-                            ) {
-                                vector_record.quantized_vector.clone()
-                            } else {
-                                vec![]
-                            },
+                            // quantized_vector field removed - quantization is internalized
                             source: None,
                         };
 

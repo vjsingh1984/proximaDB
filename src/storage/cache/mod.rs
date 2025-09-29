@@ -234,8 +234,7 @@ impl CacheValue for crate::proto::proximadb_v1::VectorRecord {
         // Add size of vector data (f32 = 4 bytes each)
         size += self.vector.len() * 4;
 
-        // Add size of quantized vector data
-        size += self.quantized_vector.len();
+        // quantized_vector removed - internalized in storage
 
         // Add size of metadata (approximate)
         for (key, value) in &self.metadata {

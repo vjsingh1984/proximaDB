@@ -319,7 +319,6 @@ impl StorageEngineAdapter for PRISMAdapter {
                 expires_at: None,
                 source: None,
                 version: Some(1),
-                quantized_vector: vec![],
             });
         }
 
@@ -524,7 +523,6 @@ impl StorageEngineAdapter for NOVAAdapter {
                 expires_at: None,
                 source: None,
                 version: Some(1),
-                quantized_vector: vec![],
             });
         }
 
@@ -703,8 +701,7 @@ macro_rules! create_simple_adapter {
                         updated_at: Some(chrono::Utc::now().timestamp()),
                         expires_at: None,
                         source: None,
-                        quantized_vector: vec![],
-                    });
+                            });
                 }
                 Ok(vectors)
             }

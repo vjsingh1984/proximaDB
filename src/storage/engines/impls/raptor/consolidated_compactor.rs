@@ -291,7 +291,6 @@ impl RaptorCompactor {
                 updated_at: None,
                 expires_at: None,
                 source: None,
-                quantized_vector: Vec::new(), // No quantized data in this extraction
             });
         }
 

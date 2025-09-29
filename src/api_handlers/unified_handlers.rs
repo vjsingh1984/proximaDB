@@ -347,7 +347,6 @@ impl UnifiedHandlers {
                 updated_at: v.updated_at.map(|x| x as i64),
                 expires_at: v.expires_at.map(|x| x as i64),
                 version: v.version.map(|x| x as i64),
-                quantized_vector: v.quantized_vector,
                 source: v.source,
             })
             .collect();

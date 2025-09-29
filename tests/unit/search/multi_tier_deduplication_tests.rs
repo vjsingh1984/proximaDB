@@ -40,7 +40,6 @@ fn test_basic_deduplication() {
         updated_at: Some(Utc::now().timestamp_micros()),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -94,7 +93,6 @@ fn test_deduplication_without_ids() {
                 updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             },
             similarity: 0.9,
@@ -113,7 +111,6 @@ fn test_deduplication_without_ids() {
                 updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             },
             similarity: 0.85,
@@ -162,7 +159,6 @@ fn test_metadata_filtering() {
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         },
         VectorRecord {
@@ -182,7 +178,6 @@ fn test_metadata_filtering() {
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         },
     ];
@@ -236,7 +231,6 @@ fn test_simple_metadata_query() {
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         },
         VectorRecord {
@@ -256,7 +250,6 @@ fn test_simple_metadata_query() {
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         },
     ];
@@ -295,7 +288,6 @@ fn test_mixed_engine_deduplication() {
         updated_at: Some(Utc::now().timestamp_micros()),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -363,7 +355,6 @@ fn test_k_limit_enforcement() {
                 updated_at: Some(Utc::now().timestamp_micros()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             },
             similarity: (i as f32 * 0.01), // Increasing scores (ascending order)
@@ -497,7 +488,6 @@ fn test_complex_deduplication_scenario() {
             updated_at: Some(Utc::now().timestamp_micros()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         },
         similarity: 0.85,

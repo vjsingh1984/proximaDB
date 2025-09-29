@@ -634,18 +634,33 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
         let mut fields = Vec::new();
 
         // Core fields - id can be null for immutable vectors
-        fields.push(Field::new("id", DataType::Utf8, true));
         fields.push(Field::new(
-            "vectors",
-            DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+            crate::storage::engines::core::formats::columnar::FIELD_ID,
+            DataType::Utf8,
+            true
+        ));
+        // Use FixedSizeList with a default dimension - actual dimension should come from collection config
+        // TODO: Get dimension from collection config context
+        let default_dimension = 128; // This should come from collection config
+        fields.push(Field::new(
+            crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32,
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), default_dimension),
             true, // Nullable for sparse vectors
         ));
 
         // Version field for MVCC - using tinyint
-        fields.push(Field::new("version", DataType::Int8, true));
+        fields.push(Field::new(
+            crate::storage::engines::core::formats::columnar::FIELD_VERSION,
+            DataType::Int8,
+            true
+        ));
 
         // Audit field - stores creation or update time
-        fields.push(Field::new("updated_at", DataType::Int64, true));
+        fields.push(Field::new(
+            crate::storage::engines::core::formats::columnar::FIELD_UPDATED_AT,
+            DataType::Int64,
+            true
+        ));
 
         // Dynamic filterable metadata columns
         for field in &self.filterable_fields {

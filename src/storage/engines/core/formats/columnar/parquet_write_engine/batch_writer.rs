@@ -87,7 +87,8 @@ impl BatchParquetWriter {
         }
 
         // Finalize and get statistics
-        writer.finalize().await
+        let (stats, _data, collector) = writer.finalize().await?;
+        Ok((stats, collector))
     }
 
     /// Write all records and return only statistics (convenience method)

@@ -424,7 +424,6 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
                     updated_at: Some(chrono::Utc::now().timestamp()),
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 })
                 .collect();
@@ -739,7 +738,6 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             timestamp: chrono::Utc::now().timestamp(),
             updated_at: None,
             expires_at: None,
-            quantized_vector: vec![],
             source: None,
             version: None,
         },
@@ -750,7 +748,6 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             timestamp: chrono::Utc::now().timestamp(),
             updated_at: None,
             expires_at: None,
-            quantized_vector: vec![],
             source: None,
             version: None,
         },
@@ -761,7 +758,6 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             timestamp: chrono::Utc::now().timestamp(),
             updated_at: None,
             expires_at: None,
-            quantized_vector: vec![],
             source: None,
             version: None,
         },
@@ -893,7 +889,6 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
                     updated_at: Some(chrono::Utc::now().timestamp()),
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 }
             })

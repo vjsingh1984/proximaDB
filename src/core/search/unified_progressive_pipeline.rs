@@ -454,17 +454,10 @@ impl UnifiedProgressiveSearchPipeline {
         let mut candidates = Vec::new();
 
         for record in records {
-            if !record.quantized_vector.is_empty() {
-                let quantized = &record.quantized_vector;
-                // Compute hamming distance for binary vectors
-                let score = self.compute_hamming_distance(&query, quantized);
-                candidates.push(StageCandidate {
-                    record: record.clone(),
-                    score,
-                    stage: SearchStage::Binary,
-                    refined_count: 1,
-                });
-            }
+            // Note: quantized_vector field removed - quantization is now internalized
+            // during flush/compaction and stored in ProximaDataBlock's QuantizedSection
+            // Binary search stage would need to access the quantized data from storage blocks
+            // For now, skip binary stage if quantization not available in memory
         }
 
         // Sort and keep top candidates
@@ -493,19 +486,9 @@ impl UnifiedProgressiveSearchPipeline {
         let mut candidates = Vec::new();
 
         for record in records {
-            if !record.quantized_vector.is_empty() {
-                let quantized = &record.quantized_vector;
-                // Convert bytes to i8 and compute distance
-                let record_int8: Vec<i8> = quantized.iter().map(|&b| b as i8).collect();
-
-                let score = self.compute_int8_distance(&query, &record_int8, distance_metric);
-                candidates.push(StageCandidate {
-                    record: record.clone(),
-                    score,
-                    stage: SearchStage::Int8,
-                    refined_count: 1,
-                });
-            }
+            // Note: quantized_vector field removed - quantization is now internalized
+            // INT8 quantized data would be accessed from ProximaDataBlock's QuantizedSection
+            // For now, skip INT8 stage if quantization not available in memory
         }
 
         candidates.sort_by(|a, b| {
@@ -534,21 +517,9 @@ impl UnifiedProgressiveSearchPipeline {
         let mut candidates = Vec::new();
 
         for record in records {
-            if !record.quantized_vector.is_empty() {
-                let quantized = &record.quantized_vector;
-                // Compute PQ distance
-                let score = self.compute_pq_distance(query, quantized, pq_bits);
-                candidates.push(StageCandidate {
-                    record: record.clone(),
-                    score,
-                    stage: if pq_bits == 4 {
-                        SearchStage::Pq4
-                    } else {
-                        SearchStage::Pq8
-                    },
-                    refined_count: 1,
-                });
-            }
+            // Note: quantized_vector field removed - quantization is now internalized
+            // PQ quantized data would be accessed from ProximaDataBlock's QuantizedSection
+            // For now, skip PQ stage if quantization not available in memory
         }
 
         candidates.sort_by(|a, b| {

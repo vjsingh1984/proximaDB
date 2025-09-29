@@ -2545,11 +2545,8 @@ impl RaptorWriter {
         // Store original FP32 vector for reconstruction
         let fp32_vector = vector.vector.clone();
 
-        // Get quantized vector - either pre-quantized or quantize now
-        let quantized_vector = if !vector.quantized_vector.is_empty() {
-            // Use pre-quantized data if available
-            vector.quantized_vector.clone()
-        } else {
+        // Get quantized vector - quantization internalized in storage
+        let quantized_vector = {
             // Quantize vector using unified engine
             let quantized_batch = self
                 .quantization_engine

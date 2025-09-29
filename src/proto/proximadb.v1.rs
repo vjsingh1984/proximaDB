@@ -2280,12 +2280,11 @@ pub struct VectorRecord {
     pub updated_at: ::core::option::Option<i64>,
     #[prost(int64, optional, tag = "6")]
     pub expires_at: ::core::option::Option<i64>,
-    #[prost(int64, optional, tag = "7")]
-    pub version: ::core::option::Option<i64>,
-    #[prost(bytes = "vec", tag = "8")]
-    pub quantized_vector: ::prost::alloc::vec::Vec<u8>,
-    /// collection_id removed - causes initialization issues across codebase
-    #[prost(string, optional, tag = "9")]
+    /// Version counter, 0-4B versions (realistically won't exceed 255)
+    #[prost(uint32, optional, tag = "7")]
+    pub version: ::core::option::Option<u32>,
+    /// Original content that generated this vector
+    #[prost(string, optional, tag = "8")]
     pub source: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[derive(serde::Serialize, serde::Deserialize)]

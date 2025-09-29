@@ -37,6 +37,7 @@ pub struct StreamingParquetWriter {
     writer: ArrowWriter<Vec<u8>>,
     config: ParquetWriterConfig,
     schema: Arc<Schema>,
+    dimension: usize,
     current_batch: Vec<VectorRecord>,
     current_row_group: usize,
     total_records_written: u64,
@@ -148,6 +149,7 @@ impl StreamingParquetWriter {
             writer,
             config,
             schema,
+            dimension,
             current_batch: Vec::new(),
             current_row_group: 0,
             total_records_written: 0,
@@ -266,8 +268,33 @@ impl StreamingParquetWriter {
         arrays.push(Arc::new(UInt32Array::from(row_group_offsets)));
         arrays.push(Arc::new(UInt32Array::from(row_indices)));
 
-        // Vector data - simplified for now
-        // TODO: Implement full vector array creation
+        // Vector data - Create List array of Float32 (non-nullable items)
+        // Create fixed-size list array (more efficient for vectors with known dimension)
+        use arrow_array::{Float32Array, FixedSizeListArray};
+
+        // Flatten all vectors into a single array
+        let mut values = Vec::with_capacity(records.len() * self.dimension);
+        for record in records {
+            // Ensure vector has correct dimension
+            if record.vector.len() != self.dimension {
+                return Err(anyhow::anyhow!(
+                    "Vector dimension mismatch: expected {}, got {}",
+                    self.dimension,
+                    record.vector.len()
+                ));
+            }
+            values.extend_from_slice(&record.vector);
+        }
+
+        let values_array = Float32Array::from(values);
+        let fixed_list_array = FixedSizeListArray::try_new(
+            Arc::new(Field::new("item", DataType::Float32, false)),
+            self.dimension as i32,
+            Arc::new(values_array),
+            None,
+        ).expect("Failed to create fixed-size list array");
+
+        arrays.push(Arc::new(fixed_list_array));
 
         // Timestamp
         let timestamps: Vec<i64> = records.iter()
@@ -275,9 +302,110 @@ impl StreamingParquetWriter {
             .collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
 
+        // Extra metadata - Create a Map array matching the schema
+        // The schema expects a struct with "key" and "value" fields
+        use arrow_array::{MapArray, StructArray};
+        use arrow_buffer::NullBuffer;
+
+        // Create struct array for the entries
+        let key_field = Field::new("key", DataType::Utf8, false);
+        let value_field = Field::new("value", DataType::Utf8, true);
+        let struct_fields = vec![key_field.clone(), value_field.clone()];
+
+        // Collect all metadata entries from all records
+        let mut all_keys = Vec::new();
+        let mut all_values = Vec::new();
+        let mut map_offsets = Vec::new();
+        let mut current_offset = 0i32;
+
+        println!("🔍 DEBUG: Writing metadata for {} records", records.len());
+
+        // Build the key-value pairs for each record's metadata
+        for (idx, record) in records.iter().enumerate() {
+            map_offsets.push(current_offset);
+            let metadata_count = record.metadata.len();
+
+            if idx < 3 || metadata_count > 0 {
+                println!("🔍 DEBUG: Record {} (id={}) has {} metadata entries",
+                    idx, record.id, metadata_count);
+            }
+
+            // Add all metadata entries for this record
+            for (key, sql_value) in &record.metadata {
+                all_keys.push(key.clone());
+
+                // Convert SqlValue to string representation
+                let value_str = if let Some(value) = &sql_value.value {
+                    use crate::proto::proximadb_v1::sql_value::Value;
+                    match value {
+                        Value::StringValue(s) => Some(s.clone()),
+                        Value::NumberValue(f) => Some(f.to_string()),
+                        Value::BoolValue(b) => Some(b.to_string()),
+                        Value::Int64Value(i) => Some(i.to_string()),
+                        _ => Some("".to_string()),
+                    }
+                } else {
+                    None
+                };
+
+                all_values.push(value_str);
+                current_offset += 1;
+
+                if idx < 3 {
+                    println!("🔍 DEBUG:   Added metadata {}={:?}", key, all_values.last());
+                }
+            }
+        }
+        map_offsets.push(current_offset); // Final offset
+
+        println!("🔍 DEBUG: Total metadata entries written: {}", all_keys.len());
+
+        // Create the struct array with all key-value pairs
+        let keys_array = StringArray::from(all_keys);
+        let values_array = StringArray::from(all_values);
+
+        let struct_array = StructArray::try_new(
+            struct_fields.into(),
+            vec![Arc::new(keys_array), Arc::new(values_array)],
+            None
+        ).expect("Failed to create struct array");
+
+        // Create offsets buffer from the offsets vector
+        let offsets = unsafe {
+            arrow_buffer::OffsetBuffer::<i32>::new_unchecked(map_offsets.into())
+        };
+
+        let map_field = Field::new(
+            "entries",
+            DataType::Struct(vec![key_field, value_field].into()),
+            false
+        );
+
+        let map_array = MapArray::new(
+            Arc::new(map_field),
+            offsets,
+            struct_array,
+            None,
+            false
+        );
+
+        arrays.push(Arc::new(map_array));
+
         // Create record batch
-        RecordBatch::try_new(self.schema.clone(), arrays)
-            .context("Failed to create record batch")
+        let array_count = arrays.len();
+        let result = RecordBatch::try_new(self.schema.clone(), arrays);
+        match result {
+            Ok(batch) => Ok(batch),
+            Err(e) => {
+                eprintln!("RecordBatch creation error: {}", e);
+                eprintln!("Schema field count: {}", self.schema.fields().len());
+                eprintln!("Array count: {}", array_count);
+                for (i, field) in self.schema.fields().iter().enumerate() {
+                    eprintln!("  Field {}: {} ({:?})", i, field.name(), field.data_type());
+                }
+                Err(anyhow::anyhow!("Failed to create record batch: {}", e))
+            }
+        }
     }
 
     /// Update bloom filters with current batch
@@ -354,25 +482,16 @@ impl StreamingParquetWriter {
         Ok(())
     }
 
-    /// Finalize the writer and return statistics
-    pub async fn finalize(mut self) -> Result<(StreamingParquetWriterStats, Option<Box<dyn MetadataCollector>>)> {
+    /// Finalize the writer and return statistics and data
+    pub async fn finalize(mut self) -> Result<(StreamingParquetWriterStats, Vec<u8>, Option<Box<dyn MetadataCollector>>)> {
         // Flush any remaining records
         if !self.current_batch.is_empty() {
             self.flush_current_batch().await?;
         }
 
-        // Finish writing and get the metadata
-        let _metadata = self.writer.finish()?;
-
-        // Extract the written data from the writer
+        // Finish writing and get the written bytes
+        // The finish() method consumes the writer and returns the bytes
         let written_data = self.writer.into_inner()?;
-
-        // Write data to the filesystem using the filesystem API
-        let fs = self.filesystem_factory.get_filesystem(&self.file_path)?;
-        let path = FilesystemFactory::resolve_path(&self.file_path)?;
-
-        fs.write(&path, &written_data, None).await
-            .context("Failed to write Parquet data to filesystem")?;
 
         // Notify collector about finalization (use current_row_group + 1 as total)
         let total_row_groups = self.current_row_group + 1;
@@ -380,10 +499,8 @@ impl StreamingParquetWriter {
             collector.finalize(total_row_groups)?;
         }
 
-        // Calculate statistics using filesystem metadata
-        let file_metadata = fs.metadata(&path).await
-            .context("Failed to get file metadata after write")?;
-        let file_size = file_metadata.size;
+        // Calculate statistics from written data
+        let file_size = written_data.len() as u64;
 
         let compression_ratio = if self.total_records_written > 0 {
             // Simplified calculation - actual implementation would be more sophisticated
@@ -429,7 +546,7 @@ impl StreamingParquetWriter {
             avg_metadata_fields: 0.0,
         };
 
-        Ok((stats, self.metadata_collector))
+        Ok((stats, written_data, self.metadata_collector))
     }
 }
 

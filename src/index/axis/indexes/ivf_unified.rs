@@ -1094,7 +1094,6 @@ impl UnifiedIvfIndex {
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized_vector: Vec::new(),
                         source: None,
                     })
                     .collect();

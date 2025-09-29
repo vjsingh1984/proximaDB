@@ -873,7 +873,6 @@ impl NovaColumnarSearch {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             }))
         } else {
@@ -912,7 +911,6 @@ impl NovaColumnarSearch {
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: vec![],
             source: None, // No source information available from Arrow batch
         }))
     }

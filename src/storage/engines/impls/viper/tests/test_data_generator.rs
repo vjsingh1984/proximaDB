@@ -270,7 +270,7 @@ impl TestDataGenerator {
             Field::new("collection_id", DataType::Utf8, false),
             Field::new(
                 crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32,
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), self.config.dimension as i32),
                 true,
             ), // Both field and items are nullable
             Field::new("timestamp", DataType::Int64, true),
@@ -328,9 +328,13 @@ impl TestDataGenerator {
         ));
 
         // Create non-nullable Float32 arrays manually to match schema
-        let mut list_builder = ListBuilder::new(Float32Builder::new());
+        use arrow_array::builder::FixedSizeListBuilder;
+        let mut list_builder = FixedSizeListBuilder::new(Float32Builder::new(), self.config.dimension as i32);
         for vector in &vectors {
-            list_builder.append_value(vector.iter().map(|&x| Some(x)));
+            for &val in vector {
+                list_builder.values().append_value(val);
+            }
+            list_builder.append(true);
         }
         let vector_array = list_builder.finish();
 

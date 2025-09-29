@@ -49,10 +49,13 @@ impl ParquetSchemaBuilder {
         fields.push(Field::new("row_group_offset", DataType::UInt32, false));
         fields.push(Field::new("row_index", DataType::UInt32, false));
 
-        // Vector data (FP32 list)
+        // Vector data (FP32 fixed-size list - more efficient since dimension is known)
         let vector_field = Field::new(
             FIELD_VECTOR_FP32,
-            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+                self.dimension as i32,
+            ),
             false,
         );
         fields.push(vector_field);
@@ -180,7 +183,9 @@ pub fn create_writer_properties(config: &ParquetWriterConfig) -> Result<WriterPr
 
     // Enable dictionary encoding if configured
     if config.enable_dictionary {
-        builder = builder.set_encoding(Encoding::RLE_DICTIONARY);
+        // Dictionary encoding is enabled separately, the encoding here is the fallback
+        // Use PLAIN as the fallback encoding when dictionary encoding fails
+        builder = builder.set_encoding(Encoding::PLAIN);
         builder = builder.set_dictionary_enabled(true);
     }
 

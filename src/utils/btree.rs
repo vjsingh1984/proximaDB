@@ -760,71 +760,10 @@ impl BPlusTree {
         // Clear existing tree
         self.clear();
 
-        // Build leaf level
-        let mut leaf_nodes = Vec::new();
-        let mut current_leaf = LeafNode::new();
-
+        // Use regular insert for correctness
+        // This ensures all B+tree invariants are maintained
         for (key, value) in entries.iter() {
-            if current_leaf.entries.len() >= self.max_keys {
-                leaf_nodes.push(NodeRef::new_leaf(current_leaf));
-                current_leaf = LeafNode::new();
-                self.stats.leaf_nodes += 1;
-            }
-            current_leaf.entries.push((key.clone(), value.clone()));
-            self.stats.entries += 1;
-        }
-
-        if !current_leaf.entries.is_empty() {
-            leaf_nodes.push(NodeRef::new_leaf(current_leaf));
-            self.stats.leaf_nodes += 1;
-        }
-
-        // Link leaf nodes
-        for i in 0..leaf_nodes.len() - 1 {
-            if let Ok(mut leaf_guard) = leaf_nodes[i].write() {
-                if let Node::Leaf(leaf) = &mut *leaf_guard {
-                    leaf.next = Some(leaf_nodes[i + 1].clone());
-                }
-            }
-        }
-
-        // Build internal levels bottom-up
-        let mut current_level = leaf_nodes;
-        self.stats.height = 1;
-
-        while current_level.len() > 1 {
-            let mut next_level = Vec::new();
-            let mut i = 0;
-
-            while i < current_level.len() {
-                let mut internal_node = InternalNode::new();
-
-                // Add first child
-                internal_node.children.push(current_level[i].clone());
-                i += 1;
-
-                // Add up to max_keys additional children (with their separator keys)
-                while i < current_level.len() && internal_node.children.len() < self.max_keys + 1 {
-                    // Get the first key of this node as the separator
-                    if let Ok(node_guard) = current_level[i].read() {
-                        if let Some(first_key) = node_guard.first_key() {
-                            internal_node.keys.push(first_key.clone());
-                        }
-                    }
-                    internal_node.children.push(current_level[i].clone());
-                    i += 1;
-                }
-
-                next_level.push(NodeRef::new_internal(internal_node));
-                self.stats.internal_nodes += 1;
-            }
-
-            current_level = next_level;
-            self.stats.height += 1;
-        }
-
-        if let Some(root) = current_level.into_iter().next() {
-            self.root = Some(root);
+            self.insert(key.clone(), value.clone());
         }
     }
 
@@ -1163,7 +1102,15 @@ mod tests {
         for i in 0..100 {
             let key = format!("key{:03}", i);
             let expected_value = format!("value{:03}", i);
-            assert_eq!(tree.get(key.as_bytes()), Some(expected_value.into_bytes()));
+            let result = tree.get(key.as_bytes());
+            if result.is_none() {
+                println!("Failed to find key: {}", key);
+                // Let's validate the tree structure
+                if let Err(e) = tree.validate() {
+                    println!("Tree validation error: {:?}", e);
+                }
+            }
+            assert_eq!(result, Some(expected_value.into_bytes()));
         }
     }
 

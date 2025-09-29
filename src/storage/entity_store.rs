@@ -252,7 +252,6 @@ impl ProximaEntityStore {
                         updated_at: Some(0i64),
                         expires_at: Some(0i64),
                         version: Some(1i64),
-                        quantized_vector: vec![],
                         source: None,
                     }
                 })

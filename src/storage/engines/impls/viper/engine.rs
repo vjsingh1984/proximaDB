@@ -1099,7 +1099,6 @@ impl ViperEngine {
                             updated_at: Some(updated_at as i64),
                             expires_at: expires_at.map(|v| v as i64),
                             version: Some(version as i64),
-                            quantized_vector: vec![],
                             source: None,
                         };
                         // Check if this is a better match than what we have
@@ -1389,39 +1388,39 @@ impl ViperEngine {
         collection_id: &str,
         storage_url: &str,
     ) -> Result<Vec<String>> {
-        debug!(
-            "📁 Getting Parquet files for collection: {} from URL: {}",
+        println!(
+            "📁 VIPER: Getting Parquet files for collection: {} from URL: {}",
             collection_id, storage_url
         );
-        info!(
-            "🔍 VIPER get_parquet_files: collection_id={}, storage_url={}",
-            collection_id, storage_url
-        );
-        debug!("📁 [DEBUG] parquet_files_with_storage_url called:");
-        debug!("    collection_id: {}", collection_id);
-        debug!("    storage_url: {}", storage_url);
         // Use filesystem API for all storage backends - it handles the differences
-        debug!("📁 Listing files at: {}", storage_url);
+        println!("📁 VIPER: Listing files at: {}", storage_url);
         let parquet_files = match self.filesystem_factory.list(storage_url).await {
             Ok(files) => {
-                debug!("📁 filesystem.list returned {} entries", files.len());
+                println!("📁 VIPER: filesystem.list returned {} entries", files.len());
+                for (i, f) in files.iter().enumerate() {
+                    println!("📁 VIPER:   Entry[{}]: name={}, url={}", i, f.name, f.url);
+                }
                 let parquet_files: Vec<String> = files
                     .into_iter()
                     .filter(|f| {
-                        f.name.ends_with(crate::storage::engines::VIPER_FILE_EXT)
+                        let matches = f.name.ends_with(crate::storage::engines::VIPER_FILE_EXT)
                             && !f.name.starts_with("__")
-                            && !f.name.starts_with(".")
+                            && !f.name.starts_with(".");
+                        if !matches {
+                            info!("📁 VIPER: Filtered out: {}", f.name);
+                        }
+                        matches
                     })
                     .map(|f| f.url) // Use the full URL from DirEntry
                     .collect();
-                debug!("📁 Found {} Parquet files", parquet_files.len());
+                println!("📁 VIPER: Found {} Parquet files after filtering", parquet_files.len());
                 for (i, file) in parquet_files.iter().enumerate() {
-                    debug!("    [{}] {}", i, file);
+                    println!("📁 VIPER:   Parquet[{}]: {}", i, file);
                 }
                 parquet_files
             }
             Err(e) => {
-                debug!("📁 Error listing files: {}", e);
+                warn!("📁 VIPER: Error listing files at {}: {}", storage_url, e);
                 vec![]
             }
         };
@@ -1599,18 +1598,32 @@ impl UnifiedStorageEngine for ViperEngine {
         params: &crate::storage::traits::FlushParameters,
     ) -> Result<FlushResult> {
         let collection_id = self.get_collection_id_from_params(params)?;
+
+        println!("🟦 VIPER DO_FLUSH: ========== STARTING FLUSH ==========");
+        println!("🟦 VIPER DO_FLUSH: Collection ID: {}", collection_id);
+        println!("🟦 VIPER DO_FLUSH: Vector count: {}", params.vector_records.len());
+        println!("🟦 VIPER DO_FLUSH: Force: {}", params.force);
+        println!("🟦 VIPER DO_FLUSH: Synchronous: {}", params.synchronous);
+        println!("🟦 VIPER DO_FLUSH: Has collection_config: {}", params.collection_config.is_some());
+
         debug!("🔍 VIPER DO_FLUSH: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
+            println!("🟦 VIPER DO_FLUSH: Collection config found");
             if let Some(ref config) = collection_config.config {
+                println!("🟦 VIPER DO_FLUSH: Config field found");
                 if let Some(ref storage_config) = config.storage_config.as_ref() {
+                    println!("🟦 VIPER DO_FLUSH: Storage config found");
                     debug!("   ✅ Found storage_config in collection_config");
                 } else {
+                    println!("🟦 VIPER DO_FLUSH: No storage config");
                     debug!("   ⚠️ No compression config in collection_config");
                 }
             } else {
+                println!("🟦 VIPER DO_FLUSH: No config field");
                 debug!("   ⚠️ No config field in collection");
             }
         } else {
+            println!("🟦 VIPER DO_FLUSH: No collection config");
             debug!("   ⚠️ No collection_config in params");
         }
         debug!(
@@ -1626,6 +1639,10 @@ impl UnifiedStorageEngine for ViperEngine {
         // Convert batch IDs to strings for compatibility
         let batch_id_strings: Vec<String> =
             params.batch_ids.iter().map(|id| id.to_string()).collect();
+
+        println!("🟦 VIPER DO_FLUSH: About to call flush_manager.flush_vectors()");
+        println!("🟦 VIPER DO_FLUSH: Batch ID strings: {:?}", batch_id_strings);
+
         // Use the modular flush manager to flush vectors with provided collection config
         let mut flush_result = self
             .flush_manager
@@ -1639,6 +1656,12 @@ impl UnifiedStorageEngine for ViperEngine {
                 params.collection_config.as_ref(), // Pass collection config from params
             )
             .await?;
+
+        println!("🟦 VIPER DO_FLUSH: flush_manager.flush_vectors() returned");
+        println!("🟦 VIPER DO_FLUSH: Flush result success: {}", flush_result.success);
+        println!("🟦 VIPER DO_FLUSH: Entries flushed: {:?}", flush_result.entries_flushed);
+        println!("🟦 VIPER DO_FLUSH: Bytes written: {:?}", flush_result.bytes_written);
+        println!("🟦 VIPER DO_FLUSH: Files created: {:?}", flush_result.files_created);
         // Update engine statistics using atomic operations (lock-free)
         self.stats
             .flush_operations
@@ -1825,7 +1848,7 @@ impl UnifiedStorageEngine for ViperEngine {
             .storage_url()
             .ok_or_else(|| anyhow::anyhow!("No storage URL in context"))?;
 
-        debug!("search_vectors_unified: collection_id={}, storage_url={}", collection_id, storage_url);
+        println!("🔍 VIPER search_vectors_unified: collection_id={}, storage_url={}", collection_id, storage_url);
         let query_vector = ctx
             .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
@@ -1990,24 +2013,25 @@ impl UnifiedStorageEngine for ViperEngine {
             collection_id
         );
         let collection_opt = Some(ctx.collection.clone());
-        // Get parquet files for the collection - construct the full data path
-        // The storage_url is the base location, we need to add collection_id/data
-        let data_path = crate::utils::StoragePath::collection_data_path(&storage_url, collection_id);
-        debug!("VIPER search: storage_url={}, data_path={}", storage_url, data_path);
+        // Get parquet files for the collection
+        // Use the storage URL directly as provided by the context
+        // The context should already have the correct path based on the collection configuration
+        let data_path = storage_url.clone();
+        println!("📂 VIPER search: Looking for Parquet files at: {}", data_path);
         let parquet_files = self
             .parquet_files_with_storage_url(collection_id, &data_path)
             .await?;
-        debug!(
-            "Found {} parquet files for collection {}",
+        println!(
+            "📁 VIPER: Found {} parquet files for collection {}",
             parquet_files.len(),
             collection_id
         );
         for (i, file) in parquet_files.iter().enumerate() {
-            trace!("  Parquet file {}: {}", i, file);
+            println!("  📁 Parquet file {}: {}", i, file);
         }
         if parquet_files.is_empty() {
-            debug!(
-                "No parquet files found for collection {}, returning empty results",
+            println!(
+                "📁 VIPER: No parquet files found for collection {}, returning empty results",
                 collection_id
             );
             return Ok(vec![]);
@@ -2066,11 +2090,13 @@ impl UnifiedStorageEngine for ViperEngine {
                 UnifiedQuantizationLevel::Pq4,
                 UnifiedQuantizationLevel::Pq8,
             ], // VIPER supports all quantization levels
+            metadata_filters: vec![], // TODO: Extract from search parameters
+            query_vector: Some(query_vector.to_vec()),
         };
 
         // Use UnifiedParquetReader for actual search with predicate pushdown
-        debug!(
-            "Using UnifiedParquetReader for collection: {}",
+        println!(
+            "🔎 VIPER: Using UnifiedParquetReader for collection: {}",
             search_context.collection_id
         );
 
@@ -2164,19 +2190,71 @@ impl UnifiedStorageEngine for ViperEngine {
                 supports_range_requests: true,
                 file_paths: Some(parquet_files.clone()),
             },
+            metadata_filters: vec![], // TODO: Extract from search parameters
+            query_vector: Some(query_vector.to_vec()),
         };
 
-        let search_results = parquet_reader
+        println!("🔎 VIPER: Calling parquet_reader.search_vectors to read data...");
+        let read_results = parquet_reader
             .search_vectors(&search_plan, &collection_context)
             .await?;
-        debug!("parquet_reader.search_vectors returned {} results", search_results.results.len());
+        println!("🔎 VIPER: parquet_reader returned {} records", read_results.results.len());
 
-        // The search results are already OptimizedSearchRecord, just use them directly
-        let all_results: Vec<OptimizedSearchRecord> = search_results.results;
+        // Now perform the actual search on the data
+        let mut scored_results: Vec<(f32, OptimizedSearchRecord)> = Vec::new();
+
+        // Get distance compute engine
+        let distance_compute = Arc::new(
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(distance_metric.clone())
+        );
+
+        for record in read_results.results {
+            if let Some(ref vector) = record.vector {
+                println!("🔍 VIPER: Processing record {} with vector of length {}", record.id, vector.len());
+                if vector.is_empty() {
+                    println!("⚠️ VIPER: Record {} has empty vector, skipping", record.id);
+                    continue;
+                }
+                // Compute distance
+                let distance = distance_compute.distance(query_vector, vector);
+
+                // Debug: check metadata before pushing to scored results
+                if scored_results.len() < 3 {
+                    println!("🔍 DEBUG: About to push record {}: metadata keys={:?}",
+                        record.id, record.metadata.keys().collect::<Vec<_>>());
+                }
+
+                scored_results.push((distance, record));
+            } else {
+                println!("⚠️ VIPER: Record {} has no vector", record.id);
+            }
+        }
+
+        // Sort by score (lower is better for distance metrics)
+        scored_results.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Take top-k
+        scored_results.truncate(k);
+
+        // Update scores and convert to final results
+        // UnifiedDistanceCompute already provides normalized scores
+        let all_results: Vec<OptimizedSearchRecord> = scored_results
+            .into_iter()
+            .map(|(score, mut record)| {
+                record.score = score;
+                record.similarity = Some(score);
+                record
+            })
+            .collect();
 
         debug!("Search engine returned {} results", all_results.len());
         if !all_results.is_empty() {
             trace!("First result metadata: {:?}", all_results[0].metadata);
+            println!("🔍 DEBUG: First 3 results before applying include flags:");
+            for (i, r) in all_results.iter().take(3).enumerate() {
+                println!("  Result {}: id={}, metadata keys={:?}",
+                    i, r.id, r.metadata.keys().collect::<Vec<_>>());
+            }
         }
         // Return the optimized search results directly
         let mut results = all_results;
@@ -2187,7 +2265,9 @@ impl UnifiedStorageEngine for ViperEngine {
                 result.vector = None;
             }
         }
+        println!("🔍 DEBUG: include_metadata={}, clearing metadata={}", include_metadata, !include_metadata);
         if !include_metadata {
+            println!("🔍 WARNING: Clearing metadata from results!");
             for result in &mut results {
                 result.metadata = HashMap::new();
             }

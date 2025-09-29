@@ -1270,7 +1270,6 @@ impl HybridQueryEngine {
                                     updated_at: Some(rec.updated_at.unwrap_or(0) as i64),
                                     expires_at: None,
                                     version: None,
-                                    quantized_vector: vec![],
                                     source: None,
                                 },
                             });
@@ -1332,7 +1331,6 @@ impl HybridQueryEngine {
                             updated_at: Some(node.updated_at_ms),
                             expires_at: None,
                             version: None,
-                            quantized_vector: vec![],
                             source: None,
                         },
                     });

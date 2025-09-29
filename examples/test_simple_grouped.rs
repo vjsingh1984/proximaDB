@@ -16,7 +16,6 @@ fn main() -> anyhow::Result<()> {
         id: "test".to_string(),
         vector: vector.clone(),
         metadata: HashMap::new(),
-        quantized_vector: vec![],
         expires_at: None,
         source: None,
         timestamp: 0,

@@ -70,7 +70,6 @@ mod tests {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: Vec::new(),
                     source: None,
                 }
             })
@@ -223,7 +222,6 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: Vec::new(),
                 source: None,
             })
             .collect();
@@ -303,7 +301,6 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: Vec::new(),
                 source: None,
             })
             .collect();
@@ -380,7 +377,6 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: Vec::new(),
                 source: None,
             })
             .collect();

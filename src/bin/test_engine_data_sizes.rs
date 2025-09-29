@@ -75,7 +75,6 @@ fn main() {
             version: Some(1),
             updated_at: Some(1000000 + i),
             expires_at: None,
-            quantized_vector: Vec::new(),  // Empty vector instead of None
             source: None,
         };
         sample_records.push(record);

@@ -326,8 +326,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized_vector: vec![],
-                        source: None,
+                            source: None,
                     },
                 );
                 // Write records using streaming approach for production consistency
@@ -522,7 +521,6 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    quantized_vector: vec![],
                     source: None,
                 };
                 records.insert(id.to_string(), record);

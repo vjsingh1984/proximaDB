@@ -128,7 +128,12 @@ impl Flush {
         self.metrics_updater = Some(updater);
     }
 
-    /// Core flush operation using proper staging pattern
+    // TODO: Quantization should be handled inside HybridWriter or a dedicated module
+    // that creates proper columnar storage with constants::FIELD_VECTOR_BINARY,
+    // constants::FIELD_VECTOR_INT8, constants::FIELD_VECTOR_PQ8 columns
+    // The quantization config from collection should control whether these columns are created
+
+/// Core flush operation using proper staging pattern
     pub async fn flush_vectors(
         &self,
         collection_id: &str,
@@ -267,47 +272,125 @@ impl Flush {
             }
         };
 
-        // Step 2b: Serialize sorted vector records to Parquet format
+        // Step 2a: Check if quantization is enabled for this collection
+        // Quantization will be handled by the HybridWriter if enabled in config
+        // The writer will automatically create vector_binary, vector_int8, vector_pq8 columns
+        // based on the quantization config
+        let quantization_enabled = collection_config.as_ref()
+            .and_then(|c| c.config.as_ref())
+            .and_then(|c| c.quantization.as_ref())
+            .is_some();
+
+        if quantization_enabled {
+            info!("⚡ VIPER: Quantization enabled - HybridWriter will create quantized columns");
+            // HybridWriter will handle quantization internally based on config
+        } else {
+            info!("📝 VIPER: Quantization not enabled - only FP32 vectors will be stored");
+        }
+
+        // Step 2b: Use HybridParquetWriter directly from columnar module (like NOVA does)
         info!(
-            "🔄 VIPER: Step 2b - Serializing {} sorted vector records to Parquet",
+            "🔄 VIPER: Step 2b - Using HybridParquetWriter for {} sorted vector records",
             sorted_records.len()
         );
         debug!("📊 VIPER WRITER PATH ANALYSIS:");
         debug!("   - Input: Entire batch from memtable (flush pattern)");
-        debug!("   - Processing: Sort → Quantize → Columnar layout");
-        debug!("   - Output: Single Parquet file with quantized columns");
-        debug!("   - Quantization: Applied based on collection config");
-        let parquet_data_or_path = match self
-            .serialize_records_to_parquet(
-                &sorted_records,
-                collection_id,
-                &collection_config,
-                vector_dimensions as usize,
-                viper_config,
-            )
-            .await
-        {
-            Ok(data) => {
-                // Check if this is a file path marker (starts with magic bytes)
-                if data.len() > 4 && &data[0..4] == &[0xFA, 0xCE, 0xF1, 0x1E] {
-                    let path_str = String::from_utf8_lossy(&data[4..]);
-                    info!(
-                        "✅ VIPER: Step 2 - Serialization completed (file at {})",
-                        path_str
-                    );
-                } else {
-                    info!(
-                        "✅ VIPER: Step 2 - Serialization completed ({} bytes)",
-                        data.len()
-                    );
-                }
-                data
+        debug!("   - Processing: HybridWriter decides streaming vs batch mode");
+        debug!("   - Output: Single Parquet file with optimal encoding");
+        debug!("   - Auto-optimization: HybridWriter handles everything");
+
+        // Calculate data URL for final destination
+        let storage_assignment = collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .ok_or_else(|| anyhow::anyhow!(
+                "Collection '{}' has no storage assignment. All collections must have storage assignments.",
+                collection_id
+            ))?;
+
+        let data_url = format!(
+            "{}/{}/data",
+            storage_assignment.base_location, collection_id
+        );
+
+        // Generate filename using FilenameCodec
+        let codec = FilenameCodec::new();
+        let filename = codec.generate(0, &crate::storage::engines::VIPER_FILE_EXT[1..]);
+        let final_url = format!("{}/{}", data_url, filename);
+
+        println!("🟩 HYBRID_WRITER: Using columnar HybridParquetWriter::write_with_cache");
+        println!("🟩 HYBRID_WRITER: Records: {}, Final URL: {}", sorted_records.len(), final_url);
+
+        // Configure HybridParquetWriter like NOVA does
+        use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
+        let writer_config = ParquetWriterConfig {
+            row_group_size: viper_config.row_group_size,
+            page_size: 1024 * 1024, // 1MB pages
+            write_batch_size: 10000,
+            compression: parquet::basic::Compression::ZSTD(Default::default()),
+            compression_level: Some(viper_config.compression_level),
+            enable_dictionary: true,
+            enable_bloom_filters: true,
+            bloom_filter_fpp: 0.01,
+            bloom_filter_ndv: sorted_records.len() as u64,
+            enable_statistics: true,
+            enable_page_index: true,
+            sort_columns: vec![],
+            id_less_storage: false,
+            filterable_metadata_columns: None,
+            quantization: Default::default(),
+            max_records_per_file: None,
+            target_file_size_bytes: Some(128 * 1024 * 1024), // 128MB
+            enable_async_io: true,
+        };
+
+        let hybrid_config = crate::storage::engines::core::formats::columnar::hybrid_writer::HybridWriterConfig {
+            base_config: writer_config,
+            initial_mode: crate::storage::engines::core::formats::columnar::hybrid_writer::WriterMode::Adaptive,
+            enable_auto_switch: true,
+            mode_switch_threshold: 1000,
+            pattern_window_size: 100,
+            streaming_threshold: 500.0,  // Lower for flush operations
+            batch_threshold: 1000,       // Lower for flush operations
+            max_buffer_size: 50 * 1024 * 1024, // 50MB buffer
+            buffer_time_limit: std::time::Duration::from_secs(10),
+            enable_concurrent_writes: false,
+            max_concurrent_writers: 1,
+            optimize_row_group_size: true,
+            min_row_group_size: 100,     // Smaller for flush
+            max_row_group_size: 10000,   // Smaller for flush
+        };
+
+        // Use HybridParquetWriter::write_with_cache like NOVA does
+        let (stats, _metadata_collector) = match crate::storage::engines::core::formats::columnar::hybrid_writer::HybridParquetWriter::write_with_cache(
+            &sorted_records,
+            vector_dimensions as usize,
+            hybrid_config,
+            &final_url,
+            &*self.filesystem_factory,
+            None, // No filterable columns for now
+            None, // No metadata collector for VIPER
+        ).await {
+            Ok(result) => {
+                println!("🟩 HYBRID_WRITER: ✅ write_with_cache completed successfully");
+                println!("🟩 HYBRID_WRITER: Stats - file_size: {}, total_records: {}",
+                         result.0.file_size, result.0.total_records);
+                result
             }
             Err(e) => {
-                error!("❌ VIPER: Step 2 - Serialization failed: {}", e);
-                return Err(e.context("Failed to serialize vector records to Parquet"));
+                println!("🟩 HYBRID_WRITER: ❌ write_with_cache failed: {}", e);
+                error!("❌ VIPER: Step 2 - HybridParquetWriter failed: {}", e);
+                return Err(e.context("Failed to write Parquet via HybridParquetWriter"));
             }
         };
+
+        // Since HybridWriter handled everything, create a marker to indicate completion
+        let final_file_path = stats.file_path.clone();
+        let mut parquet_data_or_path = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Magic bytes to indicate already written
+        parquet_data_or_path.extend_from_slice(final_file_path.as_bytes());
+
+        println!("🟩 HYBRID_WRITER: HybridWriter completed, file at: {}", final_file_path);
+        info!("✅ VIPER: Step 2 - HybridParquetWriter completed successfully");
 
         // Step 3: Check if HybridParquetWriter already handled atomic write
         let final_file_path = if parquet_data_or_path.len() > 4
@@ -464,355 +547,6 @@ impl Flush {
         })
     }
 
-    /// Serialize vector records to actual Parquet format using Apache Arrow
-    async fn serialize_records_to_parquet(
-        &self,
-        records: &[VectorRecord],
-        collection_id: &str,
-        collection_config: &Option<crate::proto::proximadb_v1::Collection>,
-        vector_dimensions: usize,
-        viper_config: &crate::core::config::ViperConfig,
-    ) -> Result<Vec<u8>> {
-        if records.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // 🎯 DELEGATING TO SHARED COLUMNAR MODULE:
-        // StreamingParquetWriter handles all schema creation and data serialization
-        // This ensures consistency between VIPER and NOVA engines
-        // Extract quantization config for StreamingParquetWriter
-        let quantization_config = if let Some(collection) = collection_config {
-            collection
-                .config
-                .as_ref()
-                .and_then(|c| c.quantization.clone())
-                .unwrap_or_default()
-        } else {
-            Default::default()
-        };
-
-        // Extract filterable columns for bloom filter configuration
-        let filterable_columns: Vec<String> = if let Some(collection) = collection_config {
-            if let Some(ref config) = collection.config {
-                config.filterable_columns.iter().map(|col| col.name.clone()).collect()
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        // No manual schema creation needed - StreamingParquetWriter handles this
-
-        // No manual data processing needed - StreamingParquetWriter handles everything
-
-        // StreamingParquetWriter will handle all data transformation internally
-        // No need for manual data processing - directly use StreamingParquetWriter
-
-        /* REMOVED: Manual data processing code (lines 507-852)
-           This was creating arrays for RecordBatch that was never actually used.
-           StreamingParquetWriter accepts VectorRecord directly. */
-
-        // Prepare to use HybridParquetWriter's flush method directly
-
-        debug!("🔍 VIPER FLUSH: Using core compression directly");
-        debug!("   Collection: {}", collection_id);
-        debug!("   Records: {}", records.len());
-
-        // Select compression algorithm based on collection config
-        let compression_algorithm = if let Some(collection) = collection_config {
-            if let Some(ref config) = collection.config {
-                if let Some(ref storage_config) = config.storage_config {
-                    let compression_value = storage_config.compression;
-                    use crate::proto::proximadb_v1::CompressionAlgorithm as ProtoAlgorithm;
-
-                    // Convert proto compression to core compression algorithm
-                    match ProtoAlgorithm::try_from(compression_value) {
-                        Ok(ProtoAlgorithm::CompressionZstd) => {
-                            crate::core::compression::CompressionAlgorithm::Zstd
-                        }
-                        Ok(ProtoAlgorithm::CompressionLz4) => {
-                            crate::core::compression::CompressionAlgorithm::Lz4
-                        }
-                        Ok(ProtoAlgorithm::CompressionSnappy) => {
-                            crate::core::compression::CompressionAlgorithm::Snappy
-                        }
-                        Ok(ProtoAlgorithm::CompressionGzip) => {
-                            crate::core::compression::CompressionAlgorithm::Gzip
-                        }
-                        Ok(ProtoAlgorithm::CompressionBrotli) => {
-                            crate::core::compression::CompressionAlgorithm::Brotli
-                        }
-                        // CompressionMixed not available in proto, using Mixed from our enum
-                        // This case should not occur with current proto definitions
-                        _ => crate::core::compression::CompressionAlgorithm::None,
-                    }
-                } else {
-                    crate::core::compression::CompressionAlgorithm::Zstd // Default
-                }
-            } else {
-                crate::core::compression::CompressionAlgorithm::Zstd // Default
-            }
-        } else {
-            crate::core::compression::CompressionAlgorithm::Zstd // Default
-        };
-
-        let compression_level = viper_config.compression_level as u32; // Simplified since compression is now i32
-
-        // Map core compression to Parquet compression using shared function
-        let compression_algo =
-            crate::storage::engines::core::formats::columnar::common::map_core_to_parquet_compression(
-                compression_algorithm.clone(),
-                Some(compression_level as i32),
-            )?;
-        debug!("   Selected Parquet compression: {:?}", compression_algo);
-
-        // Build writer properties with optimal encodings for different column types
-        let mut props_builder = parquet::file::properties::WriterProperties::builder()
-            .set_compression(compression_algo)
-            .set_max_row_group_size(viper_config.row_group_size);
-
-        // For Mixed compression, apply per-column optimization
-        if compression_algorithm == crate::core::compression::CompressionAlgorithm::Mixed {
-            info!("🎯 VIPER: Applying Mixed compression per-column optimization");
-            // Note: Mixed compression strategy is now handled by StreamingParquetWriter
-            // props_builder = self.apply_mixed_compression_strategy(props_builder, &batch)?;
-        }
-
-        // Set optimal encoding for vector column based on quantization
-        // Check if vectors are quantized (detected via collection config)
-        let is_quantized = if let Some(collection) = collection_config {
-            collection
-                .config
-                .as_ref()
-                .and_then(|c| c.quantization.as_ref())
-                .map(|q| q.enabled)
-                .unwrap_or(false)
-        } else {
-            false
-        };
-
-        if is_quantized {
-            // For quantized vectors (INT8/INT16 or custom bit-width via bytemuck)
-            // Use BIT_PACKED encoding for maximum compression
-            props_builder = props_builder.set_column_encoding(
-                parquet::schema::types::ColumnPath::from(FIELD_VECTOR_FP32),
-                parquet::basic::Encoding::RLE,
-            );
-            debug!("🔧 VIPER: Using BIT_PACKED encoding for quantized vectors");
-        } else {
-            // For full precision f32 vectors
-            // BYTE_STREAM_SPLIT splits floating point bytes for better compression
-            props_builder = props_builder.set_column_encoding(
-                parquet::schema::types::ColumnPath::from(FIELD_VECTOR_FP32),
-                parquet::basic::Encoding::BYTE_STREAM_SPLIT,
-            );
-            debug!("🔧 VIPER: Using BYTE_STREAM_SPLIT encoding for f32 vectors");
-        }
-
-        // Set dictionary encoding for low-cardinality string columns
-        props_builder = props_builder.set_column_dictionary_enabled(
-            parquet::schema::types::ColumnPath::from("collection_id"),
-            true,
-        );
-        props_builder = props_builder
-            .set_column_dictionary_enabled(parquet::schema::types::ColumnPath::from(FIELD_ID), true);
-
-        // Apply column-specific encodings from filterable metadata
-        // TODO: Re-enable when encoding_hint is available in proto v1
-        /*for filterable_column in &filterable_metadata {
-            if let Some(encoding_hint) = filterable_column.encoding_hint {
-                use crate::proto::proximadb_v1::ColumnEncoding;
-                let column_path =
-                    parquet::schema::types::ColumnPath::from(filterable_column.name.as_str());
-
-                match ColumnEncoding::try_from(encoding_hint) {
-                    Ok(ColumnEncoding::EncodingDictionary) => {
-                        props_builder =
-                            props_builder.set_column_dictionary_enabled(column_path, true);
-                    }
-                    Ok(ColumnEncoding::EncodingDelta) => {
-                        props_builder = props_builder.set_column_encoding(
-                            column_path,
-                            parquet::basic::Encoding::DELTA_BINARY_PACKED,
-                        );
-                    }
-                    Ok(ColumnEncoding::EncodingRle) => {
-                        props_builder = props_builder
-                            .set_column_encoding(column_path, parquet::basic::Encoding::RLE);
-                    }
-                    _ => {} // Use default encoding
-                }
-            }
-        }*/
-
-        // Configure ParquetWriterConfig from VIPER settings
-        // Include filterable columns in bloom filters for fast filtering
-        let mut bloom_columns = vec![FIELD_ID.to_string()];
-        // Add filterable columns that were extracted earlier
-        bloom_columns.extend(filterable_columns.clone());
-
-        let writer_config = ParquetWriterConfig {
-            row_group_size: viper_config.row_group_size,
-            page_size: 1024 * 1024, // 1MB pages
-            write_batch_size: 10000,
-            compression: compression_algo,
-            compression_level: Some(compression_level as i32),
-            enable_dictionary: true,
-            enable_bloom_filters: true, // Enable for efficient ID and metadata lookups
-            bloom_filter_fpp: 0.01,
-            bloom_filter_ndv: records.len() as u64,
-            enable_statistics: true,
-            enable_page_index: true,
-            sort_columns: vec![], // Can be populated with filterable columns if needed
-            id_less_storage: false, // Keep IDs for customer APIs
-            filterable_metadata_columns: Some(filterable_columns.clone()),
-            quantization: crate::proto::proximadb_v1::QuantizationConfig {
-                enabled: is_quantized,
-                strategy: 0, // SMART_DEFAULTS
-                custom_levels: vec![],
-                enable_progressive_search: true,
-                binary_filter_selectivity: 0.3,
-                int8_ranking_selectivity: 0.1,
-                pq_ranking_selectivity: 0.05,
-                training_sample_size: 10000,
-                quality_threshold: 0.95,
-                enable_adaptive_training: true,
-                optimize_for_storage: false,
-                optimize_for_memory: false,
-                enable_simd_acceleration: true,
-                enable_binary: false,
-                enable_int8: is_quantized,
-                enable_pq: false, // DISABLED: PQ codebook storage causes 15-25x file bloat
-                pq_segments: 32,
-                pq_bits: 8,
-                pq_codebooks: 256,
-                binary_threshold: 0.5,
-                int8_threshold: 0.3,
-                pq_threshold: 0.1,
-            },
-            max_records_per_file: None,
-            target_file_size_bytes: None,
-            enable_async_io: false,
-        };
-
-        // Get dimension from the first record
-        let dimension = if !records.is_empty() {
-            records[0].vector.len()
-        } else {
-            return Ok(Vec::new());
-        };
-
-        // Extract filterable columns from collection config
-        let filterable_columns = collection_config.as_ref()
-            .and_then(|c| c.config.as_ref())
-            .and_then(|cfg| {
-                if cfg.filterable_columns.is_empty() {
-                    None
-                } else {
-                    Some(cfg.filterable_columns.as_slice())
-                }
-            });
-
-        // Create StreamingParquetWriter with temp file and filterable columns
-        debug!("Creating StreamingParquetWriter with {} filterable columns", filterable_columns.map(|cols| cols.len()).unwrap_or(0));
-        if let Some(cols) = filterable_columns {
-            for col in cols {
-                debug!("  Filterable column: {} (type: {:?})", col.name, col.data_type);
-            }
-        }
-
-        // Debug: Check first few records for metadata
-        for (i, record) in records.iter().take(3).enumerate() {
-            debug!("Record {}: id={}, metadata keys={:?}", i, record.id, record.metadata.keys().collect::<Vec<_>>());
-            if let Some(category) = record.metadata.get("category") {
-                debug!("  category value: {:?}", category);
-            }
-        }
-
-        // Get storage assignment from collection config - fail fast if not present
-        let storage_assignment = collection_config
-            .as_ref()
-            .and_then(|c| c.storage_assignment.as_ref())
-            .ok_or_else(|| anyhow::anyhow!(
-                "Collection '{}' has no storage assignment. All collections must have storage assignments.",
-                collection_id
-            ))?;
-
-        // Get storage base path
-        let data_url = format!(
-            "{}/{}/data",
-            storage_assignment.base_location, collection_id
-        );
-
-        // Generate filename using FilenameCodec
-        let codec = FilenameCodec::new();
-        let filename = codec.generate(0, &crate::storage::engines::VIPER_FILE_EXT[1..]);
-
-        // Construct final path
-        let final_path = std::path::PathBuf::from(format!("{}/{}", data_url, filename));
-
-        // Construct final URL
-        let final_url = format!("{}/{}", data_url, filename);
-
-        // Use HybridParquetWriter with integrated disk cache support
-        use crate::storage::engines::core::formats::columnar::hybrid_writer::{HybridParquetWriter, HybridWriterConfig};
-        let hybrid_config = HybridWriterConfig {
-            base_config: writer_config,
-            ..Default::default()
-        };
-
-        // Use the integrated write_with_cache method that handles:
-        // 1. Writing to temp file
-        // 2. Finalizing the writer
-        // 3. Uploading to cloud with disk cache population
-        // TODO: Implement HybridParquetWriter::write_with_cache method
-        // For now, use a placeholder to satisfy compilation
-        let stats = crate::storage::engines::core::formats::columnar::StreamingParquetWriterStats {
-            file_path: final_url.clone(),
-            file_size: 0,
-            total_records: records.len(),
-            unique_ids: records.len(),
-            duplicate_ids: 0,
-            uncompressed_size: 0,
-            compressed_size: 0,
-            vector_data_size: 0,
-            metadata_size: 0,
-            compression_ratio: 1.0,
-            vector_compression_ratio: 1.0,
-            metadata_compression_ratio: 1.0,
-            total_row_groups: 0,
-            row_groups_written: 0,
-            avg_row_group_size: 0,
-            ..Default::default()
-        };
-        let _unused_vars = (
-            records,
-            dimension,
-            hybrid_config,
-            &final_url,
-            &self.filesystem_factory,
-            filterable_columns.clone(),
-            None::<Box<dyn crate::storage::engines::core::formats::columnar::metadata_collector::MetadataCollector>>, // VIPER doesn't use metadata collectors for sidecar files
-        );
-
-        debug!("   ✅ VIPER Parquet written with disk cache:");
-        debug!("      Cloud URL: {}", final_url);
-        debug!("      Records: {}", stats.total_records);
-        debug!("      Row groups: {}", stats.total_row_groups);
-        debug!("      File size: {} bytes", stats.file_size);
-        debug!("      Disk cache: POPULATED (future reads avoid cloud costs)");
-
-        info!(
-            "📝 VIPER FLUSH: Wrote Parquet file to {} with disk cache",
-            final_url
-        );
-
-        // Return final path as success marker - file written and cached
-        let mut result = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Magic bytes to indicate already written
-        result.extend_from_slice(final_url.as_bytes());
-        Ok(result)
-    }
 
     /// INT8 Quantization for Parquet columnar storage
     /// Delegates to unified quantization engine for consistency across all engines

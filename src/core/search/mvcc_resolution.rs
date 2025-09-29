@@ -217,7 +217,6 @@ mod tests {
             updated_at: Some(timestamp as i64),
             expires_at: expires_at.map(|t| t as i64),
             version: version.map(|v| v as i64),
-            quantized_vector: vec![],
             source: None,
         }
     }

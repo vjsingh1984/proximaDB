@@ -397,9 +397,10 @@ impl ParquetReconstructor {
                     arrays.push(Arc::new(StringArray::from(vec!["placeholder_id"])));
                 }
                 "vector" => {
+                    let dimension = 128; // Default dimension
                     fields.push(Field::new(
                         "vector",
-                        DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+                        DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), dimension),
                         false,
                     ));
                     // Create a simple float array for now
@@ -486,7 +487,6 @@ impl ParquetReconstructor {
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: Vec::new(),
                 source: None,
             });
         }

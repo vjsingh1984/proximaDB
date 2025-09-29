@@ -1336,7 +1336,6 @@ impl WriteAheadLogManager {
                 .as_secs() as i64,
             updated_at: None,
             expires_at: Some(0), // Setting to 0 or past time marks for deletion
-            quantized_vector: Vec::new(),
             source: None, // No source content for deletion record
         };
 
@@ -1713,8 +1712,7 @@ impl WriteAheadLogManager {
                         version: r.version,
                         timestamp: r.timestamp.unwrap_or(0),
                         expires_at: None,
-                        quantized_vector: Vec::new(),
-                        source: None,
+                                    source: None,
                         updated_at: None,
                     };
                     (r.id, r.score as f32, record)

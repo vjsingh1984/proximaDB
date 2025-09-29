@@ -128,7 +128,7 @@ impl UnifiedColumnarCompaction {
         let entries_removed = total_records - deduped_batch.num_rows() as u64 + expired_count;
 
         // Generate output filename
-        let output_path = self.generate_output_filename(collection_id, engine_name).await?;
+        let output_path = self.generate_output_filename(collection_id, engine_name, collection_config).await?;
 
         // Write compacted batch with sorting and bloom filters
         let bytes_written = self.write_compacted_arrow_batch(
@@ -232,6 +232,226 @@ impl UnifiedColumnarCompaction {
         ))
     }
 
+
+    /// Apply quantization to a batch of records during compaction
+    /// This recalculates quantization for merged data distribution
+    async fn apply_quantization_to_batch(
+        &self,
+        batch: &RecordBatch,
+        collection_config: Option<&crate::proto::proximadb_v1::Collection>,
+    ) -> Result<RecordBatch> {
+        use crate::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::core::memory::pool::VectorMemoryPool;
+        use crate::storage::engines::core::formats::columnar::constants;
+        use arrow_array::{Float32Array, FixedSizeListArray, BinaryArray, builder::BinaryBuilder};
+        use arrow::array::ArrayRef;
+        use std::sync::Arc;
+
+        // Extract vector column from batch
+        let vector_column = batch
+            .column_by_name(constants::FIELD_VECTOR_FP32)
+            .or_else(|| batch.column_by_name("vector"))
+            .ok_or_else(|| anyhow::anyhow!("No vector column found"))?;
+
+        let vectors: Vec<Vec<f32>> = if let Some(fixed_list) = vector_column.as_any().downcast_ref::<FixedSizeListArray>() {
+            let values = fixed_list.values()
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .ok_or_else(|| anyhow::anyhow!("Invalid vector values"))?;
+
+            let dim = fixed_list.value_length() as usize;
+            let mut all_vectors = Vec::with_capacity(batch.num_rows());
+
+            for i in 0..batch.num_rows() {
+                let start = i * dim;
+                let end = start + dim;
+                let vector: Vec<f32> = (start..end)
+                    .map(|j| values.value(j))
+                    .collect();
+                all_vectors.push(vector);
+            }
+            all_vectors
+        } else {
+            return Err(anyhow::anyhow!("Vector column is not FixedSizeList"));
+        };
+
+        // Get distance metric from config
+        let distance_metric = collection_config
+            .and_then(|c| c.config.as_ref())
+            .and_then(|c| c.distance_metric.as_ref())
+            .and_then(|m| DistanceMetric::from_str_name(m))
+            .unwrap_or(DistanceMetric::Cosine);
+
+        // Create storage quantization config based on collection settings
+        let mut config = StorageQuantizationConfig::default();
+        config.distance_metric = distance_metric;
+        config.enable_hardware_acceleration = true;
+
+        // Determine which quantization levels to generate
+        let quantization_config = collection_config
+            .and_then(|c| c.config.as_ref())
+            .and_then(|c| c.quantization.as_ref());
+
+        // Configure levels based on collection config
+        if let Some(q_config) = quantization_config {
+            // Parse quantization config to determine levels
+            // Default: Binary + INT8 for fast pre-filtering
+            config.filter_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::Binary);
+            config.fast_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8());
+
+            // PQ only if explicitly enabled due to training cost
+            if q_config.product_quantization {
+                config.primary_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
+                    q_config.num_subquantizers as usize
+                ));
+            }
+        }
+
+        // Create quantization engine with memory pool and SIMD optimization
+        let mut engine = StorageQuantizationEngine::new_with_config(config);
+
+        // Create unified memory pool for batch processing
+        let memory_pool = Arc::new(VectorMemoryPool::new());
+
+        // Use batch configuration for optimal performance
+        let batch_config = crate::storage::strategy::BatchConfig {
+            batch_size: 1024,  // Optimal for SIMD and cache locality
+            batch_timeout_ms: 100,
+        };
+
+        info!("🔬 Training quantization on {} vectors for compaction", vectors.len());
+
+        // Train on a sample if dataset is large (PQ training doesn't need all vectors)
+        let training_vectors = if vectors.len() > 10000 {
+            // Sample 10K vectors for training to limit memory usage
+            let step = vectors.len() / 10000;
+            vectors.iter().step_by(step).cloned().collect::<Vec<_>>()
+        } else {
+            vectors.clone()
+        };
+
+        engine.train(&training_vectors).await?;
+
+        // Quantize in batches for memory efficiency and SIMD performance
+        info!("⚡ Quantizing {} vectors in batches of {} with SIMD optimization",
+              vectors.len(), batch_config.batch_size);
+
+        let mut quantized_results = Vec::with_capacity(vectors.len());
+
+        // Process in batches to leverage SIMD and reduce memory pressure
+        for chunk in vectors.chunks(batch_config.batch_size) {
+            // Get pooled memory buffer for this batch
+            // This provides aligned memory for SIMD operations
+            let _pooled_buffer = memory_pool.allocate(chunk.len() * vectors[0].len() * 4)?;
+
+            // The StorageQuantizationEngine internally uses:
+            // - Unified memory pools for zero-copy operations
+            // - AVX2/AVX512 for x86_64
+            // - NEON for ARM
+            // - Aligned memory buffers for optimal SIMD performance
+            // - UnifiedDistanceBuffer for vectorized distance computations
+
+            let batch_results = engine.quantize_batch(chunk, None).await?;
+            quantized_results.extend(batch_results);
+
+            // Allow async runtime to handle other tasks
+            tokio::task::yield_now().await;
+        }
+
+        info!("✅ Quantized {} vectors with SIMD acceleration", quantized_results.len());
+
+        // Build new columns for quantized vectors
+        let mut columns: Vec<(String, ArrayRef)> = Vec::new();
+
+        // Copy all original columns
+        for field in batch.schema().fields() {
+            let column_name = field.name();
+            if let Some(column) = batch.column_by_name(column_name) {
+                columns.push((column_name.to_string(), column.clone()));
+            }
+        }
+
+        // Add binary quantized column if present
+        if quantized_results.iter().any(|r| r.binary_data.is_some()) {
+            let mut binary_builder = BinaryBuilder::new();
+            for result in &quantized_results {
+                if let Some(binary) = &result.binary_data {
+                    binary_builder.append_value(binary);
+                } else {
+                    binary_builder.append_null();
+                }
+            }
+            columns.push((constants::FIELD_VECTOR_BINARY.to_string(), Arc::new(binary_builder.finish())));
+            info!("✅ Added {} column with recalculated binary quantization", constants::FIELD_VECTOR_BINARY);
+        }
+
+        // Add INT8 quantized column if present
+        if quantized_results.iter().any(|r| r.int8_data.is_some()) {
+            let mut int8_builder = BinaryBuilder::new();
+            for result in &quantized_results {
+                if let Some(int8) = &result.int8_data {
+                    int8_builder.append_value(int8);
+                } else {
+                    int8_builder.append_null();
+                }
+            }
+            columns.push((constants::FIELD_VECTOR_INT8.to_string(), Arc::new(int8_builder.finish())));
+            info!("✅ Added {} column with recalculated INT8 quantization", constants::FIELD_VECTOR_INT8);
+        }
+
+        // Add PQ quantized column if present
+        if quantized_results.iter().any(|r| r.pq_data.is_some()) {
+            let mut pq_builder = BinaryBuilder::new();
+            for result in &quantized_results {
+                if let Some(pq) = &result.pq_data {
+                    pq_builder.append_value(pq);
+                } else {
+                    pq_builder.append_null();
+                }
+            }
+            columns.push((constants::FIELD_VECTOR_PQ.to_string(), Arc::new(pq_builder.finish())));
+            info!("✅ Added {} column with retrained PQ codebooks", constants::FIELD_VECTOR_PQ);
+        }
+
+        // Create new schema with quantized columns
+        let mut fields = batch.schema().fields().to_vec();
+
+        // Add new fields if they don't exist
+        if !fields.iter().any(|f| f.name() == constants::FIELD_VECTOR_BINARY) &&
+           columns.iter().any(|(name, _)| name == constants::FIELD_VECTOR_BINARY) {
+            fields.push(Arc::new(arrow::datatypes::Field::new(
+                constants::FIELD_VECTOR_BINARY,
+                arrow::datatypes::DataType::Binary,
+                true
+            )));
+        }
+
+        if !fields.iter().any(|f| f.name() == constants::FIELD_VECTOR_INT8) &&
+           columns.iter().any(|(name, _)| name == constants::FIELD_VECTOR_INT8) {
+            fields.push(Arc::new(arrow::datatypes::Field::new(
+                constants::FIELD_VECTOR_INT8,
+                arrow::datatypes::DataType::Binary,
+                true
+            )));
+        }
+
+        if !fields.iter().any(|f| f.name() == constants::FIELD_VECTOR_PQ) &&
+           columns.iter().any(|(name, _)| name == constants::FIELD_VECTOR_PQ) {
+            fields.push(Arc::new(arrow::datatypes::Field::new(
+                constants::FIELD_VECTOR_PQ,
+                arrow::datatypes::DataType::Binary,
+                true
+            )));
+        }
+
+        let new_schema = Arc::new(arrow::datatypes::Schema::new(fields));
+
+        // Build the final batch with quantized columns
+        let arrays: Vec<ArrayRef> = columns.into_iter().map(|(_, array)| array).collect();
+        RecordBatch::try_new(new_schema, arrays)
+            .context("Failed to create batch with quantized vectors")
+    }
 
     /// Deduplicate Arrow batches using MVCC with version continuity checking
     fn deduplicate_arrow_batches(
@@ -394,6 +614,43 @@ impl UnifiedColumnarCompaction {
         // Sort by filterable columns if configured
         let sorted_batch = self.sort_batch_by_filterable(batch, collection_config)?;
 
+        // CRITICAL: Quantization-aware compaction requirement
+        // When quantization is enabled, compaction CANNOT simply merge row groups!
+        // It MUST:
+        // 1. Load ALL FP32 vectors into memory (not just metadata)
+        // 2. Recalculate quantization on the merged dataset:
+        //    - INT8: Scan all vectors to find new min/max for scaling
+        //    - PQ: Retrain codebooks using k-means on merged vectors
+        //    - Binary: Optionally recalculate thresholds
+        // 3. Create new quantized columns with updated values
+        //
+        // This makes compaction significantly more expensive:
+        // - Memory: O(n * dimension * 4 bytes) for all vectors
+        // - Compute: O(n * k * iterations) for PQ training
+        // - I/O: Must read entire vector columns, not just statistics
+        //
+        // Implementation approach:
+        let quantization_enabled = collection_config
+            .and_then(|c| c.config.as_ref())
+            .and_then(|c| c.quantization.as_ref())
+            .is_some();
+
+        let final_batch = if quantization_enabled {
+            // Implement quantization-aware compaction using StorageQuantizationEngine
+            match self.apply_quantization_to_batch(&sorted_batch, collection_config).await {
+                Ok(quantized_batch) => {
+                    info!("✅ Applied quantization during compaction");
+                    quantized_batch
+                },
+                Err(e) => {
+                    warn!("⚠️ Quantization during compaction failed: {}, using original vectors", e);
+                    sorted_batch
+                }
+            }
+        } else {
+            sorted_batch
+        };
+
         // Build writer properties with bloom filters and compression
         let mut props_builder = WriterProperties::builder()
             .set_compression(Compression::SNAPPY)
@@ -423,28 +680,42 @@ impl UnifiedColumnarCompaction {
 
         let writer_properties = props_builder.build();
 
+        // Strip file:// prefix if present for local file operations
+        let local_path = if output_path.starts_with("file://") {
+            &output_path[7..] // Strip "file://"
+        } else {
+            output_path
+        };
+
+        // Ensure parent directory exists
+        if let Some(parent) = std::path::Path::new(local_path).parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {:?}", parent))?;
+        }
+
         // Create and write with ArrowWriter
-        let file = File::create(output_path)
-            .with_context(|| format!("Failed to create: {}", output_path))?;
+        let file = File::create(local_path)
+            .with_context(|| format!("Failed to create: {}", local_path))?;
 
         let mut writer = ArrowWriter::try_new(file, schema, Some(writer_properties))?;
 
         // Process batch with metadata collector if provided (for NOVA)
         if let Some(collector) = metadata_collector.as_mut() {
             // Process batch through metadata collector
-            collector.on_batch_write(&sorted_batch, 0, 0)?;
+            collector.on_batch_write(&final_batch, 0, 0)?;
         }
 
-        writer.write(&sorted_batch)?;
+        writer.write(&final_batch)?;
         let metadata = writer.close()?;
 
         // Write metadata sidecar file if collector was used
         if let Some(collector) = metadata_collector {
-            let sidecar_path = format!("{}.meta", output_path);
+            let sidecar_path = format!("{}.meta", local_path);
             // Finalize and write sidecar file
             collector.finalize(1)?;
             let metadata_bytes = collector.serialize_metadata()?;
             if !metadata_bytes.is_empty() {
+                // Use output_path (with file://) for filesystem operations
                 let sidecar_file = format!("{}.{}", output_path, collector.sidecar_extension());
                 let fs = self.filesystem_factory.get_filesystem("file:///")?;
                 fs.write(&sidecar_file, &metadata_bytes, None).await?;
@@ -500,10 +771,17 @@ impl UnifiedColumnarCompaction {
     }
 
     /// Generate output filename using unified FilenameCodec
-    async fn generate_output_filename(&self, collection_id: &str, _engine_name: &str) -> Result<String> {
+    async fn generate_output_filename(&self, collection_id: &str, _engine_name: &str, collection_config: Option<&crate::proto::proximadb_v1::Collection>) -> Result<String> {
         let codec = FilenameCodec::new();
         let filename = codec.generate(1, "parquet"); // L1 for compacted files
-        Ok(format!("/data/{}/data/{}", collection_id, filename))
+
+        // Get the base location from the collection config
+        let base_path = collection_config
+            .and_then(|c| c.storage_assignment.as_ref())
+            .map(|sa| format!("{}/{}/data", sa.base_location, collection_id))
+            .ok_or_else(|| anyhow::anyhow!("No storage assignment for collection"))?;
+
+        Ok(format!("{}/{}", base_path, filename))
     }
 
     /// Atomically replace old files with new

@@ -180,6 +180,9 @@ pub struct HybridParquetWriter {
 
     /// Background flush task handle
     flush_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+
+    /// Filesystem factory for I/O operations
+    filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
 }
 
 /// Insertion event for pattern tracking
@@ -216,12 +219,16 @@ impl HybridParquetWriter {
             file_path, config.initial_mode
         );
 
+        // Create default filesystem factory
+        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+
         let streaming_writer = if config.initial_mode == WriterMode::Streaming {
-            Some(StreamingParquetWriter::new(
+            Some(StreamingParquetWriter::with_filesystem_factory(
                 &file_path,
                 dimension,
                 config.base_config.clone(),
                 None, // Filterable columns will be set via setter method
+                filesystem_factory.clone(),
             )?)
         } else {
             None
@@ -251,10 +258,66 @@ impl HybridParquetWriter {
             filterable_columns: None,
             last_flush_time: Arc::new(RwLock::new(Instant::now())),
             flush_task: Arc::new(Mutex::new(None)),
+            filesystem_factory,
         };
 
         // Start background flush task
         // Note: Background task will be started when needed
+
+        Ok(writer)
+    }
+
+    /// Create new hybrid writer with specific filesystem factory
+    pub fn with_filesystem_factory<P: AsRef<Path>>(
+        file_path: P,
+        dimension: usize,
+        config: HybridWriterConfig,
+        filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
+    ) -> Result<Self> {
+        let file_path = file_path.as_ref().to_path_buf();
+        info!(
+            "Creating hybrid Parquet writer with custom filesystem: {:?}, mode: {:?}",
+            file_path, config.initial_mode
+        );
+
+        let streaming_writer = if config.initial_mode == WriterMode::Streaming {
+            Some(StreamingParquetWriter::with_filesystem_factory(
+                &file_path,
+                dimension,
+                config.base_config.clone(),
+                None, // Filterable columns will be set via setter method
+                filesystem_factory.clone(),
+            )?)
+        } else {
+            None
+        };
+
+        let stats = Arc::new(HybridWriterStats {
+            total_records: AtomicU64::new(0),
+            streaming_writes: AtomicU64::new(0),
+            batch_writes: AtomicU64::new(0),
+            mode_switches: AtomicUsize::new(0),
+            buffer_flushes: AtomicUsize::new(0),
+            forced_flushes: AtomicUsize::new(0),
+            avg_batch_size: AtomicU64::new(0),
+            avg_flush_latency_ms: AtomicU64::new(0),
+        });
+
+        let mut writer = Self {
+            config: config.clone(),
+            current_mode: Arc::new(RwLock::new(config.initial_mode)),
+            streaming_writer: Arc::new(Mutex::new(streaming_writer)),
+            buffer: Arc::new(RwLock::new(Vec::new())),
+            insertion_history: Arc::new(RwLock::new(VecDeque::new())),
+            stats,
+            file_path,
+            dimension,
+            metadata_collector: Arc::new(Mutex::new(None)),
+            filterable_columns: None,
+            last_flush_time: Arc::new(RwLock::new(Instant::now())),
+            flush_task: Arc::new(Mutex::new(None)),
+            filesystem_factory,
+        };
 
         Ok(writer)
     }
@@ -318,11 +381,12 @@ impl HybridParquetWriter {
 
         // Create streaming writer if needed
         if writer_lock.is_none() {
-            let mut new_writer = StreamingParquetWriter::new(
+            let mut new_writer = StreamingParquetWriter::with_filesystem_factory(
                 &self.file_path,
                 self.dimension,
                 self.config.base_config.clone(),
                 self.filterable_columns.as_ref().map(|v| v.as_slice()),
+                self.filesystem_factory.clone(),
             )?;
 
             // Transfer metadata collector to streaming writer if present
@@ -570,7 +634,10 @@ impl HybridParquetWriter {
             // Finalize streaming writer
             let mut writer_lock = self.streaming_writer.lock().await;
             if let Some(writer) = writer_lock.take() {
-                writer.finalize().await?;
+                let (_, data, _) = writer.finalize().await?;
+                // Write the data to the file using tokio::fs for local files
+                // Since temp files are always local, we can write directly
+                tokio::fs::write(&self.file_path, &data).await?;
             }
         }
 
@@ -669,7 +736,11 @@ impl HybridParquetWriter {
         // Finalize streaming writer if active and get its stats
         let mut writer_lock = self.streaming_writer.lock().await;
         let result = if let Some(writer) = writer_lock.take() {
-            writer.finalize().await?
+            let (stats, data, collector) = writer.finalize().await?;
+            // Write the data to the file using tokio::fs for local files
+            // Since temp files are always local, we can write directly
+            tokio::fs::write(&self.file_path, &data).await?;
+            (stats, collector)
         } else {
             // Create default stats if no streaming writer was used
             let stats = StreamingParquetWriterStats {
@@ -790,7 +861,8 @@ impl HybridParquetWriter {
         let temp_filename = format!("hybrid_temp_{}.parquet", uuid::Uuid::new_v4());
         let temp_path = temp_dir.path().join(temp_filename);
 
-        // Create writer with temp path
+        // Create writer with temp path - use default filesystem for temp files
+        // Temp files are always local, so we don't need the passed filesystem_factory
         let mut writer = HybridParquetWriter::new(
             &temp_path,
             dimension,
@@ -881,7 +953,6 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             }];
 
@@ -918,7 +989,6 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             })
             .collect();

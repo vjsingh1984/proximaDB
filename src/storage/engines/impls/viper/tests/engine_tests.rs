@@ -108,7 +108,7 @@ fn create_test_collection(
         id: collection_id.to_string(),
         config: Some(CollectionConfig {
             name: collection_id.to_string(),
-            dimension: 3,  // Changed to match test vectors
+            dimension: 128,  // Match actual test vector dimension
             distance_metric: 0,            // Cosine
             storage_engine: 0,             // VIPER
             tags: vec![],
@@ -165,7 +165,6 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     }
 }
@@ -381,12 +380,22 @@ async fn test_batch_insertion_and_flush() {
 
     // Create batch of vectors (VIPER doesn't have insert_vector - it's columnar storage)
     let mut vectors = Vec::new();
+    let vector_dimension = 256;
     for i in 0..100 {
         vectors.push(create_test_vector(
             &format!("batch_{}", i),
-            256,
+            vector_dimension,
             i as f32 * 0.01,
         ));
+    }
+
+    // Create collection with matching dimension
+    let mut collection = create_test_collection(
+        collection_id,
+        temp_dir.path().to_str().unwrap(),
+    );
+    if let Some(ref mut config) = collection.config {
+        config.dimension = vector_dimension as u32;
     }
 
     // Flush to disk
@@ -399,11 +408,8 @@ async fn test_batch_insertion_and_flush() {
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
         trigger_compaction: false,
-        estimated_size: vectors.len() * 256,
-        collection_config: Some(create_test_collection(
-            collection_id,
-            temp_dir.path().to_str().unwrap(),
-        )),
+        estimated_size: vectors.len() * vector_dimension,
+        collection_config: Some(collection),
     };
 
     let flush_result = engine
@@ -831,6 +837,15 @@ async fn test_search_vectors_unified() {
         vectors_to_flush.push(vector);
     }
 
+    // Create collection config with dimension 3 to match the test vectors
+    let mut collection = create_test_collection(
+        collection_id,
+        temp_dir.path().to_str().unwrap(),
+    );
+    if let Some(ref mut config) = collection.config {
+        config.dimension = 3; // Match the 3D test vectors
+    }
+
     // Flush to ensure data is searchable - pass the actual vectors
     let flush_params = FlushParameters {
         collection_id: Some(collection_id.to_string()),
@@ -842,10 +857,7 @@ async fn test_search_vectors_unified() {
         timeout_ms: None,
         trigger_compaction: false,
         estimated_size: 10 * 256,
-        collection_config: Some(create_test_collection(
-            collection_id,
-            temp_dir.path().to_str().unwrap(),
-        )),
+        collection_config: Some(collection),
     };
     let flush_result = engine.do_flush(&flush_params).await.unwrap();
     assert!(flush_result.success, "Flush should succeed");
@@ -1068,10 +1080,11 @@ async fn test_search_vectors_unified() {
 
     // Test 1: Basic search with cosine distance
     let base_path = temp_dir.path().to_str().unwrap();
+    let storage_url = format!("file://{}/{}/data", base_path, collection_id);
     let results = search_with_context(
         &engine,
         collection_id,
-        &format!("file://{}", base_path),
+        &storage_url,
         &[1.0, 0.0, 0.0],
         3,
     )
@@ -1110,7 +1123,7 @@ async fn test_search_vectors_unified() {
     let filtered_results = search_with_params(
         &engine,
         collection_id,
-        &format!("file://{}", base_path),
+        &storage_url,
         &[0.5, 0.5, 0.5],
         10,
         DistanceMetric::Euclidean,
@@ -1131,7 +1144,7 @@ async fn test_search_vectors_unified() {
     let minimal_results = search_with_params(
         &engine,
         collection_id,
-        &format!("file://{}", base_path),
+        &storage_url,
         &[0.0, 1.0, 0.0],
         2,
         DistanceMetric::DotProduct,

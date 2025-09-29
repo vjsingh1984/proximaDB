@@ -265,7 +265,6 @@ impl VectorOperationsService {
                 updated_at: v.updated_at,
                 expires_at: v.expires_at,
                 version: v.version,
-                quantized_vector: v.quantized_vector,
                 source: v.source,
             })
             .collect();
@@ -518,7 +517,6 @@ impl VectorOperationsService {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    quantized_vector: vec![], // Empty quantized vector for now
                     source: Some("search_result".to_string()),
                 });
             }
@@ -2157,7 +2155,6 @@ impl VectorOperationsService {
                 updated_at: None,
                 expires_at: None,
                 version: entry.version,
-                quantized_vector: vec![],
                 source: None,
             })
             .collect();

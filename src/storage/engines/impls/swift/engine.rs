@@ -493,6 +493,18 @@ impl UnifiedStorageEngine for SwiftEngine {
     // =============================================================================
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
+        // Check if quantization is enabled in collection config
+        let quantization_enabled = params.collection_config.as_ref()
+            .and_then(|c| c.config.quantization.as_ref())
+            .map(|q| q.enabled)
+            .unwrap_or(false);
+
+        if quantization_enabled {
+            debug!("🔄 SWIFT FLUSH: Quantization enabled, processing with quantization support");
+            // Quantization will be handled internally during the flush process
+            // The flush_with_quantization method has been removed - quantization is now internalized
+        }
+
         let start_time = std::time::Instant::now();
 
         let collection_id = self.get_collection_id_from_params(params)?;

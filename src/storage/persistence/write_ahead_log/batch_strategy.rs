@@ -410,7 +410,6 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                         updated_at: None,
                         expires_at: None,
                         version: search_result.version,
-                        quantized_vector: Vec::new(),
                         source: None,
                     };
                     (search_result.id, search_result.score as f32, vector_record)

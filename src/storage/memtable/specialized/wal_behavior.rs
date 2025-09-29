@@ -1106,7 +1106,6 @@ mod tests {
             updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: Some("test".to_string()),
         };
 
@@ -1118,7 +1117,6 @@ mod tests {
             updated_at: Some(now + 1),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: Some("test".to_string()),
         };
 
@@ -1206,7 +1204,6 @@ mod tests {
                 updated_at: Some(now + i as i64),
                 expires_at: None,
                 version: Some(i + 1),
-                quantized_vector: vec![],
                 source: Some("test".to_string()),
             };
 

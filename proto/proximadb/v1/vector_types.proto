@@ -107,9 +107,10 @@ message VectorRecord {
   int64 timestamp = 4;
   optional int64 updated_at = 5;
   optional int64 expires_at = 6;
-  optional int64 version = 7;
-  bytes quantized_vector = 8;
-  optional string source = 9;
+  optional uint32 version = 7;  // Version counter, 0-4B versions (realistically won't exceed 255)
+  optional string source = 8;  // Original content that generated this vector
+  // Note: quantized_vector field removed - quantization is now internalized during flush/compaction
+  // and stored in ProximaDataBlock's QuantizedSection, not in input records
   // collection_id removed - causes initialization issues across codebase
 }
 

@@ -609,7 +609,6 @@ mod tests {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 },
                 crate::proto::proximadb_v1::VectorRecord {
@@ -631,7 +630,6 @@ mod tests {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 },
                 crate::proto::proximadb_v1::VectorRecord {
@@ -653,7 +651,6 @@ mod tests {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 },
             ],

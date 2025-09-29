@@ -500,7 +500,6 @@ impl MetadataWriteAheadLog {
                 updated_at: Some(current_time_secs as i64),
                 expires_at: Some((current_time_secs.saturating_sub(1)) as i64), // Mark as expired (logical delete)
                 version: Some(1),
-                quantized_vector: Vec::new(),
                 source: None,
             };
 
@@ -627,7 +626,6 @@ impl MetadataWriteAheadLog {
             updated_at: Some(timestamp_secs as i64),
             expires_at: None,
             version: Some(1),
-            quantized_vector: Vec::new(),
             source: None,
         })
     }

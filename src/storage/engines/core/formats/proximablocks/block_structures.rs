@@ -1753,20 +1753,8 @@ impl ProximaDataBlock {
             result.write_all(&encoded_versions)?;
         }
 
-        // Quantized_vector (bytes field - special handling)
-        let quantized_vectors: Vec<&[u8]> = self.records.iter().map(|r| r.quantized_vector.as_slice()).collect();
-        let quantized_non_empty = quantized_vectors.iter().filter(|bytes| !bytes.is_empty()).count();
-
-        if quantized_non_empty == 0 {
-            result.write_all(&0u32.to_le_bytes())?; // All empty
-        } else {
-            result.write_all(&1u32.to_le_bytes())?; // Has data
-            // Store each quantized vector with length prefix
-            for bytes in &quantized_vectors {
-                result.write_all(&(bytes.len() as u32).to_le_bytes())?;
-                result.write_all(bytes)?;
-            }
-        }
+        // Quantized_vector field removed - quantization is now internalized in QuantizedSection
+        // No serialization needed for input records
 
         // ============ STEP 8: Write block metadata ============
         let metadata_bytes = bincode::serialize(&self.metadata)?;
@@ -2269,26 +2257,7 @@ impl ProximaDataBlock {
             result
         };
 
-        // Decode quantized_vector (bytes field)
-        let mut quantized_type_bytes = [0u8; 4];
-        cursor.read_exact(&mut quantized_type_bytes)?;
-        let quantized_type = u32::from_le_bytes(quantized_type_bytes);
-
-        let decoded_quantized_vectors = if quantized_type == 0 {
-            vec![Vec::new(); record_count] // All empty
-        } else {
-            // Has data
-            let mut result = Vec::new();
-            for _ in 0..record_count {
-                let mut len_bytes = [0u8; 4];
-                cursor.read_exact(&mut len_bytes)?;
-                let len = u32::from_le_bytes(len_bytes) as usize;
-                let mut data = vec![0u8; len];
-                cursor.read_exact(&mut data)?;
-                result.push(data);
-            }
-            result
-        };
+        // Quantized vectors removed - internalized in storage
 
         // ============ STEP 10: Read block metadata (LAST in serialization sequence) ============
         let mut metadata_len_bytes = [0u8; 4];
@@ -2340,10 +2309,10 @@ impl ProximaDataBlock {
             record.updated_at = decoded_updated_ats.get(i).copied().flatten();
             record.expires_at = decoded_expires_ats.get(i).copied().flatten();
             record.version = decoded_versions.get(i).copied().flatten();
-            record.quantized_vector = decoded_quantized_vectors.get(i).map(|v| v.clone()).unwrap_or_default();
+            // quantized_vector removed - internalized in storage
 
-            trace!("🔧 [DECODE] Record[{}]: ID='{}', Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}, Quantized_len={}",
-                i, record.id, record.source, record.updated_at, record.expires_at, record.version, record.quantized_vector.len());
+            trace!("🔧 [DECODE] Record[{}]: ID='{}', Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}",
+                i, record.id, record.source, record.updated_at, record.expires_at, record.version);
         }
 
         debug!("✅ [DECODE] Successfully reconstructed {} VectorRecords", record_count);
@@ -3035,7 +3004,6 @@ impl ProximaDataBlock {
                     id: temp_id,
                     vector,
                     metadata: std::collections::HashMap::new(),
-                    quantized_vector: vec![],
                     expires_at: None,
                     source: None,
                     timestamp: 0,
@@ -3058,7 +3026,6 @@ impl ProximaDataBlock {
                     id: temp_id,
                     vector,
                     metadata: std::collections::HashMap::new(),
-                    quantized_vector: vec![],
                     expires_at: None,
                     source: None,
                     timestamp: 0,
@@ -3243,7 +3210,6 @@ impl ProximaDataBlock {
                 id: format!("gv_vec_{:06}", i), // Generated ID for GroupedFieldEncodedAndCompressed
                 vector,
                 metadata: std::collections::HashMap::new(),
-                quantized_vector: vec![],
                 expires_at: None,
                 source: None,
                 timestamp: 0,
@@ -3355,7 +3321,6 @@ impl ProximaDataBlock {
                 id: format!("tv_vec_{:06}", i), // Generated ID for TransposeFieldEncodedAndCompressed
                 vector,
                 metadata: std::collections::HashMap::new(),
-                quantized_vector: vec![],
                 expires_at: None,
                 source: None,
                 timestamp: 0,
@@ -3421,7 +3386,6 @@ impl ProximaDataBlock {
                 id: format!("tv_vec_{:06}", row_idx), // Generated ID for TransposeFieldEncodedAndCompressed
                 vector,
                 metadata: std::collections::HashMap::new(),
-                quantized_vector: vec![],
                 expires_at: None,
                 source: None,
                 timestamp: 0,
@@ -3551,7 +3515,6 @@ impl ProximaDataBlock {
                 id: format!("gb_vec_{:06}", row_idx), // Generated ID for GroupedBlockCompressed
                 vector,
                 metadata: std::collections::HashMap::new(),
-                quantized_vector: vec![],
                 expires_at: None,
                 source: None,
                 timestamp: 0,
@@ -3661,7 +3624,6 @@ impl ProximaDataBlock {
                 id: format!("tb_vec_{:06}", row_idx), // Generated ID for TransposeBlockCompressed
                 vector,
                 metadata: std::collections::HashMap::new(),
-                quantized_vector: vec![],
                 expires_at: None,
                 source: None,
                 timestamp: 0,
@@ -3910,7 +3872,6 @@ mod tests {
                     id: format!("vec_{}", i),
                     vector,
                     metadata: std::collections::HashMap::new(),
-                    quantized_vector: vec![],
                     expires_at: None,
                     source: None,
                     timestamp: 0,
@@ -3990,7 +3951,6 @@ mod tests {
                 id: format!("const_{}", i),
                 vector: vec![42.0; dimension],
                 metadata: HashMap::new(),
-                quantized_vector: vec![],
                 expires_at: None,
                 source: None,
                 timestamp: 0,
@@ -4045,7 +4005,6 @@ mod tests {
                 id: format!("random_{}", i),
                 vector: (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect(),
                 metadata: HashMap::new(),
-                quantized_vector: vec![],
                 expires_at: None,
                 source: None,
                 timestamp: 0,
@@ -4117,7 +4076,6 @@ mod tests {
                     id: format!("mixed_{}", i),
                     vector,
                     metadata: HashMap::new(),
-                    quantized_vector: vec![],
                     expires_at: None,
                     source: None,
                     timestamp: 0,

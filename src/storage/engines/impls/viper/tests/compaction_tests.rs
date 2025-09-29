@@ -119,7 +119,6 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     }
 }
@@ -964,7 +963,11 @@ async fn test_concurrent_compaction_and_reads() {
     }
 
     // Wait for all operations
-    compact_handle.await.unwrap().expect("Compaction failed");
+    let compact_result = compact_handle.await.unwrap();
+    if let Err(ref e) = compact_result {
+        println!("🔍 TEST: Compaction failed with error: {:?}", e);
+    }
+    compact_result.expect("Compaction failed");
     for handle in read_handles {
         handle.await.expect("Read task failed");
     }
@@ -1360,6 +1363,17 @@ async fn test_size_tiered_compaction_strategy() {
 
     assert!(result.success);
 
+    // Debug: List files after compaction
+    let data_path = format!("{}/{}/data", temp_dir.path().to_str().unwrap(), collection_id);
+    println!("🔍 DEBUG: Listing files in data directory: {}", data_path);
+    if let Ok(entries) = std::fs::read_dir(&data_path) {
+        for entry in entries {
+            if let Ok(e) = entry {
+                println!("  - File: {:?}", e.path());
+            }
+        }
+    }
+
     // Verify all data accessible
     let total_vectors: usize = file_sizes.iter().sum();
     let storage_url = format!(
@@ -1367,6 +1381,8 @@ async fn test_size_tiered_compaction_strategy() {
         temp_dir.path().to_str().unwrap(),
         collection_id
     );
+    println!("🔍 DEBUG: Searching for {} vectors in: {}", total_vectors, storage_url);
+
     let search_results = engine
         .search_vectors(
             collection_id,
@@ -1377,7 +1393,11 @@ async fn test_size_tiered_compaction_strategy() {
         .await
         .unwrap();
 
-    assert_eq!(search_results.len(), total_vectors);
+    // Count the total number of individual results across all SearchResult objects
+    let actual_results: usize = search_results.iter().map(|sr| sr.results.len()).sum();
+    println!("🔍 DEBUG: Search returned {} SearchResult objects with {} total individual results (expected {})",
+        search_results.len(), actual_results, total_vectors);
+    assert_eq!(actual_results, total_vectors);
 }
 
 #[tokio::test]
@@ -1566,6 +1586,15 @@ async fn test_compaction_with_metadata_filtering() {
         let category_count = search_results
             .iter()
             .filter(|r| {
+                // Debug: print first few records to see what metadata they have
+                if search_results.iter().position(|x| x.id == r.id).unwrap() < 3 {
+                    println!("🔍 TEST DEBUG: Record {}: metadata keys={:?}",
+                        r.id, r.metadata.keys().collect::<Vec<_>>());
+                    if let Some(cat_val) = r.metadata.get("category") {
+                        println!("🔍 TEST DEBUG:   category value={:?}", cat_val.value);
+                    }
+                }
+
                 if let Some(sql_value) = r.metadata.get("category") {
                     if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) = sql_value.value {
                         s == category
@@ -1592,13 +1621,16 @@ async fn test_incremental_compaction() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    let temp_dir = TempDir::new().unwrap();
-    let config = create_compaction_config(temp_dir.path().to_str().unwrap());
+    // Use persistent test directory instead of temporary directory
+    let test_dir = "/tmp/proximadb-test/viper-incremental-compaction";
+    std::fs::create_dir_all(test_dir).unwrap();
+
+    let config = create_compaction_config(test_dir);
     // Incremental compaction is handled by CompactionParameters
 
     // Create filesystem factory with proper config (like HELIX does)
     let mut fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-    fs_config.default_fs = Some(format!("file://{}", temp_dir.path().to_str().unwrap()));
+    fs_config.default_fs = Some(format!("file://{}", test_dir));
     let filesystem_factory = Arc::new(FilesystemFactory::new(fs_config).await.unwrap());
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
@@ -1610,7 +1642,7 @@ async fn test_incremental_compaction() {
     let collection_id = "incremental";
 
     // Set up storage assignment for the test collection
-    setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
+    setup_test_assignment(collection_id, test_dir).await;
 
     // Create 6 small files
     for batch in 0..6 {
@@ -1619,13 +1651,15 @@ async fn test_incremental_compaction() {
             vectors.push(create_test_vector(&format!("inc_{}_vec_{}", batch, i), 128));
         }
 
+        println!("🔄 DEBUG: Batch {}: Created {} vectors", batch, vectors.len());
+
         // VIPER is columnar - vectors will be flushed below
 
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
-            synchronous: false,
-            vector_records: vectors,
+            synchronous: true,
+            vector_records: vectors.clone(),
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
@@ -1633,14 +1667,65 @@ async fn test_incremental_compaction() {
             estimated_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
-                temp_dir.path().to_str().unwrap(),
+                test_dir,
             )),
         };
-        engine.do_flush(&flush_params).await.unwrap();
+
+        let flush_result = engine.do_flush(&flush_params).await.unwrap();
+        println!("🔄 DEBUG: Batch {}: Flush result - entries_flushed: {:?}, success: {}",
+                batch, flush_result.entries_flushed, flush_result.success);
     }
 
+    // Check total vectors before compaction
+    let storage_url_check = format!(
+        "file://{}/{}/data",
+        test_dir,
+        collection_id
+    );
+
+    // Debug: Check what files exist in the storage directory and subdirectories
+    let storage_dir = format!("{}/{}/data", test_dir, collection_id);
+    println!("🔍 DEBUG: Checking storage directory: {}", storage_dir);
+
+    fn list_directory_recursive(dir: &str, depth: usize) {
+        if depth > 3 { return; } // Limit recursion depth
+        let indent = "  ".repeat(depth);
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        println!("🔍 DEBUG: {}📁 {:?}", indent, path.file_name().unwrap());
+                        list_directory_recursive(path.to_str().unwrap(), depth + 1);
+                    } else {
+                        let metadata = std::fs::metadata(&path).ok();
+                        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                        println!("🔍 DEBUG: {}📄 {:?} ({}bytes)", indent, path.file_name().unwrap(), size);
+                    }
+                }
+            }
+        } else {
+            println!("🔍 DEBUG: {}Cannot read directory: {}", indent, dir);
+        }
+    }
+
+    list_directory_recursive(&storage_dir, 0);
+
+    // Also check the test directory structure
+    println!("🔍 DEBUG: Checking test base directory: {}", test_dir);
+    list_directory_recursive(test_dir, 0);
+
+    let pre_compact_results = engine
+        .search_vectors(collection_id, &storage_url_check, &vec![0.5; 128], 100)
+        .await
+        .unwrap();
+    let total_pre_compact = pre_compact_results.iter().map(|sr| sr.results.len()).sum::<usize>();
+    println!("🔍 DEBUG: Before compaction: Found {} vectors", total_pre_compact);
+
+    println!("🔄 DEBUG: Starting incremental compaction phases");
+
     // Run incremental compaction multiple times
-    for _ in 0..3 {
+    for phase in 0..3 {
         let compact_params = CompactionParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
@@ -1651,26 +1736,54 @@ async fn test_incremental_compaction() {
             estimated_input_size: 1024 * 1024, // 1MB estimated
             collection_config: Some(create_test_collection(
                 collection_id,
-                temp_dir.path().to_str().unwrap(),
+                test_dir,
             )),
         };
 
-        engine
+        let compact_result = engine
             .do_compact(&compact_params)
-            .await
-            .expect("Incremental compaction failed");
+            .await;
+
+        if let Err(ref e) = compact_result {
+            println!("🔍 TEST: Incremental compaction phase {} failed: {:?}", phase, e);
+        }
+        let compact_result = compact_result.expect("Incremental compaction failed");
+
+        println!("🔄 DEBUG: Compaction phase {}: entries_processed: {:?}, entries_removed: {:?}, success: {}",
+                phase, compact_result.entries_processed, compact_result.entries_removed, compact_result.success);
     }
 
     // Verify all vectors preserved
     let storage_url = format!(
         "file://{}/{}/data",
-        temp_dir.path().to_str().unwrap(),
+        test_dir,
         collection_id
     );
+
+    println!("🔍 DEBUG: Searching with storage_url: {}", storage_url);
+    println!("🔍 DEBUG: Query vector dimensions: {}", vec![0.5; 128].len());
+
     let search_results = engine
         .search_vectors(collection_id, &storage_url, &vec![0.5; 128], 100)
         .await
         .unwrap();
 
-    assert_eq!(search_results.len(), 30); // 6 batches * 5 vectors
+    let total_results = search_results.iter().map(|sr| sr.results.len()).sum::<usize>();
+    println!("🔍 DEBUG: Search returned {} results (expected 30)", total_results);
+
+    // Print first few results for debugging
+    let mut result_count = 0;
+    for (search_idx, search_result) in search_results.iter().enumerate() {
+        println!("🔍 DEBUG: SearchResult {}: contains {} results", search_idx, search_result.results.len());
+        for (idx, result) in search_result.results.iter().take(5).enumerate() {
+            println!("🔍 DEBUG: Result {}: id={}, score={:?}", result_count + idx, result.id, result.score);
+        }
+        result_count += search_result.results.len();
+        if result_count >= 5 { break; }
+    }
+
+    assert_eq!(total_results, 30); // 6 batches * 5 vectors
+
+    // Cleanup: remove test directory
+    let _ = std::fs::remove_dir_all(test_dir);
 }

@@ -2992,7 +2992,6 @@ impl UnifiedSstableReader {
                     updated_at: r.updated_at,
                     expires_at: r.expires_at,
                     version: r.version,
-                    quantized_vector: vec![],
                     source: None,
                 })
                 .collect();
@@ -3382,8 +3381,7 @@ impl UnifiedSstableReader {
                         updated_at: record.updated_at,
                         expires_at: record.expires_at,
                         version: record.version.map(|v| v as i64),
-                        quantized_vector: vec![],
-                        source: None,
+                            source: None,
                     }));
                 }
             }

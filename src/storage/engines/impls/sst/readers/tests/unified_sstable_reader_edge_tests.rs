@@ -511,7 +511,6 @@ mod edge_tests {
                 updated_at: Some(version),
                 expires_at: None,
                 version: Some(version as i64),
-                quantized_vector: vec![],
                 source: None,
                 // level field removed from VectorRecord
             });
@@ -526,7 +525,6 @@ mod edge_tests {
             updated_at: Some(11),
             expires_at: None,
             version: Some(11),
-            quantized_vector: vec![],
             source: None,
         });
 
@@ -539,7 +537,6 @@ mod edge_tests {
             updated_at: Some(12),
             expires_at: None,
             version: Some(12),
-            quantized_vector: vec![],
             source: None,
         });
 
@@ -652,7 +649,6 @@ mod edge_tests {
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             };
             records.insert(record.id.clone(), record);
@@ -859,7 +855,6 @@ mod edge_tests {
                 updated_at: Some(100),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: Some(String::new()),
                 // is_tombstone field removed
                 // sequence_number field removed
@@ -880,7 +875,6 @@ mod edge_tests {
                 updated_at: Some(101),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: Some(String::new()),
                 // is_tombstone field removed
                 // sequence_number field removed
@@ -895,7 +889,6 @@ mod edge_tests {
                 updated_at: Some(102),
                 expires_at: Some(103),
                 version: Some(1),
-                quantized_vector: vec![],
                 source: Some(String::new()),
                 // is_tombstone field removed
                 // sequence_number field removed
@@ -996,7 +989,6 @@ mod edge_tests {
                 updated_at: Some(i as i64),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: Some(String::new()),
                 // is_tombstone field removed
                 // sequence_number field removed

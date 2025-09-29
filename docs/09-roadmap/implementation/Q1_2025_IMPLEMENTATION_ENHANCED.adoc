@@ -7,6 +7,19 @@
 [.lead]
 **Enhanced implementation guide for Q1 2025: Advanced Search Optimization and Quantized Vector Precomputation with ProximaDB-specific integration**
 
+[IMPORTANT]
+====
+**Key Architecture Decision**: Quantization is computed ONLY during flush and compaction operations.
+Proto messages (VectorRecord) remain unchanged. Quantized vectors are stored internally using
+a tuple/wrapper approach that pairs original records with optional quantization data.
+This separation ensures:
+
+* Proto messages stay clean and backward compatible
+* Quantization is transparent to API clients
+* Engines can optimize storage format independently
+* Compaction can recalculate quantization for merged data
+====
+
 == Prerequisites & Dependencies
 
 === Existing Components to Leverage
@@ -380,67 +393,73 @@ graph LR
     style K fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
 ----
 
-=== Enhanced Implementation with Storage Format
+=== Enhanced Implementation with Internal Storage Format
 
-==== Step 1: Extended VectorRecord Proto
-File: `proto/proximadb.proto`
+==== Step 1: Internal Quantization Data Structures (NO Proto Changes)
+File: `src/storage/formats/quantized_vector.rs`
 
-[source,protobuf]
+[IMPORTANT]
+====
+VectorRecord proto remains UNCHANGED. Quantization is computed during flush/compaction
+and stored internally, never passed through proto messages.
+====
+
+[source,rust]
 ----
-message VectorRecord {
-    string id = 1;
-    repeated float values = 2;
-    map<string, Value> metadata = 3;
-    int64 timestamp = 4;
-
-    // Existing fields...
-
-    // Enhanced quantization support
-    optional QuantizedVectors quantized = 20;
-    optional QuantizationMetadata quant_metadata = 21;
+// Internal quantization representation - NOT part of proto messages
+// This is computed during flush/compaction and stored separately
+#[derive(Debug, Clone)]
+pub struct QuantizedVector {
+    pub vector_id: String,
+    pub binary: Option<Vec<u8>>,      // 1 bit per dimension
+    pub int8: Option<Vec<i8>>,         // 8 bits per dimension
+    pub pq: Option<PQData>,            // Product quantization
+    pub metadata: QuantizationMetadata,
 }
 
-message QuantizedVectors {
-    // Basic quantized representations
-    optional bytes binary = 1;      // 1 bit per dimension
-    optional bytes int8 = 2;        // 8 bits per dimension
-
-    // Product Quantization variants
-    optional PQData pq4 = 3;        // 4-bit PQ
-    optional PQData pq8 = 4;        // 8-bit PQ
-    optional PQData pq16 = 5;       // 16-bit PQ
-    optional PQData pq32 = 6;       // 32-bit PQ
-
-    // Scalar Quantization
-    optional ScalarQuantized scalar = 7;
-
-    // Adaptive quantization (different levels for different parts)
-    optional AdaptiveQuantized adaptive = 8;
+#[derive(Debug, Clone)]
+pub struct PQData {
+    pub codes: Vec<u8>,                // PQ codes
+    pub codebook_id: String,           // Reference to codebook
+    pub num_subvectors: u32,           // M parameter
+    pub bits_per_code: u32,            // Bits per subvector
 }
 
-message PQData {
-    bytes codes = 1;                // PQ codes
-    string codebook_id = 2;          // Reference to codebook
-    uint32 num_subvectors = 3;       // M parameter
-    uint32 bits_per_code = 4;        // Bits per subvector
+#[derive(Debug, Clone)]
+pub struct QuantizationMetadata {
+    pub original_norm: f32,            // L2 norm of original vector
+    pub quality_scores: Vec<f32>,      // Quality score per quantization level
+    pub computation_time_us: u64,      // Time taken to compute
+    pub algorithm_version: String,     // Version for compatibility
 }
 
-message ScalarQuantized {
-    bytes values = 1;
-    float scale = 2;
-    float offset = 3;
-    uint32 bits = 4;
+// Wrapper for flush operations that pairs original with quantized
+#[derive(Debug, Clone)]
+pub struct VectorWithQuantization {
+    pub record: VectorRecord,          // Original proto message (unchanged)
+    pub quantized: Option<QuantizedVector>, // Optional quantization (internal only)
 }
 
-message QuantizationMetadata {
-    float original_norm = 1;         // L2 norm of original vector
-    repeated float quality_scores = 2;  // Quality score per quantization level
-    int64 computation_time_us = 3;   // Time taken to compute
-    string algorithm_version = 4;     // Version for compatibility
+// Alternative: Using a tuple approach for simpler API
+pub type QuantizedVectorPair = (VectorRecord, Option<QuantizedVector>);
+
+// For batch operations during flush
+pub struct QuantizedBatch {
+    pub records: Vec<VectorRecord>,
+    pub quantized: Vec<Option<QuantizedVector>>,
+
+    // Ensure parallel arrays stay in sync
+    pub fn iter(&self) -> impl Iterator<Item = (&VectorRecord, &Option<QuantizedVector>)> {
+        self.records.iter().zip(self.quantized.iter())
+    }
+
+    pub fn into_pairs(self) -> Vec<(VectorRecord, Option<QuantizedVector>)> {
+        self.records.into_iter().zip(self.quantized.into_iter()).collect()
+    }
 }
 ----
 
-==== Step 2: Advanced Precomputation Service
+==== Step 2: Quantization Service for Flush Operations
 File: `src/compute/quantization/precompute.rs`
 
 [source,rust]
@@ -448,7 +467,8 @@ File: `src/compute/quantization/precompute.rs`
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 use crate::compute::quantization::global_cache::GlobalQuantizationCache;
 use crate::compute::quantization::selection::QuantizationSelector;
-use crate::proto::proximadb::{VectorRecord, QuantizedVectors, QuantizationMetadata};
+use crate::proto::proximadb::VectorRecord;  // Proto unchanged
+use crate::storage::formats::quantized_vector::{QuantizedVector, QuantizedBatch};
 
 pub struct QuantizationPrecomputeService {
     engine: Arc<UnifiedQuantizationEngine>,
@@ -458,12 +478,12 @@ pub struct QuantizationPrecomputeService {
 }
 
 impl QuantizationPrecomputeService {
-    /// Main entry point for batch precomputation
-    pub async fn precompute_batch(
+    /// Main entry point for flush - returns paired vectors and quantization
+    pub async fn quantize_for_flush(
         &self,
         records: Vec<VectorRecord>,
         config: &QuantizationConfig,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<QuantizedBatch> {
         // Analyze batch characteristics
         let batch_stats = self.analyze_batch(&records)?;
 
@@ -491,14 +511,26 @@ impl QuantizationPrecomputeService {
         }
 
         // Collect results with error handling
-        let mut precomputed = Vec::new();
-        for future in futures {
+        let mut all_records = Vec::new();
+        let mut all_quantized = Vec::new();
+
+        for (i, future) in futures.into_iter().enumerate() {
             match future.await {
-                Ok(Ok(chunk_results)) => precomputed.extend(chunk_results),
+                Ok(Ok(chunk_results)) => {
+                    for (record, quantized) in chunk_results {
+                        all_records.push(record);
+                        all_quantized.push(quantized);
+                    }
+                },
                 Ok(Err(e)) => {
                     // Log error but continue with other chunks
-                    tracing::warn!("Chunk precomputation failed: {}", e);
-                    // Return original records for failed chunk
+                    tracing::warn!("Chunk {} precomputation failed: {}", i, e);
+                    // Add original records without quantization for failed chunk
+                    let chunk = &records[i * chunk_size..(i + 1) * chunk_size.min(records.len())];
+                    for record in chunk {
+                        all_records.push(record.clone());
+                        all_quantized.push(None);  // No quantization for failed chunks
+                    }
                 },
                 Err(e) => {
                     tracing::error!("Task join error: {}", e);
@@ -506,7 +538,10 @@ impl QuantizationPrecomputeService {
             }
         }
 
-        Ok(precomputed)
+        Ok(QuantizedBatch {
+            records: all_records,
+            quantized: all_quantized,
+        })
     }
 
     async fn process_chunk(
@@ -514,14 +549,20 @@ impl QuantizationPrecomputeService {
         levels: Vec<QuantizationLevel>,
         engine: Arc<UnifiedQuantizationEngine>,
         codebooks: Arc<CodebookSet>,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<(VectorRecord, Option<QuantizedVector>)>> {
         let mut results = Vec::new();
 
-        for mut record in chunk {
+        for record in chunk {  // Don't mutate the proto record
             let start = Instant::now();
             let original_norm = compute_l2_norm(&record.values);
 
-            let mut quantized = QuantizedVectors::default();
+            let mut quantized = QuantizedVector {
+                vector_id: record.id.clone(),
+                binary: None,
+                int8: None,
+                pq: None,
+                metadata: QuantizationMetadata::default(),
+            };
             let mut quality_scores = Vec::new();
 
             for level in &levels {
@@ -536,7 +577,7 @@ impl QuantizationPrecomputeService {
                     QuantizationLevel::Int8 => {
                         let (int8_data, quality) = engine
                             .quantize_int8_with_quality(&record.values)?;
-                        quantized.int8 = Some(int8_data);
+                        quantized.int8 = Some(int8_data.into_iter().map(|u| u as i8).collect());
                         quality_scores.push(quality);
                     },
 
@@ -545,48 +586,33 @@ impl QuantizationPrecomputeService {
                         let (pq_data, quality) = engine
                             .quantize_pq_with_quality(&record.values, codebook)?;
 
-                        let pq_message = PQData {
+                        quantized.pq = Some(PQData {
                             codes: pq_data,
                             codebook_id: codebook.id.clone(),
                             num_subvectors: codebook.m,
                             bits_per_code: *bits,
-                        };
-
-                        match bits {
-                            4 => quantized.pq4 = Some(pq_message),
-                            8 => quantized.pq8 = Some(pq_message),
-                            16 => quantized.pq16 = Some(pq_message),
-                            32 => quantized.pq32 = Some(pq_message),
-                            _ => {},
-                        }
+                        });
                         quality_scores.push(quality);
                     },
 
                     QuantizationLevel::Scalar(bits) => {
-                        let (scalar_data, params, quality) = engine
-                            .quantize_scalar_with_quality(&record.values, *bits)?;
-                        quantized.scalar = Some(ScalarQuantized {
-                            values: scalar_data,
-                            scale: params.scale,
-                            offset: params.offset,
-                            bits: *bits,
-                        });
-                        quality_scores.push(quality);
+                        // Handle scalar quantization if needed
+                        // For now, we'll skip as it's less common
+                        tracing::debug!("Scalar quantization not implemented yet");
                     },
                 }
             }
 
-            // Add metadata
-            let metadata = QuantizationMetadata {
+            // Set metadata
+            quantized.metadata = QuantizationMetadata {
                 original_norm,
                 quality_scores,
-                computation_time_us: start.elapsed().as_micros() as i64,
+                computation_time_us: start.elapsed().as_micros() as u64,
                 algorithm_version: env!("CARGO_PKG_VERSION").to_string(),
             };
 
-            record.quantized = Some(quantized);
-            record.quant_metadata = Some(metadata);
-            results.push(record);
+            // Return tuple of original record and quantization
+            results.push((record, Some(quantized)));
         }
 
         Ok(results)
@@ -611,10 +637,10 @@ File: `src/storage/engines/quantized_storage.rs`
 /// Trait for engines to implement quantized storage
 #[async_trait]
 pub trait QuantizedStorageEngine {
-    /// Store vectors with precomputed quantization
+    /// Store vectors with precomputed quantization (paired approach)
     async fn store_quantized(
         &self,
-        records: Vec<VectorRecord>,
+        batch: QuantizedBatch,  // Uses paired records and quantization
         storage_strategy: QuantizedStorageStrategy,
     ) -> Result<()>;
 
@@ -658,14 +684,23 @@ pub enum QuantizedStorageStrategy {
 impl QuantizedStorageEngine for SstEngine {
     async fn store_quantized(
         &self,
-        records: Vec<VectorRecord>,
+        batch: QuantizedBatch,
         strategy: QuantizedStorageStrategy,
     ) -> Result<()> {
         match strategy {
             QuantizedStorageStrategy::Inline => {
-                // Store everything in SSTable
-                let sstable = SSTableBuilder::new()
-                    .with_records(records)
+                // Store everything in SSTable with quantization alongside
+                let mut builder = SSTableBuilder::new();
+
+                // Add records with their quantization
+                for (record, quantized) in batch.into_pairs() {
+                    builder.add_record(record);
+                    if let Some(q) = quantized {
+                        builder.add_quantization(&q);
+                    }
+                }
+
+                let sstable = builder
                     .with_quantized_index(true)  // Enable special index
                     .build()?;
 
@@ -673,18 +708,15 @@ impl QuantizedStorageEngine for SstEngine {
             },
 
             QuantizedStorageStrategy::Separate { .. } => {
-                // Split storage
-                let (original, quantized) = self.split_records(records)?;
-
                 // Store original vectors
                 let main_sst = SSTableBuilder::new()
-                    .with_records(original)
+                    .with_records(batch.records)
                     .build()?;
                 self.write_sstable(main_sst).await?;
 
                 // Store quantized in separate file
                 let quant_sst = QuantizedSSTableBuilder::new()
-                    .with_quantized(quantized)
+                    .with_quantized_vectors(batch.quantized)
                     .with_compression(CompressionType::LZ4)
                     .build()?;
                 self.write_quantized_sstable(quant_sst).await
@@ -699,37 +731,54 @@ impl QuantizedStorageEngine for SstEngine {
 impl QuantizedStorageEngine for ViperEngine {
     async fn store_quantized(
         &self,
-        records: Vec<VectorRecord>,
+        batch: QuantizedBatch,
         strategy: QuantizedStorageStrategy,
     ) -> Result<()> {
         // VIPER uses columnar storage - perfect for separate quantized columns
         let mut parquet_builder = ParquetBuilder::new();
 
-        // Add original vector column
-        parquet_builder.add_column("vectors", self.extract_vectors(&records)?);
+        // Add original vector column using constants
+        parquet_builder.add_fixed_list_column(
+            constants::FIELD_VECTOR_FP32,
+            self.extract_vectors(&batch.records)?
+        );
 
-        // Add quantized columns based on available levels
-        if records[0].quantized.is_some() {
-            if let Some(binary) = &records[0].quantized.as_ref().unwrap().binary {
-                parquet_builder.add_binary_column(
-                    "quantized_binary",
-                    self.extract_binary_quantized(&records)?
-                );
-            }
+        // Add quantized columns based on what's available
+        // Check first item to determine which quantization types are present
+        if let Some(first_quant) = batch.quantized.first() {
+            if let Some(ref q) = first_quant {
+                // Binary quantization column
+                if q.binary.is_some() {
+                    let binary_data = batch.quantized.iter()
+                        .filter_map(|opt| opt.as_ref().and_then(|q| q.binary.clone()))
+                        .collect();
+                    parquet_builder.add_binary_column(
+                        constants::FIELD_VECTOR_BINARY,
+                        binary_data
+                    );
+                }
 
-            if let Some(int8) = &records[0].quantized.as_ref().unwrap().int8 {
-                parquet_builder.add_fixed_len_byte_array_column(
-                    "quantized_int8",
-                    self.extract_int8_quantized(&records)?
-                );
-            }
+                // INT8 quantization column
+                if q.int8.is_some() {
+                    let int8_data = batch.quantized.iter()
+                        .filter_map(|opt| opt.as_ref().and_then(|q| q.int8.clone()))
+                        .collect();
+                    parquet_builder.add_fixed_len_byte_array_column(
+                        constants::FIELD_VECTOR_INT8,
+                        int8_data
+                    );
+                }
 
-            // Add PQ columns with dictionary encoding for codebook references
-            if let Some(pq8) = &records[0].quantized.as_ref().unwrap().pq8 {
-                parquet_builder.add_dictionary_encoded_column(
-                    "quantized_pq8",
-                    self.extract_pq_quantized(&records, 8)?
-                );
+                // PQ columns with proper column names
+                if q.pq.is_some() {
+                    let pq_data = batch.quantized.iter()
+                        .filter_map(|opt| opt.as_ref().and_then(|q| q.pq.clone()))
+                        .collect();
+                    parquet_builder.add_dictionary_encoded_column(
+                        constants::FIELD_VECTOR_PQ,
+                        pq_data
+                    );
+                }
             }
         }
 
@@ -874,6 +923,215 @@ impl QuantizedSearchEngine {
 }
 ----
 
+==== Step 5: Flush Integration Across All Engines
+File: `src/storage/engines/traits.rs`
+
+[source,rust]
+----
+// Extension to UnifiedStorageEngine trait for quantization-aware flush
+#[async_trait]
+pub trait QuantizedFlush: UnifiedStorageEngine {
+    /// Flush with quantization precomputation
+    async fn flush_with_quantization(
+        &self,
+        records: Vec<VectorRecord>,
+        collection_config: Option<&Collection>,
+    ) -> Result<FlushResult> {
+        // Check if quantization is enabled
+        let quantization_enabled = collection_config
+            .and_then(|c| c.config.as_ref())
+            .and_then(|cfg| cfg.quantization.as_ref())
+            .map(|q| q.enabled)
+            .unwrap_or(false);
+
+        if !quantization_enabled {
+            // Fall back to regular flush
+            return self.flush_internal(records).await;
+        }
+
+        // Get quantization service
+        let quant_service = QuantizationPrecomputeService::global();
+
+        // Extract quantization config
+        let quant_config = collection_config
+            .and_then(|c| c.config.as_ref())
+            .and_then(|cfg| cfg.quantization.as_ref())
+            .unwrap();
+
+        // Quantize the batch
+        let quantized_batch = quant_service
+            .quantize_for_flush(records, quant_config)
+            .await?;
+
+        // Store with engine-specific strategy
+        match self.engine_type() {
+            EngineType::SST | EngineType::SWIFT | EngineType::RAPTOR => {
+                // Row-based engines: inline storage
+                self.store_quantized(
+                    quantized_batch,
+                    QuantizedStorageStrategy::Inline,
+                ).await
+            },
+            EngineType::VIPER | EngineType::NOVA | EngineType::HELIX => {
+                // Columnar engines: separate columns
+                self.store_quantized(
+                    quantized_batch,
+                    QuantizedStorageStrategy::Columnar {
+                        schema: self.get_columnar_schema()?,
+                    },
+                ).await
+            },
+        }
+    }
+}
+
+// Implement for all engines
+impl QuantizedFlush for SstEngine {}
+impl QuantizedFlush for ViperEngine {}
+impl QuantizedFlush for NovaEngine {}
+impl QuantizedFlush for SwiftEngine {}
+impl QuantizedFlush for RaptorEngine {}
+impl QuantizedFlush for HelixEngine {}
+----
+
+==== Step 6: Quantization-Aware Compaction
+File: `src/storage/engines/compaction/quantized_compaction.rs`
+
+[source,rust]
+----
+use crate::storage::engines::core::formats::columnar::unified_compaction::UnifiedCompactionFramework;
+use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
+
+pub struct QuantizationAwareCompaction {
+    framework: Arc<UnifiedCompactionFramework>,
+    quant_engine: Arc<StorageQuantizationEngine>,
+    memory_pool: Arc<VectorMemoryPool>,
+}
+
+impl QuantizationAwareCompaction {
+    /// Compact files with quantization recalculation
+    pub async fn compact_with_requantization(
+        &self,
+        files: Vec<String>,
+        collection_config: &Collection,
+    ) -> Result<String> {
+        // Check if quantization is enabled
+        let quant_config = collection_config
+            .config.as_ref()
+            .and_then(|c| c.quantization.as_ref());
+
+        if quant_config.is_none() || !quant_config.unwrap().enabled {
+            // Fall back to regular compaction
+            return self.framework.compact_files(files).await;
+        }
+
+        let quant_config = quant_config.unwrap();
+
+        // Step 1: Load all vectors from files (not just metadata!)
+        let mut all_records = Vec::new();
+        for file_path in &files {
+            let records = self.load_all_vectors(file_path).await?;
+            all_records.extend(records);
+        }
+
+        info!("Loaded {} vectors for compaction with requantization", all_records.len());
+
+        // Step 2: Process in batches to control memory
+        let batch_size = 10_000;
+        let mut compacted_batches = Vec::new();
+
+        for batch in all_records.chunks(batch_size) {
+            // Get memory from pool for SIMD operations
+            let mut memory_buffer = self.memory_pool.allocate(batch.len()).await?;
+
+            // Recalculate quantization for merged data
+            let quantized_batch = self.requantize_batch(
+                batch,
+                quant_config,
+                &mut memory_buffer,
+            ).await?;
+
+            compacted_batches.push(quantized_batch);
+
+            // Return memory to pool
+            self.memory_pool.release(memory_buffer).await;
+        }
+
+        // Step 3: Write compacted file with new quantization
+        let output_path = self.write_compacted_file(compacted_batches).await?;
+
+        // Step 4: Clean up old files
+        for file_path in files {
+            self.mark_for_deletion(&file_path).await?;
+        }
+
+        Ok(output_path)
+    }
+
+    async fn requantize_batch(
+        &self,
+        batch: &[VectorRecord],
+        config: &QuantizationConfig,
+        memory: &mut VectorMemoryBuffer,
+    ) -> Result<QuantizedBatch> {
+        // Extract vectors into SIMD-aligned memory
+        memory.load_vectors(batch)?;
+
+        let mut quantized_vectors = Vec::with_capacity(batch.len());
+
+        // Binary quantization - recalculate thresholds for merged data
+        if config.enable_binary {
+            let binary_threshold = self.calculate_binary_threshold(memory)?;
+            for (i, record) in batch.iter().enumerate() {
+                let binary = self.quant_engine
+                    .quantize_binary_with_threshold(&record.values, binary_threshold)?;
+                quantized_vectors[i].binary = Some(binary);
+            }
+        }
+
+        // INT8 quantization - find new min/max for merged data
+        if config.enable_int8 {
+            let (min, max) = memory.compute_min_max()?;
+            for (i, record) in batch.iter().enumerate() {
+                let int8 = self.quant_engine
+                    .quantize_int8_with_range(&record.values, min, max)?;
+                quantized_vectors[i].int8 = Some(int8);
+            }
+        }
+
+        // PQ quantization - retrain codebooks on merged data
+        if config.enable_pq {
+            // Sample vectors for training
+            let sample_size = (batch.len() / 10).min(1000).max(100);
+            let samples = self.sample_vectors(batch, sample_size);
+
+            // Train new codebooks
+            let codebooks = self.quant_engine
+                .train_pq_codebooks(&samples, config.pq_segments, config.pq_bits)?;
+
+            // Apply to all vectors
+            for (i, record) in batch.iter().enumerate() {
+                let pq = self.quant_engine
+                    .quantize_pq_with_codebooks(&record.values, &codebooks)?;
+                quantized_vectors[i].pq = Some(pq);
+            }
+        }
+
+        Ok(QuantizedBatch {
+            records: batch.to_vec(),
+            quantized: quantized_vectors,
+        })
+    }
+
+    fn calculate_binary_threshold(&self, memory: &VectorMemoryBuffer) -> Result<f32> {
+        // Use SIMD to compute optimal threshold
+        let mean = memory.compute_mean_simd()?;
+        let std_dev = memory.compute_std_dev_simd()?;
+        Ok(mean + 0.5 * std_dev)  // Adaptive threshold
+    }
+}
+----
+
 === Testing & Validation
 
 ==== Comprehensive Test Suite
@@ -930,37 +1188,46 @@ async fn test_precomputation_quality() {
 
     let config = QuantizationConfig {
         enabled: true,
-        levels: vec![
-            QuantizationLevel::Binary,
-            QuantizationLevel::Int8,
-            QuantizationLevel::PQ(8),
-        ],
+        enable_binary: true,
+        enable_int8: true,
+        enable_pq: true,
+        pq_segments: 8,
+        pq_bits: 8,
         ..Default::default()
     };
 
-    let precomputed = service.precompute_batch(records.clone(), &config).await.unwrap();
+    // Get quantized batch (records remain unchanged, quantization is separate)
+    let batch = service.quantize_for_flush(records.clone(), &config).await.unwrap();
 
-    // Verify all records have quantization
-    for record in &precomputed {
-        assert!(record.quantized.is_some());
-        assert!(record.quant_metadata.is_some());
+    // Verify all records are paired with quantization
+    assert_eq!(batch.records.len(), batch.quantized.len());
+    assert_eq!(batch.records.len(), 1000);
 
-        let quant = record.quantized.as_ref().unwrap();
-        assert!(quant.binary.is_some());
-        assert!(quant.int8.is_some());
-        assert!(quant.pq8.is_some());
+    // Check each pair
+    for (record, quantized_opt) in batch.iter() {
+        // Original record should be unchanged
+        assert!(record.id.len() > 0);
+        assert!(record.values.len() > 0);
+
+        // Quantization should exist
+        assert!(quantized_opt.is_some());
+        let quantized = quantized_opt.as_ref().unwrap();
+
+        // Check quantization components
+        assert!(quantized.binary.is_some());
+        assert!(quantized.int8.is_some());
+        assert!(quantized.pq.is_some());
 
         // Check quality scores
-        let metadata = record.quant_metadata.as_ref().unwrap();
-        assert!(metadata.quality_scores[0] > 0.7);  // Binary quality
-        assert!(metadata.quality_scores[1] > 0.85); // INT8 quality
-        assert!(metadata.quality_scores[2] > 0.9);  // PQ8 quality
+        assert!(quantized.metadata.quality_scores[0] > 0.7);  // Binary quality
+        assert!(quantized.metadata.quality_scores[1] > 0.85); // INT8 quality
+        assert!(quantized.metadata.quality_scores[2] > 0.9);  // PQ8 quality
     }
 
     // Verify storage efficiency
-    let original_size = calculate_size(&records);
-    let quantized_size = calculate_quantized_size(&precomputed);
-    assert!(quantized_size < original_size * 1.3);  // Max 30% overhead
+    let original_size = calculate_size(&batch.records);
+    let quantized_size = calculate_quantized_batch_size(&batch);
+    assert!(quantized_size < original_size * 0.3);  // Quantization should be <30% of original
 }
 
 #[tokio::test]

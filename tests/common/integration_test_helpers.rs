@@ -384,7 +384,6 @@ impl UnifiedTestEnvironment {
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
                 vector: (0..dimension).map(|j| (i + j) as f32).collect(),
                 metadata: std::collections::HashMap::from([
@@ -432,7 +431,6 @@ impl UnifiedTestEnvironment {
             updated_at: None,
             expires_at,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }
     }
@@ -754,7 +752,6 @@ pub mod operations {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 }
             })
@@ -796,7 +793,6 @@ pub mod operations {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 }
             })
@@ -859,7 +855,6 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
                 }),
             ]),
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
             updated_at: None,
             expires_at: None,
