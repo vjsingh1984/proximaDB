@@ -297,11 +297,11 @@ impl QuantizedVectorSchemaBuilder {
             let field_def = self.build_field_definition(level)?;
             field_definitions.push(field_def);
 
-            // Add codebook field if needed
-            if self.requires_codebook(level) {
-                let codebook_def = self.build_codebook_definition(level)?;
-                field_definitions.push(codebook_def);
-            }
+            // Codebooks are now stored as file-level metadata, not per-row columns
+            // Skip adding codebook fields - they will be handled by CodebookSerializer
+            // if self.requires_codebook(level) {
+            //     // Codebooks moved to file-level metadata
+            // }
 
             // Add parameter fields if needed
             let param_defs = self.build_parameter_definitions(level)?;
@@ -385,64 +385,33 @@ impl QuantizedVectorSchemaBuilder {
         )
     }
 
-    /// Build codebook field definition using columnar constants
+    /// Build codebook field definition (NOT USED - codebooks are file-level metadata)
+    /// This method is kept for backward compatibility but returns an error
     fn build_codebook_definition(&self, level: &QuantizationLevel) -> Result<QuantizedFieldDefinition> {
-        // Use constants for consistent codebook column names
-        let field_name = match level {
-            QuantizationLevel::PQ4 => FIELD_CB_PQ4.to_string(),
-            QuantizationLevel::PQ8 => FIELD_CB_PQ8.to_string(),
-            QuantizationLevel::PQ16 => FIELD_CB_PQ16.to_string(),
-            QuantizationLevel::PQ32 => FIELD_CB_PQ32.to_string(),
-            _ => return Err(anyhow::anyhow!("Codebooks only supported for PQ levels: {:?}", level)),
-        };
-
-        let pq_field_name = match level {
-            QuantizationLevel::PQ4 => FIELD_Q_PQ4.to_string(),
-            QuantizationLevel::PQ8 => FIELD_Q_PQ8.to_string(),
-            QuantizationLevel::PQ16 => FIELD_Q_PQ16.to_string(),
-            QuantizationLevel::PQ32 => FIELD_Q_PQ32.to_string(),
-            _ => return Err(anyhow::anyhow!("Invalid PQ level for codebook: {:?}", level)),
-        };
-
-        let num_subquantizers = self.calculate_subquantizers(self.get_bits_per_code(level))?;
-
-        let physical_spec = PhysicalFieldSpec::Codebook {
-            pq_field_name,
-            dimensions: CodebookDimensions {
-                num_subquantizers,
-                num_centroids: 256, // Standard for 8-bit codes
-                centroid_dimension: self.dimension / num_subquantizers,
-            },
-        };
-
-        Ok(QuantizedFieldDefinition {
-            level: level.clone(),
-            field_name,
-            physical_spec,
-            required: false,
-            data_characteristics: DataCharacteristics {
-                expected_compression_ratio: 1.0, // Codebooks don't compress much
-                expected_memory_per_vector: 0, // Per-collection, not per-vector
-                expected_search_speedup: 1.0,
-                sparsity_info: None,
-            },
-        })
+        // Codebooks are now stored as file-level metadata, not per-row columns
+        // For ProximaBlock engines: stored in footer
+        // For Parquet engines: stored as sidecar files
+        Err(anyhow::anyhow!(
+            "Codebooks are now stored as file-level metadata, not per-row columns. \
+             Use CodebookSerializer from codebook_metadata module instead. \
+             Level: {:?}", level
+        ))
     }
 
     /// Build parameter field definitions using columnar constants
-    fn build_parameter_definitions(&self, level: &UnifiedQuantizationLevel) -> Result<Vec<QuantizedFieldDefinition>> {
+    fn build_parameter_definitions(&self, level: &QuantizationLevel) -> Result<Vec<QuantizedFieldDefinition>> {
         let mut param_defs = Vec::new();
 
         // Use constants for consistent parameter column naming
         match level {
-            UnifiedQuantizationLevel::Binary => {
+            QuantizationLevel::Binary => {
                 param_defs.push(self.build_parameter_field(
                     level,
                     FIELD_QP_BINARY_THRESHOLD,
                     ParameterType::BinaryThreshold,
                 )?);
             },
-            UnifiedQuantizationLevel::INT8 => {
+            QuantizationLevel::Int8 => {
                 param_defs.push(self.build_parameter_field(
                     level,
                     FIELD_QP_INT8_MIN,
@@ -459,10 +428,10 @@ impl QuantizedVectorSchemaBuilder {
                     ParameterType::Int8ScaleFactor,
                 )?);
             },
-            UnifiedQuantizationLevel::PQ4 |
-            UnifiedQuantizationLevel::PQ8 |
-            UnifiedQuantizationLevel::PQ16 |
-            UnifiedQuantizationLevel::PQ32 => {
+            QuantizationLevel::PQ4 |
+            QuantizationLevel::PQ8 |
+            QuantizationLevel::PQ16 |
+            QuantizationLevel::PQ32 => {
                 param_defs.push(self.build_parameter_field(
                     level,
                     FIELD_QP_PQ_SUBQUANTIZERS,
@@ -473,8 +442,7 @@ impl QuantizedVectorSchemaBuilder {
                     FIELD_QP_PQ_CENTROIDS,
                     ParameterType::PqCentroidCount,
                 )?);
-            },
-            _ => {}, // No parameters needed
+            }
         }
 
         Ok(param_defs)
@@ -483,7 +451,7 @@ impl QuantizedVectorSchemaBuilder {
     /// Build single parameter field
     fn build_parameter_field(
         &self,
-        level: &UnifiedQuantizationLevel,
+        level: &QuantizationLevel,
         name: &str,
         param_type: ParameterType,
     ) -> Result<QuantizedFieldDefinition> {
@@ -611,42 +579,29 @@ impl QuantizedVectorSchemaBuilder {
                 // Quantized columns - use constants for same names as ProximaBlock
                 for level in &self.enabled_levels {
                     let column_name = match level {
-                        UnifiedQuantizationLevel::Binary => FIELD_Q_BINARY.to_string(),
-                        UnifiedQuantizationLevel::INT8 => FIELD_Q_INT8.to_string(),
-                        UnifiedQuantizationLevel::PQ4 => FIELD_Q_PQ4.to_string(),
-                        UnifiedQuantizationLevel::PQ8 => FIELD_Q_PQ8.to_string(),
-                        UnifiedQuantizationLevel::PQ16 => FIELD_Q_PQ16.to_string(),
-                        UnifiedQuantizationLevel::PQ32 => FIELD_Q_PQ32.to_string(),
-                        _ => continue,
+                        QuantizationLevel::Binary => FIELD_Q_BINARY.to_string(),
+                        QuantizationLevel::Int8 => FIELD_Q_INT8.to_string(),
+                        QuantizationLevel::PQ4 => FIELD_Q_PQ4.to_string(),
+                        QuantizationLevel::PQ8 => FIELD_Q_PQ8.to_string(),
+                        QuantizationLevel::PQ16 => FIELD_Q_PQ16.to_string(),
+                        QuantizationLevel::PQ32 => FIELD_Q_PQ32.to_string(),
                     };
                     // Logical name = Physical name for consistency
                     column_mapping.insert(column_name.clone(), column_name);
                 }
 
-                // Codebook columns - use constants
-                for level in &self.enabled_levels {
-                    if self.requires_codebook(level) {
-                        let codebook_name = match level {
-                            UnifiedQuantizationLevel::PQ4 => FIELD_CB_PQ4.to_string(),
-                            UnifiedQuantizationLevel::PQ8 => FIELD_CB_PQ8.to_string(),
-                            UnifiedQuantizationLevel::PQ16 => FIELD_CB_PQ16.to_string(),
-                            UnifiedQuantizationLevel::PQ32 => FIELD_CB_PQ32.to_string(),
-                            _ => continue,
-                        };
-                        column_mapping.insert(codebook_name.clone(), codebook_name);
-                    }
-                }
+                // Codebooks are now stored as file-level metadata, not columns
+                // Skip codebook column mapping - handled by CodebookSerializer
 
                 // Parameter columns - use constants
                 for level in &self.enabled_levels {
                     let param_columns = match level {
-                        UnifiedQuantizationLevel::Binary => vec![FIELD_QP_BINARY_THRESHOLD],
-                        UnifiedQuantizationLevel::INT8 => vec![FIELD_QP_INT8_MIN, FIELD_QP_INT8_MAX, FIELD_QP_INT8_SCALE],
-                        UnifiedQuantizationLevel::PQ4 |
-                        UnifiedQuantizationLevel::PQ8 |
-                        UnifiedQuantizationLevel::PQ16 |
-                        UnifiedQuantizationLevel::PQ32 => vec![FIELD_QP_PQ_SUBQUANTIZERS, FIELD_QP_PQ_CENTROIDS],
-                        _ => vec![],
+                        QuantizationLevel::Binary => vec![FIELD_QP_BINARY_THRESHOLD],
+                        QuantizationLevel::Int8 => vec![FIELD_QP_INT8_MIN, FIELD_QP_INT8_MAX, FIELD_QP_INT8_SCALE],
+                        QuantizationLevel::PQ4 |
+                        QuantizationLevel::PQ8 |
+                        QuantizationLevel::PQ16 |
+                        QuantizationLevel::PQ32 => vec![FIELD_QP_PQ_SUBQUANTIZERS, FIELD_QP_PQ_CENTROIDS],
                     };
 
                     for param_col in param_columns {
@@ -680,12 +635,12 @@ impl QuantizedVectorSchemaBuilder {
 
 impl QuantizedVectorSchema {
     /// Check if schema supports quantization level
-    pub fn supports_level(&self, level: &UnifiedQuantizationLevel) -> bool {
+    pub fn supports_level(&self, level: &QuantizationLevel) -> bool {
         self.enabled_levels.contains(level)
     }
 
     /// Get field definition for quantization level
-    pub fn get_field_definition(&self, level: &UnifiedQuantizationLevel) -> Option<&QuantizedFieldDefinition> {
+    pub fn get_field_definition(&self, level: &QuantizationLevel) -> Option<&QuantizedFieldDefinition> {
         self.field_definitions.iter()
             .find(|def| &def.level == level)
     }
@@ -756,16 +711,16 @@ mod tests {
             128,
             SchemaStorageType::ProximaBlock,
         )
-        .add_quantization_level(UnifiedQuantizationLevel::Binary)
-        .add_quantization_level(UnifiedQuantizationLevel::INT8)
+        .add_quantization_level(QuantizationLevel::Binary)
+        .add_quantization_level(QuantizationLevel::Int8)
         .build()?;
 
         assert_eq!(schema.collection_id, "test_collection");
         assert_eq!(schema.dimension, 128);
         assert_eq!(schema.enabled_levels.len(), 2);
-        assert!(schema.supports_level(&UnifiedQuantizationLevel::Binary));
-        assert!(schema.supports_level(&UnifiedQuantizationLevel::INT8));
-        assert!(!schema.supports_level(&UnifiedQuantizationLevel::PQ8));
+        assert!(schema.supports_level(&QuantizationLevel::Binary));
+        assert!(schema.supports_level(&QuantizationLevel::Int8));
+        assert!(!schema.supports_level(&QuantizationLevel::PQ8));
 
         schema.validate()?;
         Ok(())
@@ -793,7 +748,7 @@ mod tests {
             128,
             SchemaStorageType::Parquet,
         )
-        .add_quantization_level(UnifiedQuantizationLevel::Binary)
+        .add_quantization_level(QuantizationLevel::Binary)
         .build()?;
 
         match &schema.storage_mapping {
@@ -814,8 +769,8 @@ mod tests {
             128,
             SchemaStorageType::ProximaBlock,
         )
-        .add_quantization_level(UnifiedQuantizationLevel::Binary)
-        .add_quantization_level(UnifiedQuantizationLevel::INT8)
+        .add_quantization_level(QuantizationLevel::Binary)
+        .add_quantization_level(QuantizationLevel::Int8)
         .build()?;
 
         let savings = schema.estimated_storage_savings();

@@ -243,6 +243,7 @@ pub mod engine;
 pub mod flush;
 pub mod unified_metadata_serializer;
 pub mod unified_strategy_reader;
+pub mod codebook_sidecar;
 
 // Test modules
 

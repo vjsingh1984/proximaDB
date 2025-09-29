@@ -240,6 +240,7 @@ pub mod collections;
 pub mod utils;
 pub mod trait_impl;
 pub mod blocks;
+pub mod codebook_integration;
 
 // Test modules
 #[cfg(test)]

@@ -33,18 +33,12 @@ pub const FIELD_Q_PQ16: &str = "q_pq16";
 pub const FIELD_Q_PQ32: &str = "q_pq32";
 
 
-// === Codebook Columns ===
-/// PQ4 codebooks (subquantizer centroids for 4-bit codes)
-pub const FIELD_CB_PQ4: &str = "cb_pq4";
-
-/// PQ8 codebooks (subquantizer centroids for 8-bit codes)
-pub const FIELD_CB_PQ8: &str = "cb_pq8";
-
-/// PQ16 codebooks (subquantizer centroids for 16-bit codes)
-pub const FIELD_CB_PQ16: &str = "cb_pq16";
-
-/// PQ32 codebooks (subquantizer centroids for 32-bit codes)
-pub const FIELD_CB_PQ32: &str = "cb_pq32";
+// === Codebook Storage (File-Level Metadata) ===
+// NOTE: Codebooks are NOT stored as per-row columns!
+// They are stored as:
+// - Parquet: File-level metadata in footer
+// - ProximaBlocks: Separate codebook section in block
+// - Sidecar files: Optional .codebook files alongside data files
 
 // === Quantization Parameter Columns ===
 /// Binary quantization threshold parameter
@@ -128,13 +122,7 @@ pub const QUANTIZED_VECTOR_COLUMNS: &[&str] = &[
     FIELD_Q_PQ32,
 ];
 
-/// Codebook columns
-pub const CODEBOOK_COLUMNS: &[&str] = &[
-    FIELD_CB_PQ4,
-    FIELD_CB_PQ8,
-    FIELD_CB_PQ16,
-    FIELD_CB_PQ32,
-];
+// NOTE: Codebook columns removed - codebooks are stored as file-level metadata
 
 /// Quantization parameter columns
 pub const QUANTIZATION_PARAMETER_COLUMNS: &[&str] = &[
@@ -146,7 +134,7 @@ pub const QUANTIZATION_PARAMETER_COLUMNS: &[&str] = &[
     FIELD_QP_PQ_CENTROIDS,
 ];
 
-/// All quantization-related columns
+/// All quantization-related columns (codebooks stored as file metadata, not columns)
 pub const QUANTIZATION_COLUMNS: &[&str] = &[
     FIELD_Q_BINARY,
     FIELD_Q_INT8,
@@ -154,10 +142,6 @@ pub const QUANTIZATION_COLUMNS: &[&str] = &[
     FIELD_Q_PQ8,
     FIELD_Q_PQ16,
     FIELD_Q_PQ32,
-    FIELD_CB_PQ4,
-    FIELD_CB_PQ8,
-    FIELD_CB_PQ16,
-    FIELD_CB_PQ32,
     FIELD_QP_BINARY_THRESHOLD,
     FIELD_QP_INT8_MIN,
     FIELD_QP_INT8_MAX,

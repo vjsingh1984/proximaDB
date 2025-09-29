@@ -191,27 +191,13 @@ pub struct QuantizedVectorData {
     /// Pruning: Highest precision quantized option
     pub q_pq32: Option<Vec<Vec<u8>>>,
 
-    // ==================== CODEBOOK COLUMNS ====================
-    // Separate optional columns for PQ codebooks - enable codebook pruning
-
-    /// cb_pq4: PQ4 codebooks column
-    /// Column name: "cb_pq4"
-    /// Storage: [subquantizer][centroid][dimension] as flattened bytes
-    /// Pruning: Can load codebook independently of vectors
-    pub cb_pq4: Option<Vec<Vec<Vec<f32>>>>,
-
-    /// cb_pq8: PQ8 codebooks column
-    /// Column name: "cb_pq8"
-    /// Pruning: Most commonly used codebook
-    pub cb_pq8: Option<Vec<Vec<Vec<f32>>>>,
-
-    /// cb_pq16: PQ16 codebooks column
-    /// Column name: "cb_pq16"
-    pub cb_pq16: Option<Vec<Vec<Vec<f32>>>>,
-
-    /// cb_pq32: PQ32 codebooks column
-    /// Column name: "cb_pq32"
-    pub cb_pq32: Option<Vec<Vec<Vec<f32>>>>,
+    // ==================== CODEBOOK STORAGE ====================
+    // NOTE: Codebooks are stored as FILE-LEVEL metadata, not per-row columns!
+    // This is much more efficient since codebooks are shared across all vectors
+    // Storage locations:
+    // - Parquet: In file footer metadata
+    // - ProximaBlocks: In dedicated codebook section
+    // - Sidecar: Optional .codebook files
 
     // ==================== QUANTIZATION PARAMETER COLUMNS ====================
     // Direct optional columns for quantization parameters - enable parameter pruning
@@ -412,10 +398,6 @@ impl QuantizedVectorData {
             q_pq8: None,
             q_pq16: None,
             q_pq32: None,
-            cb_pq4: None,
-            cb_pq8: None,
-            cb_pq16: None,
-            cb_pq32: None,
             qp_binary_threshold: None,
             qp_int8_min: None,
             qp_int8_max: None,
