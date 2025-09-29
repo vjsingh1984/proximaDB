@@ -347,7 +347,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                     .iter()
                                     .find(|(key, _)| key == "version")
                                     .and_then(|(_, v)| match v {
-                                        Value::Int(ver) => Some(*ver as i64),
+                                        Value::Int(ver) => Some(*ver as u32),
                                         _ => None,
                                     }),
                                 source: None,

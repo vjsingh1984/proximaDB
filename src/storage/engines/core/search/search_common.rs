@@ -502,7 +502,7 @@ impl UniversalSearchPipeline {
                     .with_similarity(similarity_result.normalized_score)
                     .add_vector(record.vector)
                     .with_metadata(typed_metadata_map)
-                    .with_version_info(record.updated_at.unwrap_or(0), record.timestamp),
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp),
             );
         }
 

@@ -711,7 +711,7 @@ impl NovaEngine {
         let mut vector_builder = FixedSizeListBuilder::new(values_builder, dimension as i32);
 
         let mut timestamp_builder = Int64Builder::new();
-        let mut version_builder = Int64Builder::new();
+        let mut version_builder = UInt32Builder::new();
 
         // Check if quantization fields are present in schema (they would be after the 4 core fields)
         let mut quantization_field_count = 0;

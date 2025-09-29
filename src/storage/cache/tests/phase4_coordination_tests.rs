@@ -240,7 +240,6 @@ async fn test_cache_orchestrator_integration() {
         updated_at: None,
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
     // Convert VectorRecord to serde_json::Value for MetadataStore

@@ -917,7 +917,7 @@ impl AxisEventLogConsumer {
                                         };
 
                                         // Extract quantized vector if available
-                                        let quantized_vector = if has_quantized {
+                                        let quantized_vector: Vec<u8> = if has_quantized {
                                             // TODO: Extract quantized vector
                                             vec![]
                                         } else {

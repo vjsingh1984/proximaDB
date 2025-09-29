@@ -910,7 +910,7 @@ impl RaptorReader {
 
             if let Some(ver_array) = version_array {
                 if !ver_array.is_null(row_idx) {
-                    record.version = Some(ver_array.value(row_idx) as i64);
+                    record.version = Some(ver_array.value(row_idx) as u32);
                 }
             }
 

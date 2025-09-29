@@ -74,7 +74,6 @@ mod sst_cache_integration {
                 updated_at: Some(100),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             },
             VectorRecord {
@@ -85,7 +84,6 @@ mod sst_cache_integration {
                 updated_at: Some(200),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             },
         ];

@@ -343,7 +343,7 @@ fn create_vector_schema_internal(
             false,
         ),
         Field::new("timestamp", DataType::Int64, false),
-        Field::new("version", DataType::Int64, true),
+        Field::new("version", DataType::UInt32, true),
     ];
 
     // Add quantized columns if enabled

@@ -850,7 +850,7 @@ impl UnifiedParquetReader {
                 id,
                 vector,
                 metadata,
-                version: Some(version),
+                version: Some(version as u32),
                 timestamp,
                 ..Default::default()
             });

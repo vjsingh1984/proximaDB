@@ -1729,7 +1729,7 @@ impl ProximaDataBlock {
         }
 
         // Version (similar pattern)
-        let versions: Vec<Option<i64>> = self.records.iter().map(|r| r.version).collect();
+        let versions: Vec<Option<u32>> = self.records.iter().map(|r| r.version).collect();
         let version_non_none = versions.iter().filter(|&&x| x.is_some()).count();
 
         if version_non_none == 0 {
@@ -1748,7 +1748,7 @@ impl ProximaDataBlock {
             }
             result.write_all(&(bitmap.len() as u32).to_le_bytes())?;
             result.write_all(&bitmap)?;
-            let encoded_versions = encoder.encode_i64(&values, Some(values.len()))?;
+            let encoded_versions = encoder.encode_u32(&values)?;
             result.write_all(&(encoded_versions.len() as u32).to_le_bytes())?;
             result.write_all(&encoded_versions)?;
         }
@@ -2242,7 +2242,7 @@ impl ProximaDataBlock {
             cursor.read_exact(&mut values_data)?;
 
             let decoder = ProximaDecoder::new_from_data(&values_data);
-            let values = decoder.decode_i64(&values_data, None).unwrap_or_default(); // Sparse, count is in data
+            let values = decoder.decode_u32(&values_data).unwrap_or_default(); // Sparse, count is in data
 
             let mut result = Vec::new();
             let mut value_idx = 0;

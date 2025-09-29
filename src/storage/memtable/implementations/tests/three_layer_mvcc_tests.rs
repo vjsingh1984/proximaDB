@@ -28,7 +28,6 @@ fn create_vector_record(
         updated_at: Some(now),
         expires_at: expires_at.map(|v| v as i64),
         version: version.map(|v| v as i64),
-        quantized_vector: vec![],
         source: None,
     }
 }

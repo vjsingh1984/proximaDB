@@ -140,7 +140,7 @@ impl SstRecord {
                 }
             }).unwrap_or_default();
         record.timestamp = Some(self.timestamp as i64);
-        record.version = Some(self.sequence_number as i64);
+        record.version = Some(self.sequence_number as u32);
         record
     }
 

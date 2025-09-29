@@ -34,7 +34,6 @@ fn create_test_vector(id: &str) -> VectorRecord {
         updated_at: Some(chrono::Utc::now().timestamp()),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     }
 }

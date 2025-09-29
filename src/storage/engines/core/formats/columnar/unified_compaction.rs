@@ -302,7 +302,7 @@ impl UnifiedColumnarCompaction {
             // PQ only if explicitly enabled due to training cost
             if q_config.enable_pq {
                 config.primary_level = Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
-                    q_config.pq_segments.max(1) as usize
+                    q_config.pq_segments.max(1) as u8
                 ));
             }
         }
@@ -374,7 +374,7 @@ impl UnifiedColumnarCompaction {
             let mut binary_builder = BinaryBuilder::new();
             for result in &quantized_results {
                 if let Some(binary) = &result.filter {
-                    binary_builder.append_value(binary);
+                    binary_builder.append_value(&binary.data);
                 } else {
                     binary_builder.append_null();
                 }
@@ -388,7 +388,7 @@ impl UnifiedColumnarCompaction {
             let mut int8_builder = BinaryBuilder::new();
             for result in &quantized_results {
                 if let Some(int8) = &result.fast {
-                    int8_builder.append_value(int8);
+                    int8_builder.append_value(&int8.data);
                 } else {
                     int8_builder.append_null();
                 }
@@ -402,7 +402,7 @@ impl UnifiedColumnarCompaction {
             let mut pq_builder = BinaryBuilder::new();
             for result in &quantized_results {
                 if let Some(pq) = &result.primary {
-                    pq_builder.append_value(pq);
+                    pq_builder.append_value(&pq.data);
                 } else {
                     pq_builder.append_null();
                 }

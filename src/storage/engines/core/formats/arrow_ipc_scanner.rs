@@ -416,7 +416,6 @@ fn batch_to_vector_records(batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
             },
             timestamp: 0, // TODO: Extract from timestamp column if present
             updated_at: None,
-            quantized_vector: None,
             expires_at: None,
             version: None,
             source: None,

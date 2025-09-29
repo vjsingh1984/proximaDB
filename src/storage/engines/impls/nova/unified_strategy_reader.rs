@@ -273,7 +273,7 @@ impl UnifiedNOVAReader {
     ) -> Result<Vec<VectorRecord>> {
         use arrow_array::cast::as_string_array;
         use arrow_array::cast::as_primitive_array;
-        use arrow_array::types::{Float32Type, Int64Type};
+        use arrow_array::types::{Float32Type, Int64Type, UInt32Type};
 
         let mut records = Vec::new();
         let num_rows = batch.num_rows();
@@ -309,7 +309,7 @@ impl UnifiedNOVAReader {
             let version = if version_array.is_null(row) {
                 None
             } else {
-                Some(as_primitive_array::<Int64Type>(version_array).value(row))
+                Some(as_primitive_array::<UInt32Type>(version_array).value(row))
             };
 
             // Create VectorRecord
