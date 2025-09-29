@@ -40,7 +40,6 @@ fn vectors_to_records(vectors: &[Vec<f32>]) -> Vec<VectorRecord> {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }
     }).collect()

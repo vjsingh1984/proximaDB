@@ -55,7 +55,6 @@ fn create_pattern_vectors(num_vectors: usize, dimension: usize, pattern: &str) -
             id: format!("vec_{:06}", row),
             vector,
             metadata: HashMap::new(),
-            quantized_vector: vec![],
             expires_at: None,
             source: None,
             timestamp: 0,

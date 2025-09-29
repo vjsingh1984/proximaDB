@@ -54,7 +54,6 @@ mod performance_comparison_tests {
                         updated_at: None,
                         expires_at: None,
                         version: None,
-                        quantized_vector: vec![],
                         source: None,
                     })
                     .collect()
@@ -93,7 +92,6 @@ mod performance_comparison_tests {
                             updated_at: None,
                             expires_at: None,
                             version: None,
-                            quantized_vector: vec![],
                             source: None,
                         });
                     }
@@ -119,7 +117,6 @@ mod performance_comparison_tests {
                             updated_at: None,
                             expires_at: None,
                             version: None,
-                            quantized_vector: vec![],
                             source: None,
                         }
                     })

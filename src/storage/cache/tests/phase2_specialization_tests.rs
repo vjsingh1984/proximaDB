@@ -32,7 +32,6 @@ async fn test_vector_data_cache_specialization() {
         updated_at: None,
         expires_at: None,
         version: None,
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -44,7 +43,6 @@ async fn test_vector_data_cache_specialization() {
         updated_at: None,
         expires_at: None,
         version: None,
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -56,7 +54,6 @@ async fn test_vector_data_cache_specialization() {
         updated_at: None,
         expires_at: None,
         version: None,
-        quantized_vector: vec![],
         source: None,
     };
 

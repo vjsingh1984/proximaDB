@@ -83,7 +83,6 @@ async fn test_metadata_filtering_basic() {
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         };
         records.insert(record.id.clone(), record);
@@ -110,7 +109,6 @@ async fn test_metadata_filtering_basic() {
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         };
         records.insert(record.id.clone(), record);
@@ -337,7 +335,6 @@ async fn test_metadata_bloom_filter_optimization() {
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         };
         records.insert(record.id.clone(), record);

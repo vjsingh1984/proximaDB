@@ -51,7 +51,6 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         },
         VectorRecord {
@@ -71,7 +70,6 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         },
         VectorRecord {
@@ -91,7 +89,6 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         },
     ];
