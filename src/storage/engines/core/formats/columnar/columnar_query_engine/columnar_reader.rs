@@ -213,13 +213,13 @@ impl ParquetReader {
         let num_rows = batch.num_rows();
         let mut records = Vec::with_capacity(num_rows);
 
-        println!("🔍 DEBUG batch_to_records: Processing {} rows", num_rows);
-        println!("🔍 DEBUG: Batch has {} columns", batch.num_columns());
+        debug!("🔍 DEBUG batch_to_records: Processing {} rows", num_rows);
+        debug!("🔍 DEBUG: Batch has {} columns", batch.num_columns());
 
         // Debug: Print all column names
         let schema = batch.schema();
         for (idx, field) in schema.fields().iter().enumerate() {
-            println!("🔍 DEBUG: Column[{}]: name='{}', type={:?}", idx, field.name(), field.data_type());
+            debug!("🔍 DEBUG: Column[{}]: name='{}', type={:?}", idx, field.name(), field.data_type());
         }
 
         // Extract ID column
@@ -247,7 +247,7 @@ impl ParquetReader {
         let vector_values = if let Some(fixed_list) = vector_column.as_any()
             .downcast_ref::<arrow::array::FixedSizeListArray>() {
             // Handle FixedSizeList (newer format)
-            println!("🔍 DEBUG: Vector column is FixedSizeList");
+            debug!("🔍 DEBUG: Vector column is FixedSizeList");
 
             // Extract vectors from fixed size list
             let values = fixed_list.values();
@@ -271,7 +271,7 @@ impl ParquetReader {
         } else if let Some(list_array) = vector_column.as_any()
             .downcast_ref::<arrow::array::ListArray>() {
             // Handle ListArray (older format)
-            println!("🔍 DEBUG: Vector column is ListArray (legacy format)");
+            debug!("🔍 DEBUG: Vector column is ListArray (legacy format)");
 
             let mut vector_values = Vec::with_capacity(num_rows);
             let values = list_array.values();
@@ -312,7 +312,7 @@ impl ParquetReader {
                     continue;
                 }
 
-                println!("🔍 DEBUG: Processing potential metadata column: {}", column_name);
+                debug!("🔍 DEBUG: Processing potential metadata column: {}", column_name);
 
                 // Try to extract metadata value from this column
                 if let Some(column) = batch.column_by_name(column_name) {
@@ -320,38 +320,38 @@ impl ParquetReader {
                     if column_name == "extra_meta" {
                         // Handle Map type for metadata
                         if let Some(map_array) = column.as_any().downcast_ref::<arrow::array::MapArray>() {
-                            println!("🔍 DEBUG: Processing Map for row {}, is_null={}", row, map_array.is_null(row));
+                            debug!("🔍 DEBUG: Processing Map for row {}, is_null={}", row, map_array.is_null(row));
                             if !map_array.is_null(row) {
                                 let offsets = map_array.offsets();
                                 let start = offsets[row] as usize;
                                 let end = offsets[row + 1] as usize;
-                                println!("🔍 DEBUG: Map offsets for row {}: start={}, end={}, entries={}", row, start, end, end - start);
+                                debug!("🔍 DEBUG: Map offsets for row {}: start={}, end={}, entries={}", row, start, end, end - start);
 
                                 // Get the struct array that contains key-value pairs
                                 // MapArray.values() returns the flattened entries, not individual maps
                                 // We need to use the struct array directly
                                 let entries = map_array.entries();
-                                println!("🔍 DEBUG: Map entries type: {:?}", entries.data_type());
+                                debug!("🔍 DEBUG: Map entries type: {:?}", entries.data_type());
                                 if let Some(struct_array) = entries.as_any().downcast_ref::<arrow::array::StructArray>() {
-                                    println!("🔍 DEBUG: Found StructArray with {} entries, {} columns",
+                                    debug!("🔍 DEBUG: Found StructArray with {} entries, {} columns",
                                         struct_array.len(), struct_array.num_columns());
                                     // Get key and value arrays
                                     if let (Some(key_array), Some(value_array)) = (
                                         struct_array.column_by_name("key"),
                                         struct_array.column_by_name("value")
                                     ) {
-                                        println!("🔍 DEBUG: Found key and value arrays");
+                                        debug!("🔍 DEBUG: Found key and value arrays");
                                         if let (Some(keys), Some(values)) = (
                                             key_array.as_any().downcast_ref::<arrow::array::StringArray>(),
                                             value_array.as_any().downcast_ref::<arrow::array::StringArray>()
                                         ) {
                                             // Extract all key-value pairs for this row
-                                            println!("🔍 DEBUG: Extracting {} entries for row {}", end - start, row);
+                                            debug!("🔍 DEBUG: Extracting {} entries for row {}", end - start, row);
                                             for i in start..end {
                                                 if !keys.is_null(i) && !values.is_null(i) {
                                                     let key = keys.value(i);
                                                     let value = values.value(i);
-                                                    println!("🔍 DEBUG: Found map metadata {}={} for row {}", key, value, row);
+                                                    debug!("🔍 DEBUG: Found map metadata {}={} for row {}", key, value, row);
                                                     metadata.insert(
                                                         key.to_string(),
                                                         crate::proto::proximadb_v1::SqlValue {
@@ -373,7 +373,7 @@ impl ParquetReader {
                         // Skip null values - use is_null() method which checks the null bitmap
                         if !string_array.is_null(row) {
                             let value = string_array.value(row);
-                            println!("🔍 DEBUG: Found string metadata {}={} for row {}", column_name, value, row);
+                            debug!("🔍 DEBUG: Found string metadata {}={} for row {}", column_name, value, row);
                             metadata.insert(
                                 column_name.to_string(),
                                 crate::proto::proximadb_v1::SqlValue {
@@ -384,7 +384,7 @@ impl ParquetReader {
                     } else if let Some(int_array) = column.as_any().downcast_ref::<arrow::array::Int64Array>() {
                         if !int_array.is_null(row) {
                             let value = int_array.value(row);
-                            println!("🔍 DEBUG: Found int metadata {}={} for row {}", column_name, value, row);
+                            debug!("🔍 DEBUG: Found int metadata {}={} for row {}", column_name, value, row);
                             metadata.insert(
                                 column_name.to_string(),
                                 crate::proto::proximadb_v1::SqlValue {
@@ -395,7 +395,7 @@ impl ParquetReader {
                     } else if let Some(float_array) = column.as_any().downcast_ref::<arrow::array::Float64Array>() {
                         if !float_array.is_null(row) {
                             let value = float_array.value(row);
-                            println!("🔍 DEBUG: Found float metadata {}={} for row {}", column_name, value, row);
+                            debug!("🔍 DEBUG: Found float metadata {}={} for row {}", column_name, value, row);
                             metadata.insert(
                                 column_name.to_string(),
                                 crate::proto::proximadb_v1::SqlValue {
@@ -406,7 +406,7 @@ impl ParquetReader {
                     } else if let Some(bool_array) = column.as_any().downcast_ref::<arrow::array::BooleanArray>() {
                         if !bool_array.is_null(row) {
                             let value = bool_array.value(row);
-                            println!("🔍 DEBUG: Found bool metadata {}={} for row {}", column_name, value, row);
+                            debug!("🔍 DEBUG: Found bool metadata {}={} for row {}", column_name, value, row);
                             metadata.insert(
                                 column_name.to_string(),
                                 crate::proto::proximadb_v1::SqlValue {
@@ -427,7 +427,7 @@ impl ParquetReader {
             };
 
             if row < 3 || record.id.contains("_A_") || record.id.contains("_B_") && row < 25 {
-                println!("🔍 DEBUG: Created record {}: metadata keys={:?}, values={:?}",
+                debug!("🔍 DEBUG: Created record {}: metadata keys={:?}, values={:?}",
                     record.id,
                     record.metadata.keys().collect::<Vec<_>>(),
                     record.metadata.iter().map(|(k, v)| {
@@ -450,7 +450,7 @@ impl ParquetReader {
             records.push(record);
         }
 
-        println!("🔍 DEBUG batch_to_records: Extracted {} records", records.len());
+        debug!("🔍 DEBUG batch_to_records: Extracted {} records", records.len());
         Ok(records)
     }
 

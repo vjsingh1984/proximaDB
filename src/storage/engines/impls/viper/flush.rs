@@ -318,8 +318,8 @@ impl Flush {
         let filename = codec.generate(0, &crate::storage::engines::VIPER_FILE_EXT[1..]);
         let final_url = format!("{}/{}", data_url, filename);
 
-        println!("🟩 HYBRID_WRITER: Using columnar HybridParquetWriter::write_with_cache");
-        println!("🟩 HYBRID_WRITER: Records: {}, Final URL: {}", sorted_records.len(), final_url);
+        debug!("🟩 HYBRID_WRITER: Using columnar HybridParquetWriter::write_with_cache");
+        debug!("🟩 HYBRID_WRITER: Records: {}, Final URL: {}", sorted_records.len(), final_url);
 
         // Configure HybridParquetWriter like NOVA does
         use crate::storage::engines::core::formats::columnar::parquet_write_engine::writer_config::ParquetWriterConfig;
@@ -372,13 +372,13 @@ impl Flush {
             None, // No metadata collector for VIPER
         ).await {
             Ok(result) => {
-                println!("🟩 HYBRID_WRITER: ✅ write_with_cache completed successfully");
-                println!("🟩 HYBRID_WRITER: Stats - file_size: {}, total_records: {}",
+                debug!("🟩 HYBRID_WRITER: ✅ write_with_cache completed successfully");
+                debug!("🟩 HYBRID_WRITER: Stats - file_size: {}, total_records: {}",
                          result.0.file_size, result.0.total_records);
                 result
             }
             Err(e) => {
-                println!("🟩 HYBRID_WRITER: ❌ write_with_cache failed: {}", e);
+                debug!("🟩 HYBRID_WRITER: ❌ write_with_cache failed: {}", e);
                 error!("❌ VIPER: Step 2 - HybridParquetWriter failed: {}", e);
                 return Err(e.context("Failed to write Parquet via HybridParquetWriter"));
             }
@@ -389,7 +389,7 @@ impl Flush {
         let mut parquet_data_or_path = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Magic bytes to indicate already written
         parquet_data_or_path.extend_from_slice(final_file_path.as_bytes());
 
-        println!("🟩 HYBRID_WRITER: HybridWriter completed, file at: {}", final_file_path);
+        debug!("🟩 HYBRID_WRITER: HybridWriter completed, file at: {}", final_file_path);
         info!("✅ VIPER: Step 2 - HybridParquetWriter completed successfully");
 
         // Step 3: Check if HybridParquetWriter already handled atomic write

@@ -1388,17 +1388,17 @@ impl ViperEngine {
         collection_id: &str,
         storage_url: &str,
     ) -> Result<Vec<String>> {
-        println!(
+        debug!(
             "📁 VIPER: Getting Parquet files for collection: {} from URL: {}",
             collection_id, storage_url
         );
         // Use filesystem API for all storage backends - it handles the differences
-        println!("📁 VIPER: Listing files at: {}", storage_url);
+        debug!("📁 VIPER: Listing files at: {}", storage_url);
         let parquet_files = match self.filesystem_factory.list(storage_url).await {
             Ok(files) => {
-                println!("📁 VIPER: filesystem.list returned {} entries", files.len());
+                debug!("📁 VIPER: filesystem.list returned {} entries", files.len());
                 for (i, f) in files.iter().enumerate() {
-                    println!("📁 VIPER:   Entry[{}]: name={}, url={}", i, f.name, f.url);
+                    debug!("📁 VIPER:   Entry[{}]: name={}, url={}", i, f.name, f.url);
                 }
                 let parquet_files: Vec<String> = files
                     .into_iter()
@@ -1413,9 +1413,9 @@ impl ViperEngine {
                     })
                     .map(|f| f.url) // Use the full URL from DirEntry
                     .collect();
-                println!("📁 VIPER: Found {} Parquet files after filtering", parquet_files.len());
+                debug!("📁 VIPER: Found {} Parquet files after filtering", parquet_files.len());
                 for (i, file) in parquet_files.iter().enumerate() {
-                    println!("📁 VIPER:   Parquet[{}]: {}", i, file);
+                    debug!("📁 VIPER:   Parquet[{}]: {}", i, file);
                 }
                 parquet_files
             }
@@ -1599,31 +1599,31 @@ impl UnifiedStorageEngine for ViperEngine {
     ) -> Result<FlushResult> {
         let collection_id = self.get_collection_id_from_params(params)?;
 
-        println!("🟦 VIPER DO_FLUSH: ========== STARTING FLUSH ==========");
-        println!("🟦 VIPER DO_FLUSH: Collection ID: {}", collection_id);
-        println!("🟦 VIPER DO_FLUSH: Vector count: {}", params.vector_records.len());
-        println!("🟦 VIPER DO_FLUSH: Force: {}", params.force);
-        println!("🟦 VIPER DO_FLUSH: Synchronous: {}", params.synchronous);
-        println!("🟦 VIPER DO_FLUSH: Has collection_config: {}", params.collection_config.is_some());
+        debug!("🟦 VIPER DO_FLUSH: ========== STARTING FLUSH ==========");
+        debug!("🟦 VIPER DO_FLUSH: Collection ID: {}", collection_id);
+        debug!("🟦 VIPER DO_FLUSH: Vector count: {}", params.vector_records.len());
+        debug!("🟦 VIPER DO_FLUSH: Force: {}", params.force);
+        debug!("🟦 VIPER DO_FLUSH: Synchronous: {}", params.synchronous);
+        debug!("🟦 VIPER DO_FLUSH: Has collection_config: {}", params.collection_config.is_some());
 
         debug!("🔍 VIPER DO_FLUSH: Checking compression configuration");
         if let Some(ref collection_config) = params.collection_config {
-            println!("🟦 VIPER DO_FLUSH: Collection config found");
+            debug!("🟦 VIPER DO_FLUSH: Collection config found");
             if let Some(ref config) = collection_config.config {
-                println!("🟦 VIPER DO_FLUSH: Config field found");
+                debug!("🟦 VIPER DO_FLUSH: Config field found");
                 if let Some(ref storage_config) = config.storage_config.as_ref() {
-                    println!("🟦 VIPER DO_FLUSH: Storage config found");
+                    debug!("🟦 VIPER DO_FLUSH: Storage config found");
                     debug!("   ✅ Found storage_config in collection_config");
                 } else {
-                    println!("🟦 VIPER DO_FLUSH: No storage config");
+                    debug!("🟦 VIPER DO_FLUSH: No storage config");
                     debug!("   ⚠️ No compression config in collection_config");
                 }
             } else {
-                println!("🟦 VIPER DO_FLUSH: No config field");
+                debug!("🟦 VIPER DO_FLUSH: No config field");
                 debug!("   ⚠️ No config field in collection");
             }
         } else {
-            println!("🟦 VIPER DO_FLUSH: No collection config");
+            debug!("🟦 VIPER DO_FLUSH: No collection config");
             debug!("   ⚠️ No collection_config in params");
         }
         debug!(
@@ -1640,8 +1640,8 @@ impl UnifiedStorageEngine for ViperEngine {
         let batch_id_strings: Vec<String> =
             params.batch_ids.iter().map(|id| id.to_string()).collect();
 
-        println!("🟦 VIPER DO_FLUSH: About to call flush_manager.flush_vectors()");
-        println!("🟦 VIPER DO_FLUSH: Batch ID strings: {:?}", batch_id_strings);
+        debug!("🟦 VIPER DO_FLUSH: About to call flush_manager.flush_vectors()");
+        debug!("🟦 VIPER DO_FLUSH: Batch ID strings: {:?}", batch_id_strings);
 
         // Use the modular flush manager to flush vectors with provided collection config
         let mut flush_result = self
@@ -1657,11 +1657,11 @@ impl UnifiedStorageEngine for ViperEngine {
             )
             .await?;
 
-        println!("🟦 VIPER DO_FLUSH: flush_manager.flush_vectors() returned");
-        println!("🟦 VIPER DO_FLUSH: Flush result success: {}", flush_result.success);
-        println!("🟦 VIPER DO_FLUSH: Entries flushed: {:?}", flush_result.entries_flushed);
-        println!("🟦 VIPER DO_FLUSH: Bytes written: {:?}", flush_result.bytes_written);
-        println!("🟦 VIPER DO_FLUSH: Files created: {:?}", flush_result.files_created);
+        debug!("🟦 VIPER DO_FLUSH: flush_manager.flush_vectors() returned");
+        debug!("🟦 VIPER DO_FLUSH: Flush result success: {}", flush_result.success);
+        debug!("🟦 VIPER DO_FLUSH: Entries flushed: {:?}", flush_result.entries_flushed);
+        debug!("🟦 VIPER DO_FLUSH: Bytes written: {:?}", flush_result.bytes_written);
+        debug!("🟦 VIPER DO_FLUSH: Files created: {:?}", flush_result.files_created);
         // Update engine statistics using atomic operations (lock-free)
         self.stats
             .flush_operations
@@ -1848,7 +1848,7 @@ impl UnifiedStorageEngine for ViperEngine {
             .storage_url()
             .ok_or_else(|| anyhow::anyhow!("No storage URL in context"))?;
 
-        println!("🔍 VIPER search_vectors_unified: collection_id={}, storage_url={}", collection_id, storage_url);
+        debug!("🔍 VIPER search_vectors_unified: collection_id={}, storage_url={}", collection_id, storage_url);
         let query_vector = ctx
             .query_vector()
             .ok_or_else(|| anyhow::anyhow!("No query vector in context"))?;
@@ -2017,20 +2017,20 @@ impl UnifiedStorageEngine for ViperEngine {
         // Use the storage URL directly as provided by the context
         // The context should already have the correct path based on the collection configuration
         let data_path = storage_url.clone();
-        println!("📂 VIPER search: Looking for Parquet files at: {}", data_path);
+        debug!("📂 VIPER search: Looking for Parquet files at: {}", data_path);
         let parquet_files = self
             .parquet_files_with_storage_url(collection_id, &data_path)
             .await?;
-        println!(
+        debug!(
             "📁 VIPER: Found {} parquet files for collection {}",
             parquet_files.len(),
             collection_id
         );
         for (i, file) in parquet_files.iter().enumerate() {
-            println!("  📁 Parquet file {}: {}", i, file);
+            debug!("  📁 Parquet file {}: {}", i, file);
         }
         if parquet_files.is_empty() {
-            println!(
+            debug!(
                 "📁 VIPER: No parquet files found for collection {}, returning empty results",
                 collection_id
             );
@@ -2095,7 +2095,7 @@ impl UnifiedStorageEngine for ViperEngine {
         };
 
         // Use UnifiedParquetReader for actual search with predicate pushdown
-        println!(
+        debug!(
             "🔎 VIPER: Using UnifiedParquetReader for collection: {}",
             search_context.collection_id
         );
@@ -2194,11 +2194,11 @@ impl UnifiedStorageEngine for ViperEngine {
             query_vector: Some(query_vector.to_vec()),
         };
 
-        println!("🔎 VIPER: Calling parquet_reader.search_vectors to read data...");
+        debug!("🔎 VIPER: Calling parquet_reader.search_vectors to read data...");
         let read_results = parquet_reader
             .search_vectors(&search_plan, &collection_context)
             .await?;
-        println!("🔎 VIPER: parquet_reader returned {} records", read_results.results.len());
+        debug!("🔎 VIPER: parquet_reader returned {} records", read_results.results.len());
 
         // Now perform the actual search on the data
         let mut scored_results: Vec<(f32, OptimizedSearchRecord)> = Vec::new();
@@ -2210,9 +2210,9 @@ impl UnifiedStorageEngine for ViperEngine {
 
         for record in read_results.results {
             if let Some(ref vector) = record.vector {
-                println!("🔍 VIPER: Processing record {} with vector of length {}", record.id, vector.len());
+                debug!("🔍 VIPER: Processing record {} with vector of length {}", record.id, vector.len());
                 if vector.is_empty() {
-                    println!("⚠️ VIPER: Record {} has empty vector, skipping", record.id);
+                    warn!("⚠️ VIPER: Record {} has empty vector, skipping", record.id);
                     continue;
                 }
                 // Compute distance
@@ -2220,13 +2220,13 @@ impl UnifiedStorageEngine for ViperEngine {
 
                 // Debug: check metadata before pushing to scored results
                 if scored_results.len() < 3 {
-                    println!("🔍 DEBUG: About to push record {}: metadata keys={:?}",
+                    debug!("🔍 DEBUG: About to push record {}: metadata keys={:?}",
                         record.id, record.metadata.keys().collect::<Vec<_>>());
                 }
 
                 scored_results.push((distance, record));
             } else {
-                println!("⚠️ VIPER: Record {} has no vector", record.id);
+                warn!("⚠️ VIPER: Record {} has no vector", record.id);
             }
         }
 
@@ -2250,9 +2250,9 @@ impl UnifiedStorageEngine for ViperEngine {
         debug!("Search engine returned {} results", all_results.len());
         if !all_results.is_empty() {
             trace!("First result metadata: {:?}", all_results[0].metadata);
-            println!("🔍 DEBUG: First 3 results before applying include flags:");
+            debug!("🔍 DEBUG: First 3 results before applying include flags:");
             for (i, r) in all_results.iter().take(3).enumerate() {
-                println!("  Result {}: id={}, metadata keys={:?}",
+                debug!("  Result {}: id={}, metadata keys={:?}",
                     i, r.id, r.metadata.keys().collect::<Vec<_>>());
             }
         }
@@ -2265,9 +2265,9 @@ impl UnifiedStorageEngine for ViperEngine {
                 result.vector = None;
             }
         }
-        println!("🔍 DEBUG: include_metadata={}, clearing metadata={}", include_metadata, !include_metadata);
+        debug!("🔍 DEBUG: include_metadata={}, clearing metadata={}", include_metadata, !include_metadata);
         if !include_metadata {
-            println!("🔍 WARNING: Clearing metadata from results!");
+            warn!("🔍 WARNING: Clearing metadata from results!");
             for result in &mut results {
                 result.metadata = HashMap::new();
             }

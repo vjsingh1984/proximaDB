@@ -1374,7 +1374,7 @@ impl UnifiedParquetReader {
             .filter(|record| id_set.contains(&record.id))
             .collect();
 
-        println!(
+        debug!(
             "  - Found {} exact matches after bloom filter pre-filtering",
             filtered_records.len()
         );
@@ -1413,7 +1413,7 @@ impl UnifiedParquetReader {
         // For now, read all and log the optimization
         let all_records = reader.read_all_with_filesystem(path, fs).await?;
 
-        println!(
+        debug!(
             "  - Optimization: Would read {} row groups instead of all (saving I/O)",
             row_groups.len()
         );
