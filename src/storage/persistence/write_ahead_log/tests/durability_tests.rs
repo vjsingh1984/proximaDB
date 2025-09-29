@@ -90,7 +90,6 @@ async fn test_durability_level_no_sync() {
         vector: vec![1.0, 2.0, 3.0],
         metadata: HashMap::new(),
         timestamp: 0,
-        quantized_vector: vec![],
         source: None,
         updated_at: None,
         expires_at: None,
@@ -302,7 +301,7 @@ async fn test_recovery_skips_corrupted_checksum() {
 
     // Write a batch to file
     let serializer = ProtocolBuffersSerializer::new();
-    let rec = VectorRecord { id: "v1".to_string(), vector: vec![0.1,0.2], metadata: HashMap::new(), timestamp: 0, updated_at: None, expires_at: None, version: Some(1), quantized_vector: vec![], source: None };
+    let rec = VectorRecord { id: "v1".to_string(), vector: vec![0.1,0.2], metadata: HashMap::new(), timestamp: 0, updated_at: None, expires_at: None, version: Some(1), source: None };
     let data = serializer.serialize_batch(&vec![rec]).unwrap();
     let bid = BatchId::new();
     dm.write_batch(cid, &bid, &data, crate::storage::persistence::write_ahead_log::serialization::SerializationFormat::ProtocolBuffers).await.unwrap();

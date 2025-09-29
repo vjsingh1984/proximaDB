@@ -355,3 +355,7 @@ ml_prompt.txt
 GEMINI.md
 AGENTS.md
 footer_cache.bin
+
+# Project root data and text files
+*.dat
+*.txt

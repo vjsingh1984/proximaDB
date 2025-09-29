@@ -42,7 +42,6 @@ mod helix_integration_tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             })
             .collect()
@@ -241,7 +240,6 @@ mod helix_integration_tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -264,7 +262,6 @@ mod helix_integration_tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -368,7 +365,6 @@ mod helix_integration_tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             });
         }

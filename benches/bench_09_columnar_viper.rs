@@ -84,7 +84,6 @@ fn generate_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             }
         })

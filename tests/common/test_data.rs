@@ -59,7 +59,6 @@ impl TestVectorGenerator {
             updated_at: None,
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }
     }
@@ -96,7 +95,6 @@ impl TestVectorGenerator {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 }
             })
@@ -129,7 +127,6 @@ impl TestVectorGenerator {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 });
             }
@@ -160,7 +157,6 @@ impl TestVectorGenerator {
                     updated_at: None,
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: vec![],
                     source: None,
                 }
             })

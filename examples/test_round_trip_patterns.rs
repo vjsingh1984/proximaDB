@@ -131,7 +131,6 @@ fn create_vector_records(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord> {
             vector,
             metadata: HashMap::new(),
             timestamp: 1640995200 + (i as i64 * 60),
-            quantized_vector: vec![],
             expires_at: None,
             source: Some(format!("pattern_test")),
             updated_at: None,
