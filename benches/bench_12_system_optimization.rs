@@ -88,7 +88,6 @@ fn create_vector_record(id: &str, vector: Vec<f32>, with_metadata: bool) -> Vect
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     }
 }
@@ -568,7 +567,6 @@ fn bench_metadata_handling(c: &mut Criterion) {
                         updated_at: Some(i as i64),
                         expires_at: None,
                         version: Some(1),
-                        quantized_vector: vec![],
                         source: None,
                     }
                 })

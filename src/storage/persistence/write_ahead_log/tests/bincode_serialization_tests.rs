@@ -65,7 +65,6 @@ fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
         updated_at: Some(1234567890i64),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     }
 }

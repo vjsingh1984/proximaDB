@@ -29,7 +29,6 @@ fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
             ]),
             timestamp: i as i64,
             expires_at: None,
-            quantized_vector: vec![],
             source: None,
             updated_at: None,
             version: Some(1),

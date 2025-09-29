@@ -73,7 +73,6 @@ fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorR
                 updated_at: Some(now),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             }
         })

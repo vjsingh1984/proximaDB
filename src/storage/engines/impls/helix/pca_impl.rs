@@ -464,7 +464,6 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -505,7 +504,6 @@ mod tests {
                 updated_at: None,
                 expires_at: None,
                 version: None,
-                quantized_vector: vec![],
                 source: None,
             })
             .collect();

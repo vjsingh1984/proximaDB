@@ -65,7 +65,6 @@ fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec
             updated_at: Some(i as i64),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         };
 

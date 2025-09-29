@@ -31,7 +31,6 @@ use crate::compute::quantization::types::*;
             updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: Some("test".to_string()),
         }
     }

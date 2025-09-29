@@ -95,7 +95,6 @@ fn create_sample_vector_record() -> anyhow::Result<VectorRecord> {
         updated_at: Some(chrono::Utc::now().timestamp_millis()),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     })
 }

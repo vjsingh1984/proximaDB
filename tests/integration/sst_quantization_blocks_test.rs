@@ -299,7 +299,6 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
                 updated_at: Some(0i64),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             });
         }
@@ -328,7 +327,6 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
             updated_at: Some(0i64),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         });
     }

@@ -216,7 +216,7 @@ mod tests {
             timestamp: timestamp as i64,
             updated_at: Some(timestamp as i64),
             expires_at: expires_at.map(|t| t as i64),
-            version: version.map(|v| v as i64),
+            version,
             source: None,
         }
     }

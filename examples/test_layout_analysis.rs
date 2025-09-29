@@ -12,7 +12,6 @@ fn create_simple_vectors() -> Vec<VectorRecord> {
             id: format!("v{}", i),
             vector: vec![1.0, 2.0],
             metadata: HashMap::new(),
-            quantized_vector: vec![],
             expires_at: None,
             source: None,
             timestamp: 100 + i,

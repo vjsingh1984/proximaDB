@@ -16,7 +16,6 @@ fn create_realistic_test_vectors(count: usize, dimension: usize) -> Vec<VectorRe
                 .map(|_| rng.gen_range(-1.0..1.0))
                 .collect(),
             metadata: HashMap::new(),
-            quantized_vector: vec![],
             expires_at: None,
             source: None,
             timestamp: chrono::Utc::now().timestamp(),

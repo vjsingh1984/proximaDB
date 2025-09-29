@@ -26,7 +26,6 @@ fn test_early_termination_logic() -> Result<()> {
                     updated_at: Some(now.timestamp_millis()),
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: Vec::new(),
                     source: None,
                 },
                 similarity: (5 - i) as f32, // Best scores come last
@@ -66,7 +65,6 @@ fn test_early_termination_logic() -> Result<()> {
                     updated_at: Some(now.timestamp_millis()),
                     expires_at: None,
                     version: Some(1),
-                    quantized_vector: Vec::new(),
                     source: None,
                 },
                 similarity: i as f32,

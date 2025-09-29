@@ -95,7 +95,6 @@ mod tests {
             updated_at: Some(now),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }
     }

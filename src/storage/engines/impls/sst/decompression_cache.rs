@@ -671,7 +671,6 @@ mod tests {
                     updated_at: None,
                     expires_at: None,
                     version: None,
-                    quantized_vector: vec![],
                     source: None,
                 });
             }

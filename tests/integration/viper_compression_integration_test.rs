@@ -188,7 +188,6 @@ pub fn create_test_vectors(count: usize, dimension: usize, prefix: &str) -> Vec<
                 updated_at: Some((1000 + i) as i64),
                 expires_at: None,
                 version: Some(1),
-                quantized_vector: vec![],
                 source: None,
             }
         })

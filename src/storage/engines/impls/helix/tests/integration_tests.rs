@@ -41,7 +41,6 @@ fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord> {
             expires_at: None,
             updated_at: Some(i as i64),
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         });
     }

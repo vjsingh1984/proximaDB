@@ -43,7 +43,6 @@ fn create_static_test_vectors() -> Vec<VectorRecord> {
                 }
                 meta
             },
-            quantized_vector: vec![],
             expires_at: None,
             source: None,
             timestamp: 1640995200 + (row as i64 * 3600), // Static timestamps

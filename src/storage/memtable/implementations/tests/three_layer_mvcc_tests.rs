@@ -27,7 +27,7 @@ fn create_vector_record(
         timestamp: now,
         updated_at: Some(now),
         expires_at: expires_at.map(|v| v as i64),
-        version: version.map(|v| v as i64),
+        version,
         source: None,
     }
 }

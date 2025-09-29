@@ -11,7 +11,6 @@ fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
             id: format!("vec_{:06}", i),
             vector: (0..dimension).map(|d| (i as f32 + d as f32) * 0.1).collect(),
             metadata: HashMap::new(),
-            quantized_vector: vec![], // bytes field, not Option
             expires_at: None,
             source: None,
             timestamp: chrono::Utc::now().timestamp(),

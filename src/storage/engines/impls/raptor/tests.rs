@@ -114,7 +114,6 @@ mod tests {
             timestamp: 1234567890,
             updated_at: None,
             expires_at: None,
-            quantized_vector: vec![],
             source: None,
         };
 
@@ -563,7 +562,6 @@ mod tests {
                         vector,
                         metadata: std::collections::HashMap::new(),
                         timestamp: 0,
-                        quantized_vector: vec![],
                         source: Some(String::new()),
                         version: Some(1),
                         updated_at: None,

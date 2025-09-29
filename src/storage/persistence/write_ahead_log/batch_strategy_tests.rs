@@ -314,7 +314,6 @@ mod write_ahead_log_batch_strategy_tests {
             updated_at: Some(now as i64),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }
     }

@@ -57,7 +57,6 @@ fn create_test_sst_record(id: String, vector: Vec<f32>) -> SstEntry {
         updated_at: Some(1234567890),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
 

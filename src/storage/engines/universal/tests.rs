@@ -177,7 +177,6 @@ mod tests {
                 timestamp: chrono::Utc::now().timestamp(),
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
-                quantized_vector: vec![],
                 source: None,
             });
         }

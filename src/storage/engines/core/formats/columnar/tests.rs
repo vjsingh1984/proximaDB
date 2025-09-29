@@ -868,7 +868,7 @@ fn create_test_records(count: usize) -> Vec<VectorRecord> {
                 timestamp: (1000 + i) as i64,
                 updated_at: None,
                 expires_at: None,
-                version: Some(((i % 5) + 1) as i64),
+                version: Some(((i % 5) + 1) as u32),
                 source: None,
             }
         })

@@ -70,7 +70,6 @@ fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
         expires_at: Some(1234567890 + 86400), // 24 hours later
         version: Some(1),
         source: None,
-        quantized_vector: vec![],
     }
 }
 

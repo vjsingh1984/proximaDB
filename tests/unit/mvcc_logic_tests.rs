@@ -13,7 +13,7 @@ fn create_search_result(id: &str, version: u32, timestamp: u32, score: f32) -> S
         score: score as f64,
         vector: vec![0.1; 128],
         metadata: HashMap::new(),
-        version: Some(version as i64),
+        version: Some(version),
         similarity: Some(score),
         timestamp: Some(timestamp as i64),
         source: None,

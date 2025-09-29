@@ -62,7 +62,6 @@ mod tests {
             updated_at: Some(Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         }
     }

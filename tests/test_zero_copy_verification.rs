@@ -33,7 +33,6 @@ fn test_protobuf_serialization() {
         updated_at: None,
         expires_at: None,
         version: None,
-        quantized_vector: vec![],
         source: None,
     };
 
@@ -87,7 +86,6 @@ fn test_batch_serialization_performance() {
             updated_at: None,
             expires_at: None,
             version: None,
-            quantized_vector: vec![],
             source: None,
         };
         records.push(record);

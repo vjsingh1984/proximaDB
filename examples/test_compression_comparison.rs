@@ -49,7 +49,6 @@ fn create_test_vectors(num_vectors: usize, dimension: usize, pattern: &str) -> V
             id: format!("vec_{:06}", row),
             vector,
             metadata: HashMap::new(),
-            quantized_vector: vec![],
             expires_at: None,
             source: None,
             timestamp: 0,

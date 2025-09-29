@@ -229,7 +229,6 @@ mod tests {
             updated_at: Some(1234567890),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: Some("test".to_string()),
         }
     }

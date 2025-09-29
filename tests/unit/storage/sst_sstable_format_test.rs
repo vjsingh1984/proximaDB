@@ -36,7 +36,6 @@ async fn test_sstable_write_read_format() {
         updated_at: Some(123456789),
         expires_at: None,
         version: Some(1),
-        quantized_vector: vec![],
         source: None,
     };
     let record = SstEntry::from_vector_record(vector_record, 1, 0);
@@ -117,7 +116,6 @@ async fn test_sstable_format_inspection() {
             updated_at: Some(123456789),
             expires_at: None,
             version: Some(1),
-            quantized_vector: vec![],
             source: None,
         };
 

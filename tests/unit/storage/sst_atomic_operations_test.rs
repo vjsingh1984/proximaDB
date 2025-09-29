@@ -143,7 +143,6 @@ async fn test_sst_atomic_flush_rollback_on_failure() {
         updated_at: None,
         expires_at: None,
         version: None,
-        quantized_vector: vec![],
         source: None,
     }];
 
