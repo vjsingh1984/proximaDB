@@ -359,3 +359,6 @@ footer_cache.bin
 # Project root data and text files
 *.dat
 *.txt
+
+# Obsolete files marked for removal
+*.obsolete
