@@ -1,10 +1,12 @@
-= ProximaDB Storage Engines: Intelligent Performance Optimization
+= ProximaDB Storage Engines: Hybrid Columnar Architecture
 :toc: left
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
 
 == Overview
+
+ProximaDB features 6 specialized storage engines with intelligent workload optimization. **Important**: Despite historical terminology, SST, SWIFT, and HELIX are **NOT row-based** - they use **ProximaBlocks**, a hybrid columnar format where all metadata is columnar and vectors use configurable encoding strategies.
 
 ProximaDB's intelligent storage engines automatically optimize for your specific workload, eliminating the guesswork in database performance tuning. Instead of forcing you to choose a storage format, our system analyzes your application patterns and automatically selects the best approach.
 

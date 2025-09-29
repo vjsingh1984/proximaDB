@@ -13,12 +13,12 @@
 [cols="2,1,1,2", options="header"]
 |===
 | Engine | Lines of Code | Status | Key Features
-| SST | 5,128+ | ✅ Complete | Row-based, write-optimized, 3-stage filtering
-| VIPER | 294+ | ✅ Complete | Columnar Parquet, advanced quantization
-| NOVA | 456+ | ✅ Complete | Progressive columnar, zone maps
-| SWIFT | 1,259+ | ✅ Complete | High-speed traversal, Proxima encoding
-| RAPTOR | 165+ (17 modules) | ✅ Complete | Matrix Trinity, adaptive row-groups
-| HELIX | 1,224+ (17 modules) | ✅ Complete | PCA + Hilbert clustering, locality-optimized
+| SST | 5,128+ | ✅ Complete | Hybrid columnar (ProximaBlocks), LSM-tree, 3-stage filtering
+| VIPER | 294+ | ✅ Complete | Pure columnar (Parquet), advanced quantization
+| NOVA | 456+ | ✅ Complete | Progressive columnar (Parquet), zone maps
+| SWIFT | 1,259+ | ✅ Complete | Hybrid columnar (ProximaBlocks), ultra-low latency
+| RAPTOR | 165+ (17 modules) | ✅ Complete | Matrix Trinity, adaptive optimization
+| HELIX | 1,224+ (17 modules) | ✅ Complete | Hybrid columnar (ProximaBlocks), Hilbert clustering
 |===
 
 == Technical Details
@@ -26,7 +26,7 @@
 === SST Engine (Rank 11)
 **Location**: `src/storage/engines/impls/sst/`
 
-* **Architecture**: Row-based storage with LSM-tree design
+* **Architecture**: Hybrid columnar storage with LSM-tree design (ProximaBlocks)
 * **Key Features**:
   - Three-stage filtering (metadata → distance → top-k)
   - Bloom filters for existence checks
@@ -67,7 +67,7 @@
 === SWIFT Engine (Rank 14)
 **Location**: `src/storage/engines/impls/swift/`
 
-* **Architecture**: High-speed row-based with Proxima encoding
+* **Architecture**: High-speed hybrid columnar with Proxima encoding (ProximaBlocks)
 * **Key Features**:
   - SIMD-optimized operations
   - Lock-free data structures
@@ -93,7 +93,7 @@
 === HELIX Engine (Rank 16)
 **Location**: `src/storage/engines/impls/helix/`
 
-* **Architecture**: Locality-optimized with Hilbert curves
+* **Architecture**: Locality-optimized hybrid columnar with Hilbert curves (ProximaBlocks)
 * **Key Features**:
   - PCA dimensionality reduction
   - Hilbert curve clustering
@@ -125,7 +125,21 @@ pub trait UnifiedStorageEngine: Send + Sync {
 * **UnifiedCachingFilesystem**: All I/O operations
 * **UnifiedQuantizationEngine**: Compression/quantization
 * **UnifiedDistanceCompute**: Hardware-accelerated metrics
-* **ProximaBlocks**: Shared block format for SST/SWIFT
+* **ProximaBlocks**: Shared hybrid columnar format for SST/SWIFT/HELIX
+
+==== ProximaBlocks Hybrid Columnar Architecture
+
+**Important**: SST, SWIFT, and HELIX all use ProximaBlocks, which is **hybrid columnar**, not row-based:
+
+* **All metadata fields are columnar**: `id`, `timestamp`, `version`, `metadata` columns stored separately
+* **Configurable vector encoding** via `VectorEncodingLayout`:
+  - **TransposeFieldEncoded**: Each dimension as separate column (pure columnar, best for dimensional patterns)
+  - **GroupedFieldEncoded**: 32-dim groups as columns (hybrid, best for cache locality)
+  - **FullVector**: Complete vector as single column (vector-as-field, still columnar format)
+* **Per-column compression**: Each column independently compressed with optimal algorithm
+* **SIMD-optimized encoding**: Automatic selection based on data characteristics
+
+**This means "row-based" is a misnomer** - all engines using ProximaBlocks are fundamentally columnar with hybrid vector encoding strategies.
 
 === Zero-Copy Design
 * Arc-based memory sharing
