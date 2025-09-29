@@ -210,21 +210,22 @@ fn bench_compression_with_search(c: &mut Criterion) {
         for (compress_name, compress_value) in &compressions {
             // Collection ID format: {engine}_{compression}
             let collection_id = format!("{}_{}", engine_name, compress_name);
-            // Data path: {baseurl}/{engine}_{compression}/
-            let base_path = format!("{}/{}", get_base_path(), collection_id);
+            // Base path: engines will append collection_id to this
+            let base_path = get_base_path();
 
             // Clean previous run using filesystem API
+            let collection_path = format!("{}/{}", base_path, collection_id);
             runtime.block_on(async {
                 let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
-                let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
-                let _ = fs.remove_dir_all(&base_path).await;
+                let fs = fs_factory.get_filesystem(&format!("file://{}", &collection_path)).ok()?;
+                let _ = fs.remove_dir_all(&collection_path).await;
                 Some(())
             });
 
             // Step 1: Flush data with compression
             eprintln!("  Flushing {} vectors (dim={}) with {} compression to {}...",
-                     count, dimension, compress_name, base_path);
-            eprintln!("    📁 Data directory: {}", base_path);
+                     count, dimension, compress_name, collection_path);
+            eprintln!("    📁 Data directory: {}", collection_path);
 
             // Calculate expected size
             let expected_bytes = count * dimension * std::mem::size_of::<f32>();
@@ -337,8 +338,8 @@ fn bench_compression_with_search(c: &mut Criterion) {
                 // Clean up any partial data
                 runtime.block_on(async {
                     let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
-                    let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
-                    let _ = fs.remove_dir_all(&base_path).await;
+                    let fs = fs_factory.get_filesystem(&format!("file://{}", &collection_path)).ok()?;
+                    let _ = fs.remove_dir_all(&collection_path).await;
                     Some(())
                 });
                 continue;
@@ -347,8 +348,8 @@ fn bench_compression_with_search(c: &mut Criterion) {
             // Verify files were actually created and list them
             let (files_created, file_details) = runtime.block_on(async {
                 let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
-                let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
-                let entries = fs.list(&base_path).await.ok()?;
+                let fs = fs_factory.get_filesystem(&format!("file://{}", &collection_path)).ok()?;
+                let entries = fs.list(&collection_path).await.ok()?;
 
                 let mut details = Vec::new();
                 for entry in &entries {
@@ -373,7 +374,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
             }
 
             // Measure storage metrics using filesystem API
-            let size_bytes = measure_directory_size(&base_path, &runtime).unwrap_or_else(|e| {
+            let size_bytes = measure_directory_size(&collection_path, &runtime).unwrap_or_else(|e| {
                 eprintln!("    ⚠️  Failed to measure directory size: {:?}", e);
                 0
             });
@@ -469,7 +470,7 @@ fn bench_compression_with_search(c: &mut Criterion) {
                                     eprintln!("    ⚠️  WARNING: Pure search returned no results for {} with {} (expected to find vec_0)",
                                              engine_name, compress_name);
                                     eprintln!("       Debug: Searched with vector starting with {:?}", &query_clone[..5.min(query_clone.len())]);
-                                    eprintln!("       Debug: Collection={}, Base path={}", collection_id, base_path);
+                                    eprintln!("       Debug: Collection={}, Collection path={}", collection_id, collection_path);
                                     eprintln!("       Debug: Search took {}ms", pure_time_ms);
                                     PURE_EMPTY_LOGGED = true;
                                 }
