@@ -26,6 +26,7 @@ use tracing::{debug, info, warn};
 use crate::storage::engines::impls::sst::SstEngine;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::FilterExpression;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::compute::distance_computation::DistanceMetric;
 
 /// Low-level search operations
@@ -76,14 +77,16 @@ impl SearchOperations {
     ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!("🔍 SearchOps: Searching {} SSTable files in parallel", file_paths.len());
 
-        let mut all_results = Vec::new();
+        // Use bounded priority queue to maintain only top-k results
+        let mut priority_queue = BoundedPriorityQueue::new(k);
+
         let search_futures: Vec<_> = file_paths
             .iter()
             .map(|path| {
                 self.search_sstable_file(
                     path,
                     query_vector,
-                    k * 2, // Get more candidates per file
+                    k * 2, // Get more candidates per file for better quality
                     distance_metric,
                     filter_expression,
                 )
@@ -93,11 +96,15 @@ impl SearchOperations {
         // Execute searches in parallel
         let results = futures::future::join_all(search_futures).await;
 
-        // Collect successful results
+        // Collect successful results into bounded queue
+        let mut total_candidates = 0;
         for (i, result) in results.into_iter().enumerate() {
             match result {
-                Ok(mut file_results) => {
-                    all_results.append(&mut file_results);
+                Ok(file_results) => {
+                    total_candidates += file_results.len();
+                    for record in file_results {
+                        priority_queue.try_insert(record);
+                    }
                 }
                 Err(e) => {
                     warn!("⚠️ SearchOps: Failed to search file {}: {}", file_paths[i], e);
@@ -106,14 +113,12 @@ impl SearchOperations {
             }
         }
 
-        // Sort and limit results
-        all_results.sort_by(|a, b| {
-            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        all_results.truncate(k);
+        // Extract results from bounded queue
+        let results = priority_queue.into_sorted_vec();
 
-        info!("📊 SearchOps: Parallel search completed, {} total results", all_results.len());
-        Ok(all_results)
+        info!("📊 SearchOps: Parallel search completed, {} results from {} candidates",
+              results.len(), total_candidates);
+        Ok(results)
     }
 
     /// Perform point lookup for a specific vector ID

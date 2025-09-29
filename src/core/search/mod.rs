@@ -1,5 +1,6 @@
 //! Search module for ProximaDB storage-aware search implementations
 
+pub mod bounded_queue;
 pub mod engine_benchmarks;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;

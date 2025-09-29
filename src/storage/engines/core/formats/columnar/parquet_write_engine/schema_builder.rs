@@ -46,8 +46,8 @@ impl ParquetSchemaBuilder {
         fields.push(Field::new(FIELD_ID, DataType::Utf8, false));
 
         // Row group offset and row index (for ID-less storage)
-        fields.push(Field::new("row_group_offset", DataType::UInt32, false));
-        fields.push(Field::new("row_index", DataType::UInt32, false));
+        fields.push(Field::new(FIELD_ROW_GROUP_OFFSET, DataType::UInt32, false));
+        fields.push(Field::new(FIELD_ROW_INDEX, DataType::UInt32, false));
 
         // Vector data (FP32 fixed-size list - more efficient since dimension is known)
         let vector_field = Field::new(
@@ -63,7 +63,7 @@ impl ParquetSchemaBuilder {
         // Quantized vectors based on configuration
         if self.config.quantization.enable_binary {
             fields.push(Field::new(
-                "vector_binary",
+                FIELD_Q_BINARY,
                 DataType::Binary,
                 true,
             ));
@@ -71,37 +71,56 @@ impl ParquetSchemaBuilder {
 
         if self.config.quantization.enable_int8 {
             fields.push(Field::new(
-                "vector_int8",
+                FIELD_Q_INT8,
                 DataType::Binary,
                 true,
             ));
             fields.push(Field::new(
-                "int8_scales",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+                FIELD_QP_INT8_SCALE,
+                DataType::Float32,
                 true,
             ));
             fields.push(Field::new(
-                "int8_zero_points",
-                DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+                FIELD_QP_INT8_MIN,
+                DataType::Float32,
+                true,
+            ));
+            fields.push(Field::new(
+                FIELD_QP_INT8_MAX,
+                DataType::Float32,
                 true,
             ));
         }
 
         if self.config.quantization.enable_pq {
+            // Determine PQ field based on configured bits
+            let pq_bits = if self.config.quantization.pq_bits > 0 {
+                self.config.quantization.pq_bits
+            } else {
+                8 // Default to PQ8 if not specified
+            };
+            let pq_field_name = match pq_bits {
+                4 => FIELD_Q_PQ4,
+                8 => FIELD_Q_PQ8,
+                16 => FIELD_Q_PQ16,
+                32 => FIELD_Q_PQ32,
+                _ => FIELD_Q_PQ8, // Default to PQ8
+            };
+
             fields.push(Field::new(
-                "vector_pq",
+                pq_field_name,
                 DataType::Binary,
                 true,
             ));
-            fields.push(Field::new(
-                "pq_codebook",
-                DataType::Binary,
-                true,
-            ));
+            // Note: PQ codebooks are stored as file-level metadata, not per-row columns
         }
 
-        // Metadata fields
-        fields.push(Field::new("timestamp", DataType::Int64, false));
+        // Temporal fields - using constants
+        fields.push(Field::new(FIELD_TIMESTAMP, DataType::Int64, false));
+        fields.push(Field::new(FIELD_UPDATED_AT, DataType::Int64, true)); // optional
+        fields.push(Field::new(FIELD_EXPIRES_AT, DataType::Int64, true)); // optional
+        fields.push(Field::new(FIELD_VERSION, DataType::UInt32, true)); // optional
+        fields.push(Field::new(FIELD_SOURCE, DataType::Utf8, true)); // optional
 
         // Filterable metadata columns (if specified)
         if let Some(ref columns) = self.filterable_columns {
@@ -125,7 +144,7 @@ impl ParquetSchemaBuilder {
 
         // Extra metadata (for non-filterable metadata)
         let map_field = Field::new(
-            "extra_meta",
+            FIELD_EXTRA_META,
             DataType::Map(
                 Arc::new(Field::new(
                     "entries",

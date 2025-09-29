@@ -67,6 +67,9 @@ fn convert_search_params_to_plan(params: &crate::core::search::SearchParams, col
         },
         metadata_filters: vec![],
         query_vector: params.vector.clone(),
+        top_k: params.top_k.unwrap_or(10),
+        min_score: None,
+        enable_early_termination: true,
     }
 }
 

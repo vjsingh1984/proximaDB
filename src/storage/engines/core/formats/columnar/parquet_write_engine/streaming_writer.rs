@@ -296,11 +296,69 @@ impl StreamingParquetWriter {
 
         arrays.push(Arc::new(fixed_list_array));
 
+        // TODO: Add quantization arrays if enabled
+        // The schema may include quantization fields (FIELD_Q_BINARY, FIELD_Q_INT8, etc.)
+        // These need to be added here if self.config.quantization is enabled
+
         // Timestamp
         let timestamps: Vec<i64> = records.iter()
             .map(|r| r.timestamp as i64)
             .collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
+
+        // Updated at (optional)
+        let updated_at: Vec<Option<i64>> = records.iter()
+            .map(|r| r.updated_at.map(|v| v as i64))
+            .collect();
+        arrays.push(Arc::new(Int64Array::from(updated_at)));
+
+        // Expires at (optional)
+        let expires_at: Vec<Option<i64>> = records.iter()
+            .map(|r| r.expires_at.map(|v| v as i64))
+            .collect();
+        arrays.push(Arc::new(Int64Array::from(expires_at)));
+
+        // Version (optional)
+        let versions: Vec<Option<u32>> = records.iter()
+            .map(|r| r.version)
+            .collect();
+        arrays.push(Arc::new(UInt32Array::from(versions)));
+
+        // Source (optional)
+        let sources: Vec<Option<String>> = records.iter()
+            .map(|r| r.source.clone())
+            .collect();
+        arrays.push(Arc::new(StringArray::from(sources)));
+
+        // Add filterable column arrays if specified
+        if !self.filterable_columns.is_empty() {
+            for col_spec in &self.filterable_columns {
+                // Extract values from metadata for this filterable column
+                let values: Vec<Option<String>> = records.iter()
+                    .map(|r| {
+                        // Look for this column in metadata
+                        r.metadata.get(&col_spec.name).and_then(|sql_value| {
+                            if let Some(value) = &sql_value.value {
+                                use crate::proto::proximadb_v1::sql_value::Value;
+                                match value {
+                                    Value::StringValue(s) => Some(s.clone()),
+                                    Value::NumberValue(f) => Some(f.to_string()),
+                                    Value::BoolValue(b) => Some(b.to_string()),
+                                    Value::Int64Value(i) => Some(i.to_string()),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .collect();
+
+                // Create array based on column data type
+                // For now, using String array for all types (can optimize later)
+                arrays.push(Arc::new(StringArray::from(values)));
+            }
+        }
 
         // Extra metadata - Create a Map array matching the schema
         // The schema expects a struct with "key" and "value" fields

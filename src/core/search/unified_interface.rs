@@ -42,6 +42,20 @@ pub struct SearchPlan {
     pub metadata_filters: Vec<crate::storage::engines::core::formats::columnar::MetadataFilter>,
     /// Query vector for similarity search (needed for quantized pre-filtering)
     pub query_vector: Option<Vec<f32>>,
+
+    /// Number of top results to return
+    pub top_k: usize,
+
+    /// Minimum score threshold for results (dynamically updated during search)
+    /// - None: No minimum threshold (useful for full fidelity searches)
+    /// - Some(score): Only return results with score >= this value
+    /// Engines can update this as they find better results
+    pub min_score: Option<f32>,
+
+    /// Whether to enable early termination optimizations
+    /// - true: Allow early termination when sufficient high-quality results found
+    /// - false: Full scan for maximum recall (full fidelity mode)
+    pub enable_early_termination: bool,
 }
 
 /// Collection configuration for search optimization
@@ -286,6 +300,9 @@ impl IntegratedSearchOptimizer {
             storage_info,
             metadata_filters: vec![], // TODO: Extract from search request
             query_vector: None, // TODO: Extract from search request
+            top_k: 100, // Default top-k
+            min_score: None, // No minimum score by default
+            enable_early_termination: true, // Enable optimizations by default
         })
     }
 

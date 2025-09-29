@@ -28,6 +28,7 @@
 
 use crate::core::metadata_types::MetadataValue;
 use crate::core::search::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::io::Read;
@@ -629,7 +630,9 @@ impl ModularBlockReader {
         let header = reader_clone.read_header_async().await?;
         let index_entries = reader_clone.read_index_blocks(&header).await?;
 
-        let mut all_results = Vec::new();
+        // Use bounded priority queue to maintain only top-k results
+        let mut priority_queue = BoundedPriorityQueue::new(k);
+        let mut total_records_scanned = 0;
 
         // Scan all blocks and compute distances
         for (block_idx, _index_entry) in index_entries.iter().enumerate() {
@@ -637,25 +640,27 @@ impl ModularBlockReader {
                 .read_data_block_async(block_idx as u64, ReadMode::Direct)
                 .await?;
 
-            for (record_idx, record) in data_block.records.iter().enumerate() {
+            for (_record_idx, record) in data_block.records.iter().enumerate() {
+                total_records_scanned += 1;
+
                 let distance =
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
                         .calculate_distance(query_vector, &record.vector, distance_metric);
 
-                all_results.push(
-                    OptimizedSearchRecord::new(record.id.clone(), distance.rank_value)
-                        .with_similarity(distance.normalized_score)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(HashMap::new()),
-                );
+                let search_record = OptimizedSearchRecord::new(record.id.clone(), distance.rank_value)
+                    .with_similarity(distance.normalized_score)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(HashMap::new());
+
+                // Try to insert into bounded queue - only keeps top-k
+                priority_queue.try_insert(search_record);
             }
         }
 
-        // Sort and return top-k
-        all_results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
-        all_results.truncate(k);
+        debug!("Scanned {} records, returning top {}", total_records_scanned, k);
 
-        Ok(all_results)
+        // Get sorted results from bounded queue
+        Ok(priority_queue.into_sorted_vec())
     }
 
     pub fn new(filesystem_factory: Arc<FilesystemFactory>, file_path: String) -> Self {
@@ -2360,18 +2365,17 @@ impl UnifiedSstableReader {
             .first_query_vector()
             .ok_or_else(|| anyhow::anyhow!("Query vector required"))?;
 
-        let k = params.top_k;
+        let k = params.top_k.unwrap_or(10);
         let distance_metric = params.distance_metric;
 
         debug!(
             "🔍 Searching in {} blocks for top {} results",
             blocks.len(),
-            k.unwrap_or(10)
+            k
         );
 
-        // Pre-allocate with exact capacity to avoid reallocations (critical for performance)
-        let total_capacity: usize = blocks.iter().map(|b| b.records.len()).sum();
-        let mut scored_results = Vec::with_capacity(total_capacity.min(k.unwrap_or(10) * 10)); // Pre-allocate for top 10*k candidates
+        // Use bounded priority queue to maintain only top-k results
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
         let mut total_records = 0u32; // Use u32 for better cache efficiency
         let mut filtered_out = 0u32;
@@ -2468,41 +2472,30 @@ impl UnifiedSstableReader {
                     }
                 }
 
-                scored_results.push(
-                    OptimizedSearchRecord::new(record.id.clone(), similarity.rank_value)
-                        .with_similarity(similarity.normalized_score)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(record.metadata.clone())
-                        .with_version_info(record.version.unwrap_or(0), record.timestamp),
-                );
+                let search_record = OptimizedSearchRecord::new(record.id.clone(), similarity.rank_value)
+                    .with_similarity(similarity.normalized_score)
+                    .add_vector(record.vector.clone())
+                    .with_metadata(record.metadata.clone())
+                    .with_version_info(record.version.unwrap_or(0), record.timestamp);
+
+                // Try to insert into bounded queue - only keeps top-k
+                priority_queue.try_insert(search_record);
             }
         }
 
         debug!(
-            "📊 Search stats: {} total records, {} tombstones, {} filtered out, {} candidates",
+            "📊 Search stats: {} total records, {} tombstones, {} filtered out, {} in queue",
             total_records,
             tombstones,
             filtered_out,
-            scored_results.len()
+            priority_queue.len()
         );
 
-        // Sort and return top-k results (in-place sorting for memory efficiency)
-        scored_results.sort_unstable_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Get sorted results from bounded queue
+        let results = priority_queue.into_sorted_vec();
 
-        // Truncate to k results efficiently
-        let k_value = k.unwrap_or(10);
-        if scored_results.len() > k_value {
-            scored_results.truncate(k_value);
-        }
-
-        // Rankings are implicit in the order of results, no need to set explicitly
-
-        debug!("🎯 Returning {} final results", scored_results.len());
-        Ok(scored_results)
+        debug!("🎯 Returning {} final results", results.len());
+        Ok(results)
     }
 
     /// Full scan strategy implementation with disk cache optimization

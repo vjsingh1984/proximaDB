@@ -128,10 +128,17 @@ async fn test_parquet_flush_and_read_pattern() {
         .collect();
 
     writer.write_batch(&test_records).await.unwrap();
-    let (stats, _data, _collector) = writer.finalize().await.unwrap();
+    let (stats, written_data, _collector) = writer.finalize().await.unwrap();
 
     assert_eq!(stats.total_records, 300);
     assert!(stats.bloom_filter_count > 0);
+
+    // Write the data to disk
+    use tokio::fs::File;
+    use tokio::io::AsyncWriteExt;
+    let mut file = File::create(&file_path).await.unwrap();
+    file.write_all(&written_data).await.unwrap();
+    file.flush().await.unwrap();
 
     // Read using filesystem API
     let filesystem = Arc::new(

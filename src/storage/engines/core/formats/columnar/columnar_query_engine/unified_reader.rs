@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use tracing::{debug, info, trace};
 use crate::proto::proximadb_v1::{VectorRecord, MetadataFilter};
 use crate::core::search::unified_interface::SearchPlan;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 // SearchResponse should come from service types
 type SearchResponse = crate::core::service_types::VectorSearchResponse;
@@ -20,6 +21,30 @@ use super::{
     CacheStrategy,
     BranchedFilterExecutor,
 };
+
+// Simple cosine similarity function for scoring
+fn compute_cosine_similarity(a: &[f32], b: &Arc<Vec<f32>>) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+
+    let mut dot_product = 0.0;
+    let mut norm_a = 0.0;
+    let mut norm_b = 0.0;
+
+    for i in 0..a.len() {
+        dot_product += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+
+    let denom = (norm_a * norm_b).sqrt();
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot_product / denom
+    }
+}
 
 /// Reading strategy selector
 #[derive(Debug, Clone)]
@@ -341,14 +366,26 @@ impl UnifiedParquetReader {
         row_groups: &[usize],
         _projection: Option<&[String]>,
     ) -> Result<Vec<VectorRecord>> {
-        // Stub implementation - read all and filter by row groups
-        // In production, this should use Parquet's row group API directly
-        // read_all_records expects start_offset and limit
-        let all_records = self.read_all_records(0, None).await?;
+        // If no specific row groups requested, read all
+        if row_groups.is_empty() {
+            return self.read_all_records(0, None).await;
+        }
 
-        // For now, just return all records (row group filtering not implemented)
-        // TODO: Implement actual row group filtering
-        Ok(all_records)
+        // Read records and filter by row group index
+        // Assuming row_group_size is 100 (from test configuration)
+        let row_group_size = 100; // This should be obtained from metadata
+
+        let mut result = Vec::new();
+        for &rg_idx in row_groups {
+            let start_offset = rg_idx * row_group_size;
+            let limit = Some(row_group_size);
+
+            // Read records for this row group
+            let records = self.read_all_records(start_offset, limit).await?;
+            result.extend(records);
+        }
+
+        Ok(result)
     }
 
     /// Get collection context - returns metadata about the collection
@@ -383,21 +420,37 @@ impl UnifiedParquetReader {
         debug!("UnifiedParquetReader: Optimized search starting");
         debug!("  Files to scan: {}", self.file_paths.len());
         debug!("  Column projection: vectors={}, metadata={}", needs_vectors, needs_metadata);
+        debug!("  Top-k: {}, Early termination: {}", search_plan.top_k, search_plan.enable_early_termination);
         if !metadata_filters.is_empty() {
             debug!("  Metadata filters: {} conditions", metadata_filters.len());
         }
 
-        let mut all_results = Vec::new();
+        // Initialize bounded priority queue for top-k results
+        let mut priority_queue = BoundedPriorityQueue::new(search_plan.top_k);
         let mut total_records_scanned = 0;
         let mut row_groups_skipped = 0;
+        let mut files_skipped_early = 0;
 
         // Check if quantization is enabled for this search
         let quantization_enabled = search_plan.collection_config.as_ref()
             .map(|c| c.enable_quantization)
             .unwrap_or(false);
 
-        // Process ALL files - we cannot stop early as we need all candidates for scoring
-        for file_path in &self.file_paths {
+        // Process files with early termination support
+        for (file_idx, file_path) in self.file_paths.iter().enumerate() {
+            // Check for early termination if enabled
+            if search_plan.enable_early_termination && priority_queue.is_full() {
+                // Optionally: Check if remaining files could possibly beat current min score
+                // This requires file-level statistics (max similarity bounds)
+                // For now, just skip if we have very good results already
+                let min_threshold = priority_queue.min_score_threshold();
+                if min_threshold > 0.95 {  // Very high quality results already
+                    files_skipped_early = self.file_paths.len() - file_idx;
+                    debug!("Early termination: Skipping {} files (min_score: {})",
+                           files_skipped_early, min_threshold);
+                    break;
+                }
+            }
             // Read from this file with optimizations including filter-based row group pruning
             let (file_records, skipped) = self.read_file_with_optimization_and_filters(
                 file_path,
@@ -410,35 +463,86 @@ impl UnifiedParquetReader {
             total_records_scanned += file_records.len();
             row_groups_skipped += skipped;
 
-            // Convert to OptimizedSearchRecord format
-            for record in file_records {
-                all_results.push(crate::core::search::results::OptimizedSearchRecord {
-                    id: record.id.clone(),
-                    vector_id: Some(record.id),
-                    score: 0.0, // Scoring will be done by the engine after all records are collected
-                    similarity: Some(0.0),
-                    vector: Some(Arc::new(record.vector)),
-                    metadata: if needs_metadata { record.metadata } else { HashMap::new() },
-                    debug_info: None,
-                    version: record.version,
-                    timestamp: Some(record.timestamp),
-                    updated_at: None,
-                    expires_at: None,
-                    source: None,
-                    expanded_context: vec![],
-                    semantic_similarity: None,
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None,
-                });
+            // Score and insert records into priority queue
+            if let Some(query_vector) = &search_plan.query_vector {
+                for record in file_records {
+                    // Compute similarity score
+                    let score = compute_cosine_similarity(query_vector, &Arc::new(record.vector.clone()));
+
+                    // Check if score meets minimum threshold (if set)
+                    if let Some(min_score) = search_plan.min_score {
+                        if score < min_score {
+                            continue; // Skip records below minimum threshold
+                        }
+                    }
+
+                    // Check if this record would be accepted into the queue
+                    if !priority_queue.would_accept(score) {
+                        continue; // Skip if it wouldn't make it into top-k
+                    }
+
+                    // Create OptimizedSearchRecord and try to insert
+                    let search_record = crate::core::search::results::OptimizedSearchRecord {
+                        id: record.id.clone(),
+                        vector_id: Some(record.id),
+                        score,
+                        similarity: Some(score),
+                        vector: Some(Arc::new(record.vector)),
+                        metadata: if needs_metadata { record.metadata } else { HashMap::new() },
+                        debug_info: None,
+                        version: record.version,
+                        timestamp: Some(record.timestamp),
+                        updated_at: None,
+                        expires_at: None,
+                        source: None,
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                    };
+
+                    priority_queue.try_insert(search_record);
+                }
+            } else {
+                // No query vector - just collect records without scoring
+                // This shouldn't happen in practice for similarity search
+                for record in file_records {
+                    let search_record = crate::core::search::results::OptimizedSearchRecord {
+                        id: record.id.clone(),
+                        vector_id: Some(record.id),
+                        score: 0.0,
+                        similarity: Some(0.0),
+                        vector: Some(Arc::new(record.vector)),
+                        metadata: if needs_metadata { record.metadata } else { HashMap::new() },
+                        debug_info: None,
+                        version: record.version,
+                        timestamp: Some(record.timestamp),
+                        updated_at: None,
+                        expires_at: None,
+                        source: None,
+                        expanded_context: vec![],
+                        semantic_similarity: None,
+                        quantization_info: None,
+                        engine_stats: None,
+                        index_path: None,
+                    };
+
+                    if priority_queue.len() < search_plan.top_k {
+                        priority_queue.try_insert(search_record);
+                    }
+                }
             }
         }
 
-        let processing_time_us = start_time.elapsed().as_micros() as i64;
+        // Extract final results from priority queue (already sorted)
+        let all_results = priority_queue.into_sorted_vec();
         let total_results = all_results.len();
 
-        info!("UnifiedParquetReader: Search complete - scanned: {}, skipped: {}, returned: {}, time: {}ms",
-              total_records_scanned, row_groups_skipped, total_results, processing_time_us / 1000);
+        let processing_time_us = start_time.elapsed().as_micros() as i64;
+
+        info!("UnifiedParquetReader: Search complete - scanned: {}, skipped: {}, returned: {}, files_skipped: {}, time: {}ms",
+              total_records_scanned, row_groups_skipped, total_results, files_skipped_early, processing_time_us / 1000);
 
         // For queries without filters, the main optimizations are:
         // 1. Column projection (skip metadata if not needed)

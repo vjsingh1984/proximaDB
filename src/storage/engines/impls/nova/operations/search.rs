@@ -10,6 +10,7 @@ use crate::proto::proximadb_v1::{VectorRecord, MetadataFilter};
 use crate::core::search::unified_interface::SearchPlan;
 use crate::storage::engines::core::search::search_common::SearchConfig;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::compute::distance_computation::DistanceMetric;
 
@@ -118,7 +119,8 @@ impl NovaSearchOperations {
             return Ok(Vec::new());
         }
 
-        let mut all_candidates: Vec<(f32, OptimizedSearchRecord)> = Vec::new();
+        // Use bounded priority queue to maintain only top-k results
+        let mut priority_queue = BoundedPriorityQueue::new(k);
         let dimension = query_vector.len();
 
         for file_path in files {
@@ -151,7 +153,7 @@ impl NovaSearchOperations {
 
             let records = reader.read_all_records(10000, None).await?;
 
-            // Compute distances and collect candidates
+            // Compute distances and insert into bounded queue
             for record in records {
                 let vector = &record.vector;
                 let distance = self.distance_engine.distance_with_metric(
@@ -180,19 +182,13 @@ impl NovaSearchOperations {
                     index_path: None,
                 };
 
-                // Add to candidates
-                all_candidates.push((distance, search_record));
+                // Try to insert into bounded queue - only keeps top-k
+                priority_queue.try_insert(search_record);
             }
         }
 
-        // Sort by distance (ascending) and take top-k
-        all_candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-        all_candidates.truncate(k);
-
-        let results: Vec<OptimizedSearchRecord> = all_candidates
-            .into_iter()
-            .map(|(_, record)| record)
-            .collect();
+        // Get sorted results from bounded queue
+        let results = priority_queue.into_sorted_vec();
 
         Ok(results)
     }

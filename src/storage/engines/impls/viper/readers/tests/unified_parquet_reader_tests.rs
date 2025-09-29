@@ -27,8 +27,17 @@ mod tests {
     // Test helpers
     async fn create_test_reader() -> UnifiedParquetReader {
         let file_paths = vec!["/tmp/test1.parquet".to_string(), "/tmp/test2.parquet".to_string()];
+        create_test_reader_with_files(file_paths).await
+    }
+
+    async fn create_test_reader_with_files(file_paths: Vec<String>) -> UnifiedParquetReader {
         // Create UnifiedCachingFilesystem for testing
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
+        let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+        let filesystem_factory = Arc::new(
+            crate::storage::persistence::filesystem::FilesystemFactory::new(fs_config)
+                .await
+                .unwrap()
+        );
         let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
         let cached_filesystem = Arc::new(
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
@@ -69,6 +78,9 @@ mod tests {
             },
             metadata_filters: vec![],
             query_vector: params.vector.clone(),
+            top_k: params.top_k.unwrap_or(100) as usize,
+            min_score: None,  // No minimum score filter for tests
+            enable_early_termination: true, // Enable optimizations by default
         }
     }
 
@@ -486,8 +498,8 @@ mod tests {
         // Write to parquet file
         create_test_parquet_file(&file_path, test_vectors.clone(), 4).await?;
 
-        // Create reader
-        let reader = create_test_reader().await;
+        // Create reader with the actual file path
+        let reader = create_test_reader_with_files(vec![file_path.clone()]).await;
 
         // Use search API to read all vectors (no filter, high k)
         let search_params = SearchParams {
@@ -543,8 +555,8 @@ mod tests {
         // Write to parquet file
         create_test_parquet_file(&file_path, test_vectors, 3).await?;
 
-        // Create reader
-        let reader = create_test_reader().await;
+        // Create reader with the actual file path
+        let reader = create_test_reader_with_files(vec![file_path.clone()]).await;
 
         // Create search params
         let search_params = SearchParams {
@@ -583,8 +595,10 @@ mod tests {
         let results = reader.search_vectors(&search_plan, &context).await?;
 
         // Verify
+        println!("Search returned {} results", results.results.len());
         assert!(!results.results.is_empty(), "Should find results");
-        assert!(results.results.len() <= 3, "Should return at most 3 results");
+        // The reader now applies basic scoring and top_k filtering
+        assert!(results.results.len() <= 3, "Should return at most top_k=3 results (got {})", results.results.len());
 
         // Debug output
         for (i, result) in results.results.iter().enumerate() {
@@ -689,8 +703,8 @@ mod tests {
         // Write to parquet file
         create_test_parquet_file(&file_path, vec![test_vector], 3).await?;
 
-        // Create reader and search
-        let reader = create_test_reader().await;
+        // Create reader with the actual file path
+        let reader = create_test_reader_with_files(vec![file_path.clone()]).await;
 
         let search_params = SearchParams {
             query_vectors: Some(vec![vec![1.0, 2.0, 3.0]]),

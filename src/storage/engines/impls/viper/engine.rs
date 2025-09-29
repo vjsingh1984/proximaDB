@@ -2092,6 +2092,9 @@ impl UnifiedStorageEngine for ViperEngine {
             ], // VIPER supports all quantization levels
             metadata_filters: vec![], // TODO: Extract from search parameters
             query_vector: Some(query_vector.to_vec()),
+            top_k: k,
+            min_score: None, // No minimum threshold
+            enable_early_termination: true, // Enable optimizations
         };
 
         // Use UnifiedParquetReader for actual search with predicate pushdown
@@ -2192,6 +2195,9 @@ impl UnifiedStorageEngine for ViperEngine {
             },
             metadata_filters: vec![], // TODO: Extract from search parameters
             query_vector: Some(query_vector.to_vec()),
+            top_k: k,
+            min_score: None,
+            enable_early_termination: true,
         };
 
         debug!("🔎 VIPER: Calling parquet_reader.search_vectors to read data...");
