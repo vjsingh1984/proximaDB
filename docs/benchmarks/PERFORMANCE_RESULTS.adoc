@@ -32,6 +32,16 @@ ProximaDB delivers exceptional performance with hardware-accelerated SIMD optimi
 
 == December 2024 Benchmark Results
 
+[NOTE]
+====
+**Latest Performance Analysis (September 2025)**: For the most recent performance issues and optimization opportunities identified through comprehensive benchmarking, see:
+
+* link:../performance/PERFORMANCE_COMPREHENSIVE.adoc#known-performance-issues-september-2025[Known Performance Issues] - Critical bottlenecks and fixes
+* link:benchmarks/benchmark_analysis.adoc#benchmark-failures-analysis-september-2025[Benchmark Failures Analysis] - Path construction bugs and resolutions
+
+The analysis below represents December 2024 baseline performance.
+====
+
 === Distance Computation Performance
 
 Complete performance analysis of ProximaDB's hardware-accelerated distance computation engine.

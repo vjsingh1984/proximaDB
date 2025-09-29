@@ -969,6 +969,194 @@ scrape_configs:
     scrape_interval: 15s
 ----
 
+== Known Performance Issues (September 2025)
+
+=== Critical Performance Bottlenecks Identified
+
+Analysis of `proximadb-bench` benchmarks (September 2025) identified 4 critical performance issues with potential for **5-17x improvements**:
+
+==== Issue #1: TransposeFieldEncoded Performance (P0 - Critical)
+
+**Symptom**: Encoding times are catastrophically slow with extreme variance
+
+[cols="2,2,2,2", options="header"]
+|===
+|Configuration |Encode Time |Variance |vs TransposeBlock
+
+|100v × 384d
+|10.54 ms
+|47%
+|17x slower
+
+|1000v × 768d
+|35.84 ms
+|29%
+|4.4x slower
+
+|5000v × 768d
+|194.55 ms
+|23%
+|4x slower
+|===
+
+**Root Cause**:
+
+* **File**: `src/storage/engines/core/ops/proximaencoder.rs` (lines 682-732)
+* Creates 768 separate Vec allocations per call for 1000 vectors × 768 dimensions
+* Initializes compression (Zstd/LZ4) 768 times instead of once
+* Cache-hostile memory access pattern (strided access)
+
+**Expected Fix Impact**: 194ms → <20ms (10x improvement)
+
+**Fix Recommendations**:
+
+1. Single allocation for transposed data (pre-allocate full buffer)
+2. Block-level transpose with SIMD operations
+3. Batch compression with single compressor initialization
+4. Use `TransposeBlockCompressed` as default instead
+
+==== Issue #2: LSH Index Initialization (P0 - Critical)
+
+**Symptom**: LSH index insertion is 99x slower than HNSW
+
+[cols="2,2,2", options="header"]
+|===
+|Index Type |Insert Time (768D) |Speedup
+
+|LSH
+|25.83 μs/vec
+|Baseline
+
+|HNSW
+|0.26 μs/vec
+|99x faster
+|===
+
+**Root Cause**:
+
+* **File**: `src/index/axis/indexes/lsh_index.rs` (lines 92-112, 246-295)
+* Box-Muller transform called 76,800 times during initialization (100 hash functions × 768 dimensions)
+* Sequential hash table insertions without batching
+* Uses `HashMap` instead of lock-free `DashMap` for concurrent access
+
+**Expected Fix Impact**: 25.83 μs → <5 μs (5x improvement)
+
+**Fix Recommendations**:
+
+1. Pre-compute random projections once during initialization
+2. Batch hash table insertions
+3. Replace `HashMap` with `DashMap` for concurrent access
+4. Cache projection results for repeated queries
+
+==== Issue #3: Memory Pool Regression (P1 - High)
+
+**Symptom**: Memory pool adds overhead instead of optimization
+
+[cols="2,2,2", options="header"]
+|===
+|Configuration |Processing Time |Speedup
+
+|Without pool (1000×768D)
+|406.0 ± 3.2 μs
+|Baseline
+
+|With pool (1000×768D)
+|412.3 ± 4.8 μs
+|0.98x (regression!)
+|===
+
+**Root Cause**:
+
+* **File**: `src/core/memory/pool.rs` (lines 156-206)
+* Double mutex locks per acquisition (buffers + stats)
+* Stats collection overhead: 60μs per 1000 vectors
+* Pool size too small (exhausts quickly, falls back to allocation)
+* No thread-local caching
+
+**Expected Fix Impact**: 0.98x → 1.15-1.20x (15-20% improvement)
+
+**Fix Recommendations**:
+
+1. Disable stats collection by default (use feature flag)
+2. Increase pool size to match workload
+3. Implement thread-local caching to avoid mutex contention
+4. Use lock-free pool with atomic operations
+
+==== Issue #4: SIMD Compilation Not Enabled (P1 - High)
+
+**Symptom**: Pooled SIMD operations show no performance benefit or regressions
+
+[cols="2,2,2", options="header"]
+|===
+|Configuration |Processing Time |Speedup
+
+|Sequential (1000 vectors)
+|415.2 ± 19.4 μs
+|Baseline
+
+|Pooled SIMD (1000 vectors)
+|469.8 ± 45.4 μs
+|0.9x (slower!)
+|===
+
+**Root Cause**:
+
+* Missing `target-cpu = "native"` compilation flag in `Cargo.toml`
+* Pool overhead exceeds SIMD benefits for small batches
+* Memory alignment issues (SIMD requires 32-byte alignment)
+* No batch size threshold (applies pooling to all batch sizes)
+
+**Expected Fix Impact**: 0.9x → 1.5-2.0x for large batches (50-100% improvement)
+
+**Fix Recommendations**:
+
+1. Add `target-cpu = "native"` to `[profile.release]` in `Cargo.toml`
+2. Add batch size threshold (only use pooled SIMD for >1000 vectors)
+3. Ensure 32-byte aligned allocations for AVX2
+4. Pre-warm pool to avoid allocation overhead
+
+=== Priority Matrix
+
+[cols="2,2,2,2,3", options="header"]
+|===
+|Priority |Component |Current |Target |Impact
+
+|**P0**
+|TransposeFieldEncoded
+|194.55ms
+|<20ms
+|10x faster encoding
+
+|**P0**
+|LSH Index
+|25.83 μs/vec
+|<5 μs/vec
+|5x faster inserts
+
+|**P1**
+|Memory Pool
+|0.98x speedup
+|1.15-1.20x
+|18% improvement
+
+|**P1**
+|SIMD Compilation
+|0.9x speedup
+|1.5-2.0x
+|50-100% improvement
+|===
+
+=== Implementation Status
+
+[NOTE]
+====
+**Status**: Analysis complete (September 2025)
+
+These issues were identified through comprehensive benchmarking with `proximadb-bench`. Fixes are pending implementation based on priority and user requirements.
+
+For detailed analysis and code locations, see commit history for September 2025.
+====
+
 == Performance Troubleshooting
 
 === Common Issues
@@ -992,6 +1180,14 @@ scrape_configs:
 |CPU spikes
 |No SIMD, inefficient queries
 |Enable SIMD, optimize query patterns
+
+|Slow encoding (>100ms)
+|TransposeFieldEncoded
+|Use TransposeBlockCompressed instead
+
+|Slow index build
+|LSH with high dimensions
+|Use HNSW or pre-compute projections
 |===
 
 === Debug Tools

@@ -69,3 +69,192 @@ Combine bench_04, bench_05, bench_06, bench_07, bench_11 into:
 2. **Duplicate Measurements**: Same operations measured in multiple files
 3. **Missing Compression Details**: No algorithm names or ratios reported
 4. **No Cloud Storage Testing**: All using /tmp local paths
+
+== Benchmark Failures Analysis (September 2025)
+
+=== SST Engine Search Failure (Fixed)
+
+**Status**: ✅ **FIXED** (Commit: e65282a9)
+
+==== Symptoms
+```
+✓ Flushed 1000 vectors, 8770856 bytes written in 17ms
+✓ Created 1 files/directories: data (DIR)
+❌ Pure search failed for sst with none: IO error: No such file or directory (os error 2)
+```
+
+==== Root Cause
+
+**File**: `src/storage/engines/impls/sst/search/mod.rs` (lines 228-250)
+
+The `discover_sstable_files()` method incorrectly parsed storage paths:
+
+```rust
+// BEFORE (BROKEN):
+let (base_url, collection_id) = self.parse_storage_url(storage_url)?;
+let data_url = StoragePath::collection_data_path(&base_url, &collection_id);
+// Input: "/tmp/bench/sst-none/data"
+// Parsed: base="/tmp/bench/sst-none", collection="data" ❌
+// Result: "/tmp/bench/sst-none/data/data" ❌ WRONG PATH!
+```
+
+==== Fix Applied
+
+```rust
+// AFTER (FIXED):
+async fn discover_sstable_files(&self, storage_url: &str) -> Result<Vec<String>> {
+    // storage_url is already the correct data directory path
+    let data_url = storage_url;  // Use directly, don't re-parse
+    debug!("🔍 SST discover_sstable_files: Looking for .sst files in {}", data_url);
+    // ... rest of implementation
+}
+```
+
+**Result**: SST search now correctly finds files in the same directory where flush writes them.
+
+=== VIPER Engine Path Duplication (In Progress)
+
+**Status**: 🔄 **IN PROGRESS**
+
+==== Symptoms
+```
+🟩 HYBRID_WRITER: Final URL: /tmp/bench/viper-none/viper-none/data/L0_*.parquet
+🟩 HYBRID_WRITER: ❌ write_with_cache failed: No such file or directory (os error 2)
+⚠️  Flush failed for viper with none: Failed to write Parquet via HybridParquetWriter
+```
+
+==== Root Cause (Suspected)
+
+**File**: `src/storage/engines/impls/viper/flush.rs` (lines 311-314)
+
+Path construction duplicates collection_id:
+
+```rust
+let data_url = format!(
+    "{}/{}/data",
+    storage_assignment.base_location, collection_id
+);
+// Expected: /tmp/bench/viper-none/data
+// Actual:   /tmp/bench/viper-none/viper-none/data ❌
+```
+
+**Possible causes**:
+1. `base_location` already contains collection_id
+2. Filesystem API modifying paths during creation
+3. Confusion between `storage_url()` and `collection_storage_path()`
+
+==== Recommended Fix Options
+
+**Option 1**: Check for duplication before constructing path
+```rust
+let data_url = if storage_assignment.base_location.ends_with(&collection_id) {
+    format!("{}/data", storage_assignment.base_location)
+} else {
+    format!("{}/{}/data", storage_assignment.base_location, collection_id)
+};
+```
+
+**Option 2**: Use `collection_storage_path()` consistently (preferred)
+```rust
+let ctx = self.context().await?;
+let data_url = ctx.collection_storage_path();  // Already correct
+```
+
+**Option 3**: Ensure parent directory exists
+```rust
+let parent_dir = std::path::Path::new(final_url).parent()?;
+fs.create_dir_all(parent_dir.to_str()?).await?;
+```
+
+=== NOVA Engine Issues
+
+**Status**: 🔄 **IN PROGRESS**
+
+Similar symptoms to VIPER - likely same root cause with path construction.
+
+=== Testing Recommendations
+
+==== Unit Tests for Path Construction
+```rust
+#[tokio::test]
+async fn test_path_construction_no_duplicates() {
+    let base_location = "/tmp/test";
+    let collection_id = "test-collection";
+
+    let storage_assignment = StorageAssignment {
+        base_location: base_location.to_string(),
+        ..Default::default()
+    };
+
+    let data_url = format!("{}/{}/data",
+        storage_assignment.base_location,
+        collection_id
+    );
+
+    assert_eq!(data_url, "/tmp/test/test-collection/data");
+    assert!(!data_url.contains("test-collection/test-collection"),
+        "Path should not contain duplicate collection_id");
+}
+```
+
+==== Integration Tests
+```bash
+# Trace path construction with debug logging
+RUST_LOG=proximadb::storage::engines::impls::viper=debug \
+  cargo test --lib storage::engines::impls::viper::tests::test_flush \
+  -- --exact --nocapture
+```
+
+==== Benchmark Validation
+```bash
+# Run specific engine/compression benchmark
+RUST_LOG=debug cargo bench --bench bench_04_storage_unified 2>&1 | \
+  grep -A10 "viper-none"
+```
+
+=== Common Pattern: Path Semantics
+
+**Root cause pattern** across all failures:
+
+* `storage_url()` returns base path (e.g., `/tmp/bench`)
+* `collection_storage_path()` returns data path (e.g., `/tmp/bench/collection/data`)
+* Engines mixing these conventions cause path mismatches
+
+**Solution**: Standardize on `collection_storage_path()` for all data operations
+
+=== Status Summary
+
+[cols="2,3,2,2", options="header"]
+|===
+|Engine |Issue |Status |Resolution
+
+|SST
+|Path parsing bug in discover_sstable_files()
+|✅ FIXED
+|Commit: e65282a9
+
+|VIPER
+|Path duplication in flush operations
+|🔄 IN PROGRESS
+|Pending fix
+
+|NOVA
+|Directory creation failure
+|🔄 IN PROGRESS
+|Similar to VIPER
+
+|RAPTOR
+|No issues
+|✅ OK
+|N/A
+
+|SWIFT
+|No issues
+|✅ OK
+|N/A
+
+|HELIX
+|No issues
+|✅ OK
+|N/A
+|===
