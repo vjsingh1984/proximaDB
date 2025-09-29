@@ -240,10 +240,12 @@ async fn benchmark_engine_configuration(
         0
     };
 
+    // Compression ratio: 1 - (compressed/uncompressed)
+    // Standard definition: higher is better, negative means expansion
     let compression_ratio = if uncompressed_size > 0 {
-        compressed_size as f64 / uncompressed_size as f64
+        1.0 - (compressed_size as f64 / uncompressed_size as f64)
     } else {
-        1.0
+        0.0
     };
 
     Ok(BenchmarkResult {
@@ -255,7 +257,7 @@ async fn benchmark_engine_configuration(
         uncompressed_size,
         compressed_size,
         compression_ratio,
-        compression_savings_percent: (1.0 - compression_ratio) * 100.0,
+        compression_savings_percent: compression_ratio * 100.0,
         total_flush_time_ms: total_flush_time,
         avg_flush_time_ms: avg_flush_time,
         compaction_time_ms,

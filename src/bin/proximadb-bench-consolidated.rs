@@ -741,11 +741,12 @@ fn benchmark_encoding_configuration(
     }
     let grouped_serialize_ms = grouped_serialize_times.iter().sum::<f64>() / iterations as f64;
 
-    // Calculate compression ratios (compressed/uncompressed - lower is better)
+    // Compression ratio: 1 - (compressed/uncompressed)
+    // Standard definition: higher is better, negative means expansion
     let original_size = vector_count * dimension * 4; // f32 = 4 bytes
-    let columnar_compression_ratio = columnar_serialized.len() as f64 / original_size as f64;
-    let fullvector_compression_ratio = fullvector_serialized.len() as f64 / original_size as f64;
-    let grouped_compression_ratio = grouped_serialized.len() as f64 / original_size as f64;
+    let columnar_compression_ratio = 1.0 - (columnar_serialized.len() as f64 / original_size as f64);
+    let fullvector_compression_ratio = 1.0 - (fullvector_serialized.len() as f64 / original_size as f64);
+    let grouped_compression_ratio = 1.0 - (grouped_serialized.len() as f64 / original_size as f64);
 
     Ok(EncodingBenchmarkResult {
         vector_count,
@@ -3009,22 +3010,22 @@ fn benchmark_encoding_statistical_with_compression(
     println!("  Test: {} vectors × {} dimensions, {:?} compression",
         vector_count, dimension, compression_config.algorithm);
 
-    // Find best strategies (lower ratio is better)
+    // Find best strategies (higher ratio is better with new definition)
     let mut best_compression_strategy = "TransposeFieldEncoded";
     let mut best_compression_ratio = transpose_field_ratio;
-    if transpose_block_ratio < best_compression_ratio {
+    if transpose_block_ratio > best_compression_ratio {
         best_compression_strategy = "TransposeBlockCompressed";
         best_compression_ratio = transpose_block_ratio;
     }
-    if rowwise_ratio < best_compression_ratio {
+    if rowwise_ratio > best_compression_ratio {
         best_compression_strategy = "FullVector";
         best_compression_ratio = rowwise_ratio;
     }
-    if grouped_field_ratio < best_compression_ratio {
+    if grouped_field_ratio > best_compression_ratio {
         best_compression_strategy = "GroupedFieldEncoded";
         best_compression_ratio = grouped_field_ratio;
     }
-    if grouped_block_ratio < best_compression_ratio {
+    if grouped_block_ratio > best_compression_ratio {
         best_compression_strategy = "GroupedBlockCompressed";
         best_compression_ratio = grouped_block_ratio;
     }

@@ -139,16 +139,18 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     );
 
     // Calculate compression effectiveness by checking flush size
+    // Compression ratio: 1 - (compressed/uncompressed)
+    // Standard definition: higher is better, negative means expansion
     let bytes_written = flush_result.bytes_written.unwrap_or(0) as f32;
     let estimated_uncompressed = (sst_records.len() * 512 * 4) as f32; // 512 dims * 4 bytes per f32
     let compression_ratio = if estimated_uncompressed > 0.0 {
-        bytes_written / estimated_uncompressed
+        1.0 - (bytes_written / estimated_uncompressed)
     } else {
-        1.0
+        0.0
     };
     assert!(
         compression_ratio > 0.0 && compression_ratio < 1.0,
-        "Compression ratio should be between 0 and 1, got {}",
+        "Compression ratio should be between 0 and 1 (positive means compression), got {}",
         compression_ratio
     );
 

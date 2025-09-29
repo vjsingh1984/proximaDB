@@ -988,35 +988,38 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         uncompressed_size
     );
 
-    let compression_ratio = 100.0 * compressed_size as f64 / uncompressed_size as f64;
+    // Compression ratio: 1 - (compressed/uncompressed)
+    // Standard definition: higher is better, negative means expansion
+    let compression_ratio = 1.0 - (compressed_size as f64 / uncompressed_size as f64);
+    let compression_ratio_percent = compression_ratio * 100.0;
     info!(
-        "✅ Compression achieved: {:.2}% of original size",
-        compression_ratio
+        "✅ Compression achieved: {:.2}% reduction from original size",
+        compression_ratio_percent
     );
 
     // With 256D sparse vectors, we should get decent compression
     // Temporarily relaxed for debugging - let's see what we actually get
-    if compression_ratio >= 95.0 {
+    if compression_ratio_percent <= 5.0 {
         debug!(
             "⚠️  WARNING: Very poor compression {:.2}% - investigating...",
-            compression_ratio
+            compression_ratio_percent
         );
         // This suggests either vectors aren't sparse or compression isn't working
-    } else if compression_ratio >= 85.0 {
+    } else if compression_ratio_percent <= 15.0 {
         debug!(
             "📊 Moderate compression {:.2}% - acceptable but could be better",
-            compression_ratio
+            compression_ratio_percent
         );
     } else {
         debug!(
             "✅ Good compression {:.2}% - as expected for sparse vectors",
-            compression_ratio
+            compression_ratio_percent
         );
     }
 
     // For now, just ensure we get SOME compression benefit
     assert!(
-        compression_ratio < 99.0,
+        compression_ratio > 0.01,
         "Expected at least minimal compression benefit, but got {:.2}% of original",
         compression_ratio
     );

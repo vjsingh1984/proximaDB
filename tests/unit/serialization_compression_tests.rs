@@ -122,17 +122,19 @@ fn test_zstd_compression_effectiveness() {
         }
 
         // Sparse vectors should compress well, sequential may not compress as much
+        // Note: compression_ratio now uses standard definition: 1 - (compressed/uncompressed)
+        // Higher is better, negative means expansion
         if name.contains("sparse") {
             assert!(
-                compression_ratio < 0.6,
-                "Expected good compression for {} but got {:.3}",
+                compression_ratio > 0.4,
+                "Expected good compression for {} but got {:.3} (>40% reduction expected)",
                 name,
                 compression_ratio
             );
         } else if name == "sequential" {
             assert!(
-                compression_ratio < 0.95,
-                "Expected some compression for {} but got {:.3}",
+                compression_ratio > 0.05,
+                "Expected some compression for {} but got {:.3} (>5% reduction expected)",
                 name,
                 compression_ratio
             );

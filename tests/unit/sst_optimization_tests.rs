@@ -279,11 +279,12 @@ fn test_data_block_zstd_compression() {
     let uncompressed_size = serialized.len();
 
     if is_compressed {
-        // Calculate compression ratio on-demand
+        // Compression ratio: 1 - (compressed/uncompressed)
+        // Standard definition: higher is better, negative means expansion
         let compression_ratio = if uncompressed_size > 0 {
-            serialized.len() as f32 / uncompressed_size as f32
+            1.0 - (serialized.len() as f32 / uncompressed_size as f32)
         } else {
-            1.0
+            0.0
         };
         debug!(
             "📦 ProximaProximaDataBlock ZSTD compression - Ratio: {:.3}, Original: {} bytes, Compressed: {} bytes",
@@ -291,7 +292,7 @@ fn test_data_block_zstd_compression() {
             uncompressed_size,
             serialized.len()
         );
-        assert!(compression_ratio < 0.95, "Compression should be beneficial");
+        assert!(compression_ratio > 0.05, "Compression should be beneficial (>5%)");
     } else {
         debug!(
             "📦 ProximaProximaDataBlock stored uncompressed - {} bytes",
@@ -352,7 +353,7 @@ fn test_compression_performance_benchmark() {
 
     // Compression should be beneficial
     assert!(
-        compression_ratio < 0.8,
+        compression_ratio > 0.2,
         "Should achieve at least 20% compression"
     );
 

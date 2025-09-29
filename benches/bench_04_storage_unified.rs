@@ -165,8 +165,8 @@ fn bench_compression_with_search(c: &mut Criterion) {
     eprintln!("\n📊 UNIFIED COMPRESSION + SEARCH BENCHMARK");
     eprintln!("   Flush once → Search twice (pure + filtered)");
     eprintln!("   Dimension: {}, Vectors: {}", dimension, count);
-    eprintln!("\n{:<8} {:<8} {:>10} {:>8} {:>8} {:>10} {:>10} {:>10}",
-             "Engine", "Compress", "Size(MB)", "Ratio", "Save%", "Flush(ms)", "Pure(ms)", "Filter(ms)");
+    eprintln!("\n{:<8} {:<8} {:>10} {:>10} {:>10} {:>10} {:>10}",
+             "Engine", "Compress", "Size(MB)", "Ratio%", "Flush(ms)", "Pure(ms)", "Filter(ms)");
     eprintln!("{}", "-".repeat(80));
     let vectors = generate_test_vectors(count, dimension);
     // Use the first vector as query for deterministic results
@@ -379,8 +379,10 @@ fn bench_compression_with_search(c: &mut Criterion) {
                 0
             });
             let size_mb = size_bytes as f64 / 1_048_576.0;
-            let ratio = size_bytes as f64 / uncompressed_size as f64;
-            let savings = (1.0 - ratio) * 100.0;
+            // Compression ratio: 1 - (compressed/uncompressed)
+            // Standard definition: higher is better, negative means expansion
+            let compression_ratio = 1.0 - (size_bytes as f64 / uncompressed_size as f64);
+            let compression_ratio_percent = compression_ratio * 100.0;
 
             // Step 2: Pure vector search benchmark
             let mut pure_group = c.benchmark_group(format!("pure_{}-{}", engine_name, compress_name));
@@ -663,11 +665,11 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
             // Print results with validation status
             if size_bytes == 0 && files_created == 0 {
-                eprintln!("{:<8} {:<8} {:>10} {:>8} {:>7} {:>10} {:>10} {:>10}  ❌ NO DATA",
-                         engine_name, compress_name, "NO DATA", "N/A", "N/A", flush_time_ms, pure_time_ms, filter_time_ms);
+                eprintln!("{:<8} {:<8} {:>10} {:>10} {:>10} {:>10} {:>10}  ❌ NO DATA",
+                         engine_name, compress_name, "NO DATA", "N/A", flush_time_ms, pure_time_ms, filter_time_ms);
             } else {
-                eprintln!("{:<8} {:<8} {:>10.2} {:>8.3} {:>7.1}% {:>10} {:>10} {:>10}",
-                         engine_name, compress_name, size_mb, ratio, savings, flush_time_ms, pure_time_ms, filter_time_ms);
+                eprintln!("{:<8} {:<8} {:>10.2} {:>9.1}% {:>10} {:>10} {:>10}",
+                         engine_name, compress_name, size_mb, compression_ratio_percent, flush_time_ms, pure_time_ms, filter_time_ms);
             }
 
             // Clean up immediately after each test using filesystem API
