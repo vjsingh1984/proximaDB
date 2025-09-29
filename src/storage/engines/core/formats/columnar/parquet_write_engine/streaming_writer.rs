@@ -318,7 +318,7 @@ impl StreamingParquetWriter {
         let mut map_offsets = Vec::new();
         let mut current_offset = 0i32;
 
-        println!("🔍 DEBUG: Writing metadata for {} records", records.len());
+        debug!("Writing metadata for {} records", records.len());
 
         // Build the key-value pairs for each record's metadata
         for (idx, record) in records.iter().enumerate() {
@@ -326,7 +326,7 @@ impl StreamingParquetWriter {
             let metadata_count = record.metadata.len();
 
             if idx < 3 || metadata_count > 0 {
-                println!("🔍 DEBUG: Record {} (id={}) has {} metadata entries",
+                trace!("Record {} (id={}) has {} metadata entries",
                     idx, record.id, metadata_count);
             }
 
@@ -352,13 +352,13 @@ impl StreamingParquetWriter {
                 current_offset += 1;
 
                 if idx < 3 {
-                    println!("🔍 DEBUG:   Added metadata {}={:?}", key, all_values.last());
+                    trace!("  Added metadata {}={:?}", key, all_values.last());
                 }
             }
         }
         map_offsets.push(current_offset); // Final offset
 
-        println!("🔍 DEBUG: Total metadata entries written: {}", all_keys.len());
+        debug!("Total metadata entries written: {}", all_keys.len());
 
         // Create the struct array with all key-value pairs
         let keys_array = StringArray::from(all_keys);
@@ -397,11 +397,10 @@ impl StreamingParquetWriter {
         match result {
             Ok(batch) => Ok(batch),
             Err(e) => {
-                eprintln!("RecordBatch creation error: {}", e);
-                eprintln!("Schema field count: {}", self.schema.fields().len());
-                eprintln!("Array count: {}", array_count);
+                error!("RecordBatch creation error: {}", e);
+                error!("Schema field count: {}, Array count: {}", self.schema.fields().len(), array_count);
                 for (i, field) in self.schema.fields().iter().enumerate() {
-                    eprintln!("  Field {}: {} ({:?})", i, field.name(), field.data_type());
+                    error!("  Field {}: {} ({:?})", i, field.name(), field.data_type());
                 }
                 Err(anyhow::anyhow!("Failed to create record batch: {}", e))
             }

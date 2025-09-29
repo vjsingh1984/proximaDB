@@ -379,11 +379,11 @@ impl UnifiedParquetReader {
         // Extract metadata filters from search plan for row group pruning
         let metadata_filters = search_plan.metadata_filters.clone();
 
-        println!("🚀 UnifiedParquetReader: Optimized search starting");
-        println!("  📊 Files to scan: {}", self.file_paths.len());
-        println!("  📋 Column projection: vectors={}, metadata={}", needs_vectors, needs_metadata);
+        debug!("UnifiedParquetReader: Optimized search starting");
+        debug!("  Files to scan: {}", self.file_paths.len());
+        debug!("  Column projection: vectors={}, metadata={}", needs_vectors, needs_metadata);
         if !metadata_filters.is_empty() {
-            println!("  🔍 Metadata filters: {} conditions", metadata_filters.len());
+            debug!("  Metadata filters: {} conditions", metadata_filters.len());
         }
 
         let mut all_results = Vec::new();
@@ -436,11 +436,8 @@ impl UnifiedParquetReader {
         let processing_time_us = start_time.elapsed().as_micros() as i64;
         let total_results = all_results.len();
 
-        println!("🎯 UnifiedParquetReader: Search complete");
-        println!("  📊 Records scanned: {}", total_records_scanned);
-        println!("  🚫 Row groups skipped: {}", row_groups_skipped);
-        println!("  ✅ Results returned: {}", total_results);
-        println!("  ⏱️ Time: {}ms", processing_time_us / 1000);
+        info!("UnifiedParquetReader: Search complete - scanned: {}, skipped: {}, returned: {}, time: {}ms",
+              total_records_scanned, row_groups_skipped, total_results, processing_time_us / 1000);
 
         // For queries without filters, the main optimizations are:
         // 1. Column projection (skip metadata if not needed)
@@ -542,7 +539,7 @@ impl UnifiedParquetReader {
             // BLOOM FILTER OPTIMIZATION: Further prune based on ID bloom filters if searching for specific IDs
             selected = self.apply_bloom_filter_pruning(file_path, &selected, metadata_filters).await?;
 
-            println!("  🎯 Row group pruning: {} filters applied", metadata_filters.len());
+            debug!("  Row group pruning: {} filters applied", metadata_filters.len());
             selected
         } else {
             // No filters, select all row groups
@@ -655,8 +652,8 @@ impl UnifiedParquetReader {
             records.extend(batch_records);
         }
 
-        println!("  📊 Row groups: {}/{} selected (skipped {})",
-                 total_row_groups - row_groups_skipped, total_row_groups, row_groups_skipped);
+        debug!("  Row groups: {}/{} selected (skipped {})",
+               total_row_groups - row_groups_skipped, total_row_groups, row_groups_skipped);
 
         Ok((records, row_groups_skipped))
     }
@@ -687,7 +684,7 @@ impl UnifiedParquetReader {
             return Ok(selected_row_groups.to_vec());
         }
 
-        println!("  🔍 Bloom filter check: {} ID lookups", id_filters.len());
+        trace!("  Bloom filter check: {} ID lookups", id_filters.len());
 
         // For now, we'll return all row groups as bloom filter reading from Parquet
         // requires additional implementation. This is where the actual bloom filter
@@ -718,8 +715,8 @@ impl UnifiedParquetReader {
 
         let quantized_prefilter = has_binary || has_int8 || has_pq8;
         if quantized_prefilter {
-            println!("  ⚡ Using quantized vectors for pre-filtering (binary={}, int8={}, pq8={})",
-                     has_binary, has_int8, has_pq8);
+            debug!("  Using quantized vectors for pre-filtering (binary={}, int8={}, pq8={})",
+                   has_binary, has_int8, has_pq8);
         }
 
         let mut records = Vec::new();
@@ -1051,29 +1048,29 @@ impl UnifiedParquetReader {
             }
         }
 
-        println!("🔍 Schema detection for {}: {} direct columns, extra_meta scan: {}",
-                file_path, direct_columns.len(), needs_extra_meta_scan);
+        debug!("Schema detection for {}: {} direct columns, extra_meta scan: {}",
+               file_path, direct_columns.len(), needs_extra_meta_scan);
 
         // Decision: Choose fast or slow path based on schema analysis
         if !direct_columns.is_empty() && !needs_extra_meta_scan {
             // FAST PATH: All filter columns are directly available in schema
-            println!("  → Fast path: Using direct column filtering with bloom filters");
+            debug!("  Fast path: Using direct column filtering with bloom filters");
             self.fast_path_query(file_path, filter, &direct_columns).await
         } else if needs_extra_meta_scan && allow_slow_queries {
             // SLOW PATH: Need to scan extra_meta column for some filters
-            println!("  → Slow path: Full scan with extra_meta filtering");
+            debug!("  Slow path: Full scan with extra_meta filtering");
             self.slow_path_query(file_path, filter).await
         } else if !direct_columns.is_empty() {
             // MIXED PATH: Some columns direct, some need extra_meta - partial optimization
-            println!("  → Mixed path: Partial direct filtering");
+            debug!("  Mixed path: Partial direct filtering");
             self.mixed_path_query(file_path, filter, &direct_columns).await
         } else if !allow_slow_queries {
             // No optimization possible and slow queries not allowed
-            println!("  → Rejected: Slow scan required but not allowed");
+            debug!("  Rejected: Slow scan required but not allowed");
             Ok(vec![])
         } else {
             // FALLBACK: Full scan without any optimization
-            println!("  → Fallback: Full file scan");
+            debug!("  Fallback: Full file scan");
             self.slow_path_query(file_path, filter).await
         }
     }
@@ -1108,7 +1105,7 @@ impl UnifiedParquetReader {
             (0..bloom_filters.num_row_groups).collect()
         };
 
-        println!("    - Bloom filters reduced to {} row groups", candidate_row_groups.len());
+        trace!("    Bloom filters reduced to {} row groups", candidate_row_groups.len());
 
         // 2. Read only candidate row groups with projection
         let fs = self.get_filesystem_for_path(file_path)?;
@@ -1122,7 +1119,7 @@ impl UnifiedParquetReader {
             .filter(|record| self.matches_direct_filter(record, filter, direct_columns))
             .collect();
 
-        println!("    - Final results: {} records after direct filtering", filtered_records.len());
+        trace!("    Final results: {} records after direct filtering", filtered_records.len());
         Ok(filtered_records)
     }
 
@@ -1137,14 +1134,14 @@ impl UnifiedParquetReader {
         let path = FilesystemFactory::resolve_path(file_path)?;
 
         let all_records = self.read_entire_file_raw(&path, fs).await?;
-        println!("    - Read {} total records for extra_meta filtering", all_records.len());
+        trace!("    Read {} total records for extra_meta filtering", all_records.len());
 
         // 2. Apply filters by examining each record's metadata
         let filtered_records = all_records.into_iter()
             .filter(|record| self.matches_extra_meta_filter(record, filter))
             .collect::<Vec<_>>();
 
-        println!("    - Final results: {} records after extra_meta filtering", filtered_records.len());
+        trace!("    Final results: {} records after extra_meta filtering", filtered_records.len());
         Ok(filtered_records)
     }
 
@@ -1173,12 +1170,12 @@ impl UnifiedParquetReader {
             self.read_entire_file_raw(&path, fs).await?
         };
 
-        println!("    - After direct filtering: {} records", records.len());
+        trace!("    After direct filtering: {} records", records.len());
 
         // 2. Apply extra_meta filters to remaining records
         records.retain(|record| self.matches_extra_meta_filter(record, filter));
 
-        println!("    - Final results: {} records after mixed filtering", records.len());
+        trace!("    Final results: {} records after mixed filtering", records.len());
         Ok(records)
     }
 
@@ -1262,7 +1259,7 @@ impl UnifiedParquetReader {
             let cached_fs = &cache_context.cached_filesystem;
             let cache_key = format!("parquet_schema:{}:{}", cache_context.engine_type, file_path);
 
-            println!("🔍 Checking schema cache for key: {}", cache_key);
+            trace!("Checking schema cache for key: {}", cache_key);
 
             // UnifiedCachingFilesystem optimizations:
             // 1. For cloud files, it caches parquet footer metadata locally
@@ -1302,8 +1299,8 @@ impl UnifiedParquetReader {
             let schema = metadata.file_metadata().schema_descr_ptr();
 
             // Schema is now cached in UnifiedCachingFilesystem automatically
-            println!("📋 Schema cached for {}: {} columns (engine: {})",
-                    file_path, schema.num_columns(), cache_context.engine_type);
+            trace!("Schema cached for {}: {} columns (engine: {})",
+                   file_path, schema.num_columns(), cache_context.engine_type);
 
             Ok(schema)
         } else {
@@ -1315,7 +1312,7 @@ impl UnifiedParquetReader {
             let metadata = reader.metadata();
             let schema = metadata.file_metadata().schema_descr_ptr();
 
-            println!("📋 Schema loaded (no cache): {} columns", schema.num_columns());
+            trace!("Schema loaded (no cache): {} columns", schema.num_columns());
             Ok(schema)
         }
     }
@@ -1352,11 +1349,9 @@ impl UnifiedParquetReader {
             .get_candidate_row_groups(file_path, &column_filters)
             .await?;
 
-        println!(
-            "🔍 Bloom filter optimization: Checking {} out of {} row groups",
-            candidate_row_groups.len(),
-            self.load_bloom_filters(file_path).await?.num_row_groups
-        );
+        trace!("Bloom filter optimization: Checking {} out of {} row groups",
+               candidate_row_groups.len(),
+               self.load_bloom_filters(file_path).await?.num_row_groups);
 
         // Only read from candidate row groups
         let fs = self.get_filesystem_for_path(file_path)?;
