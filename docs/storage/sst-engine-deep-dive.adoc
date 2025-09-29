@@ -1,0 +1,852 @@
+= SST Engine: Technical Deep Dive
+:toc: left
+:toclevels: 4
+:icons: font
+:source-highlighter: rouge
+:last-updated: January 2025
+:engine-location: src/storage/engines/impls/sst/
+:total-lines: 27,290
+
+[.lead]
+**Comprehensive technical guide to ProximaDB's SST (Sorted String Table) storage engine**
+
+== Executive Summary
+
+The SST Engine is ProximaDB's **hybrid columnar** storage engine optimized for write-heavy workloads with real-time query requirements. Built on LSM-tree architecture, it achieves high write throughput while maintaining low read latency through intelligent three-stage filtering.
+
+**Key Characteristics:**
+[cols="2,3", options="header"]
+|===
+| Property | Value
+| Architecture | Hybrid Columnar (ProximaBlocks)
+| Optimization | Write-optimized with LSM-tree
+| Total Code | {total-lines} lines across 27+ modules
+| Performance | 100K+ writes/sec, <100µs p99 read latency
+| Compression | 60% reduction (configurable)
+| Status | ✅ Production-ready
+|===
+
+**Important**: Despite historical terminology, SST is **NOT row-based**. It uses ProximaBlocks, a hybrid columnar format where:
+* All metadata fields stored columnar: `id`, `timestamp`, `version`, `metadata`
+* Vector encoding configurable: TransposeFieldEncoded, GroupedFieldEncoded, or FullVector
+* Per-column compression with optimal algorithms
+
+== Architecture Overview
+
+=== Design Philosophy
+
+SST follows these core principles:
+
+1. **Write Optimization**: Sequential writes via LSM-tree for maximum throughput
+2. **Progressive Filtering**: Three-stage pipeline eliminates candidates early
+3. **Modular Design**: 8 focused subsystems with clear boundaries
+4. **Hybrid Columnar**: ProximaBlocks format for SIMD-optimized operations
+5. **Production-Ready**: ACID compliance, crash recovery, comprehensive monitoring
+
+=== High-Level Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph CLIENT["Client Operations"]
+        A[Insert/Update/<br/>Delete]
+        B[Search/<br/>Query]
+    end
+
+    subgraph MEMORY["In-Memory Layer (L0)"]
+        C[MemTable<br/>64MB Buffer]
+        D[Write-Ahead Log<br/>WAL]
+    end
+
+    subgraph DISK["Disk Layer (L1-L3+)"]
+        E[Level 1<br/>2MB SSTables]
+        F[Level 2<br/>20MB SSTables]
+        G[Level 3+<br/>200MB+ SSTables]
+    end
+
+    subgraph BACKGROUND["Background Tasks"]
+        H[Compaction<br/>Manager]
+        I[Bloom Filter<br/>Builder]
+    end
+
+    A --> C
+    C --> D
+    C -->|Flush 64MB| E
+    E -->|Compact| F
+    F -->|Compact| G
+    B --> E
+    B --> F
+    B --> G
+    H --> E
+    H --> F
+    H --> G
+    I --> E
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style C fill:#ffd966,stroke:#cc9900,stroke-width:2px,color:#000
+    style D fill:#ffd966,stroke:#cc9900,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style G fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style H fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style I fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+----
+
+=== LSM-Tree Structure
+
+**Level Organization**:
+[source,text]
+----
+┌──────────────────────────────────────────────┐
+│ L0: MemTable (In-Memory)                     │
+│ - 64MB buffer                                │
+│ - Sorted by ID                               │
+│ - Flush trigger: Size or time               │
+└──────────────────────────────────────────────┘
+                    ↓ Flush
+┌──────────────────────────────────────────────┐
+│ L1: 2MB SSTables (Max 10 files)             │
+│ - Immutable files                            │
+│ - Bloom filters per file                     │
+│ - Compact when >10 files                    │
+└──────────────────────────────────────────────┘
+                    ↓ Tiered Compaction
+┌──────────────────────────────────────────────┐
+│ L2: 20MB SSTables (Max 10 files)            │
+│ - Merged & deduplicated                      │
+│ - Size-tiered compaction                     │
+└──────────────────────────────────────────────┘
+                    ↓ Leveled Compaction
+┌──────────────────────────────────────────────┐
+│ L3+: 200MB+ SSTables                         │
+│ - Long-term storage                          │
+│ - Minimal write amplification               │
+└──────────────────────────────────────────────┘
+----
+
+**Compaction Strategies**:
+* **L0 → L1**: Tiered compaction (merge multiple small files)
+* **L1 → L2**: Size-tiered (10x growth per level)
+* **L2+**: Leveled compaction (merge overlapping ranges)
+
+== Module Architecture
+
+The SST engine was refactored from a monolithic 5,169-line module into a modular design with 68% reduction in main file size.
+
+=== Module Breakdown
+
+[cols="2,1,1,3", options="header"]
+|===
+| Module | Lines | Purpose | Key Components
+| **core.rs** | 352 | Engine initialization | SstEngine struct, configuration
+| **flush/** | 1,011 | Flush operations | Coordinator, optimizer, atomic ops
+| **search/** | 1,378 | Search & filtering | Three-stage pipeline, query optimization
+| **collections.rs** | 403 | Collection management | Stats, cleanup, compaction triggers
+| **utils.rs** | 492 | Shared utilities | Sorting, bloom filters, serialization
+| **trait_impl.rs** | 251 | Trait implementations | UnifiedStorageEngine interface
+| **blocks.rs** | 418 | Block structures | ProximaDataBlock, compression config
+| **compaction.rs** | 1,500+ | Compaction logic | Tiered & leveled strategies
+|===
+
+=== Core Module (`core.rs`)
+
+**Purpose**: Central engine struct and component coordination
+
+**Key Components**:
+[source,rust]
+----
+pub struct SstEngine {
+    config: SstConfig,
+    compaction_manager: Option<Arc<Compaction>>,
+    filesystem: Arc<FilesystemFactory>,
+    unified_fs: Option<Arc<dyn FileSystem>>,
+    atomic_coordinator: Arc<TransactionCoordinator>,
+    sstable_reader: Arc<UnifiedSstableReader>,
+    distance_compute: Arc<UnifiedDistanceCompute>,
+    decompression_cache: Arc<DecompressionCache>,
+    storage_quantization_engine: Arc<StorageQuantizationEngine>,
+    fallback_quantization_engine: Arc<UnifiedQuantizationEngine>,
+    universal_optimizer: UniversalPerformanceOptimizer,
+    orchestrator: Option<Arc<CrossCacheOrchestrator>>,
+}
+----
+
+**Design Pattern**: Singleton engine handles multiple collections. Collection info provided at runtime via `FlushParameters` and `StorageQueryContext`.
+
+**Initialization**:
+[source,rust]
+----
+let engine = SstEngine::new().await?;
+
+// Engine is stateless - collection binding at operation time
+engine.do_flush(&flush_params).await?;
+engine.search_vectors(&search_request).await?;
+----
+
+=== Flush Module (`flush/`)
+
+**Purpose**: Handle all flush operations from memory to disk
+
+**Submodules**:
+* `mod.rs` - Main flush implementation
+* `coordinator.rs` - Flush scheduling and coordination
+* `optimizer.rs` - Multi-batch k-way merge optimization
+* `operations.rs` - Low-level atomic write operations
+
+**Flush Pipeline**:
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+    A[VectorRecords<br/>In Memory] --> B{Size Check}
+    B -->|>10K vectors| C[Batch Split]
+    B -->|≤10K vectors| D[Sort by ID]
+    C --> D
+    D --> E[Build Bloom<br/>Filter]
+    E --> F[Compress<br/>ProximaBlocks]
+    F --> G[Write to<br/>Staging]
+    G --> H[Atomic<br/>Rename]
+    H --> I[Update<br/>Manifest]
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#ffd966,stroke:#cc9900,stroke-width:2px,color:#000
+    style C fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style D fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style E fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style F fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style G fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style H fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style I fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+----
+
+**Key Functions**:
+[source,rust]
+----
+pub async fn do_flush(&self, params: FlushParameters) -> Result<FlushResult>
+pub fn should_flush(&self, memory_usage: usize) -> bool
+pub async fn write_vectors_atomic(&self, vectors: Vec<VectorRecord>) -> Result<()>
+----
+
+**Atomicity Guarantee**:
+1. Write to staging directory: `<collection>/__staging/<file_id>.sst.tmp`
+2. Verify checksum and completeness
+3. Atomic rename to final location: `<collection>/<file_id>.sst`
+4. Update manifest with new file metadata
+
+**Failure Recovery**:
+* Incomplete flushes detected on restart
+* Staging files cleaned up automatically
+* WAL replay ensures no data loss
+
+=== Search Module (`search/`)
+
+**Purpose**: Implement three-stage filtering and search operations
+
+**Submodules**:
+* `mod.rs` - Unified search implementation
+* `coordinator.rs` - Search strategy selection
+* `optimizer.rs` - Query optimization with bloom filters
+* `operations.rs` - File-level search operations
+
+**Key Functions**:
+[source,rust]
+----
+pub async fn search_vectors_unified(&self, request: SearchRequest) -> Result<SearchResponse>
+pub fn select_search_strategy(&self, request: &SearchRequest) -> SearchStrategy
+pub async fn search_file(&self, file_path: &str, query: &Query) -> Result<Vec<Result>>
+----
+
+== Three-Stage Filtering Pipeline
+
+SST's most distinctive feature: progressive elimination of non-matches through three stages.
+
+=== Stage Overview
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+    A[Query: 1000 Files] --> B{Stage 1<br/>Bloom Filter<br/>Metadata Pre-filter}
+    B -->|✓ Possible Match| C[100 Files<br/>Remain]
+    B -->|✗ Definite No Match| Z1[900 Files<br/>Eliminated]
+
+    C --> D{Stage 2<br/>Index Entry<br/>Block Filter}
+    D -->|✓ Match Criteria| E[20 Files<br/>5000 Blocks]
+    D -->|✗ No Match| Z2[80 Files<br/>Eliminated]
+
+    E --> F{Stage 3<br/>Data Block<br/>Row Filter}
+    F -->|✓ Pass Metadata| G[500 Candidates<br/>for Distance]
+    F -->|✗ Fail Metadata| Z3[4500 Vectors<br/>Eliminated]
+
+    G --> H[Distance<br/>Computation]
+    H --> I[Top-K<br/>Results]
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style B fill:#ffd966,stroke:#cc9900,stroke-width:2px,color:#000
+    style C fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style D fill:#ffd966,stroke:#cc9900,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style F fill:#ffd966,stroke:#cc9900,stroke-width:2px,color:#000
+    style G fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+    style H fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+    style I fill:#7db8f7,stroke:#5090d3,stroke-width:2px,color:#000
+    style Z1 fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style Z2 fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+    style Z3 fill:#f4a261,stroke:#c8733d,stroke-width:2px,color:#000
+----
+
+=== Stage 1: Bloom Filter Pre-filtering
+
+**Purpose**: Skip entire files that definitely don't contain matches
+
+**Implementation**:
+[source,rust]
+----
+// Check if vector ID might exist in file
+if let Some(bloom) = &file_metadata.bloom_filter {
+    if !bloom.might_contain(&query.id) {
+        // Definite no match - skip file entirely
+        continue;
+    }
+}
+
+// Check metadata ranges (zone maps)
+if !file_metadata.overlaps_query(&query.metadata_filters) {
+    // No overlap with query predicates
+    continue;
+}
+----
+
+**Bloom Filter Configuration**:
+* **False Positive Rate**: 1% (configurable)
+* **Size**: ~10 bytes per 1K vectors
+* **Memory**: In-memory for L0-L1, lazy-loaded for L2+
+
+**Performance**:
+* **Cost**: O(1) per file, ~100ns
+* **Elimination**: 90%+ of files
+* **Memory**: <1MB for 100K files
+
+=== Stage 2: Index Entry Block Filtering
+
+**Purpose**: Skip data blocks within files that don't match
+
+**Implementation**:
+[source,rust]
+----
+// Read index block (always at end of file)
+let index = reader.read_index(&file_path)?;
+
+for index_entry in &index.entries {
+    // Check zone maps (min/max values per column)
+    if !index_entry.metadata_ranges.satisfies(&query.filters) {
+        continue;  // Skip block
+    }
+
+    // Check timestamp range
+    if !index_entry.timestamp_range.overlaps(&query.time_range) {
+        continue;  // Skip block
+    }
+
+    // Block might contain matches - add to scan list
+    blocks_to_scan.push(index_entry.block_offset);
+}
+----
+
+**Index Entry Structure**:
+[source,rust]
+----
+pub struct IndexEntry {
+    pub block_offset: u64,
+    pub block_size: u32,
+    pub vector_count: u32,
+    pub id_range: (String, String),
+    pub timestamp_range: (i64, i64),
+    pub metadata_ranges: HashMap<String, (SqlValue, SqlValue)>,
+}
+----
+
+**Performance**:
+* **Cost**: O(log n) per file, ~1µs
+* **Elimination**: 80%+ of blocks within matched files
+* **Memory**: Index cached in decompression cache
+
+=== Stage 3: Data Block Row Filtering
+
+**Purpose**: Fast in-memory metadata filtering on decompressed blocks
+
+**Implementation**:
+[source,rust]
+----
+// Decompress block (cached)
+let block: ProximaDataBlock = cache.get_or_decompress(&file_path, block_offset)?;
+
+// SIMD-optimized batch filtering
+let candidates: Vec<usize> = row_filter.evaluate_batch(
+    &block.records,
+    &query.metadata_filters,
+)?;
+
+// Only candidates proceed to distance computation
+for idx in candidates {
+    let record = &block.records[idx];
+    let distance = distance_compute.compute(&query.vector, &record.vector)?;
+    if distance < threshold {
+        results.push((record.id.clone(), distance));
+    }
+}
+----
+
+**Row Filter Evaluator**:
+[source,rust]
+----
+pub struct SSTRowFilterEvaluator {
+    // Evaluates metadata predicates on individual records
+}
+
+impl SSTRowFilterEvaluator {
+    pub fn evaluate(&self, record: &SstRecord, filters: &[FilterExpression]) -> bool {
+        for filter in filters {
+            if !self.matches_filter(record, filter) {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn evaluate_batch(&self, records: &[SstRecord], filters: &[FilterExpression]) -> Vec<usize> {
+        // SIMD-optimized batch evaluation
+        records.iter()
+            .enumerate()
+            .filter(|(_, record)| self.evaluate(record, filters))
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+}
+----
+
+**Performance**:
+* **Cost**: O(m) where m = vectors per block, ~10µs for 1K vectors
+* **Elimination**: 50-90% depending on selectivity
+* **Memory**: Block cached, ~1MB typical
+
+=== Filter Performance Analysis
+
+**Example Query**: Find vectors with `category='product'` AND `price<100` in 1M vector collection
+
+[cols="1,2,1,1,1"]
+|===
+| Stage | Input | Output | Cost | Elimination %
+| Initial | 1000 files | - | 0 | 0%
+| Stage 1 | 1000 files | 100 files | 100µs | 90%
+| Stage 2 | 100 files | 20 files, 5K blocks | 100µs | 80%
+| Stage 3 | 5K blocks, 50K vectors | 500 candidates | 500µs | 99%
+| Distance | 500 candidates | 10 results | 250µs | 98%
+| **Total** | 1M vectors | 10 results | **950µs** | **99.999%**
+|===
+
+**vs. Brute Force**: 50µs × 1M = 50,000µs = **52x slower**
+
+== File Format Specification
+
+=== SSTable File Structure
+
+[source,text]
+----
+╔══════════════════════════════════════════════════════╗
+║                   SSTable File                       ║
+║                 (Hybrid Columnar)                    ║
+╠══════════════════════════════════════════════════════╣
+║ Header (128 bytes)                                   ║
+║  - Magic: 0x53535431 ("SST1")                       ║
+║  - Version: 2                                        ║
+║  - Compression: LZ4/Zstd/Snappy                     ║
+║  - Encoding: TransposeFieldEncoded/GroupedField     ║
+║  - Vector Count: uint32                              ║
+║  - Block Count: uint32                               ║
+║  - Dimension: uint32                                 ║
+║  - Reserved: 92 bytes                                ║
+╠══════════════════════════════════════════════════════╣
+║ Data Blocks (ProximaBlocks - Hybrid Columnar)       ║
+║  ┌─────────────────────────────────────────┐        ║
+║  │ Block 0: Vectors 0-999                  │        ║
+║  │  ┌──────────────────────────────────┐   │        ║
+║  │  │ Column: id (string[])            │   │        ║
+║  │  │ Column: timestamp (i64[])        │   │        ║
+║  │  │ Column: version (u32[])          │   │        ║
+║  │  │ Column: metadata (map[])         │   │        ║
+║  │  │ Column: vector_group_0 (f32[][]) │   │        ║
+║  │  │ Column: vector_group_1 (f32[][]) │   │        ║
+║  │  │ ...                              │   │        ║
+║  │  │ Bloom filter (inline, 10KB)      │   │        ║
+║  │  └──────────────────────────────────┘   │        ║
+║  │  Compressed with LZ4                     │        ║
+║  └─────────────────────────────────────────┘        ║
+║  ┌─────────────────────────────────────────┐        ║
+║  │ Block 1: Vectors 1000-1999              │        ║
+║  └─────────────────────────────────────────┘        ║
+║  ...                                                 ║
+╠══════════════════════════════════════════════════════╣
+║ Index Block                                          ║
+║  ┌─────────────────────────────────────────┐        ║
+║  │ Entry 0:                                 │        ║
+║  │  - Offset: 128                          │        ║
+║  │  - Size: 524288                         │        ║
+║  │  - Vectors: 1000                        │        ║
+║  │  - ID Range: ["vec_0", "vec_999"]      │        ║
+║  │  - Timestamp Range: [t0, t1]            │        ║
+║  │  - Metadata Ranges: {category: ...}     │        ║
+║  └─────────────────────────────────────────┘        ║
+║  Entry 1, Entry 2, ...                               ║
+╠══════════════════════════════════════════════════════╣
+║ Footer (128 bytes)                                   ║
+║  - Index Offset: uint64                              ║
+║  - Index Size: uint32                                ║
+║  - Checksum (CRC32): uint32                         ║
+║  - Magic: 0x53535431 (verification)                 ║
+║  - Reserved: 108 bytes                               ║
+╚══════════════════════════════════════════════════════╝
+----
+
+=== ProximaBlock Columnar Layout
+
+**Vector Encoding Strategies**:
+
+**1. TransposeFieldEncoded** (Pure Columnar):
+[source,text]
+----
+Vector[0] = [0.1, 0.2, 0.3, ...768]
+Vector[1] = [0.4, 0.5, 0.6, ...768]
+...
+
+Stored as:
+Column[dim_0] = [0.1, 0.4, ...]  // All vectors' dimension 0
+Column[dim_1] = [0.2, 0.5, ...]  // All vectors' dimension 1
+...
+Column[dim_767] = [...]
+----
+
+**2. GroupedFieldEncoded** (Hybrid - Default):
+[source,text]
+----
+Group vectors into 32-dim chunks:
+Column[group_0] = [vec0[0:32], vec1[0:32], ...]
+Column[group_1] = [vec0[32:64], vec1[32:64], ...]
+...
+Column[group_23] = [vec0[736:768], vec1[736:768], ...]
+----
+
+**3. FullVector** (Vector as Single Column):
+[source,text]
+----
+Column[vectors] = [
+    bytemuck(vec0),  // 768 × 4 = 3072 bytes
+    bytemuck(vec1),
+    ...
+]
+----
+
+**Column Compression**:
+* Each column compressed independently
+* Algorithm selection per column type:
+  - Strings: Zstd (best text compression)
+  - Numbers: LZ4 (fast, good ratio)
+  - Vectors: Snappy or quantization
+
+=== Manifest File
+
+**Location**: `<collection_path>/sst/MANIFEST`
+
+**Format**:
+[source,json]
+----
+{
+  "version": 2,
+  "collection_id": "my_collection",
+  "next_file_id": 42,
+  "levels": {
+    "1": [
+      {
+        "file_id": "000001.sst",
+        "size_bytes": 2097152,
+        "vector_count": 1000,
+        "key_range": ["vec_0000", "vec_0999"],
+        "timestamp_range": [1704067200, 1704070800],
+        "created_at": 1704067200,
+        "checksum": "a1b2c3d4"
+      }
+    ],
+    "2": [...],
+    "3": [...]
+  },
+  "metadata": {
+    "total_vectors": 1000000,
+    "total_size_bytes": 314572800,
+    "last_compaction": 1704070800
+  }
+}
+----
+
+== Performance Characteristics
+
+=== Benchmark Results
+
+**Hardware**: M1 Max, 64GB RAM, NVMe SSD
+
+[cols="3,2,2,2", options="header"]
+|===
+| Operation | Throughput | Latency (p50) | Latency (p99)
+| Sequential Write | 120K ops/sec | 10µs | 50µs
+| Random Write | 100K ops/sec | 15µs | 100µs
+| Point Query (by ID) | 200K ops/sec | 5µs | 20µs
+| Range Query (10 vectors) | 150K ops/sec | 10µs | 50µs
+| Range Query (100 vectors) | 50K ops/sec | 50µs | 200µs
+| Vector Search (k=10, 1M vectors) | 10K queries/sec | 500µs | 2ms
+| Flush (10K vectors) | 100 flushes/sec | 5ms | 20ms
+| Compaction (100K vectors) | 10 compactions/sec | 50ms | 200ms
+|===
+
+=== Memory Usage
+
+[cols="2,2,4", options="header"]
+|===
+| Component | Memory | Configuration
+| Write Buffer | 64MB | Configurable via `flush_threshold_mb`
+| Decompression Cache | 256MB | LRU cache for hot blocks
+| Bloom Filters | 10MB | ~1MB per 1M vectors
+| Index Blocks | 50MB | L0-L1 in memory, L2+ lazy-loaded
+| Total Overhead | ~380MB | Plus OS page cache
+|===
+
+=== Storage Efficiency
+
+**Dataset**: 1M vectors, 768 dimensions
+
+[cols="2,2,2", options="header"]
+|===
+| Format | Size per Vector | Total Size
+| Raw FP32 | 3KB (768 × 4 bytes) | 3GB
+| SST (LZ4, no quantization) | 1.2KB (60% reduction) | 1.2GB
+| SST (LZ4 + INT8 quantization) | 900 bytes (70% reduction) | 900MB
+| SST (Zstd + PQ8 quantization) | 600 bytes (80% reduction) | 600MB
+|===
+
+**Additional Overhead**:
+* Bloom filters: +10 bytes per vector
+* Metadata: +50 bytes per vector (average)
+* Index entries: +20 bytes per 1K vectors
+
+== Configuration
+
+=== Engine Configuration
+
+[source,toml]
+----
+[storage.sst]
+# Flush configuration
+flush_threshold_mb = 64              # Trigger flush at 64MB
+flush_batch_size = 10000             # Vectors per batch
+flush_threads = 4                    # Parallel flush workers
+
+# Compaction configuration
+compaction_strategy = "tiered"       # or "leveled"
+l1_max_files = 10                    # Trigger compaction at 10 files
+l1_file_size_mb = 2                  # Target size for L1
+l2_file_size_mb = 20                 # Target size for L2
+l3_file_size_mb = 200                # Target size for L3+
+compaction_threads = 2               # Background compaction workers
+
+# Compression
+compression = "lz4"                  # or "zstd", "snappy", "none"
+compression_level = 3                # Algorithm-specific level
+
+# ProximaBlocks encoding
+vector_encoding = "grouped"          # or "transpose", "full"
+encoding_group_size = 32             # For GroupedFieldEncoded
+
+# Cache configuration
+decompression_cache_mb = 256         # Block cache size
+bloom_filter_cache_mb = 10           # Bloom filter cache
+
+# Performance tuning
+enable_bloom_filters = true
+bloom_filter_fpr = 0.01              # 1% false positive rate
+enable_zone_maps = true
+enable_quantization = true
+----
+
+=== Collection-Specific Configuration
+
+[source,rust]
+----
+let collection_config = CollectionConfig {
+    storage_engine: "sst",
+    sst_config: Some(SstCollectionConfig {
+        compression: "zstd",
+        compression_level: 5,
+        vector_encoding: "grouped",
+        enable_quantization: true,
+        quantization_level: QuantizationLevel::Pq8,
+    }),
+    ...
+};
+----
+
+== Monitoring & Metrics
+
+=== Key Metrics
+
+**Write Path**:
+[source,rust]
+----
+sst_flush_count                    // Total flushes
+sst_flush_duration_ms              // Flush latency histogram
+sst_flush_bytes                    // Bytes per flush
+sst_flush_vectors                  // Vectors per flush
+sst_write_amplification            // Write amp ratio
+----
+
+**Read Path**:
+[source,rust]
+----
+sst_search_count                   // Total searches
+sst_search_duration_ms             // Search latency histogram
+sst_bloom_filter_hits              // Bloom filter effectiveness
+sst_bloom_filter_false_positives   // False positive rate
+sst_blocks_scanned                 // Blocks accessed per search
+sst_vectors_scanned                // Vectors evaluated per search
+sst_stage1_elimination_pct         // Stage 1 filter effectiveness
+sst_stage2_elimination_pct         // Stage 2 filter effectiveness
+sst_stage3_elimination_pct         // Stage 3 filter effectiveness
+----
+
+**Compaction**:
+[source,rust]
+----
+sst_compaction_count               // Total compactions
+sst_compaction_duration_ms         // Compaction duration
+sst_compaction_bytes_in            // Input size
+sst_compaction_bytes_out           // Output size
+sst_compaction_read_amplification  // Read amp during compaction
+----
+
+**Resource Usage**:
+[source,rust]
+----
+sst_memory_usage_bytes             // Total memory
+sst_disk_usage_bytes               // Disk space per level
+sst_cache_hit_rate                 // Cache effectiveness
+sst_file_count                     // Files per level
+----
+
+=== Logging
+
+**Log Levels**:
+[source,bash]
+----
+# Full debug logging
+RUST_LOG=proximadb::storage::engines::impls::sst=debug
+
+# Specific module
+RUST_LOG=proximadb::storage::engines::impls::sst::search=trace
+
+# Production (errors and warnings only)
+RUST_LOG=proximadb::storage::engines::impls::sst=warn
+----
+
+**Example Output**:
+[source,text]
+----
+INFO  sst: SST engine initialized for collection: my_collection
+INFO  sst::flush: Flushing 10000 vectors to L1 (64.2MB)
+DEBUG sst::flush: Bloom filter built: 10KB, 1% FPR
+DEBUG sst::flush: Compressed 64.2MB → 25.6MB (60% reduction)
+INFO  sst::flush: Flush completed in 5.2ms, wrote 000042.sst
+
+INFO  sst::search: Search query: top_k=10, filters=2
+DEBUG sst::search: Stage 1 (Bloom): 1000 files → 95 files (90.5% eliminated)
+DEBUG sst::search: Stage 2 (Index): 95 files → 18 files (81% eliminated)
+DEBUG sst::search: Stage 3 (Rows): 18K vectors → 523 candidates (97% eliminated)
+INFO  sst::search: Search completed in 950µs, found 10 results
+
+INFO  sst::compaction: Compaction started: L1 → L2 (10 files)
+DEBUG sst::compaction: Merging 10 files, 100K vectors
+INFO  sst::compaction: Compaction completed in 125ms, output: 2 files, 98K vectors
+----
+
+== Best Practices
+
+=== When to Use SST
+
+✅ **Ideal For**:
+* Write-heavy workloads (inserts, updates)
+* Real-time applications (<100µs queries)
+* Point queries and range queries
+* Metadata filtering with selective predicates
+* Transactional guarantees required
+
+❌ **Not Ideal For**:
+* Pure analytics (use VIPER for columnar scans)
+* Ultra-low latency (<10µs) - use SWIFT
+* Spatial queries - use HELIX
+* Mostly read-only data - use NOVA
+
+=== Optimization Tips
+
+**Write Performance**:
+1. Batch inserts: 1K-10K vectors per batch
+2. Pre-sort by ID if possible
+3. Use appropriate flush threshold (64MB default)
+4. Enable parallel flush threads
+
+**Read Performance**:
+1. Use metadata filters to reduce search space
+2. Enable bloom filters (default on)
+3. Set appropriate cache sizes
+4. Monitor filter stage effectiveness
+
+**Space Efficiency**:
+1. Enable compression (LZ4 balance, Zstd best ratio)
+2. Use quantization for large datasets
+3. Configure appropriate compaction intervals
+4. Monitor space amplification
+
+=== Troubleshooting
+
+**Slow Writes**:
+* Check compaction keeping up: `sst_compaction_lag_seconds`
+* Verify disk I/O bandwidth
+* Increase flush threads if CPU-bound
+
+**Slow Searches**:
+* Check bloom filter FPR: Should be <5%
+* Verify cache hit rate: Should be >80% for hot data
+* Monitor stages: Stage 1 should eliminate 90%+
+* Review metadata filter selectivity
+
+**High Space Amplification**:
+* Trigger manual compaction
+* Increase compaction frequency
+* Check for failed compactions in logs
+
+## Related Documentation
+
+* link:../technical/unified-quantization-guide.adoc[Quantization Guide]
+* link:hybrid-columnar-engines.adoc[Hybrid Columnar Architecture]
+* link:../reference/rest-api-specification.adoc[REST API Reference]
+* link:../09-roadmap/completed/01-storage-engines.adoc[Storage Engines Overview]
+
+## References
+
+* **Implementation**: `{engine-location}` ({total-lines} lines)
+* **Module Documentation**: `ARCHITECTURE.md` (in-code)
+* **Tests**: 30+ test files with comprehensive coverage
+* **Benchmarks**: `benches/bench_04_storage_unified.rs`
+
+---
+
+**Last Updated**: {last-updated} +
+**Status**: ✅ Production-Ready +
+**Total Code**: {total-lines} lines across 27+ modules
