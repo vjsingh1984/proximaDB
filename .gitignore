@@ -1,7 +1,5 @@
 # Rust build artifacts and binaries
 /target/*
-# Allow Criterion HTML reports to be tracked
-!/target/criterion/
 **/*.rs.bk
 *.pdb
 
