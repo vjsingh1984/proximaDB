@@ -744,8 +744,9 @@ mod tests {
         // Create flush coordinator
         let flush_coordinator = Arc::new(WALFlushCoordinator::new());
 
-        // Create recovery manager
-        let config = crate::storage::persistence::write_ahead_log::config::WALConfig::default();
+        // Create recovery manager with temp_dir path
+        let mut config = crate::storage::persistence::write_ahead_log::config::WALConfig::default();
+        config.multi_disk.data_directories = vec![temp_dir.path().to_str().unwrap().to_string()];
         let wal_behavior = Arc::new(crate::storage::memtable::specialized::wal_behavior::WALBehaviorWrapper::new(crate::storage::memtable::MemtableConfig::default()));
         let recovery_manager =
             RecoveryManager::new(config, wal_behavior, filesystem_factory.clone());

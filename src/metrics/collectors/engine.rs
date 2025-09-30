@@ -424,9 +424,9 @@ mod tests {
         let collector = EngineMetricsCollector::new();
 
         // Register engines for comparison (normally done by storage engine initialization)
-        // Use weak references to dummy engines for testing
-        collector.register_engine("DSST".to_string(), Weak::<dyn UnifiedStorageEngine>::new()).await;
-        collector.register_engine("DVIPER".to_string(), Weak::<dyn UnifiedStorageEngine>::new()).await;
+        // Note: Cannot create Weak references directly for trait objects in tests
+        // In production, these are created from Arc::downgrade()
+        // For testing, we skip registration or use Arc then downgrade
 
         // Record some test operations
         collector
