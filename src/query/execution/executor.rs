@@ -694,26 +694,50 @@ impl QueryExecutor {
                 // For testing when vector service is not available, return mock results
                 #[cfg(test)]
                 {
-                    use crate::core::search::OptimizedSearchRecord;
+                    use crate::proto::proximadb_v1::{SearchResult, SearchVectorRecord, SqlValue};
                     vec![
-                        OptimizedSearchRecord {
-                            id: "test_vector_1".to_string(),
-                            score: 0.95,
-                            metadata: std::collections::HashMap::from([
-                                ("category".to_string(), serde_json::Value::String("electronics".to_string())),
-                                ("brand".to_string(), serde_json::Value::String("apple".to_string())),
-                            ]),
-                            payload: None,
-                        },
-                        OptimizedSearchRecord {
-                            id: "test_vector_2".to_string(),
-                            score: 0.87,
-                            metadata: std::collections::HashMap::from([
-                                ("category".to_string(), serde_json::Value::String("electronics".to_string())),
-                                ("brand".to_string(), serde_json::Value::String("samsung".to_string())),
-                            ]),
-                            payload: None,
-                        },
+                        SearchResult {
+                            collection_id: Some(collection_id.to_string()),
+                            results: vec![
+                                SearchVectorRecord {
+                                    id: "test_vector_1".to_string(),
+                                    score: 0.95,
+                                    vector: vec![],
+                                    metadata: std::collections::HashMap::from([
+                                        ("category".to_string(), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())) }),
+                                        ("brand".to_string(), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("apple".to_string())) }),
+                                    ]),
+                                    version: None,
+                                    similarity: None,
+                                    timestamp: None,
+                                    source: None,
+                                    expanded_context: vec![],
+                                    semantic_similarity: None,
+                                    engine_stats: std::collections::HashMap::new(),
+                                    index_path: None,
+                                    quantization_info: None,
+                                },
+                                SearchVectorRecord {
+                                    id: "test_vector_2".to_string(),
+                                    score: 0.87,
+                                    vector: vec![],
+                                    metadata: std::collections::HashMap::from([
+                                        ("category".to_string(), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("electronics".to_string())) }),
+                                        ("brand".to_string(), SqlValue { value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue("samsung".to_string())) }),
+                                    ]),
+                                    version: None,
+                                    similarity: None,
+                                    timestamp: None,
+                                    source: None,
+                                    expanded_context: vec![],
+                                    semantic_similarity: None,
+                                    engine_stats: std::collections::HashMap::new(),
+                                    index_path: None,
+                                    quantization_info: None,
+                                },
+                            ],
+                            total_found: 2,
+                        }
                     ]
                 }
                 #[cfg(not(test))]
