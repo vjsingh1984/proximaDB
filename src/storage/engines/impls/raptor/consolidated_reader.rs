@@ -564,6 +564,7 @@ impl RaptorReader {
         let elapsed = start_time.elapsed();
         let throughput = bytes_read as f64 / elapsed.as_secs_f64() / 1024.0 / 1024.0;
 
+        println!("[READER DEBUG] Scan completed: {} vectors from {} rowgroups", all_vectors.len(), total_rowgroups);
         tracing::info!(
             "✅ Full scan completed: {} vectors from {} rowgroups in {:.2}s ({:.1} MB/s)",
             all_vectors.len(),
@@ -826,10 +827,18 @@ impl RaptorReader {
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::StringArray>())
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'id' column in RecordBatch"))?;
 
-        let vector_array = batch
+        // Vector column can be either ListArray or FixedSizeListArray
+        let vector_col = batch
             .column_by_name("vector")
-            .and_then(|col| col.as_any().downcast_ref::<arrow_array::ListArray>())
-            .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'vector' column in RecordBatch"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing 'vector' column in RecordBatch"))?;
+
+        // Try FixedSizeListArray first (most common from writer)
+        let is_fixed_size_list = vector_col.as_any().downcast_ref::<arrow_array::FixedSizeListArray>().is_some();
+        let is_list = vector_col.as_any().downcast_ref::<arrow_array::ListArray>().is_some();
+
+        if !is_fixed_size_list && !is_list {
+            return Err(anyhow::anyhow!("'vector' column is neither ListArray nor FixedSizeListArray"));
+        }
 
         // Optional columns (may not exist in all rowgroups)
         let quantized_vector_array = batch
@@ -870,13 +879,22 @@ impl RaptorReader {
             let id_value = id_array.value(row_idx);
             record.id = id_value.to_string();
 
-            // Extract vector (required field)
-            if !vector_array.is_null(row_idx) {
-                let vector_list = vector_array.value(row_idx);
-                if let Some(float_array) =
-                    vector_list.as_primitive_opt::<arrow_array::types::Float32Type>()
-                {
-                    record.vector = float_array.values().to_vec();
+            // Extract vector (required field) - handle both FixedSizeListArray and ListArray
+            if is_fixed_size_list {
+                let fixed_array = vector_col.as_any().downcast_ref::<arrow_array::FixedSizeListArray>().unwrap();
+                if !fixed_array.is_null(row_idx) {
+                    let vector_list = fixed_array.value(row_idx);
+                    if let Some(float_array) = vector_list.as_primitive_opt::<arrow_array::types::Float32Type>() {
+                        record.vector = float_array.values().to_vec();
+                    }
+                }
+            } else if is_list {
+                let list_array = vector_col.as_any().downcast_ref::<arrow_array::ListArray>().unwrap();
+                if !list_array.is_null(row_idx) {
+                    let vector_list = list_array.value(row_idx);
+                    if let Some(float_array) = vector_list.as_primitive_opt::<arrow_array::types::Float32Type>() {
+                        record.vector = float_array.values().to_vec();
+                    }
                 }
             }
 

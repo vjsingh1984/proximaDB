@@ -821,19 +821,16 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
     /// Read vectors from a single file
     async fn read_vectors_from_file(&self, file_path: &std::path::Path) -> Result<Vec<VectorRecord>> {
-        // Get base directory from the file path
-        let base_path = file_path
-            .parent()
-            .and_then(|p| p.to_str())
-            .unwrap_or("/tmp")
-            .to_string();
+        // Convert path to string - this is the actual file path, not directory
+        let file_path_str = file_path.to_string_lossy().to_string();
 
         // Get or create a CrossCacheOrchestrator for the reader
         let cache = Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
 
         // Use RaptorReader to read from the file
+        // IMPORTANT: RaptorReader's base_path should be the file path, not directory
         let mut reader = RaptorReader::new(
-            base_path,
+            file_path_str.clone(),
             "".to_string(), // collection_id not needed for direct file read
             self.config.clone(),
             cache,
@@ -841,12 +838,9 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             self.transaction_coordinator.clone(),
         );
 
-        // Convert path to string
-        let path_str = file_path.to_string_lossy().to_string();
-
         // Use scan_vectors_with_strategy for full scan
         reader
-            .scan_vectors_with_strategy(&path_str, ScanStrategy::FullScan)
+            .scan_vectors_with_strategy(&file_path_str, ScanStrategy::FullScan)
             .await
     }
 
