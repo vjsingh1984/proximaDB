@@ -1,4 +1,4 @@
-= Memory Pool Benchmark Analysis
+= Memory Pool Performance Guide
 :doctype: article
 :toc: macro
 :toclevels: 3
@@ -6,16 +6,84 @@
 :source-highlighter: rouge
 
 [abstract]
-.Comprehensive Memory Pool Performance Analysis
+.Complete Memory Pool Configuration and Analysis
 --
-Complete analysis of ProximaDB's memory pool system (`bench_15_memory_pool`) on Apple M4 Pro (ARM64) covering pool sizing, statistics overhead, concurrent access patterns, buffer type performance, and growth strategies. Results show minimal pool size impact, ~4% stats overhead, and exceptional buffer reuse patterns.
+Comprehensive guide for ProximaDB's memory pool system including configuration presets, performance analysis, and tuning recommendations. Based on extensive benchmarking on Apple M4 Pro (ARM64) showing **97-98% cache hit rates** with optimized settings.
 
-**Key Findings**: Pool size 64 optimal with 97-98% cache hit rates, growth factor 2.0x best balance, near-linear concurrent scaling up to 8 threads. Production-ready with minor regressions identified for investigation.
+**Quick Start**: Use `pool_size=64`, `growth_factor=2.0`, `enable_stats=true` for optimal performance.
 --
 
 toc::[]
 
-== Executive Summary
+== Quick Reference
+
+=== Recommended Configuration (Apple M4 Pro) ⭐
+
+[cols="2,3"]
+|===
+|**Optimal Settings** |`pool_size=64`, `growth_factor=2.0`, `enable_stats=true`
+|**Cache Hit Rate** |**97-98%** (pool_size=64: 98.6%)
+|**Memory Usage** |~4MB per pool type, ~16MB total
+|**Stats Overhead** |~4% (+2µs) - acceptable for production monitoring
+|**Concurrency** |⚠️  **CONTENTION DETECTED** - Single-threaded recommended
+|===
+
+=== Configuration Presets
+
+==== Production Optimal ⭐
+
+[source,toml]
+----
+[memory.pool]
+pool_size = 64
+growth_factor = 2.0
+enable_stats = true
+max_buffer_size_mb = 16
+----
+
+**Performance**: 98.6% hit rate, ~410µs operations, 4MB memory
+
+==== Memory Constrained
+
+[source,toml]
+----
+[memory.pool]
+pool_size = 16
+growth_factor = 1.5
+enable_stats = false
+max_buffer_size_mb = 4
+----
+
+**Performance**: 97.3% hit rate, ~406µs operations, 1MB memory
+
+==== High Performance
+
+[source,toml]
+----
+[memory.pool]
+pool_size = 256
+growth_factor = 2.0
+enable_stats = true
+max_buffer_size_mb = 64
+----
+
+**Performance**: 97.8% hit rate, ~409µs operations, 16MB memory
+
+=== Quick Commands
+
+[source,rust]
+----
+// Check pool statistics
+let stats = memory_pool.get_statistics().await?;
+println!("Hit rate: {:.1}%", stats.hit_rate * 100.0);
+println!("Memory usage: {}MB", stats.memory_usage_mb);
+
+// Optimize for current workload
+let optimizer = MemoryPoolOptimizer::new();
+let config = optimizer.optimize_for_workload(&workload_stats).await?;
+----
+
+== Detailed Analysis
 
 === What This Benchmark Tests
 

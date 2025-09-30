@@ -1,4 +1,4 @@
-= System Optimization Performance Analysis
+= System Optimization Performance Guide
 :doctype: article
 :toc: macro
 :toclevels: 3
@@ -22,9 +22,93 @@ All code defaults updated. No configuration required for optimal performance.
 ====
 
 [abstract]
-.ProximaDB System-Wide Optimization Analysis
+.Complete System Optimization Configuration and Analysis
 --
-Comprehensive analysis of ProximaDB's system optimization benchmarks revealing **82-169x speedup** opportunities through Arc-based memory sharing (ALWAYS use Arc, no dimension limits), **5-7x improvement** via heap-based top-K selection, and **2-3x gains** from sparse vector kernels. Tested on Apple M4 Pro ARM64 with normalization formulas for Intel/AMD platforms.
+Comprehensive guide for ProximaDB's system-wide optimization including configuration presets, performance analysis, and tuning recommendations. Based on extensive benchmarking on Apple M4 Pro (ARM64) showing **82-169x speedup** from Arc-based cloning.
+
+**Quick Start**: Always use Arc cloning, heap-based top-K for large results, and parallel processing for batches 17-4999.
+--
+
+== Quick Reference
+
+=== Critical Optimizations (Apple M4 Pro) ⭐
+
+[cols="2,3"]
+|===
+|**Memory Sharing** |Always use Arc cloning (**82-169x faster**)
+|**Result Aggregation** |Heap select for k/n < 0.1 (**5-7x faster**)
+|**Batch Processing** |Parallel for 17-4999 vectors (**2.6-3.6x faster**)
+|**Sparse L2 Distance** |**2.97x faster** at 50% sparsity
+|**Cosine Sparsity** |< 10% variation (warnings unnecessary)
+|**Metadata Handling** |Use projection pattern (16-26x overhead)
+|===
+
+=== Configuration Presets
+
+==== Production Optimal ⭐
+
+[source,rust]
+----
+// Memory sharing - ALWAYS use Arc
+let vectors = Arc::new(vectors);
+let cloned = Arc::clone(&vectors);  // 82-169x faster than Vec::clone
+
+// Result aggregation
+let use_heap = (k as f64 / n as f64) < 0.1;
+let results = if use_heap {
+    heap_select(scores, k)  // 5-7x faster for large n
+} else {
+    sort_select(scores, k)
+};
+
+// Batch processing
+let use_parallel = batch_size >= 17 && batch_size <= 4999;
+let processor = if use_parallel {
+    ParallelBatchProcessor::new()  // 2.6-3.6x faster
+} else {
+    SequentialBatchProcessor::new()
+};
+----
+
+==== Memory Constrained
+
+[source,rust]
+----
+// Use Vec when memory is extremely limited
+// (Only if Arc overhead is prohibitive)
+let vectors = Vec::new();
+
+// Always prefer heap for large results
+let results = heap_select(scores, k);
+----
+
+==== Speed Critical
+
+[source,rust]
+----
+// Maximum performance settings
+let vectors = Arc::new(vectors);
+let parallel_threshold = 17;  // Minimum for parallel benefit
+let heap_threshold = 0.1;     // k/n ratio for heap selection
+----
+
+=== Quick Commands
+
+[source,rust]
+----
+// Auto-select optimization strategy
+let optimizer = SystemOptimizer::new();
+let strategy = optimizer.select_strategy(batch_size, k, n).await?;
+
+// Benchmark current configuration
+let benchmark = SystemBenchmark::new();
+let results = benchmark.run_optimization_suite().await?;
+----
+
+[abstract]
+.Original Comprehensive Analysis
+--
+Detailed analysis of ProximaDB's system optimization benchmarks revealing **82-169x speedup** opportunities through Arc-based memory sharing (ALWAYS use Arc, no dimension limits), **5-7x improvement** via heap-based top-K selection, and **2-3x gains** from sparse vector kernels. Tested on Apple M4 Pro ARM64 with normalization formulas for Intel/AMD platforms.
 
 **Key Discovery**: Arc cloning is **ALWAYS superior** to deep clone, becoming MORE dominant at higher dimensions (169x faster at 3072D × 50 clones). Sparse vectors have minimal impact on cosine performance (< 10% variation). **Parallel processing is 2.6-3.6x faster for batches < 5000**, but sequential wins at 5000+ due to parallel overhead.
 --

@@ -1,13 +1,92 @@
-= ProximaDB Compression Guide
+= ProximaDB Compression Complete Guide
 :toc: left
 :toclevels: 3
 :icons: font
 :source-highlighter: highlightjs
 :experimental:
 
+== Quick Reference
+
+=== Recommended Configurations ⭐
+
+[cols="2,2,3"]
+|===
+| Use Case | Algorithm | Configuration
+
+| **Real-time Applications**
+| LZ4 Level 1
+| `CompressionAlgorithm::Lz4, level: 1`
+
+| **Storage Optimization**
+| Zstd Level 6
+| `CompressionAlgorithm::Zstd, level: 6`
+
+| **Balanced Performance**
+| Snappy
+| `CompressionAlgorithm::Snappy`
+
+| **Maximum Speed**
+| None
+| `CompressionAlgorithm::None`
+|===
+
+=== Quick Commands
+
+[source,rust]
+----
+// Auto-select compression
+let config = CompressionConfig::auto_select(&workload_pattern)?;
+
+// Manual configuration
+let config = CompressionConfig {
+    algorithm: CompressionAlgorithm::Lz4,
+    level: 3,
+    enable_proxima_encoding: true,
+};
+----
+
 == Overview
 
 ProximaDB provides a unified compression infrastructure supporting multiple algorithms with context-aware selection. This guide presents real-world benchmark results and recommendations for choosing the optimal compression strategy for your workload.
+
+== System Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "Compression Pipeline"
+        A[Raw Vectors<br/>f32 arrays]
+        B[Pattern Analysis<br/>Sparse/Gaussian/Quantized]
+        C[Encoding Strategy<br/>GroupedField/Transpose]
+        D[Compression<br/>Snappy/LZ4/Zstd]
+        E[Storage<br/>Optimized blocks]
+    end
+
+    subgraph "Proxima Encoding"
+        F[Bit Packing<br/>Variable bits]
+        G[Delta Encoding<br/>Temporal patterns]
+        H[Run Length<br/>Repeated values]
+        I[Dictionary<br/>Common patterns]
+    end
+
+    A --> B
+    B --> C
+    C --> F
+    C --> G
+    C --> H
+    C --> I
+    F --> D
+    G --> D
+    H --> D
+    I --> D
+    D --> E
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style E fill:#93c47d,stroke:#5a8047,stroke-width:2px,color:#000
+----
+
+**Note**: This guide consolidates architecture details from the former `docs/architecture/compression_system.adoc` for comprehensive coverage.
 
 == Supported Compression Algorithms
 
