@@ -613,9 +613,9 @@ impl UnifiedParquetReader {
         let fs = self.get_filesystem_for_path(file_path)?;
         let path = FilesystemFactory::resolve_path(file_path)?;
 
-        // Check if file exists
+        // Check if file exists - return error if missing
         if !fs.exists(&path).await? {
-            return Ok((Vec::new(), 0));
+            return Err(anyhow::anyhow!("File not found: {}", file_path));
         }
 
         // Read file data
@@ -811,7 +811,7 @@ impl UnifiedParquetReader {
         needs_vectors: bool,
         needs_metadata: bool,
     ) -> Result<Vec<VectorRecord>> {
-        use arrow_array::{StringArray, Float32Array, FixedSizeListArray, ListArray, Int64Array, BinaryArray, UInt8Array};
+        use arrow_array::{StringArray, Float32Array, FixedSizeListArray, ListArray, Int64Array, BinaryArray, UInt8Array, MapArray};
 
         // Check if we have quantized vectors for pre-filtering
         let has_binary = batch.column_by_name(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY).is_some();
@@ -934,8 +934,38 @@ impl UnifiedParquetReader {
             };
 
             let metadata = if needs_metadata {
-                // TODO: Extract metadata from Map columns
-                HashMap::new()
+                // Extract metadata from "extra_meta" Map column if present
+                let mut meta_map = HashMap::new();
+
+                if let Some(map_col) = batch.column_by_name("extra_meta") {
+                    if let Some(map_array) = map_col.as_any().downcast_ref::<MapArray>() {
+                        use arrow_array::Array;
+                        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+
+                        if !map_array.is_null(row_idx) {
+                            let map_value = map_array.value(row_idx);
+
+                            // Map is stored as a struct array with "key" and "value" fields
+                            if let Some(struct_array) = map_value.as_any().downcast_ref::<arrow_array::StructArray>() {
+                                if let Some(keys) = struct_array.column_by_name("key").and_then(|c| c.as_any().downcast_ref::<StringArray>()) {
+                                    if let Some(values) = struct_array.column_by_name("value").and_then(|c| c.as_any().downcast_ref::<StringArray>()) {
+                                        for i in 0..keys.len() {
+                                            if !keys.is_null(i) && !values.is_null(i) {
+                                                let key = keys.value(i).to_string();
+                                                let value = values.value(i).to_string();
+                                                meta_map.insert(key, SqlValue {
+                                                    value: Some(Value::StringValue(value))
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                meta_map
             } else {
                 HashMap::new()
             };
