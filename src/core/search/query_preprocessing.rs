@@ -668,11 +668,11 @@ mod tests {
         assert_eq!(result1.normalized, result2.normalized);
         assert_eq!(result1.vector_hash, result2.vector_hash);
 
-        // Cache stats won't update in test mode
+        // Cache stats will update in test mode, but storage is disabled
         let stats = preprocessor.stats();
-        // Cache is disabled in tests, so no hits/misses are recorded
+        // Cache storage is disabled in tests, so we get all misses
         assert_eq!(stats.hits, 0);
-        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.misses, 2); // Two preprocess calls = two misses
     }
 
     #[test]

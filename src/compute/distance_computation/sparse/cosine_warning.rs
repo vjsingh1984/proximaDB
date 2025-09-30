@@ -266,7 +266,13 @@ mod tests {
 
     #[test]
     fn test_cosine_unsafe_for_sparse() {
-        let checker = CosineSparsityChecker::new();
+        let config = CosineWarningConfig {
+            enable_warnings: true,
+            warning_threshold: 0.7,
+            auto_fallback: true,
+            ..Default::default()
+        };
+        let checker = CosineSparsityChecker::with_config(config);
 
         let info = SparsityInfo {
             sparsity_ratio: 0.9, // 90% sparse
@@ -305,7 +311,13 @@ mod tests {
 
     #[test]
     fn test_auto_fallback() {
-        let checker = CosineSparsityChecker::new();
+        let config = CosineWarningConfig {
+            enable_warnings: true,
+            warning_threshold: 0.7,
+            auto_fallback: true,
+            ..Default::default()
+        };
+        let checker = CosineSparsityChecker::with_config(config);
 
         let info = SparsityInfo {
             sparsity_ratio: 0.9,
@@ -329,6 +341,8 @@ mod tests {
     #[test]
     fn test_no_fallback() {
         let config = CosineWarningConfig {
+            enable_warnings: true,
+            warning_threshold: 0.7,
             auto_fallback: false,
             ..Default::default()
         };
