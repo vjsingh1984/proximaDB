@@ -468,15 +468,14 @@ mod tests {
     async fn test_batch_operations_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        let filesystem = Arc::new(
+        let filesystem_factory = Arc::new(
             FilesystemFactory::new(FilesystemConfig::default())
                 .await
                 .unwrap(),
         );
 
         // Create UnifiedCachingFilesystem for testing
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
-        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let base_fs = filesystem_factory.get_filesystem("file:///tmp/test").unwrap();
         let cached_filesystem = Arc::new(
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
                 base_fs,
@@ -536,15 +535,14 @@ mod tests {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
             let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-            let filesystem = Arc::new(
+            let filesystem_factory = Arc::new(
                 FilesystemFactory::new(FilesystemConfig::default())
                     .await
                     .unwrap(),
             );
 
             // Create UnifiedCachingFilesystem for testing
-        let filesystem_factory = Arc::new(crate::storage::persistence::filesystem::FilesystemFactory::default());
-        let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let base_fs = filesystem_factory.get_filesystem("file:///tmp/test").unwrap();
         let cached_filesystem = Arc::new(
             crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
                 base_fs,

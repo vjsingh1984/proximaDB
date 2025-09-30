@@ -89,6 +89,8 @@ impl ParquetConfigBuilder {
         // Note: enable_column_index and enable_offset_index are not in ParquetWriterConfig
         // Only enable_page_index exists
         self.config.enable_page_index = false;
+        // Page indexes require statistics, so disable those too
+        self.config.enable_statistics = false;
         self
     }
 
