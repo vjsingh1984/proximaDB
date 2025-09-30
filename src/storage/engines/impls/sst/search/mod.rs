@@ -242,7 +242,16 @@ impl SstEngine {
 
         // List files in the collection directory
         let fs = self.filesystem().get_filesystem(data_url)?;
-        let entries = fs.list(data_url).await?;
+
+        // Handle case where directory doesn't exist yet (e.g., before first flush)
+        let entries = match fs.list(data_url).await {
+            Ok(entries) => entries,
+            Err(e) if e.to_string().contains("No such file or directory") => {
+                debug!("   Directory doesn't exist yet: {}", data_url);
+                return Ok(files);
+            }
+            Err(e) => return Err(anyhow::anyhow!("Failed to list directory {}: {}", data_url, e)),
+        };
 
         for entry in entries {
             if !entry.metadata.is_directory && entry.name.ends_with(".sst") {
