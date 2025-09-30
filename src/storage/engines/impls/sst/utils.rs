@@ -164,7 +164,8 @@ impl SstEngine {
         let union = a_keys.union(&b_keys).count();
 
         if union == 0 {
-            return false;
+            // Both vectors have no metadata - they are similar
+            return true;
         }
 
         // Consider similar if >50% keys match

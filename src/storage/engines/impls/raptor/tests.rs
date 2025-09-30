@@ -248,7 +248,11 @@ mod tests {
 
         // Search for similar vectors
         let query = vec![1.0, 0.0, 0.0, 0.0];
-        let search_params = std::sync::Arc::new(crate::core::search::SearchParams::default());
+        let search_params = std::sync::Arc::new(crate::core::search::SearchParams {
+            vector: Some(query.clone()),
+            top_k: Some(2),
+            ..Default::default()
+        });
         let collection = std::sync::Arc::new(crate::proto::proximadb_v1::Collection {
             id: "test_collection".to_string(),
             config: Some(crate::proto::proximadb_v1::CollectionConfig {

@@ -49,8 +49,9 @@ mod tests {
         let base_path = temp_dir.path().to_str().unwrap().to_string();
         info!("📁 Using temporary directory: {}", base_path);
 
-        // Create filesystem factory
-        let fs_config = FilesystemConfig::default();
+        // Create filesystem factory with temp directory
+        let mut fs_config = FilesystemConfig::default();
+        fs_config.default_fs = Some(format!("file://{}", base_path));
         let filesystem = Arc::new(FilesystemFactory::new(fs_config).await?);
 
         // Create SST engine
@@ -310,8 +311,10 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap().to_string();
 
+        let mut fs_config = FilesystemConfig::default();
+        fs_config.default_fs = Some(format!("file://{}", base_path));
         let filesystem = Arc::new(
-            FilesystemFactory::new(FilesystemConfig::default()).await?
+            FilesystemFactory::new(fs_config).await?
         );
 
         let engine = SstEngine::new_with_config(

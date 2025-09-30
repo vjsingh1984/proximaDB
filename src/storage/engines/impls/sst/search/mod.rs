@@ -257,19 +257,13 @@ impl SstEngine {
 
     /// Parse storage URL to extract base URL and collection ID
     fn parse_storage_url(&self, storage_url: &str) -> Result<(String, String)> {
-        if let Some((base, coll)) = crate::utils::StoragePath::parse_collection_path(
-            &format!("{}/dummy", storage_url)
-        ) {
-            Ok((base, coll))
+        // Fallback: assume storage_url is base_url/collection_id format
+        if let Some(last_slash) = storage_url.rfind('/') {
+            let base = &storage_url[..last_slash];
+            let collection = &storage_url[last_slash + 1..];
+            Ok((base.to_string(), collection.to_string()))
         } else {
-            // Fallback: assume storage_url is base_url/collection_id format
-            if let Some(last_slash) = storage_url.rfind('/') {
-                let base = &storage_url[..last_slash];
-                let collection = &storage_url[last_slash + 1..];
-                Ok((base.to_string(), collection.to_string()))
-            } else {
-                Err(SstError::InvalidArgument(format!("Invalid storage URL format: {}", storage_url)).into())
-            }
+            Err(SstError::InvalidArgument(format!("Invalid storage URL format: {}", storage_url)).into())
         }
     }
 
