@@ -41,6 +41,9 @@ use crate::storage::engines::core::ops::performance_optimization::{
 };
 // VectorMemoryPool now managed by universal optimizer
 
+// Unified metrics framework for AutoML integration
+use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
+
 /// Vector search result for compatibility - using OptimizedSearchRecord
 type VectorSearchResult = OptimizedSearchRecord;
 
@@ -138,7 +141,9 @@ pub struct RaptorEngine {
     // Cache and metadata
     cache: Arc<RwLock<RowGroupCache>>,
     file_registry: Arc<RwLock<FileRegistry>>,
-    metrics: Arc<RaptorMetrics>, // Lock-free atomic metrics
+
+    // Unified metrics for AutoML integration
+    metrics_collector: Option<Arc<EngineMetricsCollector>>,
 }
 
 impl RaptorEngine {
@@ -408,7 +413,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
         let file_registry = Arc::new(RwLock::new(FileRegistry::new()));
 
-        let metrics = Arc::new(RaptorMetrics::new());
+        // Initialize unified metrics collector for AutoML integration
+        let metrics_collector = Some(Arc::new(EngineMetricsCollector::new()));
 
         // Get the global hardware capabilities instance
         let hardware_capabilities = get_hardware_capabilities();
@@ -437,7 +443,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             hardware_capabilities,
             cache,
             file_registry,
-            metrics,
+            metrics_collector,
             storage_quantization_engine,
             fallback_quantization_engine,
         })
@@ -570,13 +576,10 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             self.update_clustering(&batch).await?;
         }
 
-        // Update metrics using atomic operations (lock-free)
-        self.metrics
-            .total_vectors
-            .fetch_add(row_count, Ordering::Relaxed);
-        self.metrics
-            .insert_operations
-            .fetch_add(1, Ordering::Relaxed);
+        // Update unified metrics
+        if let Some(ref collector) = self.metrics_collector {
+            collector.record_operation("raptor", "insert", 0.0, false, row_count as u64).await;
+        }
 
         // Check if compaction is needed
         if self.should_compact().await {
@@ -1721,12 +1724,10 @@ impl UnifiedStorageEngine for RaptorEngine {
         };
 
         // Update unified metrics
-        self.metrics
-            .flush_operations
-            .fetch_add(1, Ordering::Relaxed);
-        self.metrics
-            .total_vectors
-            .fetch_add(vectors_flushed, Ordering::Relaxed);
+        if let Some(ref collector) = self.metrics_collector {
+            let flush_duration_ms = start_time.elapsed().as_millis() as f64;
+            collector.record_operation("raptor", "flush", flush_duration_ms, false, vectors_flushed as u64).await;
+        }
 
         // HNSW is integrated within RAPTOR row groups, no separate flush needed
         if self.config.enable_clustering {
@@ -1796,9 +1797,9 @@ impl UnifiedStorageEngine for RaptorEngine {
         }
 
         // Update unified metrics
-        self.metrics
-            .compaction_operations
-            .fetch_add(1, Ordering::Relaxed);
+        if let Some(ref collector) = self.metrics_collector {
+            collector.record_operation("raptor", "compaction", 0.0, false, 0).await;
+        }
 
         Ok(CompactionResult {
             success: true,
@@ -1818,63 +1819,31 @@ impl UnifiedStorageEngine for RaptorEngine {
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut stats = HashMap::new();
 
-        // Collect atomic metrics without locks (unified metrics framework)
-        stats.insert(
-            "total_vectors".to_string(),
-            serde_json::json!(self.metrics.total_vectors.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "total_rows".to_string(),
-            serde_json::json!(self.metrics.total_rows.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "total_files".to_string(),
-            serde_json::json!(self.metrics.total_files.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "insert_operations".to_string(),
-            serde_json::json!(self.metrics.insert_operations.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "search_operations".to_string(),
-            serde_json::json!(self.metrics.search_operations.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "flush_operations".to_string(),
-            serde_json::json!(self.metrics.flush_operations.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "compaction_operations".to_string(),
-            serde_json::json!(self.metrics.compaction_operations.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "cache_hits".to_string(),
-            serde_json::json!(self.metrics.cache_hits.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "cache_misses".to_string(),
-            serde_json::json!(self.metrics.cache_misses.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "cache_hit_ratio".to_string(),
-            serde_json::json!(self.metrics.cache_hit_ratio()),
-        );
-        stats.insert(
-            "compression_ratio".to_string(),
-            serde_json::json!(self.metrics.compression_ratio()),
-        );
-        stats.insert(
-            "bytes_written".to_string(),
-            serde_json::json!(self.metrics.bytes_written.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "bytes_read".to_string(),
-            serde_json::json!(self.metrics.bytes_read.load(Ordering::Relaxed)),
-        );
-        stats.insert(
-            "memory_usage_bytes".to_string(),
-            serde_json::json!(self.metrics.memory_usage_bytes.load(Ordering::Relaxed)),
-        );
+        // Use unified metrics collector if available
+        if let Some(ref collector) = self.metrics_collector {
+            // Collect metrics from unified framework
+            let engine_stats = collector.engine_statistics("raptor").await;
+            stats.insert(
+                "total_operations".to_string(),
+                serde_json::json!(engine_stats.total_operations),
+            );
+            stats.insert(
+                "total_errors".to_string(),
+                serde_json::json!(engine_stats.total_errors),
+            );
+            stats.insert(
+                "error_rate".to_string(),
+                serde_json::json!(engine_stats.error_rate),
+            );
+            stats.insert(
+                "max_avg_latency".to_string(),
+                serde_json::json!(engine_stats.max_avg_latency),
+            );
+            stats.insert(
+                "total_bytes_processed".to_string(),
+                serde_json::json!(engine_stats.total_bytes_processed),
+            );
+        }
 
         // Engine identification for unified metrics dashboard
         stats.insert("engine_name".to_string(), serde_json::json!("RAPTOR"));
@@ -2168,70 +2137,7 @@ struct FileMetadata {
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
-// RaptorMetrics - integrated with unified metrics framework
-// Using atomic counters for lock-free metric updates
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-struct RaptorMetrics {
-    // Vector and row metrics
-    total_vectors: AtomicUsize,
-    total_rows: AtomicUsize,
-    total_files: AtomicUsize,
-
-    // Operation counters
-    insert_operations: AtomicU64,
-    search_operations: AtomicU64,
-    flush_operations: AtomicU64,
-    compaction_operations: AtomicU64,
-
-    // Cache metrics
-    cache_hits: AtomicU64,
-    cache_misses: AtomicU64,
-
-    // I/O metrics
-    bytes_written: AtomicU64,
-    bytes_read: AtomicU64,
-    memory_usage_bytes: AtomicU64,
-}
-
-impl RaptorMetrics {
-    fn new() -> Self {
-        Self {
-            total_vectors: AtomicUsize::new(0),
-            total_rows: AtomicUsize::new(0),
-            total_files: AtomicUsize::new(0),
-            insert_operations: AtomicU64::new(0),
-            search_operations: AtomicU64::new(0),
-            flush_operations: AtomicU64::new(0),
-            compaction_operations: AtomicU64::new(0),
-            cache_hits: AtomicU64::new(0),
-            cache_misses: AtomicU64::new(0),
-            bytes_written: AtomicU64::new(0),
-            bytes_read: AtomicU64::new(0),
-            memory_usage_bytes: AtomicU64::new(0),
-        }
-    }
-
-    fn cache_hit_ratio(&self) -> f32 {
-        let hits = self.cache_hits.load(Ordering::Relaxed);
-        let misses = self.cache_misses.load(Ordering::Relaxed);
-        if hits + misses == 0 {
-            0.0
-        } else {
-            hits as f32 / (hits + misses) as f32
-        }
-    }
-
-    fn compression_ratio(&self) -> f32 {
-        let written = self.bytes_written.load(Ordering::Relaxed);
-        let memory = self.memory_usage_bytes.load(Ordering::Relaxed);
-        if memory == 0 {
-            1.0
-        } else {
-            written as f32 / memory as f32
-        }
-    }
-}
 
 /// Implementation of UniversallyOptimized trait for RAPTOR engine
 #[async_trait]
@@ -2267,25 +2173,30 @@ impl UniversallyOptimized for RaptorEngine {
     async fn collect_performance_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
 
-        // Basic RAPTOR metrics (using unified framework)
-        metrics.insert(
-            "raptor_total_rows".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(
-                self.metrics.total_rows.load(Ordering::Relaxed),
-            )),
-        );
-        metrics.insert(
-            "raptor_total_files".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(
-                self.metrics.total_files.load(Ordering::Relaxed),
-            )),
-        );
-        metrics.insert(
-            "raptor_memory_usage_bytes".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(
-                self.metrics.memory_usage_bytes.load(Ordering::Relaxed),
-            )),
-        );
+        // Collect from unified metrics collector if available
+        if let Some(ref collector) = self.metrics_collector {
+            let engine_stats = collector.engine_statistics("raptor").await;
+            metrics.insert(
+                "raptor_total_operations".to_string(),
+                serde_json::json!(engine_stats.total_operations),
+            );
+            metrics.insert(
+                "raptor_total_errors".to_string(),
+                serde_json::json!(engine_stats.total_errors),
+            );
+            metrics.insert(
+                "raptor_error_rate".to_string(),
+                serde_json::json!(engine_stats.error_rate),
+            );
+            metrics.insert(
+                "raptor_max_avg_latency".to_string(),
+                serde_json::json!(engine_stats.max_avg_latency),
+            );
+            metrics.insert(
+                "raptor_total_bytes_processed".to_string(),
+                serde_json::json!(engine_stats.total_bytes_processed),
+            );
+        }
 
         // Universal optimizer metrics
         let strategy = self.universal_optimizer.get_strategy();

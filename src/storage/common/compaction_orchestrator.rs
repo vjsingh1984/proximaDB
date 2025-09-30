@@ -1108,7 +1108,7 @@ mod tests {
         // Test generation
         let filename = codec.generate(5, "sst");
         assert!(filename.starts_with("L5_"));
-        assert!(filename.ends_with(".sstable"));
+        assert!(filename.ends_with(".sst"));
 
         // Test parsing
         let test_filename = "L3_20250814T143052_a7f3c2d1.parquet";
