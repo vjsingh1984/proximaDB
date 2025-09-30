@@ -627,8 +627,8 @@ mod tests {
         // Create empty parquet file
         create_test_parquet_file(&file_path, vec![], 4).await?;
 
-        // Create reader
-        let reader = create_test_reader().await;
+        // Create reader with the actual file path
+        let reader = create_test_reader_with_files(vec![file_path.clone()]).await;
 
         // Use search API
         let search_params = SearchParams {
