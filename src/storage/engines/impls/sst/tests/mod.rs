@@ -20,3 +20,6 @@
 
 #[cfg(test)]
 pub mod modular_integration_test;
+
+#[cfg(test)]
+pub mod end_to_end_test;

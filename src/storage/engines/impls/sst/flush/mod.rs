@@ -210,21 +210,31 @@ impl SstEngine {
             None, // No compression config in this path
         );
 
-        // Write vectors to SSTable
-        let mut bytes_written = 0u64;
-        let mut entries_written = 0u64;
+        // Count entries for writing
+        let entries_written = sorted_vectors.len() as u64;
 
-        for (key, vector_record) in sorted_vectors {
-            // Convert VectorRecord to bytes (simplified)
-            let record_bytes = serde_json::to_vec(&vector_record)
-                .context("Failed to serialize vector record")?;
+        // Actually write vectors to SSTable file using the streaming writer
+        // This writes to the staging location which will be moved to final location on commit
+        writer.write_sorted_vector_records(
+            sorted_vectors.into_iter(),
+            entries_written as usize,
+        ).await
+            .context("Failed to write vectors to SSTable")?;
 
-            bytes_written += record_bytes.len() as u64;
-            entries_written += 1;
-
-            // In a real implementation, we would write to the SSTable format
-            // For now, we'll just track the metrics
-        }
+        // Get actual bytes written from the filesystem
+        let fs = self.filesystem().get_filesystem(&staging_url)?;
+        let file_metadata = fs.metadata(&staging_url).await
+            .unwrap_or_else(|_| crate::storage::persistence::filesystem::FileMetadata {
+                path: staging_url.clone(),
+                size: entries_written * 1024, // Estimate if metadata unavailable
+                created: None,
+                modified: None,
+                is_directory: false,
+                permissions: None,
+                etag: None,
+                storage_class: None,
+            });
+        let bytes_written = file_metadata.size;
 
         // Commit the atomic operation
         self.atomic_coordinator()
