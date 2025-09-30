@@ -15,9 +15,11 @@ _Hardware-accelerated SIMD optimization delivering 20M+ operations/sec with comp
 
 For detailed benchmark charts and comparative analysis, see:
 
-* link:benchmarks/BENCHMARK_ANALYSIS.adoc[Benchmark Analysis] - Visual performance comparisons
-* link:benchmarks/CORE_BENCHMARKS.adoc[Core Benchmarks] - Raw benchmark data
-* link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] - Engine optimization strategies
+* link:../benchmarks/benchmark_analysis.adoc[Benchmark Analysis] - Visual performance comparisons
+* link:../benchmarks/README.adoc[Benchmark Suite] - Complete benchmark documentation
+* link:../guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] - Engine optimization strategies
+
+**Note**: This document consolidates content from the former `docs/benchmarks/PERFORMANCE_RESULTS.adoc` for comprehensive coverage.
 ====
 
 == Executive Performance Summary

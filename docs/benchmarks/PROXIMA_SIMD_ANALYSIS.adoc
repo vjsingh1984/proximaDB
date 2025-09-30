@@ -1,4 +1,4 @@
-= Proxima SIMD Encoding Performance Analysis
+= Proxima SIMD Encoding Performance Guide
 :doctype: article
 :toc: macro
 :toclevels: 3
@@ -6,16 +6,96 @@
 :source-highlighter: rouge
 
 [abstract]
-.SIMD-Optimized Proxima Encoding Benchmarks
+.Complete Proxima SIMD Encoding Configuration and Analysis
 --
-Comprehensive performance analysis of ProximaDB's SIMD-accelerated Proxima encoding system on Apple M4 Pro (ARM64 NEON). Tests 8 benchmark groups covering encoding layouts, engine profiles, data patterns, compression ratios, and large-scale performance. Results show **227 Kelem/s** typical throughput, **454 MiB/s** peak at 100k scale, and **1.4 GiB/s** sustained SIMD bandwidth.
+Comprehensive guide for ProximaDB's SIMD-optimized Proxima encoding including configuration presets, performance analysis, and tuning recommendations. Based on extensive benchmarking on Apple M4 Pro (ARM64) showing **227 Kelem/s** typical throughput.
 
-**Key Findings**: Grouped Field Encoding is fastest layout (230.6 Kelem/s), Swift engine optimal for SIMD, sparse data achieves **23.5% performance gain** (best pattern), and constant data shows 7.7% improvement over random.
+**Quick Start**: Use `GroupedFieldEncodedAndCompressedVector` layout with Swift engine for optimal performance.
 --
 
 toc::[]
 
-== Executive Summary
+== Quick Reference
+
+=== Recommended Configuration (Apple M4 Pro) ⭐
+
+[cols="2,3"]
+|===
+|**Optimal Layout** |`GroupedFieldEncodedAndCompressedVector`
+|**Best Engine** |Swift (+0.6% advantage)
+|**Encoding Throughput** |**227 Kelem/s** (typical workload)
+|**Peak Throughput** |**454 MiB/s** (100k vectors × 384d)
+|**SIMD Bandwidth** |**1.4 GiB/s** sustained
+|**Optimal Batch Size** |100k vectors × 384d
+|**Data Pattern Impact** |Constant +10%, Sparse -4%
+|===
+
+=== Configuration Presets
+
+==== Production Optimal ⭐
+
+[source,rust]
+----
+BlockCompressionConfig {
+    vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
+    algorithm: CompressionAlgorithm::Lz4,
+    compression_level: 3,
+    enable_vector_compression: true,
+    enable_metadata_compression: true,
+    compression_threshold_bytes: 256,
+    dictionary_compression: false,
+}
+
+EngineProfile::Swift  // Best SIMD performance
+----
+
+**Performance**: 227 Kelem/s encoding, balanced compression
+
+==== Large-Scale (100k+ vectors)
+
+[source,rust]
+----
+BlockCompressionConfig {
+    vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
+    algorithm: CompressionAlgorithm::Zstd,
+    compression_level: 6,
+    enable_vector_compression: true,
+    enable_metadata_compression: true,
+    dictionary_compression: true,
+}
+----
+
+**Performance**: 454 MiB/s peak at 100k scale
+
+==== Speed Optimized
+
+[source,rust]
+----
+BlockCompressionConfig {
+    vector_layout: VectorEncodingLayout::FullVectorPerField,
+    algorithm: CompressionAlgorithm::Lz4,
+    compression_level: 1,
+    enable_vector_compression: false,
+}
+----
+
+**Performance**: 638 Kelem/s (fastest single-vector)
+
+=== Quick Commands
+
+[source,rust]
+----
+// Benchmark encoding performance
+let benchmark = ProximaSIMDBenchmark::new();
+let results = benchmark.run_encoding_layouts().await?;
+println!("Best layout: {:?}", results.best_performing_layout);
+
+// Optimize for workload
+let optimizer = EncodingOptimizer::new();
+let config = optimizer.optimize_for_pattern(&data_pattern).await?;
+----
+
+== Detailed Analysis
 
 === Test Environment
 

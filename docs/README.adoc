@@ -19,8 +19,8 @@ Welcome to the ProximaDB documentation. ProximaDB is a high-performance vector d
 * link:enterprise/[Enterprise Features] - Advanced deployment options
 
 === Performance & Optimization
-* link:performance/[Performance Documentation] - Benchmarks and tuning
-* link:performance/benchmarks/[Benchmark Results] - Detailed performance analysis
+* link:performance/PERFORMANCE_COMPREHENSIVE.adoc[Performance Documentation] - Complete benchmarks and tuning guide
+* link:benchmarks/README.adoc[Benchmark Suite] - Comprehensive performance analysis with guides
 * link:guides/engine_selection_optimization_guide.adoc[Engine Selection Guide] - Choose the right engine
 
 === API Reference
@@ -31,7 +31,7 @@ Welcome to the ProximaDB documentation. ProximaDB is a high-performance vector d
 
 === Storage Engines & AI Features
 * link:storage/[Storage Engine Documentation] - Hybrid block and columnar architectures
-* link:automl/[AutoML Framework] - Automatic optimization and performance tuning
+* link:automl/README.adoc[AutoML Complete Guide] - Automatic optimization and performance tuning
 
 === Development
 * link:development/[Development Guides] - Contributing, style guides, and development setup
@@ -40,22 +40,28 @@ Welcome to the ProximaDB documentation. ProximaDB is a high-performance vector d
 
 == Documentation Structure
 
+[NOTE]
+====
+**Streamlined Documentation**: This structure has been optimized to eliminate duplicates and consolidate related content. All QUICKREF files have been merged into comprehensive guides, and MD files have been converted to AsciiDoc format per CLAUDE.md standards.
+====
+
 ----
 docs/
 ├── quickstart/           # Getting started guides
-├── architecture/         # System architecture
+├── architecture/         # System architecture (streamlined)
 ├── storage/              # Storage engine documentation
-├── automl/               # AutoML framework documentation
-├── technical/            # Technical implementation details
+├── automl/               # AutoML complete guide (consolidated)
+├── technical/            # Technical implementation details (AsciiDoc only)
 ├── operations/           # Production operations
 ├── enterprise/           # Enterprise features
-├── performance/          # Performance analysis and benchmarks
+├── performance/          # Comprehensive performance documentation
+├── benchmarks/           # Complete benchmark suite with integrated guides
 ├── development/          # Development guides and contributing
 ├── guides/               # How-to guides
 ├── reference/            # API reference
 ├── security/             # Security documentation
 ├── business/             # Business documentation
-└── 09-roadmap/           # Development roadmap
+└── 09-roadmap/           # Development roadmap (unchanged)
 ----
 
 == Contributing
