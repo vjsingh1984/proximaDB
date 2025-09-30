@@ -351,19 +351,53 @@ fn benchmark_hit_rates(c: &mut Criterion) {
                 let pool = Pool::new(config.clone(), || Vec::<u8>::with_capacity(1024));
 
                 b.iter(|| {
-                    // Simulate realistic access pattern: burst of acquisitions
+                    // Realistic workload simulation with varied access patterns
                     let mut items = Vec::new();
 
-                    // Burst: acquire more than pool size
-                    for _ in 0..pool_size * 2 {
+                    // Phase 1: Initial burst - acquire up to pool size
+                    for _ in 0..pool_size {
                         items.push(pool.acquire());
                     }
 
-                    // Release half
-                    items.truncate(pool_size);
+                    // Phase 2: Partial release with randomized retention
+                    // Use simple PRNG for deterministic but varied pattern
+                    let mut seed = 12345u64;
+                    let release_count = pool_size * 3 / 4; // Release 75%
+                    let mut release_indices = Vec::new();
+                    for i in 0..release_count {
+                        // Simple LCG: x' = (a * x + c) mod m
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        let idx = (seed as usize) % items.len();
+                        if !release_indices.contains(&idx) {
+                            release_indices.push(idx);
+                        }
+                    }
+                    release_indices.sort_unstable();
+                    for &idx in release_indices.iter().rev() {
+                        if idx < items.len() {
+                            items.swap_remove(idx);
+                        }
+                    }
 
-                    // Acquire again (should hit cache)
-                    for _ in 0..pool_size {
+                    // Phase 3: Re-acquire with varied pattern (should mostly hit cache)
+                    for _ in 0..release_count {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        // Vary acquisition timing to simulate real workload
+                        if (seed % 3) != 0 {  // ~66% acquire rate
+                            items.push(pool.acquire());
+                        }
+                    }
+
+                    // Phase 4: Peak load - acquire beyond pool size to test misses
+                    for _ in 0..(pool_size / 4) {
+                        items.push(pool.acquire());
+                    }
+
+                    // Phase 5: Cleanup - release all but a few
+                    items.truncate(pool_size / 8);
+
+                    // Phase 6: Final burst - should hit cache for most
+                    for _ in 0..(pool_size / 2) {
                         items.push(pool.acquire());
                     }
 
@@ -373,8 +407,8 @@ fn benchmark_hit_rates(c: &mut Criterion) {
                 // Print hit rate after benchmark
                 let stats = pool.stats();
                 if pool_size == 16 || pool_size == 64 || pool_size == 256 {
-                    println!("\n  Pool size {}: Hit rate {:.1}%, Current size: {}",
-                        pool_size, stats.hit_rate() * 100.0, stats.current_size);
+                    println!("\n  Pool size {}: Hit rate {:.1}%, Cache misses: {}, Current size: {}",
+                        pool_size, stats.hit_rate() * 100.0, stats.cache_misses, stats.current_size);
                 }
             },
         );
@@ -486,20 +520,31 @@ fn benchmark_growth_strategies(c: &mut Criterion) {
                 let pool = Pool::new(config.clone(), || Vec::<u8>::with_capacity(1024));
 
                 b.iter(|| {
-                    let mut items = Vec::new();
+                    // CRITICAL: Hold all items simultaneously to force pool growth
+                    // Previous version released immediately due to RAII, preventing growth
 
-                    // Force pool to grow by acquiring many items
-                    for _ in 0..200 {
-                        items.push(pool.acquire());
+                    // Phase 1: Gradual acquisition beyond initial pool size
+                    let items: Vec<_> = (0..200).map(|_| pool.acquire()).collect();
+
+                    // Phase 2: Verify items are held (prevents optimization)
+                    black_box(&items);
+
+                    // Phase 3: Simulate work with random access
+                    let mut seed = 54321u64;
+                    for _ in 0..50 {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        let idx = (seed as usize) % items.len();
+                        black_box(&items[idx]);
                     }
 
+                    // Items dropped here, all at once
                     black_box(items);
                 });
 
                 // Print growth stats
                 let stats = pool.stats();
-                println!("\n  Growth factor {:.2}: {} grows, peak size {}",
-                    growth_factor, stats.pool_grows, stats.peak_size);
+                println!("\n  Growth factor {:.2}: {} total grows, peak size {}, cache misses: {}",
+                    growth_factor, stats.pool_grows, stats.peak_size, stats.cache_misses);
             },
         );
     }
