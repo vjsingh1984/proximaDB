@@ -891,11 +891,17 @@ impl HybridParquetWriter {
         // Get filesystem for final URL
         let fs = filesystem_factory.get_filesystem(final_url)?;
 
-        // Write to final location - UnifiedCachingFilesystem will:
-        // 1. Upload to cloud (if s3://, azure://, etc)
-        // 2. Populate disk cache automatically
-        // 3. Future reads will hit cache, avoiding cloud costs
-        fs.write(final_url, &data, None).await?;
+        // Write to final location with directory creation - UnifiedCachingFilesystem will:
+        // 1. Create parent directories if needed
+        // 2. Upload to cloud (if s3://, azure://, etc)
+        // 3. Populate disk cache automatically
+        // 4. Future reads will hit cache, avoiding cloud costs
+        let write_options = crate::storage::persistence::filesystem::FileOptions {
+            create_dirs: true,
+            overwrite: true,
+            ..Default::default()
+        };
+        fs.write(final_url, &data, Some(write_options)).await?;
 
         debug!(
             "HybridParquetWriter: Wrote {} records to {} with disk cache",

@@ -212,15 +212,53 @@ impl SwiftEngine {
     /// Load SWIFT files for collection from storage
     async fn load_collection_files(
         &self,
-        _collection_id: &str,
-        _storage_path: &str,
+        collection_id: &str,
+        storage_path: &str,
     ) -> Result<Vec<SwiftFile>> {
-        // In production, this would:
-        // 1. List all files in {storage_path}/{collection_id}/data/
-        // 2. Filter out *.stats files and other non-data files
-        // 3. Load SST files with embedded statistics from headers
-        // 4. Statistics are embedded in each file for atomicity
-        // For now, return empty vec as placeholder
+        use tracing::debug;
+
+        // Construct data directory path: {storage_path}/{collection_id}/data/
+        let data_dir = format!("{}/{}/data", storage_path, collection_id);
+
+        debug!("🔍 SWIFT: Loading files from {}", data_dir);
+
+        // Get filesystem instance
+        let fs = self.filesystem.get_filesystem(&data_dir)?;
+
+        // List all files in the data directory
+        let entries = match fs.list(&data_dir).await {
+            Ok(entries) => entries,
+            Err(e) => {
+                debug!("⚠️  SWIFT: Failed to list directory {}: {}", data_dir, e);
+                return Ok(Vec::new());
+            }
+        };
+
+        debug!("📁 SWIFT: Found {} entries in {}", entries.len(), data_dir);
+
+        // Filter for .swift files (not .stats or temp files)
+        let swift_file_paths: Vec<String> = entries
+            .into_iter()
+            .filter(|entry| {
+                !entry.metadata.is_directory
+                && entry.name.ends_with(".swift")
+                && !entry.name.starts_with("___temp")
+            })
+            .map(|entry| format!("{}/{}", data_dir, entry.name))
+            .collect();
+
+        debug!("📂 SWIFT: Found {} .swift files", swift_file_paths.len());
+
+        // TODO: For now, we need to actually implement loading SwiftFile from disk
+        // SwiftFile doesn't currently have a from_disk method, so we return empty
+        // This is a partial fix - files are discovered but not loaded
+        // Future work: Implement SwiftFile::from_disk() to deserialize the file structure
+
+        if !swift_file_paths.is_empty() {
+            debug!("⚠️  SWIFT: File loading not yet implemented. Found {} files but cannot load them.", swift_file_paths.len());
+            debug!("    Files: {:?}", swift_file_paths);
+        }
+
         Ok(Vec::new())
     }
 

@@ -36,6 +36,7 @@ impl NovaFlushOperations {
         records: Vec<VectorRecord>,
         compression_algo: &str,
         dimension: usize,
+        base_location: &str,
     ) -> Result<(String, u64, HashMap<String, serde_json::Value>)> {
         use crate::storage::engines::core::formats::columnar::{
             parquet_write_engine::ParquetWriterConfig,
@@ -56,7 +57,8 @@ impl NovaFlushOperations {
             uuid::Uuid::new_v4()
         );
 
-        let storage_path = format!("/data/collections/{}/nova", collection_id);
+        // Use base_location from StorageAssignment instead of hardcoded path
+        let storage_path = format!("{}/{}/nova", base_location, collection_id);
         let full_path = format!("{}/{}", storage_path, file_name);
 
         // Create directory if it doesn't exist
@@ -177,12 +179,20 @@ impl NovaFlushOperations {
             .and_then(|v| v.as_str())
             .unwrap_or("zstd");
 
+        // Get base_location from storage assignment
+        let base_location = params.collection_config
+            .as_ref()
+            .and_then(|c| c.storage_assignment.as_ref())
+            .map(|s| s.base_location.as_str())
+            .unwrap_or("/data/collections");
+
         // Delegate to write_nova_file_to_disk
         let (path, bytes_written, metadata) = self.write_nova_file_to_disk(
             params.collection_id.as_deref().unwrap_or("default"),
             params.vector_records.clone(),
             compression_algo,
             dimension,
+            base_location,
         ).await?;
 
         Ok(FlushResult {
