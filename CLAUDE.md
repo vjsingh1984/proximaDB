@@ -2,6 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Quick Start
+
+### Docker (Fastest Way)
+```bash
+# Start ProximaDB
+docker run -d -p 5678:5678 -p 5679:5679 proximadb/proximadb:latest
+
+# Test the health endpoint
+curl http://localhost:5678/health
+
+# Create your first collection
+curl -X POST http://localhost:5678/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my_vectors", "dimension": 1536}'
+```
+
+### From Source
+```bash
+git clone https://github.com/vjsingh1984/proximaDB
+cd proximaDB
+cargo run --release --bin proximadb-server
+```
+
 ## Development Philosophy and Rules
 
 ### Core Principles
@@ -353,6 +376,10 @@ make docs-update-gaps       # Update critical documentation gaps
 ```
 
 ## Architecture Overview
+
+**Current Version**: 0.1.4
+**Rust Edition**: 2024
+**Minimum Rust Version**: 1.88
 
 ProximaDB is a unified vector database with 6 specialized storage engines that auto-optimize for different workloads, now enhanced with AutoML capabilities and fully modularized engine architectures.
 
@@ -734,10 +761,55 @@ Benchmarks: `cargo bench` or see `docs/PERFORMANCE_COMPREHENSIVE.adoc` for detai
 
 Location: `clients/python/`
 
-Install and test:
+**Installation:**
 ```bash
+# Install from local source (development)
 cd clients/python
 pip install -e .
+
+# Or install from PyPI (when available)
+pip install proximadb
+```
+
+**Basic Usage:**
+```python
+from proximadb import ProximaDB
+
+# Connect to ProximaDB
+client = ProximaDB(url="http://localhost:5678")
+
+# Create collection - ProximaDB auto-selects best engine
+collection = client.create_collection(
+    name="my_collection",
+    dimension=1536,
+    engine="auto"  # Let ProximaDB decide
+)
+
+# Insert vectors with metadata
+collection.insert([{
+    "id": "vec_1",
+    "vector": [0.1, 0.2, ...],  # Your embedding vector
+    "metadata": {
+        "category": "example",
+        "timestamp": "2024-01-01"
+    }
+}])
+
+# Search with filters
+results = collection.search(
+    query_vector=[0.1, 0.2, ...],
+    top_k=10,
+    filter={"category": "example"}
+)
+
+# Process results
+for result in results:
+    print(f"ID: {result.id}, Score: {result.score}")
+```
+
+**Run Tests:**
+```bash
+cd clients/python
 python test_v1_client.py  # Run individual test files
 ```
 
