@@ -948,45 +948,40 @@ impl UnifiedStorageEngine for SwiftEngine {
             }
         }
 
-        // Sort by distance and take top-k
-        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        all_results.truncate(top_k);
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-        // Convert to OptimizedSearchRecord format directly
-        let results_len = all_results.len();
-        let search_results: Vec<OptimizedSearchRecord> = all_results
-            .into_iter()
-            .enumerate()
-            .map(|(idx, (record, distance))| {
-                // Create SimilarityResult manually for Euclidean distance
-                // For euclidean: lower distance = better similarity
-                let similarity_result =
-                    crate::compute::distance_computation::engine::SimilarityResult::new(
-                        distance,
-                        crate::proto::proximadb_v1::DistanceMetric::Euclidean,
-                    );
+        // Convert to OptimizedSearchRecord format and insert into bounded queue
+        for (record, distance) in all_results {
+            // Convert distance to score (higher is better)
+            let score = 1.0 / (1.0 + distance);
 
-                let id = if record.id.is_empty() {
-                    format!("unknown_{}", idx)
-                } else {
-                    record.id.clone()
-                };
+            let search_record = OptimizedSearchRecord {
+                id: record.id.clone(),
+                vector_id: Some(record.id.clone()),
+                score,
+                similarity: Some(distance),
+                vector: Some(Arc::new(record.vector.clone())),
+                metadata: record.metadata.clone(),
+                debug_info: None,
+                version: None,
+                timestamp: None,
+                updated_at: None,
+                expires_at: None,
+                source: None,
+                expanded_context: vec![],
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+            };
 
-                // Use metadata directly from the record (it's already HashMap<String, SqlValue>)
+            priority_queue.try_insert(search_record);
+        }
 
-                let mut search_record =
-                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
-                        .with_similarity(similarity_result.normalized_score)
-                        .add_vector(record.vector)
-                        .with_metadata(record.metadata);
-
-                if let Some(version) = record.version {
-                    search_record = search_record.with_version_info(version, record.timestamp);
-                }
-
-                search_record
-            })
-            .collect();
+        // Get sorted results from bounded queue
+        let search_results: Vec<OptimizedSearchRecord> = priority_queue.into_sorted_vec();
+        let results_len = search_results.len();
 
         // Track bytes processed for metrics
         if let Some(ref mut timer) = timer {

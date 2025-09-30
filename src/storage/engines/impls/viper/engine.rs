@@ -42,6 +42,7 @@ use crate::storage::engines::core::ops::performance_optimization::{
 // VectorMemoryPool now managed by universal optimizer
 use super::types::*;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -2206,8 +2207,8 @@ impl UnifiedStorageEngine for ViperEngine {
             .await?;
         debug!("🔎 VIPER: parquet_reader returned {} records", read_results.results.len());
 
-        // Now perform the actual search on the data
-        let mut scored_results: Vec<(f32, OptimizedSearchRecord)> = Vec::new();
+        // Now perform the actual search on the data using bounded priority queue
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
         // Get distance compute engine
         let distance_compute = Arc::new(
@@ -2224,34 +2225,31 @@ impl UnifiedStorageEngine for ViperEngine {
                 // Compute distance
                 let distance = distance_compute.distance(query_vector, vector);
 
-                // Debug: check metadata before pushing to scored results
-                if scored_results.len() < 3 {
-                    debug!("🔍 DEBUG: About to push record {}: metadata keys={:?}",
-                        record.id, record.metadata.keys().collect::<Vec<_>>());
+                // Convert distance to score (higher is better)
+                let score = 1.0 / (1.0 + distance);
+
+                // Create record with score and insert into bounded queue
+                let mut search_record = record;
+                search_record.score = score;
+                search_record.similarity = Some(distance);
+
+                // Debug: check metadata before inserting
+                if priority_queue.len() < 3 {
+                    debug!("🔍 DEBUG: About to insert record {}: metadata keys={:?}",
+                        search_record.id, search_record.metadata.keys().collect::<Vec<_>>());
                 }
 
-                scored_results.push((distance, record));
+                priority_queue.try_insert(search_record);
             } else {
                 warn!("⚠️ VIPER: Record {} has no vector", record.id);
             }
         }
 
-        // Sort by score (lower is better for distance metrics)
-        scored_results.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        // Get sorted results from priority queue
+        let scored_results = priority_queue.into_sorted_vec();
 
-        // Take top-k
-        scored_results.truncate(k);
-
-        // Update scores and convert to final results
-        // UnifiedDistanceCompute already provides normalized scores
-        let all_results: Vec<OptimizedSearchRecord> = scored_results
-            .into_iter()
-            .map(|(score, mut record)| {
-                record.score = score;
-                record.similarity = Some(score);
-                record
-            })
-            .collect();
+        // Results are already scored and sorted from the priority queue
+        let all_results: Vec<OptimizedSearchRecord> = scored_results;
 
         debug!("Search engine returned {} results", all_results.len());
         if !all_results.is_empty() {

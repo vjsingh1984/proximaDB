@@ -12,6 +12,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::SStableMetadata;
@@ -254,16 +255,18 @@ pub async fn parallel_search(
     // Wait for all search tasks to complete
     let results = join_all(search_tasks).await;
 
-    // Merge results from all SSTables
-    let mut all_results = Vec::new();
+    // Merge results from all SSTables using bounded queue
+    let mut priority_queue = BoundedPriorityQueue::new(k);
     let mut successful_searches = 0;
     let mut failed_searches = 0;
 
     for (idx, result) in results.into_iter().enumerate() {
         match result {
-            Ok(Ok(mut sstable_results)) => {
+            Ok(Ok(sstable_results)) => {
                 trace!("Thread {} returned {} results", idx, sstable_results.len());
-                all_results.append(&mut sstable_results);
+                for result in sstable_results {
+                    priority_queue.try_insert(result);
+                }
                 successful_searches += 1;
             }
             Ok(Err(e)) => {
@@ -277,9 +280,8 @@ pub async fn parallel_search(
         }
     }
 
-    // Sort by score (higher is better) and take top-k
-    all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    all_results.truncate(k);
+    // Get top-k results
+    let all_results = priority_queue.into_sorted_vec();
 
     info!(
         "Parallel search completed in {:?}: {} successful, {} failed, {} results",
@@ -313,7 +315,7 @@ pub async fn search_with_stats(
     distance_metric: &DistanceMetric,
 ) -> Result<(Vec<OptimizedSearchRecord>, QueryStats)> {
     let mut stats = QueryStats::default();
-    let mut results = Vec::new();
+    let mut priority_queue = BoundedPriorityQueue::new(k);
 
     stats.sstables_scanned = sstables.len();
 
@@ -351,7 +353,11 @@ pub async fn search_with_stats(
         .await?;
 
         stats.vectors_evaluated += sstable_results.len();
-        results.extend(sstable_results);
+
+        // Insert results into bounded queue
+        for result in sstable_results {
+            priority_queue.try_insert(result);
+        }
     }
 
     // Calculate pruning ratio
@@ -361,9 +367,8 @@ pub async fn search_with_stats(
         0.0
     };
 
-    // Sort and take top-k
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-    results.truncate(k);
+    // Get top-k results
+    let results = priority_queue.into_sorted_vec();
 
     info!(
         "Query completed: scanned {}/{} SSTables, pruned {:.1}%, evaluated {} vectors",

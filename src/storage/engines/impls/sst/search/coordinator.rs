@@ -27,6 +27,7 @@ use tracing::{info, debug, warn};
 use crate::storage::engines::impls::sst::SstEngine;
 use crate::storage::traits::StorageQueryContext;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::FilterExpression;
 use crate::compute::distance_computation::DistanceMetric;
 
@@ -156,17 +157,18 @@ impl SearchCoordinator {
     ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!("🔧 Post-processing {} search results", results.len());
 
-        // Sort by score (ascending for distance-based metrics)
-        results.sort_by(|a, b| {
-            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        // Apply top-k limit
+        // Use bounded priority queue for efficient top-k selection
         let k = ctx.top_k();
-        if results.len() > k {
-            results.truncate(k);
-            debug!("📊 Truncated results to top-{}", k);
+        let mut priority_queue = BoundedPriorityQueue::new(k);
+
+        // Insert all results into bounded queue
+        for result in results {
+            priority_queue.try_insert(result);
         }
+
+        // Get sorted results from bounded queue
+        let mut results = priority_queue.into_sorted_vec();
+        debug!("📊 Selected top-{} results from bounded queue", results.len());
 
         // Apply score normalization if needed
         if !results.is_empty() {

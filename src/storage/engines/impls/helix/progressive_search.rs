@@ -11,6 +11,7 @@ use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistan
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::persistence::filesystem::FileSystem;
 
 use super::clustering::HilbertKey;
@@ -202,7 +203,7 @@ impl ProgressiveSearchCoordinator {
         filesystem: &Arc<dyn FileSystem>,
         quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        let mut all_results = Vec::new();
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
         for sstable in sstables {
             // Read SSTable blocks with quantized vectors
@@ -216,14 +217,15 @@ impl ProgressiveSearchCoordinator {
                     &quantization_level,
                 )
                 .await?;
-            all_results.extend(results);
+
+            // Insert results into bounded queue
+            for result in results {
+                priority_queue.try_insert(result);
+            }
         }
 
-        // Sort and take top-k
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        all_results.truncate(k);
-
-        Ok(all_results)
+        // Return sorted results
+        Ok(priority_queue.into_sorted_vec())
     }
 
     /// Refine candidates with higher precision quantization
@@ -235,7 +237,7 @@ impl ProgressiveSearchCoordinator {
         distance_metric: DistanceMetric,
         quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        let mut refined = Vec::new();
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
         for mut candidate in candidates {
             // Re-compute distance with higher precision
@@ -244,14 +246,11 @@ impl ProgressiveSearchCoordinator {
                 candidate.score = 1.0 / (1.0 + distance);
                 candidate.similarity = Some(distance);
             }
-            refined.push(candidate);
+            priority_queue.try_insert(candidate);
         }
 
-        // Sort and take top-k
-        refined.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        refined.truncate(k);
-
-        Ok(refined)
+        // Return sorted results
+        Ok(priority_queue.into_sorted_vec())
     }
 
     /// Final FP32 reranking for highest precision
@@ -262,7 +261,7 @@ impl ProgressiveSearchCoordinator {
         k: usize,
         distance_metric: DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        let mut final_results = Vec::new();
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
         for mut candidate in candidates {
             if let Some(ref vector) = candidate.vector {
@@ -271,12 +270,11 @@ impl ProgressiveSearchCoordinator {
                 candidate.score = 1.0 / (1.0 + exact_distance);
                 candidate.similarity = Some(exact_distance);
             }
-            final_results.push(candidate);
+            priority_queue.try_insert(candidate);
         }
 
-        // Final sort and take exactly k
-        final_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        final_results.truncate(k);
+        // Get final sorted results
+        let final_results = priority_queue.into_sorted_vec();
 
         debug!(
             "Progressive search complete: {} results with scores {:.4}-{:.4}",
@@ -297,7 +295,7 @@ impl ProgressiveSearchCoordinator {
         distance_metric: DistanceMetric,
         filesystem: &Arc<dyn FileSystem>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        let mut all_results = Vec::new();
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
         for sstable in sstables {
             let results = super::readers::search_sstable(
@@ -310,14 +308,15 @@ impl ProgressiveSearchCoordinator {
                 None, // candidate_ids
             )
             .await?;
-            all_results.extend(results);
+
+            // Insert results into bounded queue
+            for result in results {
+                priority_queue.try_insert(result);
+            }
         }
 
-        // Sort and take top-k
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        all_results.truncate(k);
-
-        Ok(all_results)
+        // Return sorted results
+        Ok(priority_queue.into_sorted_vec())
     }
 
     /// Search a single SSTable with quantization

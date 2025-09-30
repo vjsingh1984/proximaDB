@@ -1563,12 +1563,19 @@ impl UnifiedSstableReader {
             }
         }
 
-        // Step 5: Sort and return top-k
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        results.truncate(k);
+        // Step 5: Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
-        debug!("✅ SST: Search complete, found {} results", results.len());
-        Ok(results)
+        // Insert all results into bounded queue
+        for result in results {
+            priority_queue.try_insert(result);
+        }
+
+        // Get sorted results from bounded queue
+        let final_results = priority_queue.into_sorted_vec();
+
+        debug!("✅ SST: Search complete, found {} results", final_results.len());
+        Ok(final_results)
     }
 
 

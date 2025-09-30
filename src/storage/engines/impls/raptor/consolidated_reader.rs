@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 // Use unified components instead of custom implementations
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute, SimilarityResult};
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
@@ -462,15 +463,18 @@ impl RaptorReader {
             );
         }
 
-        // Sort by similarity score (higher = better)
-        results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        results.truncate(top_k);
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-        Ok(results)
+        // Insert all results into bounded queue
+        for result in results {
+            priority_queue.try_insert(result);
+        }
+
+        // Get sorted results from bounded queue
+        let final_results = priority_queue.into_sorted_vec();
+
+        Ok(final_results)
     }
 
     // ====== Enhanced Scanning Methods ======
@@ -3397,11 +3401,18 @@ impl RaptorReader {
             }
         }
 
-        // Sort by score (higher is better) and take top k
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        all_results.truncate(k);
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
-        Ok(all_results)
+        // Insert all results into bounded queue
+        for result in all_results {
+            priority_queue.try_insert(result);
+        }
+
+        // Get sorted results from bounded queue
+        let final_results = priority_queue.into_sorted_vec();
+
+        Ok(final_results)
     }
 
     /// Helper: Decompress column data

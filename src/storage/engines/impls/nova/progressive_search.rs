@@ -8,6 +8,7 @@ use super::streaming_processor::{
 };
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 use std::collections::BinaryHeap;
@@ -729,13 +730,51 @@ impl ProgressiveColumnarSearch {
             final_candidates.push((record, exact_distance));
         }
 
-        // Sort by exact distance and take top-k
-        final_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        final_candidates.truncate(top_k);
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-        let results: Vec<VectorRecord> = final_candidates
+        for (record, distance) in final_candidates {
+            // Convert distance to score (higher is better)
+            let score = 1.0 / (1.0 + distance);
+
+            let search_record = crate::core::search::results::OptimizedSearchRecord {
+                id: record.id.clone(),
+                vector_id: Some(record.id.clone()),
+                score,
+                similarity: Some(distance),
+                vector: Some(Arc::new(record.vector.clone())),
+                metadata: record.metadata.clone(),
+                debug_info: None,
+                version: None,
+                timestamp: None,
+                updated_at: None,
+                expires_at: None,
+                source: None,
+                expanded_context: vec![],
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+            };
+
+            priority_queue.try_insert(search_record);
+        }
+
+        // Get sorted results and convert back to VectorRecord format
+        let top_results = priority_queue.into_sorted_vec();
+
+        let results: Vec<VectorRecord> = top_results
             .into_iter()
-            .map(|(record, _)| record)
+            .map(|search_record| VectorRecord {
+                id: search_record.id,
+                vector: search_record.vector.map(|v| (*v).clone()).unwrap_or_default(),
+                metadata: search_record.metadata,
+                version: None,
+                timestamp: 0,
+                expires_at: None,
+                updated_at: None,
+                source: None,
+            })
             .collect();
         let candidates_out = results.len();
         let duration_ms = stage_start.elapsed().as_millis() as u64;

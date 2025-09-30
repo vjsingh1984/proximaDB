@@ -16,6 +16,7 @@ use crate::compute::quantization::storage_engine::{
 };
 use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::compute::distance_computation::{UnifiedDistanceCompute, DistanceMetric};
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
@@ -567,11 +568,53 @@ async fn phase4_full_precision(
         all_results.retain(|(record, _)| record_matches_filter(record, &f));
     }
 
-    // Sort by distance and take top-k
-    all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-    all_results.truncate(top_k);
+    // Use bounded priority queue for efficient top-k selection
+    let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-    Ok(all_results.into_iter().map(|(r, _)| r).collect())
+    for (record, distance) in all_results {
+        // Convert distance to score (higher is better)
+        let score = 1.0 / (1.0 + distance);
+
+        let search_record = crate::core::search::results::OptimizedSearchRecord {
+            id: record.id.clone(),
+            vector_id: Some(record.id.clone()),
+            score,
+            similarity: Some(distance),
+            vector: Some(Arc::new(record.vector.clone())),
+            metadata: record.metadata.clone(),
+            debug_info: None,
+            version: None,
+            timestamp: None,
+            updated_at: None,
+            expires_at: None,
+            source: None,
+            expanded_context: vec![],
+            semantic_similarity: None,
+            quantization_info: None,
+            engine_stats: None,
+            index_path: None,
+        };
+
+        priority_queue.try_insert(search_record);
+    }
+
+    // Get sorted results and convert back to VectorRecord format
+    let top_results = priority_queue.into_sorted_vec();
+    let final_records: Vec<VectorRecord> = top_results
+        .into_iter()
+        .map(|search_record| VectorRecord {
+            id: search_record.id,
+            vector: search_record.vector.map(|v| (*v).clone()).unwrap_or_default(),
+            metadata: search_record.metadata,
+            version: None,
+            timestamp: 0,
+            expires_at: None,
+            updated_at: None,
+            source: None,
+        })
+        .collect();
+
+    Ok(final_records)
 }
 
 // Helper functions

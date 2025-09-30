@@ -10,6 +10,7 @@ use tokio::sync::{Semaphore, mpsc};
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     FilterCondition, MetadataFilter,
@@ -443,18 +444,43 @@ impl NovaColumnarSearch {
             }
         }
 
-        // Sort and take top-k (sort by similarity, descending)
-        all_candidates.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap());
-        all_candidates.truncate(top_k);
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-        // Load full records
+        for candidate in all_candidates {
+            let search_record = crate::core::search::results::OptimizedSearchRecord {
+                id: candidate.vector_id.clone().unwrap_or_default(),
+                vector_id: candidate.vector_id.clone(),
+                score: candidate.similarity,
+                similarity: Some(1.0 - candidate.similarity), // Convert similarity back to distance
+                vector: None, // Will be loaded later
+                metadata: Default::default(),
+                debug_info: None,
+                version: None,
+                timestamp: None,
+                updated_at: None,
+                expires_at: None,
+                source: None,
+                expanded_context: vec![],
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+            };
+            priority_queue.try_insert(search_record);
+        }
+
+        // Get top candidates from bounded queue
+        let top_candidates = priority_queue.into_sorted_vec();
+
+        // Load full records for top candidates
         let mut results = Vec::new();
-        for candidate in all_candidates.iter() {
+        for candidate in top_candidates.iter() {
             if let Some(record) = self
                 .load_record_by_id(nova_file, &candidate.vector_id)
                 .await?
-            {
-                results.push((record, candidate.similarity));
+                {
+                    results.push((record, candidate.score));
             }
         }
 

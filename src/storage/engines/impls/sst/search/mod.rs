@@ -40,6 +40,7 @@ use tracing::{info, debug, warn};
 use crate::storage::engines::impls::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::FilterExpression;
 use crate::compute::distance_computation::DistanceMetric;
 
@@ -205,11 +206,16 @@ impl SstEngine {
             }
         }
 
-        // Sort candidates by score and take top-k
-        all_candidates.sort_by(|a, b| {
-            a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        all_candidates.truncate(k);
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(k);
+
+        // Insert all candidates into bounded queue
+        for candidate in all_candidates {
+            priority_queue.try_insert(candidate);
+        }
+
+        // Get sorted results from bounded queue
+        let mut all_candidates = priority_queue.into_sorted_vec();
 
         // Filter results based on include flags
         self.filter_search_results(&mut all_candidates, include_vectors, include_metadata);

@@ -24,6 +24,7 @@ use tracing::{debug, info};
 // Health status handled internally
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Use core compression directly instead of adapter
 use super::optimized_operations::OptimizedNovaOperations;
@@ -1264,64 +1265,47 @@ impl NovaEngine {
             }
         }
 
-        // Sort by score and take top-k
-        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        all_results.truncate(top_k);
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-        // Convert to OptimizedSearchRecord format directly
-        let search_results: Vec<OptimizedSearchRecord> = all_results
-            .into_iter()
-            .enumerate()
-            .map(|(idx, (record, score))| {
-                let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
-                    1.0 - score, // Distance value
-                    distance_metric,
-                );
+        // Insert all results into bounded queue
+        for (record, distance) in all_results {
+            // Convert distance to score (higher is better)
+            let score = 1.0 / (1.0 + distance);
 
-                let id = if record.id.is_empty() {
-                    format!("unknown_{}", idx)
-                } else {
-                    record.id.clone()
-                };
+            let similarity_result = crate::compute::distance_computation::SimilarityResult::new(
+                distance,
+                distance_metric,
+            );
 
-                let metadata_map: HashMap<String, serde_json::Value> = record
-                    .metadata
-                    .iter()
-                    .map(|(key, sql_value)| {
-                        let value = match &sql_value.value {
-                            Some(
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
-                            ) => serde_json::Value::String(s.clone()),
-                            Some(
-                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n),
-                            ) => serde_json::json!(n),
-                            Some(
-                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
-                            ) => serde_json::json!(i),
-                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
-                                b,
-                            )) => serde_json::Value::Bool(*b),
-                            _ => serde_json::Value::Null,
-                        };
-                        (key.clone(), value)
-                    })
-                    .collect();
+            let search_record = OptimizedSearchRecord {
+                id: record.id.clone(),
+                vector_id: Some(record.id.clone()),
+                score,
+                similarity: Some(distance),
+                vector: Some(Arc::new(record.vector.clone())),
+                metadata: record.metadata.clone(),
+                debug_info: None,
+                version: None,
+                timestamp: None,
+                updated_at: None,
+                expires_at: None,
+                source: None,
+                expanded_context: vec![],
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+            };
 
-                let mut search_record =
-                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
-                        .with_similarity(similarity_result.normalized_score)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(record.metadata.clone());
+            priority_queue.try_insert(search_record);
+        }
 
-                if let Some(version) = record.version {
-                    search_record = search_record.with_version_info(version, record.timestamp);
-                }
+        // Get sorted results from bounded queue
+        let final_results = priority_queue.into_sorted_vec();
 
-                search_record
-            })
-            .collect();
-
-        Ok(search_results)
+        // Return the results from bounded priority queue
+        Ok(final_results)
     }
 }
 

@@ -11,6 +11,7 @@ use crate::core::{
     hardware_capabilities::{HardwareBackend, HardwareCapabilities},
     memory::pool::VectorMemoryPool,
 };
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::engines::core::search::search_modes::{
     CandidateRecord, CandidateState, SearchCandidate,
 };
@@ -258,10 +259,53 @@ impl OptimizedSwiftOperations {
             }
         }
 
-        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        results.truncate(top_k);
+        // Use bounded priority queue for efficient top-k selection
+        let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-        Ok(results.into_iter().map(|(r, _)| r).collect())
+        for (record, distance) in results {
+            // Convert distance to score (higher is better)
+            let score = 1.0 / (1.0 + distance.distance);
+
+            let search_record = crate::core::search::results::OptimizedSearchRecord {
+                id: record.id.clone(),
+                vector_id: Some(record.id.clone()),
+                score,
+                similarity: Some(distance.distance),
+                vector: Some(Arc::new(record.vector.clone())),
+                metadata: record.metadata.clone(),
+                debug_info: None,
+                version: None,
+                timestamp: None,
+                updated_at: None,
+                expires_at: None,
+                source: None,
+                expanded_context: vec![],
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+            };
+
+            priority_queue.try_insert(search_record);
+        }
+
+        // Get sorted results and convert back to VectorRecord format
+        let top_results = priority_queue.into_sorted_vec();
+        let final_records: Vec<VectorRecord> = top_results
+            .into_iter()
+            .map(|search_record| VectorRecord {
+                id: search_record.id,
+                vector: search_record.vector.map(|v| (*v).clone()).unwrap_or_default(),
+                metadata: search_record.metadata,
+                version: None,
+                timestamp: 0,
+                expires_at: None,
+                updated_at: None,
+                source: None,
+            })
+            .collect();
+
+        Ok(final_records)
     }
 
     /// Load block using memory-mapped file for efficiency
