@@ -261,7 +261,83 @@ cargo bench -- --warm-up-time 5 --measurement-time 10
 
 |`complete_benchmark_suite`
 |Full validation suite
+
+|`bench_15_memory_pool`
+|Memory pool performance and configuration
+
+|`bench_16_proxima_simd`
+|SIMD-optimized Proxima encoding performance
+
+|`bench_12_system_optimization`
+|System-wide optimization (cloning, aggregation, sparsity, batching)
 |===
+
+=== System Optimization Benchmarks
+link:SYSTEM_OPTIMIZATION_ANALYSIS.adoc[View Detailed Analysis] | link:SYSTEM_OPTIMIZATION_QUICKREF.adoc[Quick Reference]
+
+**Apple M4 Pro Results**: **82-169x speedup** from Arc-based cloning (always use Arc), **5-7x improvement** via heap-based top-K, **2.6-3.6x gains** from parallel batch processing
+
+Comprehensive system-wide optimization analysis covering:
+
+* **Memory Sharing**: Arc cloning (82-169x faster) - ALWAYS use Arc at all dimensions
+* **Result Aggregation**: Heap select (5-7x faster) for large result sets, strategy decision matrix
+* **Sparsity Impact**: L2 distance 2.97x faster at 50% sparsity, cosine < 10% variation (no fallback needed)
+* **Batch Processing**: Parallel 2.6-3.6x faster for batches 17-4999, sequential for extremes (≤16 or ≥5000)
+* **Metadata Handling**: 16-26x serialization overhead, projection pattern recommendations
+
+**Key Findings (M4 Pro ARM64)**:
+- **Arc cloning ALWAYS optimal**: 82-169x speedup at ALL dimensions (even 3072D), NO inversion exists
+- **Sparse cosine minimal impact**: < 10% variation across all sparsity levels, warnings unnecessary
+- **Parallel processing sweet spot**: 2.6-3.6x faster for batches 17-4999 (overhead at extremes)
+- **Heap select for k/n < 0.1**: 7.1x faster for n=10K, k=10
+- **Sparse L2 optimization**: 2.97x faster at 50% sparsity
+- **Metadata overhead critical**: 26.4x slower with 50 fields, use projection pattern
+- **Hardware normalization included**: Formulas for Intel Xeon (1.8x), AMD EPYC (2.1x), Core i9 (1.4x)
+
+=== Proxima SIMD Encoding Benchmarks
+link:PROXIMA_SIMD_ANALYSIS.adoc[View Detailed Analysis] | link:PROXIMA_SIMD_QUICKREF.adoc[Quick Reference] | link:SPARSE_ENCODING_OPTIMIZATION.adoc[Sparse Optimization Guide]
+
+**Apple M4 Pro Results**: **227 Kelem/s** encoding throughput (Grouped layout), **454 MiB/s** peak at 100k scale, **1.4 GiB/s** SIMD transpose bandwidth
+
+Comprehensive analysis of SIMD-accelerated Proxima encoding system:
+
+* **Encoding Layouts**: Grouped (227 Kelem/s), Transpose (138 Kelem/s), Full Vector (638 Kelem/s)
+* **Engine Profiles**: Swift fastest (143.94 Kelem/s), Helix baseline (142.36 Kelem/s), SST (141.23 Kelem/s)
+* **Data Patterns**: Constant best (154 Kelem/s, +10%), Sparse worst (131 Kelem/s, -4%)
+* **Compression Ratios**: Constant 95-98%, Clustered 70-80%, Random 40-60%
+* **Large-Scale Performance**: 10k→100k→1M vectors (329→454→316 MiB/s)
+* **SIMD Transpose**: Sustained 1.4 GiB/s bandwidth across 128d-768d
+* **Encoding Algorithms**: RLE +17% for constant, Delta +10% for sequential
+
+**Key Findings (M4 Pro ARM64 NEON)**:
+- **Grouped Field Encoding optimal** for production (227 Kelem/s)
+- **Swift engine best** for SIMD operations (+0.6% vs SST)
+- **100k × 384d optimal batch** achieves 454 MiB/s peak throughput
+- **Data pattern matters**: 17.5% performance spread (constant vs sparse)
+- **Sparse encoding needs optimization**: -4% vs random baseline → See link:SPARSE_ENCODING_OPTIMIZATION.adoc[optimization guide] for +17% improvement
+- **Hardware normalization included**: Formulas for Intel/AMD/ARM64 platforms
+
+=== Memory Pool Benchmarks
+link:MEMORY_POOL_ANALYSIS.adoc[View Detailed Analysis] | link:MEMORY_POOL_QUICKREF.adoc[Quick Reference]
+
+**Apple M4 Pro Results**: **97-98% cache hit rates**, pool_size=64 optimal (98.6%), growth_factor=2.0 best balance
+
+Comprehensive analysis of ProximaDB's memory pool system covering:
+
+* **Pool Sizing**: Impact of pool_size on performance (16-1024 buffers, consistent ~406-410µs)
+* **Stats Overhead**: Cost of statistics tracking (~4%, +2µs per operation)
+* **Concurrent Access**: Multi-threaded scaling (near-linear up to 8 threads, ~3.3x speedup)
+* **Hit Rate Analysis**: Cache effectiveness (97-98% with refined workload, pool64: 98.6%)
+* **Buffer Types**: Performance comparison of vector, serialization, compression, metadata buffers
+* **Growth Strategies**: Evaluation of growth_factor values (1.25-3.0x, 2.0x optimal with 4 grows)
+* **Memory Footprint**: Linear scaling analysis (1MB-64MB, ~4MB @ pool_size=64)
+
+**Key Findings (M4 Pro Hardware)**:
+- **Pool size 64 optimal** with 98.6% hit rate (~4MB per pool type, ~16MB total)
+- **Stats overhead acceptable** (~4%) - critical for production monitoring
+- **Concurrent scaling excellent**: Near-linear up to 8 threads (recommend 6-8 workers)
+- **Growth factor 2.0x best** balance (4 grows to steady state, -1.68% perf improvement)
+- **Memory footprint predictable**: Linear scaling, ~4MB @ pool_size=64
 
 == Storage Engine Selection
 

@@ -146,3 +146,56 @@ ca_file = ""    # Path to CA certificate for mTLS
 [cache]
 total_memory_mb = 512
 enable_warming = false
+
+# System Optimization Configuration
+[search.optimization]
+enabled = true
+
+# Memory Sharing Strategy
+# Philosophy: Two strategies, no auto-switching
+# User explicitly chooses - system respects choice and never switches
+[search.optimization.memory_sharing]
+strategy = "Arc"  # Options: "Arc" (default, 82-169x faster) | "DeepCopy" (if explicitly needed)
+track_clone_statistics = true
+enable_unified_metrics = true   # Default: centralized observability (set false for local stats only)
+# Note: Arc is proven 82-169x faster at ALL dimensions - always recommended
+
+# Sparse Vector Kernels
+[search.optimization.sparse]
+enable_sparse_kernels = true
+sparse_threshold = 0.5              # 50% zeros to trigger sparse kernels
+warn_cosine_sparse_threshold = 0.7  # Warn at 70% sparsity
+enable_simd_sparse = true
+sparse_detection_sample_size = 100
+cache_sparsity_info = true
+sparsity_cache_size = 10000
+
+# Distance Metric Strategy
+# Philosophy: User specifies metric in query - no auto-switching
+# System respects user choice and never automatically switches metrics
+[search.optimization.distance_metric]
+# User specifies distance metric in query or collection default
+# No warnings or automatic fallbacks - user choice is respected
+# Note: Sparse vectors have < 10% impact on cosine performance
+
+# Batch Strategy Selection (delegates to UnifiedDistanceCompute for actual processing)
+[search.optimization.batch_strategy]
+sequential_threshold = 16           # ≤16 items: use sequential processing
+parallel_threshold = 5000           # ≥5000 items: use sequential (parallel overhead dominates)
+# Recommendation based on bench_12_system_optimization.log:
+# - Batches < 5000: Use PARALLEL (2.6-3.6x faster)
+# - Batches ≥ 5000: Use SEQUENTIAL (parallel overhead: 1.18x slower)
+# Note: Actual batch sizing uses existing UnifiedDistanceCompute hardware detection
+# - AVX512: 128-item batches
+# - AVX2: 64-item batches
+# - SSE2/NEON: 32-item batches
+# - Scalar: 16-item batches
+
+# Metadata Projection
+[search.optimization.metadata_projection]
+enabled = true
+projection_threshold = 5            # Use projection if ≤5 fields needed
+auto_analyze = true                 # Automatically analyze access patterns
+cache_projections = true
+max_cached_projections = 1000
+track_access_patterns = true

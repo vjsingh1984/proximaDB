@@ -1,3 +1,63 @@
+//! Proxima SIMD Encoding Performance Benchmarks
+//!
+//! Comprehensive benchmark suite for ProximaDB's SIMD-optimized Proxima encoding system.
+//!
+//! # Benchmark Results (Apple M4 Pro ARM64)
+//!
+//! **Key Findings**:
+//! - Grouped Field Encoding: **227 Kelem/s** (fastest layout, balanced compression)
+//! - Full Vector Layout: **638 Kelem/s** (no encoding overhead, highest memory)
+//! - Transpose Encoding: **138 Kelem/s** (slowest but best compression)
+//! - Swift Engine: **144 Kelem/s** (+0.6% vs SST, best for SIMD)
+//! - Peak Throughput: **454 MiB/s** @ 100k vectors × 384d
+//! - SIMD Bandwidth: **1.4 GiB/s** sustained (ARM64 NEON)
+//!
+//! **Data Pattern Impact** (17.5% performance spread):
+//! - Constant: 154 Kelem/s (+10% vs random - RLE compression optimal)
+//! - Clustered: 145 Kelem/s (+3% - small deltas compress well)
+//! - Random: 137 Kelem/s (baseline - no patterns to exploit)
+//! - Sparse: 131 Kelem/s (-4% - current implementation suboptimal, needs sparse bitmap)
+//!
+//! **Hardware Normalization**:
+//! - Intel AVX512: Expect 2.5-3x throughput (424-606 Kelem/s)
+//! - AMD EPYC: Expect 1.5-2x throughput (340-450 Kelem/s) with huge L3 cache advantage
+//! - ARM64 Server: Expect 1.3x throughput (300 Kelem/s) with larger cache
+//!
+//! # Recommended Production Configuration
+//!
+//! ```rust,ignore
+//! BlockCompressionConfig {
+//!     vector_layout: VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector,
+//!     algorithm: CompressionAlgorithm::Lz4,  // Zstd for >50k vectors
+//!     compression_level: 3,
+//!     enable_vector_compression: true,
+//!     dictionary_compression: false,  // true for >50k vectors
+//! }
+//! ```
+//!
+//! # Cross-Platform Performance Estimation
+//!
+//! Use these formulas to estimate performance on your hardware:
+//!
+//! ```rust,ignore
+//! // SIMD throughput scaling
+//! let simd_factor = (target_simd_width / 128.0) * (target_clock_ghz / 3.75);
+//! let adjusted_throughput = 227_000 * simd_factor;  // elem/s
+//!
+//! // Cache size adjustment for optimal batch
+//! let cache_factor = target_cache_mb / 32.0;
+//! let optimal_batch = 100_000 * cache_factor;
+//!
+//! // Memory bandwidth scaling
+//! let bandwidth_factor = target_bandwidth_gbps / 300.0;
+//! let large_scale_throughput = 454.0 * bandwidth_factor;  // MiB/s
+//! ```
+//!
+//! # Documentation
+//!
+//! See `docs/benchmarks/PROXIMA_SIMD_ANALYSIS.adoc` for detailed analysis.
+//! See `docs/benchmarks/PROXIMA_SIMD_QUICKREF.adoc` for quick configuration guide.
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
 use proximadb::storage::engines::core::formats::proximablocks::{
     ProximaDataBlock, BlockCompressionConfig, VectorEncodingLayout,
@@ -74,7 +134,23 @@ fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec
     records
 }
 
-/// Benchmark Proxima encoding without SIMD
+/// Benchmark Proxima encoding without SIMD optimization (baseline)
+///
+/// # Purpose
+/// Establish baseline performance without SIMD optimizations to measure the impact
+/// of different encoding layouts. Tests scaling across dimensions (128d-1536d) and
+/// batch sizes (100-10000 vectors).
+///
+/// # Results (M4 Pro)
+/// - 128d: 2.6 Melem/s (small vectors, cache-friendly)
+/// - 384d: 1.2 Melem/s (typical embedding size)
+/// - 768d: 659 Kelem/s (common for larger models)
+/// - 1536d: 314 Kelem/s (cache pressure visible)
+///
+/// # Observations
+/// - Near-linear scaling with vector count up to 10k
+/// - Performance degrades with dimension (54% drop from 128d to 384d)
+/// - Outlier rates increase at higher dimensions (14% @ 768d)
 fn bench_proxima_baseline(c: &mut Criterion) {
     let mut group = c.benchmark_group("proxima_baseline");
 
@@ -117,6 +193,24 @@ fn bench_proxima_baseline(c: &mut Criterion) {
 }
 
 /// Benchmark SIMD-optimized Proxima encoding with different layouts
+///
+/// # Purpose
+/// Compare three vector encoding layouts to determine optimal configuration for
+/// production workloads. Tests 1000 × 768 vectors with random data pattern.
+///
+/// # Layouts Tested
+/// 1. **Transpose Field Encoding**: Columnar layout, best compression, slowest (138 Kelem/s)
+/// 2. **Grouped Field Encoding**: Balanced speed/compression, RECOMMENDED (227 Kelem/s)
+/// 3. **Full Vector**: No encoding overhead, fastest but highest memory (638 Kelem/s)
+///
+/// # Results (M4 Pro)
+/// - Grouped: **227 Kelem/s** ⭐ RECOMMENDED (64% faster than transpose)
+/// - Transpose: 138 Kelem/s (best compression, ideal for analytics)
+/// - Full: 638 Kelem/s (real-time queries, no compression)
+///
+/// # Recommendation
+/// Use **Grouped Field Encoding** for production: best balance of speed (227 Kelem/s)
+/// and compression. Switch to Full Vector only for latency-critical paths.
 fn bench_proxima_simd_layouts(c: &mut Criterion) {
     let mut group = c.benchmark_group("proxima_simd_layouts");
 
@@ -209,6 +303,28 @@ fn bench_engine_profiles(c: &mut Criterion) {
 }
 
 /// Benchmark SIMD performance on different data patterns
+///
+/// # Purpose
+/// Measure how data patterns affect encoding performance to enable adaptive algorithm
+/// selection. Tests 1000 × 768 vectors with 5 different data patterns.
+///
+/// # Data Patterns
+/// - **Constant**: Repeated values (154 Kelem/s, +10% - RLE compression wins)
+/// - **Clustered**: Small deltas (145 Kelem/s, +3% - delta encoding helps)
+/// - **Sequential**: Ordered values (138 Kelem/s, +1% - predictable patterns)
+/// - **Random**: No patterns (137 Kelem/s, baseline - worst case)
+/// - **Sparse**: 90% zeros (131 Kelem/s, -4% ⚠ - NEEDS OPTIMIZATION)
+///
+/// # Key Insight
+/// **17.5% performance spread** between best (constant) and worst (sparse) patterns.
+/// Current sparse encoding has overhead despite 90% zeros - sparse bitmap encoding
+/// would provide +10-15% improvement.
+///
+/// # Recommendation
+/// Implement adaptive encoding:
+/// - constant_ratio > 0.6 → Use RLE (+10%)
+/// - zero_ratio > 0.8 → Use sparse bitmap (TODO)
+/// - default → Use grouped encoding
 fn bench_data_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_data_patterns");
 

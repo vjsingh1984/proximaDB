@@ -356,14 +356,20 @@ path = "benches/bench_13_complete_suite.rs"
 # harness = false
 # path = "benches/metadata_lifecycle.rs"
 
-# 6. GRAPH OPERATIONS BENCHMARKS (14 - Last)
-[[bench]]
-name = "bench_14_graph_operations"
-harness = false
-path = "benches/bench_14_graph_operations.rs"
+# 6. GRAPH OPERATIONS BENCHMARKS (14 - Disabled)
+# Requires storage backend configuration, disabled until storage is properly initialized
+# [[bench]]
+# name = "bench_14_graph_operations"
+# harness = false
+# path = "benches/bench_14_graph_operations.rs"
 
 [[bench]]
 name = "bench_15_memory_pool"
 harness = false
 path = "benches/bench_15_memory_pool.rs"
+
+[[bench]]
+name = "bench_16_proxima_simd"
+harness = false
+path = "benches/bench_16_proxima_simd.rs"
 

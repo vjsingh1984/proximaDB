@@ -52,6 +52,12 @@ pub struct PoolStats {
     pub current_size: usize,
     pub peak_size: usize,
     pub average_buffer_size: usize,
+    /// Total buffers ever created (including those currently outstanding)
+    pub total_buffers_created: usize,
+    /// Current outstanding buffers (acquired but not returned)
+    pub outstanding_buffers: usize,
+    /// Peak outstanding buffers
+    pub peak_outstanding: usize,
 }
 
 impl PoolStats {
@@ -71,12 +77,16 @@ impl PoolStats {
         );
         info!("   Hit rate: {:.1}%", self.hit_rate() * 100.0);
         info!(
-            "   Pool size: {} (peak: {})",
+            "   Pool queue size: {} (peak: {})",
             self.current_size, self.peak_size
         );
         info!(
-            "   Pool operations: {} grows, {} shrinks",
-            self.pool_grows, self.pool_shrinks
+            "   Outstanding buffers: {} (peak: {})",
+            self.outstanding_buffers, self.peak_outstanding
+        );
+        info!(
+            "   Total buffers created: {} (pool operations: {} grows, {} shrinks)",
+            self.total_buffers_created, self.pool_grows, self.pool_shrinks
         );
         info!("   Average buffer size: {} bytes", self.average_buffer_size);
     }
@@ -173,6 +183,12 @@ where
                 stats.total_acquisitions += 1;
                 stats.cache_hits += 1;
                 stats.current_size = buffers.len();
+                stats.outstanding_buffers += 1;
+
+                // Track peak outstanding
+                if stats.outstanding_buffers > stats.peak_outstanding {
+                    stats.peak_outstanding = stats.outstanding_buffers;
+                }
             }
 
             trace!("🎯 Pool cache hit, {} buffers remaining", buffers.len());
@@ -192,6 +208,35 @@ where
             if let Some(ref mut stats) = stats {
                 stats.total_acquisitions += 1;
                 stats.cache_misses += 1;
+                stats.outstanding_buffers += 1;
+                stats.total_buffers_created += 1;
+
+                // Track peak outstanding
+                if stats.outstanding_buffers > stats.peak_outstanding {
+                    stats.peak_outstanding = stats.outstanding_buffers;
+                }
+
+                // Track pool growth: increment when total buffers exceeds growth thresholds
+                // Growth thresholds: initial_size, initial_size * growth_factor, initial_size * growth_factor^2, etc.
+                let total_capacity = stats.total_buffers_created;
+                let initial_capacity = self.config.initial_size;
+
+                // Use logarithm to calculate expected growth level directly (safer than loop)
+                if total_capacity > initial_capacity {
+                    let growth_factor = self.config.growth_factor;
+
+                    // Calculate expected number of growth events based on total capacity
+                    // Formula: log_base(growth_factor)(total_capacity / initial_capacity)
+                    let ratio = (total_capacity as f64) / (initial_capacity as f64);
+                    let expected_grows = ratio.log(growth_factor as f64).floor() as u64;
+
+                    // Only increment if we've reached a new growth level
+                    if expected_grows > stats.pool_grows {
+                        stats.pool_grows = expected_grows;
+                        trace!("📈 Pool grew to level {}, total capacity: {}",
+                            stats.pool_grows, total_capacity);
+                    }
+                }
             }
 
             trace!("🔄 Pool cache miss, creating new buffer");
@@ -254,6 +299,7 @@ where
             let mut stats = self.stats.lock();
             stats.current_size = buffers.len();
             stats.peak_size = buffers.len();
+            stats.total_buffers_created = self.config.initial_size;
         }
 
         debug!("🏊 Initialized pool with {} buffers", buffers.len());
@@ -341,6 +387,7 @@ impl<T> Drop for PooledItem<T> {
                     let mut stats = self.stats.lock();
                     stats.total_releases += 1;
                     stats.current_size = buffers.len();
+                    stats.outstanding_buffers = stats.outstanding_buffers.saturating_sub(1);
 
                     if buffers.len() > stats.peak_size {
                         stats.peak_size = buffers.len();
@@ -353,6 +400,7 @@ impl<T> Drop for PooledItem<T> {
                 if self.config.enable_stats {
                     let mut stats = self.stats.lock();
                     stats.total_releases += 1;
+                    stats.outstanding_buffers = stats.outstanding_buffers.saturating_sub(1);
                 }
 
                 trace!("🗑️ Pool full, discarding buffer");

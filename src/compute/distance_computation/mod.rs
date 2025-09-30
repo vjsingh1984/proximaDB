@@ -8,6 +8,7 @@ pub mod engine; // Consolidated engine with all SIMD implementations
 pub mod int8_simd;
 pub mod platform;
 pub mod quantized; // Unified quantized distance computation for all engines
+pub mod sparse; // Sparse vector optimizations
 
 // UnifiedDistanceCompute now contains all SIMD implementations directly:
 // - Hardware-aware SIMD implementations (AVX2, SSE, NEON, etc.)
@@ -33,6 +34,14 @@ pub use quantized::{
     DistanceMetrics, HardwarePreferences, InstructionSet, Int8VectorData, PQVectorData,
     QuantizedDistanceCalculator, QuantizedDistanceConfig, QuantizedDistanceResult,
     QuantizedVectorData, SIMDOptimization, SelectedFormat, VectorizationStrategy,
+};
+
+// Re-export sparse vector optimization types
+pub use sparse::{
+    CosineSparsityChecker, CosineSparsityWarning, CosineWarningConfig,
+    SparseDistanceResult, SparsityAnalyzer, SparsityConfig, SparsityInfo,
+    estimate_cosine_degradation, is_cosine_safe, sparse_l2_distance,
+    sparse_l2_distance_scalar, sparse_l2_distance_squared,
 };
 
 // DEPRECATED: These exports from core are deprecated. Use UnifiedDistanceCompute instead.

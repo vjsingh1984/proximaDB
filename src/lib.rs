@@ -149,6 +149,7 @@ pub mod query;
 pub mod schema;
 // NOTE: schema_constants module removed - using hardcoded schema_types.rs instead
 // schema_types removed - use core::avro_unified instead
+pub mod search;
 pub mod server;
 pub mod services;
 pub mod storage;
