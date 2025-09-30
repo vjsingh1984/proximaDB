@@ -256,18 +256,18 @@ async fn test_vector_by_id() {
             data_size_bytes: 0,
         }),
         storage_assignment: Some(StorageAssignment {
-            primary_path: "/tmp/proximadb-data/helix".to_string(),
+            primary_path: format!("{}/helix", path),
             backup_paths: vec![],
             engine: StorageEngine::Helix as i32,
             engine_config: HashMap::new(),
-            base_location: "/tmp/proximadb-data".to_string(),
+            base_location: path.clone(),
             assigned_at: 0,
         }),
         ..Default::default()
     };
 
-    // Flush some vectors - use 100+ to avoid fast path that might have issues
-    let records = create_test_records(150, 128);
+    // Flush some vectors - use 1100+ to ensure PCA training happens (min is 1000)
+    let records = create_test_records(1100, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: records,
@@ -282,7 +282,7 @@ async fn test_vector_by_id() {
 
     // Find specific vector - use same base_location as in flush
     let result = engine
-        .vector_by_id("test_collection", "/tmp/proximadb-data", "vec_5")
+        .vector_by_id("test_collection", &path, "vec_5")
         .await
         .expect("Failed to search for vector by ID");
 
