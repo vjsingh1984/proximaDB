@@ -296,11 +296,10 @@ impl StreamingParquetWriter {
 
         arrays.push(Arc::new(fixed_list_array));
 
-        // TODO: Add quantization arrays if enabled using UnifiedQuantizationEngine
-        // Requires sidecar file integration for PQ codebooks
-        // if self.config.quantization.enable_binary || self.config.quantization.enable_int8 || self.config.quantization.enable_pq {
-        //     self.add_quantization_arrays(&mut arrays, records)?;
-        // }
+        // Add quantization arrays if enabled using UnifiedQuantizationEngine
+        if self.config.quantization.enable_binary || self.config.quantization.enable_int8 || self.config.quantization.enable_pq {
+            self.add_quantization_arrays(&mut arrays, records)?;
+        }
 
         // Timestamp
         let timestamps: Vec<i64> = records.iter()
@@ -465,6 +464,68 @@ impl StreamingParquetWriter {
                 Err(anyhow::anyhow!("Failed to create record batch: {}", e))
             }
         }
+    }
+
+    /// Add quantization arrays to the record batch using UnifiedQuantizationEngine
+    fn add_quantization_arrays(&self, arrays: &mut Vec<ArrayRef>, records: &[VectorRecord]) -> Result<()> {
+        use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
+        use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use arrow::array::BinaryBuilder;
+
+        // Create a quantization engine for this batch with in-memory codebook
+        let distance_compute = Arc::new(UnifiedDistanceCompute::default());
+        let codebook_store = Arc::new(InMemoryCodebookStore::new());
+        let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
+
+        // Binary quantization
+        if self.config.quantization.enable_binary {
+            let mut builder = BinaryBuilder::new();
+            for record in records {
+                let binary_vec = engine.quantize_to_binary(&record.vector)?;
+                builder.append_value(&binary_vec);
+            }
+            arrays.push(Arc::new(builder.finish()));
+        }
+
+        // INT8 quantization
+        if self.config.quantization.enable_int8 {
+            let mut int8_builder = BinaryBuilder::new();
+            let mut scale_values = Vec::with_capacity(records.len());
+            let mut min_values = Vec::with_capacity(records.len());
+            let mut max_values = Vec::with_capacity(records.len());
+
+            for record in records {
+                let (int8_vec, min, max) = engine.quantize_to_u8(&record.vector)?;
+                int8_builder.append_value(&int8_vec);
+
+                // Calculate scale from min/max
+                let range = max - min;
+                let scale = if range > 0.0 { range / 255.0 } else { 1.0 };
+
+                scale_values.push(scale);
+                min_values.push(min);
+                max_values.push(max);
+            }
+
+            arrays.push(Arc::new(int8_builder.finish()));
+            arrays.push(Arc::new(Float32Array::from(scale_values)));
+            arrays.push(Arc::new(Float32Array::from(min_values)));
+            arrays.push(Arc::new(Float32Array::from(max_values)));
+        }
+
+        // PQ quantization
+        if self.config.quantization.enable_pq {
+            // TODO: Implement PQ quantization
+            // PQ requires async codebook training and proper sidecar file storage
+            // For now, store null values
+            let mut pq_builder = BinaryBuilder::new();
+            for _ in records {
+                pq_builder.append_null();
+            }
+            arrays.push(Arc::new(pq_builder.finish()));
+        }
+
+        Ok(())
     }
 
     /// Update bloom filters with current batch

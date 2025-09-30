@@ -112,7 +112,7 @@ impl ParquetSchemaBuilder {
                 DataType::Binary,
                 true,
             ));
-            // Note: PQ codebooks are stored as file-level metadata, not per-row columns
+            // Note: PQ codebook is stored as file-level metadata or sidecar, not per-row
         }
 
         // Temporal fields - using constants
@@ -253,9 +253,9 @@ mod tests {
         // Check quantization fields
         assert!(schema.field_with_name("vector_binary").is_ok());
         assert!(schema.field_with_name("vector_int8").is_ok());
-        assert!(schema.field_with_name("int8_scales").is_ok());
+        assert!(schema.field_with_name("int8_scale").is_ok());
         assert!(schema.field_with_name("vector_pq").is_ok());
-        assert!(schema.field_with_name("pq_codebook").is_ok());
+        // Note: pq_codebook stored as file metadata, not column
     }
 
     #[test]
