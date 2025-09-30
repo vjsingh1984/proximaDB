@@ -221,7 +221,9 @@ mod tests {
     
     #[tokio::test]
     async fn test_auth_service_creation() {
-        let config = AuthConfig::default();
+        let mut config = AuthConfig::default();
+        // Provide a test JWT secret to make service creation succeed
+        config.jwt.secret = Some("test_secret_key_for_jwt_signing_in_tests".to_string());
         let auth_service = AuthService::new(config);
         assert!(auth_service.is_ok());
     }
@@ -237,7 +239,9 @@ mod tests {
             token_expires_at: None,
         };
         
-        let config = AuthConfig::default();
+        let mut config = AuthConfig::default();
+        // Provide a test JWT secret to make service creation succeed
+        config.jwt.secret = Some("test_secret_key_for_jwt_signing_in_tests".to_string());
         let auth_service = AuthService::new(config).unwrap();
         
         // Should succeed for granted permission
