@@ -1471,9 +1471,24 @@ impl UnifiedProximaSIMD {
         let mut i = 0;
 
         // Simple-8b selector table: (bits_per_value, values_per_word)
+        // Each combination must fit in 28 bits: bits_per_value * values_per_word <= 28
         let selectors = [
-            (0, 240), (1, 120), (2, 60), (3, 40), (4, 30), (5, 24), (6, 20), (7, 17),
-            (8, 15), (10, 12), (12, 10), (15, 8), (20, 6), (30, 4), (60, 2), (120, 1),
+            (0, 28),   // Special case: all zeros
+            (1, 28),   // 1 bit each, 28 values
+            (2, 14),   // 2 bits each, 14 values
+            (3, 9),    // 3 bits each, 9 values
+            (4, 7),    // 4 bits each, 7 values
+            (5, 5),    // 5 bits each, 5 values
+            (6, 4),    // 6 bits each, 4 values
+            (7, 4),    // 7 bits each, 4 values
+            (8, 3),    // 8 bits each, 3 values
+            (9, 3),    // 9 bits each, 3 values
+            (10, 2),   // 10 bits each, 2 values
+            (12, 2),   // 12 bits each, 2 values
+            (14, 2),   // 14 bits each, 2 values
+            (20, 1),   // 20 bits each, 1 value
+            (24, 1),   // 24 bits each, 1 value
+            (28, 1),   // 28 bits each, 1 value
         ];
 
         while i < int_values.len() {
@@ -1504,7 +1519,12 @@ impl UnifiedProximaSIMD {
             // Pack values into remaining 28 bits
             for j in 0..best_count {
                 if i + j < int_values.len() {
-                    word |= (int_values[i + j] & ((1u32 << bits) - 1)) << (j * bits as usize);
+                    let shift_amount = j * bits as usize;
+                    // Safe now with corrected selector table
+                    if bits > 0 && shift_amount < 28 {
+                        let mask = (1u32 << bits) - 1;
+                        word |= (int_values[i + j] & mask) << shift_amount;
+                    }
                 }
             }
 
