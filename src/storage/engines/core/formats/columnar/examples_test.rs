@@ -53,10 +53,11 @@ pub async fn viper_optimization_example() -> Result<()> {
     );
 
     // Create optimized writer configuration
+    // TODO: Re-enable quantization once sidecar file integration is complete
     let quantization = QuantizationConfig {
-        enable_binary: true,
-        enable_int8: true,
-        enable_pq: true,
+        enable_binary: false,
+        enable_int8: false,
+        enable_pq: false,
         pq_segments: 32,
         pq_bits: 8,
         ..Default::default()
@@ -293,10 +294,11 @@ pub async fn nova_optimization_example() -> Result<()> {
     );
 
     // NOVA benefits from the same infrastructure with different configuration
+    // TODO: Re-enable quantization once sidecar file integration is complete
     let quantization = QuantizationConfig {
-        enable_binary: true,
-        enable_int8: true,
-        enable_pq: true,
+        enable_binary: false,
+        enable_int8: false,
+        enable_pq: false,
         pq_segments: 64, // More segments for higher dimensions
         pq_bits: 4,      // Lower bits for more compression
         ..Default::default()

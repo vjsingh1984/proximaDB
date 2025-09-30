@@ -296,9 +296,11 @@ impl StreamingParquetWriter {
 
         arrays.push(Arc::new(fixed_list_array));
 
-        // TODO: Add quantization arrays if enabled
-        // The schema may include quantization fields (FIELD_Q_BINARY, FIELD_Q_INT8, etc.)
-        // These need to be added here if self.config.quantization is enabled
+        // TODO: Add quantization arrays if enabled using UnifiedQuantizationEngine
+        // Requires sidecar file integration for PQ codebooks
+        // if self.config.quantization.enable_binary || self.config.quantization.enable_int8 || self.config.quantization.enable_pq {
+        //     self.add_quantization_arrays(&mut arrays, records)?;
+        // }
 
         // Timestamp
         let timestamps: Vec<i64> = records.iter()
