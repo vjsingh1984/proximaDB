@@ -75,9 +75,9 @@ toc::[]
 |Fastest by +0.6% vs SST
 
 |**Best Data Pattern**
-|173.1 Kelem/s
+|175.8 Kelem/s
 |Sparse (90% zeros)
-|**+23.5% vs random** (well-optimized!)
+|**20% faster than random** (best pattern)
 
 |**Large Scale**
 |316 MiB/s
@@ -98,14 +98,14 @@ Achieves **230.6 Kelem/s** with balanced compression:
 
 **Finding #2: Sparse Data Performs BEST**
 
-Performance spread of **23.5%** with sparse data leading:
-- **Sparse (90% zeros): 173.1 Kelem/s (+23.5% vs random)** ⭐ BEST PATTERN
-- Constant: 150.9 Kelem/s (+7.7% vs random)
-- Sequential: 142.9 Kelem/s (+2.0%)
-- Clustered: 141.5 Kelem/s (+1.0%)
-- Random: 140.1 Kelem/s (baseline)
+Performance spread of **20%** with sparse data leading:
+- **Sparse (90% zeros): 175.8 Kelem/s (20% faster than random)** ⭐ BEST PATTERN
+- Constant: 151.6 Kelem/s (7.2% faster)
+- Sequential: 143.6 Kelem/s (2.1% faster)
+- Clustered: 142.1 Kelem/s (1.1% faster)
+- Random: 140.7 Kelem/s (baseline)
 
-**Critical Update**: Previous analysis incorrectly stated sparse was slower. Actual results show sparse encoding is **well-optimized** and achieves the best performance of all patterns!
+Sparse data achieves the best performance, showing ProximaDB's encoding is well-optimized for vectors with many zero values.
 
 **Finding #3: Optimal Batch Size is 100k × 384d**
 
