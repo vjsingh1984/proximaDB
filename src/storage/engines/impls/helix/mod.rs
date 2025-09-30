@@ -123,6 +123,7 @@ mod tests;
 mod integration_tests;
 
 use crate::proto::proximadb_v1::VectorRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::services::EventLog;
 use crate::utils::StoragePath;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
@@ -1117,7 +1118,8 @@ impl UnifiedStorageEngine for HelixEngine {
             );
 
             // Sequential search for small number of files
-            let mut results = Vec::new();
+            // Use bounded priority queue to maintain only top-k results
+            let mut priority_queue = BoundedPriorityQueue::new(k);
             let mut accessed_files = Vec::new();
 
             for sstable in sstables_to_search {
@@ -1127,19 +1129,21 @@ impl UnifiedStorageEngine for HelixEngine {
                     &self.filesystem,
                     &sstable,
                     query_vector,
-                    k,
+                    k * 2, // Get more candidates for better quality
                     &distance_metric,
                     filter_fn.clone(),
                     None, // No specific IDs to check
                 )
                 .await?;
 
-                results.extend(sstable_results);
+                // Insert results into bounded queue
+                for result in sstable_results {
+                    priority_queue.try_insert(result);
+                }
             }
 
-            // Sort by score (higher is better) and take top-k
-            results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-            results.truncate(k);
+            // Get sorted results from bounded queue
+            let results = priority_queue.into_sorted_vec();
 
             (results, accessed_files)
         };

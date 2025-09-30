@@ -16,6 +16,7 @@ use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistan
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
     UnifiedStorageEngine,
@@ -717,7 +718,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         selected_rowgroups: Vec<u32>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        let mut all_results = Vec::new();
+        // Use bounded priority queue to maintain only top-k results
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
         for rg_id in selected_rowgroups {
             // Use filesystem API for efficient range reads
@@ -764,15 +766,15 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                     .with_similarity(similarity_score)
                     .with_metadata(HashMap::new());
 
-                all_results.push(search_result);
+                // Try to insert into bounded queue - only keeps top-k
+                priority_queue.try_insert(search_result);
             }
         }
 
-        // Sort by similarity score in descending order (higher = more similar)
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        all_results.truncate(k);
+        // Get sorted results from bounded queue
+        let results = priority_queue.into_sorted_vec();
 
-        Ok(all_results)
+        Ok(results)
     }
 
     async fn read_rowgroup_with_range(&self, rg_id: u32) -> Result<RecordBatch> {
@@ -1297,7 +1299,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         // For full scan, get all rowgroups
         let selected_rowgroups = rowgroup_manager.row_group_ids();
 
-        let mut all_results = Vec::new();
+        // Use bounded priority queue to maintain only top-k results
+        let mut priority_queue = BoundedPriorityQueue::new(k);
 
         for rg_id in selected_rowgroups {
             // Check cache first
@@ -1353,15 +1356,15 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
                     .with_similarity(similarity_score)
                     .with_metadata(HashMap::new());
 
-                all_results.push(search_result);
+                // Try to insert into bounded queue - only keeps top-k
+                priority_queue.try_insert(search_result);
             }
         }
 
-        // Sort by similarity score in descending order (higher = more similar)
-        all_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        all_results.truncate(k);
+        // Get sorted results from bounded queue
+        let results = priority_queue.into_sorted_vec();
 
-        Ok(all_results)
+        Ok(results)
     }
 
     async fn get_cached_rowgroup(&self, key: &str) -> Option<RecordBatch> {

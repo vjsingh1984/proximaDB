@@ -22,6 +22,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult, StorageEngineStrategy, UnifiedStorageEngine,
@@ -1111,7 +1112,8 @@ impl SwiftEngine {
             .load_collection_files(collection_id, storage_path)
             .await?;
 
-        let mut all_results = Vec::new();
+        // Use bounded priority queue to maintain only top-k results
+        let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
         // Search each SWIFT file
         for swift_file in files.iter() {
@@ -1121,33 +1123,20 @@ impl SwiftEngine {
                 .search_optimized(swift_file, query_vector, top_k, config)
                 .await?;
 
-            // Convert to search results
+            // Convert to search results and insert into bounded queue
             for record in results {
-                // Would compute actual distance
-                all_results.push((record, 0.0f32));
-            }
-        }
+                // Compute actual distance
+                let distance = 0.0f32; // Would compute actual distance
 
-        // Sort by distance and take top-k
-        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        all_results.truncate(top_k);
-
-        // Convert to OptimizedSearchRecord format directly
-        let search_results: Vec<OptimizedSearchRecord> = all_results
-            .into_iter()
-            .enumerate()
-            .map(|(idx, (record, distance))| {
-                // Create SimilarityResult manually based on distance metric
+                // Create SimilarityResult based on distance metric
                 let similarity_result =
                     crate::compute::distance_computation::engine::SimilarityResult::new(
                         distance,
                         distance_metric,
                     );
 
-                // Use metadata directly from the record (it's already HashMap<String, SqlValue>)
-
                 let id = if record.id.is_empty() {
-                    format!("unknown_{}", idx)
+                    format!("unknown_{}", record.timestamp)
                 } else {
                     record.id.clone()
                 };
@@ -1162,9 +1151,13 @@ impl SwiftEngine {
                     search_record = search_record.with_version_info(version, record.timestamp);
                 }
 
-                search_record
-            })
-            .collect();
+                // Try to insert into bounded queue - only keeps top-k
+                priority_queue.try_insert(search_record);
+            }
+        }
+
+        // Get sorted results from bounded queue
+        let search_results = priority_queue.into_sorted_vec();
 
         Ok(search_results)
     }
