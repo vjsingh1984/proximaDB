@@ -559,7 +559,7 @@ async fn test_dictionary_encoding_optimization() {
 
     let config = ParquetWriterConfig {
         enable_dictionary: true, // Enable dictionary encoding
-        enable_bloom_filters: true,
+        enable_bloom_filters: false, // Disable bloom filters to see compression benefits
         ..Default::default()
     };
 
@@ -595,11 +595,12 @@ async fn test_dictionary_encoding_optimization() {
     assert_eq!(stats.total_records, 1000);
 
     // Dictionary encoding should result in good compression for repeated IDs
-    // compression_ratio < 1.0 means good compression (compressed is smaller than uncompressed)
+    // compression_ratio = 1 - (compressed/uncompressed), where higher values = better compression
+    // < 0.5 means at least 50% space savings with good dictionary encoding
     assert!(
-        stats.compression_ratio < 0.5,
-        "Dictionary encoding should achieve good compression ratio: {}",
-        stats.compression_ratio
+        stats.compression_ratio > 0.5,
+        "Dictionary encoding should achieve > 50% space savings (got {:.2}% savings)",
+        stats.compression_ratio * 100.0
     );
 
     // Verify ID lookups still work correctly

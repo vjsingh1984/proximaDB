@@ -114,10 +114,14 @@ impl StreamingParquetWriterStats {
         Self::default()
     }
 
-    /// Update compression ratio
+    /// Update compression ratio as space savings
+    /// Formula: 1 - (compressed/uncompressed)
+    /// - 0.0 = no compression
+    /// - 0.5 = 50% space savings
+    /// - 0.9 = 90% space savings
     pub fn update_compression_ratio(&mut self) {
         if self.uncompressed_size > 0 {
-            self.compression_ratio = self.compressed_size as f64 / self.uncompressed_size as f64;
+            self.compression_ratio = 1.0 - (self.compressed_size as f64 / self.uncompressed_size as f64);
         }
     }
 

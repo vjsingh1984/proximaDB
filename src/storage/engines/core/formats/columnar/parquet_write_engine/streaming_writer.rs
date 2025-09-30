@@ -559,11 +559,20 @@ impl StreamingParquetWriter {
         // Calculate statistics from written data
         let file_size = written_data.len() as u64;
 
-        let compression_ratio = if self.total_records_written > 0 {
-            // Simplified calculation - actual implementation would be more sophisticated
-            1.0
+        // Calculate compression ratio by comparing vector column compressed size to uncompressed size
+        // Uncompressed vector size = dimensions × 4 bytes × record_count
+        let uncompressed_vector_size = (self.dimension * 4 * self.total_records_written as usize) as u64;
+
+        // Extract compressed vector column size from Parquet metadata
+        let compressed_vector_size = extract_vector_column_compressed_size(&written_data, uncompressed_vector_size)?;
+
+        // Calculate compression ratio as space savings: 1 - (compressed/uncompressed)
+        // This aligns with standard compression literature
+        // 0.0 = no compression, 0.5 = 50% space savings, 0.9 = 90% space savings
+        let compression_ratio = if uncompressed_vector_size > 0 {
+            1.0 - (compressed_vector_size as f64 / uncompressed_vector_size as f64)
         } else {
-            1.0
+            0.0
         };
 
         let stats = StreamingParquetWriterStats {
@@ -575,12 +584,12 @@ impl StreamingParquetWriter {
             total_records: self.total_records_written as usize,
             unique_ids: 0, // Would need to track this
             duplicate_ids: 0,
-            uncompressed_size: 0, // Would need to track
-            compressed_size: file_size as usize,
-            vector_data_size: 0,
+            uncompressed_size: uncompressed_vector_size as usize,
+            compressed_size: compressed_vector_size as usize,
+            vector_data_size: compressed_vector_size as usize,
             metadata_size: 0,
-            compression_ratio: compression_ratio as f64,
-            vector_compression_ratio: 0.0,
+            compression_ratio,
+            vector_compression_ratio: compression_ratio,
             metadata_compression_ratio: 0.0,
             row_groups_written: total_row_groups as usize,
             avg_row_group_size: if total_row_groups > 0 {
@@ -604,6 +613,49 @@ impl StreamingParquetWriter {
         };
 
         Ok((stats, written_data, self.metadata_collector))
+    }
+}
+
+/// Extract compressed size of vector column from Parquet metadata
+fn extract_vector_column_compressed_size(parquet_data: &[u8], fallback_uncompressed: u64) -> Result<u64> {
+    use parquet::file::reader::FileReader;
+    use parquet::file::serialized_reader::SerializedFileReader;
+    use bytes::Bytes;
+    use crate::storage::engines::core::formats::columnar::constants::FIELD_VECTOR_FP32;
+
+    // Create a reader from the bytes
+    let bytes = Bytes::copy_from_slice(parquet_data);
+    let reader = SerializedFileReader::new(bytes)?;
+
+    // Get metadata
+    let metadata = reader.metadata();
+
+    // Find the vector column using constant
+    let mut total_compressed_size = 0u64;
+
+    // Iterate through row groups
+    for rg_idx in 0..metadata.num_row_groups() {
+        let row_group = metadata.row_group(rg_idx);
+
+        // Find the vector column in this row group
+        for col_idx in 0..row_group.num_columns() {
+            let column = row_group.column(col_idx);
+            let column_path = column.column_path();
+            let path_str = column_path.string();
+
+            // Check if this is the vector column (matches FIELD_VECTOR_FP32 or its nested paths)
+            if path_str.starts_with(FIELD_VECTOR_FP32) {
+                // Get compressed size from column metadata
+                total_compressed_size += column.compressed_size() as u64;
+            }
+        }
+    }
+
+    // If we couldn't find the column or size is 0, return fallback
+    if total_compressed_size == 0 {
+        Ok(fallback_uncompressed)
+    } else {
+        Ok(total_compressed_size)
     }
 }
 
