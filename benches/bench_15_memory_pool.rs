@@ -7,8 +7,6 @@
 // Run specific benchmark group:
 //   cargo bench --bench bench_15_memory_pool -- pool_config_matrix
 
-mod common;
-
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use proximadb::core::memory::pool::{Pool, PoolConfig, VectorMemoryPool};
 use proximadb::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};

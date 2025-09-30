@@ -362,3 +362,8 @@ name = "bench_14_graph_operations"
 harness = false
 path = "benches/bench_14_graph_operations.rs"
 
+[[bench]]
+name = "bench_15_memory_pool"
+harness = false
+path = "benches/bench_15_memory_pool.rs"
+
