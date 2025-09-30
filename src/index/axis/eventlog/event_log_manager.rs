@@ -189,7 +189,7 @@ impl EventLogManager {
         deleted_files: Vec<String>,
     ) -> Result<()> {
         let event_log = self.get_event_log(collection_id).await?;
-        event_log.cleanup_compacted_files(deleted_files);
+        event_log.cleanup_compacted_files(deleted_files).await;
         Ok(())
     }
 

@@ -315,7 +315,7 @@ impl EventLogQueue {
                         // In test mode, ignore persistence failures for now
                         return Ok(());
                     } else {
-                        return Err(e);
+                        return Err(anyhow::anyhow!("Failed to persist queue state: {}", e));
                     }
                 }
             }
