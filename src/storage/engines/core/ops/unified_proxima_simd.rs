@@ -1011,7 +1011,8 @@ impl UnifiedProximaSIMD {
                 self.simd_sparse_coo_encode(values)
             },
             _ => {
-                // Fall back to existing encoder for unsupported schemes
+                // Fall back to ProximaEncoder for unsupported schemes
+                // No recursion risk in Phase 3 - ProximaEncoder is pure baseline
                 let encoder = ProximaEncoder::new(scheme.clone());
                 encoder.encode_f32(values, None)
             }
@@ -1019,13 +1020,13 @@ impl UnifiedProximaSIMD {
     }
 
     fn simd_delta_encode(&self, values: &[f32], base: f32) -> Result<Vec<u8>> {
-        // For now, fall back to regular encoding
+        // Fall back to ProximaEncoder for delta encoding
         let encoder = ProximaEncoder::new(ProximaScheme::Delta { base: base as i64 });
         encoder.encode_f32(values, None)
     }
 
     fn simd_frame_encode(&self, values: &[f32], reference: f32, bits: u8) -> Result<Vec<u8>> {
-        // For now, fall back to regular encoding
+        // Fall back to ProximaEncoder for frame-of-reference encoding
         let encoder = ProximaEncoder::new(ProximaScheme::FrameOfReference { reference: reference as i64, bits });
         encoder.encode_f32(values, None)
     }
@@ -1038,7 +1039,7 @@ impl UnifiedProximaSIMD {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
-            // Fallback to regular encoding
+            // Fall back to ProximaEncoder for bitpacking on non-x86 platforms
             let encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits });
             encoder.encode_f32(values, None)
         }
@@ -1574,7 +1575,9 @@ impl UnifiedProximaSIMD {
     /// - non_zero_values: Packed f32 values (4 bytes each)
     ///
     /// Performance: ~15x compression for 90% sparsity, +17% throughput
-    fn simd_sparse_bitmap_encode(&self, values: &[f32]) -> Result<Vec<u8>> {
+    ///
+    /// Phase 1 Migration: Made public for delegation from ProximaEncoder
+    pub fn simd_sparse_bitmap_encode(&self, values: &[f32]) -> Result<Vec<u8>> {
         if values.is_empty() {
             return Ok(Vec::new());
         }
@@ -1624,7 +1627,9 @@ impl UnifiedProximaSIMD {
     /// - entries: (index, value) pairs for non-zero positions
     ///
     /// Performance: ~30x compression for 95% sparsity
-    fn simd_sparse_coo_encode(&self, values: &[f32]) -> Result<Vec<u8>> {
+    ///
+    /// Phase 1 Migration: Made public for delegation from ProximaEncoder
+    pub fn simd_sparse_coo_encode(&self, values: &[f32]) -> Result<Vec<u8>> {
         if values.is_empty() {
             return Ok(Vec::new());
         }

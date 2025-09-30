@@ -1208,9 +1208,11 @@ mod block_utils {
 
     /// Encode vectors using Proxima SIMD-optimized encoding
     pub fn encode_with_proxima(block: &ProximaDataBlock) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proximaencoder::{
-            ProximaEncoder, ProximaScheme,
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        use crate::storage::engines::core::ops::unified_proxima_simd::{
+            UnifiedProximaSIMD, EngineProfile,
         };
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         use std::io::Write;
 
         // Get dimension from the first record since metadata doesn't have it directly
@@ -1226,18 +1228,18 @@ mod block_utils {
             }
         }
 
-        // Encode each dimension column using a default scheme
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?;
         let scheme = ProximaScheme::BitPacked { bits: 16 };
-        let encoder = ProximaEncoder::new(scheme);
         let mut encoded_data = Vec::new();
 
         // Write metadata first
         encoded_data.write_all(&(dimension as u32).to_le_bytes())?;
         encoded_data.write_all(&(block.records.len() as u32).to_le_bytes())?;
 
-        // Encode each column
+        // Encode each column with SIMD acceleration
         for column in columns {
-            let encoded_column = encoder.encode_f32(&column, Some(column.len()))?;
+            let encoded_column = simd_encoder.simd_encode_dimension(&column, &scheme)?;
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;
         }

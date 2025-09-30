@@ -2361,7 +2361,9 @@ impl ProximaDataBlock {
     /// Encode vectors using FullVector strategy with field-level compression
     /// Each field (vectors, IDs, metadata) is compressed separately
     fn encode_full_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         use crate::core::compression::{compress, CompressionContext};
 
         let mut field_data = Vec::new();
@@ -2405,10 +2407,11 @@ impl ProximaDataBlock {
                all_floats.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)),
                all_floats.iter().sum::<f32>() / all_floats.len() as f32);
 
-        let encoder = ProximaEncoder::new(scheme.clone());
+        // Phase 3: Use UnifiedProximaSIMD for SIMD acceleration
+        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
 
         // Enhanced error handling for encoding
-        let encoded_vectors = match encoder.encode_f32(&all_floats, Some(all_floats.len())) {
+        let encoded_vectors = match simd_encoder.simd_encode_dimension(&all_floats, &scheme) {
             Ok(data) => data,
             Err(e) => {
                 warn!("❌ [ENCODE_FULL_VECTOR] Encoding failed with scheme {:?}: {}", scheme, e);
@@ -2490,7 +2493,9 @@ impl ProximaDataBlock {
     /// Encode vectors using GroupedFieldEncodedAndCompressedVector strategy with compression-friendly encoding
     /// Divides vectors into 32D groups for better cache locality and compression
     fn encode_grouped_field_encoded_and_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         use crate::core::compression::{compress, CompressionContext};
 
         const GROUP_SIZE: usize = 32;
@@ -2537,7 +2542,8 @@ impl ProximaDataBlock {
         };
 
         debug!("[ENCODE_GV] GroupedFieldEncoded | Pattern: {} | Selected: {:?} | Reason: Better cache locality for grouped access", pattern_info, scheme);
-        let encoder = ProximaEncoder::new(scheme);
+        // Phase 3: Use UnifiedProximaSIMD for SIMD acceleration
+        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?;
 
         // Process each 64D group
         for group_idx in 0..num_groups {
@@ -2559,8 +2565,8 @@ impl ProximaDataBlock {
                 }
             }
 
-            // Encode the group using Proxima for better compression
-            let encoded_group = encoder.encode_f32(&group_floats, Some(group_floats.len()))?;
+            // Encode the group using UnifiedProximaSIMD for SIMD acceleration
+            let encoded_group = simd_encoder.simd_encode_dimension(&group_floats, &scheme)?;
 
             // Apply compression uniformly based on header setting
             let final_group_data = if compression_intent != 0x00 {
@@ -2598,7 +2604,9 @@ impl ProximaDataBlock {
     /// Encode vectors using GroupedFieldEncodedBlockCompressedVector strategy with block-level compression
     /// Divides vectors into 32D groups, applies Proxima encoding to each group, then compresses entire block
     fn encode_grouped_field_encoded_block_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         use crate::core::compression::{compress, CompressionContext};
 
         const GROUP_SIZE: usize = 32;
@@ -2646,8 +2654,8 @@ impl ProximaDataBlock {
             trace!(" [ENCODE_GB] Group {} (dims {}-{}): Pattern: {} | Scheme: {:?}",
                    group_idx, start_dim, end_dim - 1, pattern, scheme);
 
-            // Use group-specific encoder with group-specific scheme
-            let encoder = ProximaEncoder::new(scheme);
+            // Phase 3: Use UnifiedProximaSIMD for SIMD acceleration
+            let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?;
 
             // Collect group data: transpose group dimensions
             let mut group_data = Vec::new();
@@ -2656,8 +2664,8 @@ impl ProximaDataBlock {
                     .map(|v| v.get(dim).copied().unwrap_or(0.0))
                     .collect();
 
-                // Apply Proxima encoding to this dimension
-                let encoded_dim = encoder.encode_f32(&dim_values, Some(vectors.len()))
+                // Apply SIMD encoding to this dimension
+                let encoded_dim = simd_encoder.simd_encode_dimension(&dim_values, &scheme)
                     .map_err(|e| anyhow::anyhow!("Proxima encoding failed for group {} dim {}: {}", group_idx, dim, e))?;
 
                 // Write dimension size and data within the group
@@ -2709,7 +2717,9 @@ impl ProximaDataBlock {
     /// Encode vectors using TransposeFieldEncodedBlockCompressedVector strategy with block-level compression
     /// Transposes RxD → DxR, applies Proxima encoding to each dimension, then compresses entire block
     fn encode_transpose_field_encoded_block_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         use crate::core::compression::{compress, CompressionContext};
 
         let mut field_data = Vec::new();
@@ -2741,7 +2751,8 @@ impl ProximaDataBlock {
         };
 
         debug!("[ENCODE_GB] GroupedBlockCompressed | Pattern: {} | Selected: {:?} | Reason: Block-level compression for better ratios", pattern_info, scheme);
-        let encoder = ProximaEncoder::new(scheme);
+        // Phase 3: Use UnifiedProximaSIMD for SIMD acceleration
+        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?;
 
         // Transpose and encode each dimension (no per-dimension compression)
         let mut uncompressed_block = Vec::new();
@@ -2754,8 +2765,8 @@ impl ProximaDataBlock {
 
             trace!(" [ENCODE_TB] Encoding dimension {} with {} values", dim_idx, dim_values.len());
 
-            // Apply Proxima delta encoding (no compression yet)
-            let encoded_dim = encoder.encode_f32(&dim_values, Some(dim_values.len()))
+            // Apply SIMD encoding (no compression yet)
+            let encoded_dim = simd_encoder.simd_encode_dimension(&dim_values, &scheme)
                 .map_err(|e| anyhow::anyhow!("Proxima encoding failed for dimension {}: {}", dim_idx, e))?;
 
             // Write dimension size and encoded data
@@ -2801,7 +2812,9 @@ impl ProximaDataBlock {
     /// Encode vectors using TransposeFieldEncodedAndCompressedVector strategy with per-dimension field compression
     /// Transposes RxD → DxR and compresses each dimension field separately
     fn encode_transpose_field_encoded_and_compressed_vector_field(vectors: &[Vec<f32>], dimension: usize, config: &BlockCompressionConfig) -> anyhow::Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
+        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         use crate::core::compression::{compress, CompressionContext};
 
         let mut field_data = Vec::new();
@@ -2835,12 +2848,13 @@ impl ProximaDataBlock {
                 dimension_values.push(vector[dim_idx]);
             }
 
-            // Encode dimension data with adaptive Proxima encoding
+            // Encode dimension data with adaptive SIMD encoding
             let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32(&dimension_values);
             let pattern = Self::analyze_pattern_f32(&dimension_values);
             trace!("[ENCODE_DIM] Dimension {}: Pattern: {} | Selected: {:?}", dim_idx, pattern, scheme);
-            let encoder = ProximaEncoder::new(scheme);
-            let encoded_dimension = encoder.encode_f32(&dimension_values, Some(vectors.len()))?;
+            // Phase 3: Use UnifiedProximaSIMD for SIMD acceleration
+            let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?;
+            let encoded_dimension = simd_encoder.simd_encode_dimension(&dimension_values, &scheme)?;
 
             // Compress dimension field if enabled
             let final_dimension_data = if config.enable_vector_compression && config.algorithm != crate::core::compression::CompressionAlgorithm::None {

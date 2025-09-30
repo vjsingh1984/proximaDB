@@ -72,6 +72,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
+use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
 use crate::storage::persistence::filesystem::FileSystem;
 
 // Import AXIS clustering for reuse
@@ -2914,7 +2915,10 @@ impl RaptorWriter {
     fn encode_vector_column(&self, page: &RowPageBuffer) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
         let num_rows = page.rows.len();
-        let proxima_encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
+
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
+        let scheme = ProximaScheme::BitPacked { bits: 16 };
 
         // Transpose vectors to columnar format
         let mut columns: Vec<Vec<f32>> = vec![Vec::with_capacity(num_rows); self.dimension];
@@ -2926,9 +2930,9 @@ impl RaptorWriter {
             }
         }
 
-        // Encode each dimension column
+        // Encode each dimension column with SIMD acceleration
         for column in columns {
-            let encoded_column = proxima_encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
+            let encoded_column = simd_encoder.simd_encode_dimension(&column, &scheme)?;
             encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
             encoded.extend(&encoded_column);
         }
@@ -3045,7 +3049,10 @@ impl RaptorWriter {
             return Ok(encoded);
         }
 
-        let proxima_encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
+        // Phase 3: Use UnifiedProximaSIMD for f32 encoding, ProximaEncoder for binary/int8
+        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
+        let scheme = ProximaScheme::BitPacked { bits: 16 };
+        let proxima_encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 8 }); // For quantized vectors
         let num_rows = page.rows.len();
 
         // === SECTION 1: IDs (columnar string storage) ===
@@ -3068,9 +3075,9 @@ impl RaptorWriter {
             }
         }
 
-        // Encode each dimension column with Proxima
+        // Encode each dimension column with SIMD acceleration
         for column in fp32_columns {
-            let encoded_column = proxima_encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
+            let encoded_column = simd_encoder.simd_encode_dimension(&column, &scheme)?;
             encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
             encoded.extend(&encoded_column);
         }
@@ -3786,17 +3793,17 @@ impl RaptorWriter {
             ProximaScheme::BitPacked { bits: 16 } // Good for dense tensors
         };
 
-        let encoder = ProximaEncoder::new(scheme);
+        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
+        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
         let mut encoded_data = Vec::new();
 
         // Write metadata
         encoded_data.write_all(&(dimension as u32).to_le_bytes())?;
         encoded_data.write_all(&(vectors.len() as u32).to_le_bytes())?;
 
-        // Encode each dimension column
+        // Encode each dimension column with SIMD acceleration
         for column in columns {
-            // Use Proxima float encoding with full fidelity
-            let encoded_column = encoder.encode_f32(&column, None)?; // TODO: Pass expected count for optimization
+            let encoded_column = simd_encoder.simd_encode_dimension(&column, &scheme)?;
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;
         }
@@ -4090,9 +4097,10 @@ impl RaptorWriter {
             ivf_data.extend(&centroid.mean_distance.to_le_bytes());
             ivf_data.extend(&centroid.std_deviation.to_le_bytes());
 
-            // Write centroid vector using Proxima
-            let encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 32 });
-            let encoded = encoder.encode_f32(&centroid.vector, None)?; // Single centroid, no expected count
+            // Phase 3: Write centroid vector using UnifiedProximaSIMD
+            let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
+            let scheme = ProximaScheme::BitPacked { bits: 32 };
+            let encoded = simd_encoder.simd_encode_dimension(&centroid.vector, &scheme)?;
             ivf_data.extend(&(encoded.len() as u32).to_le_bytes());
             ivf_data.extend(&encoded);
         }
@@ -4856,15 +4864,16 @@ impl RaptorWriter {
                     encoded.extend(&packed);
                 }
                 MetadataEncoding::Float => {
-                    // Parse as floats and use Proxima
+                    // Phase 3: Parse as floats and use UnifiedProximaSIMD
                     let floats: Vec<f32> = column
                         .values
                         .iter()
                         .map(|v| v.parse::<f32>().unwrap_or(0.0))
                         .collect();
 
-                    let encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 16 });
-                    let encoded_floats = encoder.encode_f32(&floats, None)?; // TODO: Pass expected count for optimization
+                    let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
+                    let scheme = ProximaScheme::BitPacked { bits: 16 };
+                    let encoded_floats = simd_encoder.simd_encode_dimension(&floats, &scheme)?;
 
                     encoded.extend(&(encoded_floats.len() as u32).to_le_bytes());
                     encoded.extend(&encoded_floats);
