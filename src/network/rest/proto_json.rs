@@ -240,7 +240,14 @@ pub mod utils {
     pub fn metadata_value_to_json(value: &proximadb::metadata_item::Value) -> serde_json::Value {
         match value {
             proximadb::metadata_item::Value::StringValue(s) => serde_json::json!(s),
-            proximadb::metadata_item::Value::NumberValue(f) => serde_json::json!(f),
+            proximadb::metadata_item::Value::NumberValue(f) => {
+                // If the float is a whole number, convert it back to an integer
+                if f.fract() == 0.0 && f.is_finite() && *f >= i64::MIN as f64 && *f <= i64::MAX as f64 {
+                    serde_json::json!(*f as i64)
+                } else {
+                    serde_json::json!(f)
+                }
+            },
             proximadb::metadata_item::Value::BoolValue(b) => serde_json::json!(b),
         }
     }

@@ -140,24 +140,7 @@ fn should_skip_auth(path: &str) -> bool {
 /// Determine required permission based on HTTP method and path
 fn determine_required_permission(method: &str, path: &str) -> Option<Permission> {
     match path {
-        // Collection endpoints
-        path if path.starts_with("/collections") => {
-            match method {
-                "GET" => {
-                    if path.ends_with("/collections") {
-                        Some(Permission::ListCollections)
-                    } else {
-                        Some(Permission::ReadCollectionMetadata)
-                    }
-                }
-                "POST" => Some(Permission::CreateCollection),
-                "PUT" | "PATCH" => Some(Permission::UpdateCollectionMetadata),
-                "DELETE" => Some(Permission::DeleteCollection),
-                _ => None,
-            }
-        }
-        
-        // Vector endpoints
+        // Vector endpoints (check before general collection endpoints)
         path if path.contains("/vectors") => {
             match method {
                 "GET" => Some(Permission::ReadVectors),
@@ -218,7 +201,24 @@ fn determine_required_permission(method: &str, path: &str) -> Option<Permission>
                 Some(Permission::ConfigureSystem)
             }
         }
-        
+
+        // Collection endpoints (checked last as they're more general)
+        path if path.starts_with("/collections") => {
+            match method {
+                "GET" => {
+                    if path.ends_with("/collections") {
+                        Some(Permission::ListCollections)
+                    } else {
+                        Some(Permission::ReadCollectionMetadata)
+                    }
+                }
+                "POST" => Some(Permission::CreateCollection),
+                "PUT" | "PATCH" => Some(Permission::UpdateCollectionMetadata),
+                "DELETE" => Some(Permission::DeleteCollection),
+                _ => None,
+            }
+        }
+
         _ => None, // No specific permission required
     }
 }
