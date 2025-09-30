@@ -71,7 +71,8 @@ impl RbacService {
     
     /// Get roles for a user
     pub fn get_user_roles(&self, user_id: &str) -> Result<Vec<String>, AuthError> {
-        let user_roles = self.user_roles.blocking_read();
+        let user_roles = self.user_roles.try_read()
+            .map_err(|_| AuthError::InvalidCredentials)?;
         let roles = user_roles
             .get(user_id)
             .map(|roles| roles.iter().cloned().collect())
@@ -112,7 +113,8 @@ impl RbacService {
         let mut permissions = HashSet::new();
         
         // Get cached permissions
-        let role_permissions = self.role_permissions.blocking_read();
+        let role_permissions = self.role_permissions.try_read()
+            .map_err(|_| AuthError::InvalidCredentials)?;
         
         for role in roles {
             // Check cached permissions first
@@ -391,7 +393,7 @@ mod tests {
         // Check user roles
         let roles = rbac.get_user_roles(user_id).unwrap();
         assert!(roles.contains(&"admin".to_string()));
-        
+
         // Check user permissions
         let permissions = rbac.get_permissions_for_roles(&roles).unwrap();
         assert!(permissions.contains(&Permission::ManageUsers));
