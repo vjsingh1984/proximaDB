@@ -1521,8 +1521,8 @@ impl UnifiedProximaSIMD {
                 if i + j < int_values.len() {
                     let shift_amount = j * bits as usize;
                     // Safe now with corrected selector table
-                    if bits > 0 && shift_amount < 28 {
-                        let mask = (1u32 << bits) - 1;
+                    if bits > 0 && shift_amount < 28 && bits < 32 {
+                        let mask = if bits >= 32 { u32::MAX } else { (1u32 << bits) - 1 };
                         word |= (int_values[i + j] & mask) << shift_amount;
                     }
                 }
