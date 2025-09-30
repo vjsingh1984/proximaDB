@@ -111,13 +111,28 @@ impl NovaSearchOperations {
         let filter_expression = ctx.search_params.filter_expression.as_ref();
 
         // Get files for the collection
-        let collection_path = format!("/data/collections/{}/nova", collection_id);
-        // Get files for collection - simplified for now
-        let files: Vec<String> = vec![]; // Would normally list actual files
+        // Get the collection's storage path from context
+        let storage_path = ctx.collection_storage_path()
+            .ok_or_else(|| anyhow::anyhow!("No storage path in context"))?;
+
+        // List all parquet files in the nova directory
+        let nova_path = format!("{}/nova", storage_path);
+        let fs = self.filesystem.get_filesystem(&nova_path)?;
+
+        // List files in the nova directory
+        let entries = fs.list(&nova_path).await?;
+        let files: Vec<String> = entries
+            .into_iter()
+            .filter(|e| !e.metadata.is_directory && e.name.ends_with(".parquet"))
+            .map(|e| format!("{}/{}", nova_path, e.name))
+            .collect();
 
         if files.is_empty() {
+            debug!("NOVA: No parquet files found in {}", nova_path);
             return Ok(Vec::new());
         }
+
+        debug!("NOVA: Found {} parquet files for search", files.len());
 
         // Use bounded priority queue to maintain only top-k results
         let mut priority_queue = BoundedPriorityQueue::new(k);

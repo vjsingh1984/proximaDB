@@ -38,7 +38,7 @@ use std::sync::Arc;
 // Removed zero_copy traits - these concepts are now handled by UnifiedCachingFilesystem
 use futures::TryStreamExt;
 use futures::stream::{Stream, StreamExt};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 // Performance optimizations: import commonly used types and functions for zero-cost abstractions
 // use std::hint::likely; // Unstable feature - removed for compilation
@@ -1491,7 +1491,7 @@ impl UnifiedSstableReader {
         k: usize,
         distance_metric: crate::compute::distance_computation::DistanceMetric,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        eprintln!("🔍 DEBUG READER: search_with_filter called with file_path: {}", file_path);
+        trace!("SST Reader: search_with_filter called with file_path: {}", file_path);
         // REFACTORED: Use SharedSstFormatReader like SWIFT does
         // No more duplicate I/O logic!
 
@@ -1530,7 +1530,7 @@ impl UnifiedSstableReader {
         // Step 3: Use apply_strategy to leverage SharedSstFormatReader
         // This delegates all I/O to the shared infrastructure
         let blocks = self.apply_strategy(&strategy, &params, &context).await?;
-        eprintln!("🔍 DEBUG READER: apply_strategy returned {} blocks", blocks.len());
+        trace!("SST Reader: apply_strategy returned {} blocks", blocks.len());
 
         // Step 4: Process blocks and compute distances
         let mut results = Vec::new();
@@ -2059,7 +2059,7 @@ impl UnifiedSstableReader {
         Box<dyn std::future::Future<Output = Result<Vec<ProximaDataBlock>>> + Send + 'a>,
     > {
         Box::pin(async move {
-            eprintln!("🔍 DEBUG APPLY_STRATEGY: Starting with strategy type");
+            trace!("SST Apply Strategy: Starting with strategy type");
             match strategy {
                 SstableReadingStrategy::FullScan { use_block_cache } => {
                     self.full_scan_strategy(context, *use_block_cache).await
@@ -2511,7 +2511,7 @@ impl UnifiedSstableReader {
         context: &CollectionContext,
         use_block_cache: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
-        eprintln!("🔍 DEBUG FULL_SCAN: Starting for {} files", context.sstable_files.len());
+        trace!("SST Full Scan: Starting for {} files", context.sstable_files.len());
         debug!(
             "🔍 Full scan strategy for {} files (cache={})",
             context.sstable_files.len(),
@@ -2525,7 +2525,7 @@ impl UnifiedSstableReader {
         let mut all_blocks = Vec::new();
 
         for (idx, file_path) in context.sstable_files.iter().enumerate() {
-            eprintln!("🔍 DEBUG FULL_SCAN: Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
+            trace!("SST Full Scan: Reading file {} of {}: {}", idx + 1, context.sstable_files.len(), file_path);
             debug!(
                 "📂 Reading file {} of {}: {}",
                 idx + 1,
@@ -2547,26 +2547,26 @@ impl UnifiedSstableReader {
             }
 
             // Validate SST1 magic marker before attempting to read the file
-            eprintln!("🔍 DEBUG FULL_SCAN: Validating SST file: {}", file_path);
+            trace!("SST Full Scan: Validating SST file: {}", file_path);
             match self.validate_sst_file(file_path).await {
                 Ok(()) => {
-                    eprintln!("🔍 DEBUG FULL_SCAN: Validation passed for: {}", file_path);
+                    trace!("SST Full Scan: Validation passed for: {}", file_path);
                     debug!("✅ SST1 validation passed for file: {}", file_path);
                 }
                 Err(e) => {
-                    eprintln!("🔍 DEBUG FULL_SCAN: Validation failed for {}: {}", file_path, e);
+                    debug!("SST Full Scan: Validation failed for {}: {}", file_path, e);
                     warn!("⚠️ Skipping invalid SSTable file {}: {}", file_path, e);
                     continue; // Skip this file entirely and move to the next one
                 }
             }
 
-            eprintln!("🔍 DEBUG FULL_SCAN: Reading blocks (use_block_cache={})", use_block_cache);
+            trace!("SST Full Scan: Reading blocks (use_block_cache={})", use_block_cache);
             let blocks = if use_block_cache {
                 self.read_file_with_cache(file_path).await?
             } else {
                 self.read_file_direct(file_path).await?
             };
-            eprintln!("🔍 DEBUG FULL_SCAN: Loaded {} blocks from file", blocks.len());
+            trace!("SST Full Scan: Loaded {} blocks from file", blocks.len());
             debug!("  📦 Loaded {} blocks from this file", blocks.len());
 
             // Debug: print sample records from first block
@@ -3115,20 +3115,20 @@ impl UnifiedSstableReader {
 
     /// Load index with cloud-optimized metadata reading
     async fn load_index_optimized(&self, file_path: &str) -> Result<SstableIndex> {
-        eprintln!("🔍 DEBUG LOAD_INDEX: Starting for: {}", file_path);
+        trace!("SST Load Index: Starting for: {}", file_path);
         // Extract scheme from file path for proper filesystem selection
         let scheme = if file_path.contains("://") {
             file_path.split("://").next().unwrap_or("file")
         } else {
             "file"
         };
-        eprintln!("🔍 DEBUG LOAD_INDEX: Detected scheme: {}", scheme);
+        trace!("SST Load Index: Detected scheme: {}", scheme);
         let fs = self.filesystem.get_filesystem(&format!("{}://", scheme))?;
-        eprintln!("🔍 DEBUG LOAD_INDEX: Got filesystem, reading magic bytes");
+        trace!("SST Load Index: Got filesystem, reading magic bytes");
 
         // Read and verify SST1 magic bytes
         let first_8_bytes = fs.read_range(file_path, 0, 8).await?;
-        eprintln!("🔍 DEBUG LOAD_INDEX: Read {} magic bytes", first_8_bytes.len());
+        trace!("SST Load Index: Read {} magic bytes", first_8_bytes.len());
         if first_8_bytes.len() < 8 {
             return Err(anyhow::anyhow!(
                 "SSTable file too small: expected at least 8 bytes, got {}",
@@ -3142,7 +3142,7 @@ impl UnifiedSstableReader {
             ));
         }
 
-        eprintln!("🔍 DEBUG LOAD_INDEX: SST1 format detected");
+        trace!("SST Load Index: SST1 format detected");
         debug!("SST1 format detected");
         let header_len = u32::from_le_bytes([
             first_8_bytes[4],
@@ -3150,13 +3150,13 @@ impl UnifiedSstableReader {
             first_8_bytes[6],
             first_8_bytes[7],
         ]) as u64;
-        eprintln!("🔍 DEBUG LOAD_INDEX: Header length: {}", header_len);
+        trace!("SST Load Index: Header length: {}", header_len);
         let header_offset = 8u64; // Skip magic + header_len
 
         // Read header
-        eprintln!("🔍 DEBUG LOAD_INDEX: Reading header at offset {} length {}", header_offset, header_len);
+        trace!("SST Load Index: Reading header at offset {} length {}", header_offset, header_len);
         let header_data = fs.read_range(file_path, header_offset, header_len).await?;
-        eprintln!("🔍 DEBUG LOAD_INDEX: Read {} bytes of header data", header_data.len());
+        trace!("SST Load Index: Read {} bytes of header data", header_data.len());
         if header_data.len() < header_len as usize {
             return Err(anyhow::anyhow!(
                 "Failed to read complete header: expected {} bytes, got {}",
@@ -3164,13 +3164,13 @@ impl UnifiedSstableReader {
                 header_data.len()
             ));
         }
-        eprintln!("🔍 DEBUG LOAD_INDEX: Deserializing header");
+        trace!("SST Load Index: Deserializing header");
         let header: SstableHeader = bincode::deserialize(&header_data)
             .map_err(|e| {
-                eprintln!("🔍 DEBUG LOAD_INDEX: ERROR deserializing header: {}", e);
+                debug!("SST Load Index: ERROR deserializing header: {}", e);
                 anyhow::anyhow!("Failed to deserialize header: {}", e)
             })?;
-        eprintln!("🔍 DEBUG LOAD_INDEX: Header deserialized successfully");
+        trace!("SST Load Index: Header deserialized successfully");
 
         // Calculate bloom filter offset and read its length
         let bloom_offset = header_offset + header_len;
@@ -3192,7 +3192,7 @@ impl UnifiedSstableReader {
         let index_offset = bloom_offset + 4 + bloom_len;
 
         // Read index length
-        eprintln!("🔍 DEBUG LOAD_INDEX: Reading index length at offset {}", index_offset);
+        trace!("SST Load Index: Reading index length at offset {}", index_offset);
         let index_len_data = fs.read_range(file_path, index_offset, 4).await?;
         let index_len = u32::from_le_bytes([
             index_len_data[0],
@@ -3200,14 +3200,14 @@ impl UnifiedSstableReader {
             index_len_data[2],
             index_len_data[3],
         ]) as u64;
-        eprintln!("🔍 DEBUG LOAD_INDEX: Index length: {}", index_len);
+        trace!("SST Load Index: Index length: {}", index_len);
 
         // Read index data
         let index_data = if index_len > 0 {
-            eprintln!("🔍 DEBUG LOAD_INDEX: Reading index data at offset {} length {}", index_offset + 4, index_len);
+            trace!("SST Load Index: Reading index data at offset {} length {}", index_offset + 4, index_len);
             fs.read_range(file_path, index_offset + 4, index_len).await?
         } else {
-            eprintln!("🔍 DEBUG LOAD_INDEX: No index data (index_len = 0)");
+            trace!("SST Load Index: No index data (index_len = 0)");
             vec![]
         };
 
@@ -3672,7 +3672,7 @@ impl UnifiedSstableReader {
     }
 
     async fn read_file_with_cache(&self, path: &str) -> Result<Vec<ProximaDataBlock>> {
-        eprintln!("🔍 DEBUG READ_WITH_CACHE: Starting for path: {}", path);
+        trace!("SST Read with Cache: Starting for path: {}", path);
 
         // For Proxima format, we need to read the data blocks directly after the header
         // The format is: SST1 | header_len | header | bloom_len | bloom | index_len | index | data_blocks
@@ -3680,7 +3680,7 @@ impl UnifiedSstableReader {
         // Read the file to find data blocks
         let blocks = self.read_proximablocks(path).await?;
 
-        eprintln!("🔍 DEBUG READ_WITH_CACHE: Loaded {} Proxima blocks", blocks.len());
+        trace!("SST Read with Cache: Loaded {} Proxima blocks", blocks.len());
         Ok(blocks)
     }
 
@@ -3754,7 +3754,7 @@ impl UnifiedSstableReader {
     async fn read_proximablocks(&self, path: &str) -> Result<Vec<ProximaDataBlock>> {
         use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
-        eprintln!("🔍 DEBUG PROXIMA: Reading blocks from: {}", path);
+        trace!("SST Proxima: Reading blocks from: {}", path);
 
         // Get filesystem
         let scheme = if path.contains("://") {
@@ -3805,7 +3805,7 @@ impl UnifiedSstableReader {
         ]) as u64;
         offset += 4 + index_len;
 
-        eprintln!("🔍 DEBUG PROXIMA: Data blocks start at offset: {}", offset);
+        trace!("SST Proxima: Data blocks start at offset: {}", offset);
 
         // Now read the data blocks
         // Each block is prefixed with its length
@@ -3838,16 +3838,16 @@ impl UnifiedSstableReader {
 
             // Read the block data
             let block_data = fs.read_range(path, offset, block_len).await?;
-            eprintln!("🔍 DEBUG PROXIMA: Reading block at offset {} with {} bytes", offset, block_len);
+            trace!("SST Proxima: Reading block at offset {} with {} bytes", offset, block_len);
 
             // Deserialize using Proxima deserializer
             match ProximaDataBlock::deserialize(&block_data) {
                 Ok(block) => {
-                    eprintln!("🔍 DEBUG PROXIMA: Successfully deserialized block with {} records", block.records.len());
+                    trace!("SST Proxima: Successfully deserialized block with {} records", block.records.len());
                     blocks.push(block);
                 }
                 Err(e) => {
-                    eprintln!("🔍 DEBUG PROXIMA: Failed to deserialize block: {}", e);
+                    debug!("SST Proxima: Failed to deserialize block: {}", e);
                     // Continue with next block
                 }
             }
@@ -3855,7 +3855,7 @@ impl UnifiedSstableReader {
             offset += block_len;
         }
 
-        eprintln!("🔍 DEBUG PROXIMA: Read {} total blocks", blocks.len());
+        trace!("SST Proxima: Read {} total blocks", blocks.len());
         Ok(blocks)
     }
 
@@ -4107,7 +4107,7 @@ impl UnifiedSstableReader {
 
     async fn read_file_direct(&self, path: &str) -> Result<Vec<ProximaDataBlock>> {
         // Use the same Proxima reader as read_file_with_cache
-        eprintln!("🔍 DEBUG READ_DIRECT: Starting for path: {}", path);
+        trace!("SST Read Direct: Starting for path: {}", path);
         self.read_proximablocks(path).await
     }
 

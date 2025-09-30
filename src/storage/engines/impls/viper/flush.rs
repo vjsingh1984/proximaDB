@@ -314,10 +314,17 @@ impl Flush {
         );
 
         // Ensure the data directory exists before writing
-        debug!("🟩 VIPER: Ensuring directory exists: {}", data_url);
-        if let Err(e) = tokio::fs::create_dir_all(&data_url).await {
-            error!("❌ VIPER: Failed to create directory {}: {}", data_url, e);
-            return Err(anyhow::anyhow!("Failed to create directory {}: {}", data_url, e));
+        // Strip file:// prefix if present for local filesystem operations
+        let dir_path = if data_url.starts_with("file://") {
+            data_url.strip_prefix("file://").unwrap().to_string()
+        } else {
+            data_url.clone()
+        };
+
+        debug!("🟩 VIPER: Ensuring directory exists: {}", dir_path);
+        if let Err(e) = tokio::fs::create_dir_all(&dir_path).await {
+            error!("❌ VIPER: Failed to create directory {}: {}", dir_path, e);
+            return Err(anyhow::anyhow!("Failed to create directory {}: {}", dir_path, e));
         }
 
         // Generate filename using FilenameCodec
