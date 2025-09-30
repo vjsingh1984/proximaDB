@@ -1654,6 +1654,15 @@ impl UnifiedStorageEngine for RaptorEngine {
         writer.close().await?;
         tracing::debug!("RAPTOR flush: Writer closed, {} vectors written to {}", vectors_flushed, file_path);
 
+        // Get actual file size to report bytes written
+        let bytes_written = match self.filesystem.metadata(&file_path).await {
+            Ok(metadata) => metadata.size,
+            Err(e) => {
+                tracing::warn!("RAPTOR flush: Failed to get file size: {}", e);
+                0
+            }
+        };
+
         // Update unified metrics
         self.metrics
             .flush_operations
@@ -1670,7 +1679,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         Ok(FlushResult {
             success: true,
             files_created: Some(1),
-            bytes_written: Some(0), // TODO: Track actual bytes written
+            bytes_written: Some(bytes_written),
             duration_ms: Some(start_time.elapsed().as_millis() as u64),
             collections_affected: vec![collection_id.to_string()],
             entries_flushed: Some(vectors_flushed as u64),

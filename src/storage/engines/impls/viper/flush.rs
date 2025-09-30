@@ -313,6 +313,13 @@ impl Flush {
             storage_assignment.base_location, collection_id
         );
 
+        // Ensure the data directory exists before writing
+        debug!("🟩 VIPER: Ensuring directory exists: {}", data_url);
+        if let Err(e) = tokio::fs::create_dir_all(&data_url).await {
+            error!("❌ VIPER: Failed to create directory {}: {}", data_url, e);
+            return Err(anyhow::anyhow!("Failed to create directory {}: {}", data_url, e));
+        }
+
         // Generate filename using FilenameCodec
         let codec = FilenameCodec::new();
         let filename = codec.generate(0, &crate::storage::engines::VIPER_FILE_EXT[1..]);

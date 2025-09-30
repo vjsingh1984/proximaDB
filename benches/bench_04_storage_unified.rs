@@ -452,10 +452,16 @@ fn bench_compression_with_search(c: &mut Criterion) {
                             ..Default::default()
                         });
 
+                        // Configure metadata with proper collection_id for SST path resolution
+                        let mut metadata = StorageQueryMetadata::default();
+                        metadata.collection_id = collection_id.clone();
+                        metadata.dimension = dimension;
+                        metadata.storage_path = base_path.clone();
+
                         let ctx = StorageQueryContext {
                             search_params,
                             collection,
-                            metadata: StorageQueryMetadata::default(),
+                            metadata,
                         };
 
                         engine.search_vectors_unified(&ctx).await
@@ -602,10 +608,16 @@ fn bench_compression_with_search(c: &mut Criterion) {
                             ..Default::default()
                         });
 
+                        // Configure metadata with proper collection_id for SST path resolution
+                        let mut metadata = StorageQueryMetadata::default();
+                        metadata.collection_id = collection_id.clone();
+                        metadata.dimension = dimension;
+                        metadata.storage_path = base_path.clone();
+
                         let ctx = StorageQueryContext {
                             search_params,
                             collection,
-                            metadata: StorageQueryMetadata::default(),
+                            metadata,
                         };
 
                         engine.search_vectors_unified(&ctx).await
@@ -821,13 +833,14 @@ fn bench_large_scale_search(c: &mut Criterion) {
 
                 // Use {engine}-{compression}-{batchsize} format for collection ID
                 let collection_id = format!("{}-{}-{}", engine_name, compress_name, batch_size_name);
-                let base_path = format!("{}/{}", get_base_path(), collection_id);
+                let base_path = get_base_path(); // Don't include collection_id in base_path
 
                 // Clean and load data using filesystem API
+                let collection_path = format!("{}/{}", base_path, collection_id);
                 runtime.block_on(async {
                     let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
-                    let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
-                    let _ = fs.remove_dir_all(&base_path).await;
+                    let fs = fs_factory.get_filesystem(&format!("file://{}", collection_path)).ok()?;
+                    let _ = fs.remove_dir_all(&collection_path).await;
                     Some(())
                 });
 
@@ -841,7 +854,6 @@ fn bench_large_scale_search(c: &mut Criterion) {
                             name: collection_id.clone(),
                             dimension: dimension as u32,
                             storage_config: Some(StorageConfig {
-                                storage_path: base_path.clone(),
                                 compression: compress_val as i32,
                                 ..Default::default()
                             }),
@@ -891,7 +903,6 @@ fn bench_large_scale_search(c: &mut Criterion) {
                                     name: collection_id.clone(),
                                     dimension: dimension as u32,
                                     storage_config: Some(StorageConfig {
-                                        storage_path: base_path.clone(),
                                         compression: compress_val as i32,
                                         ..Default::default()
                                     }),
@@ -905,10 +916,16 @@ fn bench_large_scale_search(c: &mut Criterion) {
                                 ..Default::default()
                             });
 
+                            // Configure metadata with proper collection_id for SST path resolution
+                            let mut metadata = StorageQueryMetadata::default();
+                            metadata.collection_id = collection_id.clone(); // Specific to benchmark run
+                            metadata.dimension = dimension;
+                            metadata.storage_path = base_path.clone(); // Consistent base path
+
                             let ctx = StorageQueryContext {
                                 search_params,
                                 collection,
-                                metadata: StorageQueryMetadata::default(),
+                                metadata,
                             };
 
                             let result = engine.search_vectors_unified(&ctx).await;
@@ -920,10 +937,11 @@ fn bench_large_scale_search(c: &mut Criterion) {
                 group.finish();
 
                 // Clean up using filesystem API
+                let collection_path = format!("{}/{}", base_path, collection_id);
                 runtime.block_on(async {
                     let fs_factory = FilesystemFactory::new(FilesystemConfig::default()).await.ok()?;
-                    let fs = fs_factory.get_filesystem(&format!("file://{}", base_path)).ok()?;
-                    let _ = fs.remove_dir_all(&base_path).await;
+                    let fs = fs_factory.get_filesystem(&format!("file://{}", collection_path)).ok()?;
+                    let _ = fs.remove_dir_all(&collection_path).await;
                     Some(())
                 });
             }

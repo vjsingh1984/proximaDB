@@ -113,6 +113,9 @@ pub struct RaptorWriter {
     id_column_builder: IdColumnBuilder,
     ivf_builder: IvfClusteringBuilder, // Memory-efficient builder
     column_projections: ColumnProjectionsBuilder,
+
+    // Track if file has been created
+    file_created: bool,
 }
 
 /// Buffer for accumulating rows into pages
@@ -2517,6 +2520,7 @@ impl RaptorWriter {
                 metadata_columns: HashMap::new(),
                 filter_bitmaps: HashMap::new(),
             },
+            file_created: true, // Header was written
         })
     }
 

@@ -380,7 +380,7 @@ impl SstableWriter {
     where
         I: Iterator<Item = (String, VectorRecord)>,
     {
-        eprintln!("DEBUG WRITER: write_sorted_vector_records called with {} records", record_count);
+        debug!("SST Writer: write_sorted_vector_records called with {} records", record_count);
         info!(
             "🚀 SST STREAMING PATH: Writing {} pre-sorted VectorRecords directly",
             record_count
@@ -392,7 +392,7 @@ impl SstableWriter {
         debug!("   - Compression: Applied based on collection config");
 
         if record_count == 0 {
-            eprintln!("DEBUG WRITER: No records to write, returning error");
+            debug!("SST Writer: No records to write, returning error");
             info!(
                 "⚠️ SST: No records to write - this may be a valid scenario (e.g., compaction with no data)"
             );
@@ -743,13 +743,13 @@ impl SstableWriter {
 
         // Write all data atomically
         let write_path = self.path.to_string_lossy();
-        eprintln!("DEBUG WRITER: Atomic write of {} bytes to: {}", output_data.len(), write_path);
+        debug!("SST Writer: Atomic write of {} bytes to: {}", output_data.len(), write_path);
         let result = atomic_writer
             .write_atomic(&*fs, &write_path, &output_data, None)
             .await;
         match result {
-            Ok(_) => eprintln!("DEBUG WRITER: Atomic write successful to: {}", write_path),
-            Err(ref e) => eprintln!("DEBUG WRITER: Atomic write failed to {}: {}", write_path, e),
+            Ok(_) => debug!("SST Writer: Atomic write successful to: {}", write_path),
+            Err(ref e) => debug!("SST Writer: Atomic write failed to {}: {}", write_path, e),
         }
         result?;
 
@@ -967,7 +967,7 @@ impl SstableWriter {
         };
         let header_bytes = bincode::serialize(&header)?;
         let header_len = header_bytes.len() as u32;
-        eprintln!("DEBUG WRITER: Header serialized to {} bytes", header_len);
+        debug!("SST Writer: Header serialized to {} bytes", header_len);
         file_content.extend_from_slice(&header_len.to_le_bytes());
 
         // Write header
@@ -1006,12 +1006,12 @@ impl SstableWriter {
 
         // Write to file using filesystem
         let write_path = self.path.to_str().unwrap();
-        eprintln!("DEBUG WRITER: Writing {} bytes to path: {}", file_content.len(), write_path);
+        debug!("SST Writer: Writing {} bytes to path: {}", file_content.len(), write_path);
         let fs = self.filesystem.get_filesystem("file://")?;
         let result = fs.write(write_path, &file_content, None).await;
         match result {
-            Ok(_) => eprintln!("DEBUG WRITER: Successfully wrote file to: {}", write_path),
-            Err(ref e) => eprintln!("DEBUG WRITER: Failed to write file to {}: {}", write_path, e),
+            Ok(_) => debug!("SST Writer: Successfully wrote file to: {}", write_path),
+            Err(ref e) => debug!("SST Writer: Failed to write file to {}: {}", write_path, e),
         }
         result?;
 

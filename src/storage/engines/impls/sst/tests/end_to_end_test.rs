@@ -29,9 +29,10 @@ mod tests {
     };
     use crate::storage::traits::{
         UnifiedStorageEngine, StorageQueryContext, FlushParameters,
-        SearchParams, StorageQueryMetadata,
+        StorageQueryMetadata,
     };
-    use crate::core::types::FilterExpression;
+    use crate::proto::proximadb_v1::SearchParams;
+    use crate::core::search::{FilterExpression, ComparisonOperator};
     use tracing::{info, debug};
 
     #[tokio::test]
@@ -226,7 +227,7 @@ mod tests {
 
         let filter_expr = FilterExpression::Comparison {
             field: "category".to_string(),
-            operator: crate::core::types::ComparisonOperator::Equals,
+            operator: ComparisonOperator::Equals,
             value: serde_json::Value::String("cat_5".to_string()),
         };
 
