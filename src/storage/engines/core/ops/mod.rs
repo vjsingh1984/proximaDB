@@ -164,11 +164,21 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
 
 // Temporary placeholder types until modules are created
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct UniversalPerformanceConfig {
     pub max_concurrent_operations: usize,
     pub enable_prefetching: bool,
     pub cache_size_bytes: u64,
+}
+
+impl Default for UniversalPerformanceConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_operations: 100, // Must be > 0
+            enable_prefetching: true,
+            cache_size_bytes: 1024 * 1024 * 1024, // 1GB
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -930,7 +940,11 @@ mod tests {
         let mut config = UniversalEngineConfig::default();
 
         // Valid config should pass
-        assert!(validate_config_compatibility(&config).is_ok());
+        let result = validate_config_compatibility(&config);
+        if let Err(ref e) = result {
+            eprintln!("Validation failed: {}", e);
+        }
+        assert!(result.is_ok());
 
         // Mismatched dimensions should fail
         config.storage_config.schema_config.vector_schema.dimension = 512;
