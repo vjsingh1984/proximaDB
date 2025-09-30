@@ -115,7 +115,7 @@ impl GraphOperationsService {
             mode: OperationMode::Unified,
             collection_service,
             graphs: Arc::new(DashMap::new()),
-            base_storage_url: "file://localhost/tmp/proximadb".to_string(), // Default storage URL with localhost
+            base_storage_url: "file:///tmp/proximadb".to_string(), // Default storage URL
             memory_pool,
             metrics_updater: None,
             stats_edges: Arc::new(AtomicU64::new(0)),
@@ -162,7 +162,7 @@ impl GraphOperationsService {
             mode: OperationMode::Unified,
             collection_service,
             graphs: Arc::new(DashMap::new()),
-            base_storage_url: "file://localhost/tmp/proximadb".to_string(),
+            base_storage_url: "file:///tmp/proximadb".to_string(),
             memory_pool,
             metrics_updater: None,
             stats_edges: Arc::new(AtomicU64::new(0)),
