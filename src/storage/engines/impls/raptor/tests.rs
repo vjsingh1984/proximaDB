@@ -259,6 +259,14 @@ mod tests {
                 dimension: 4,
                 ..Default::default()
             }),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp".to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp".to_string(),
+                assigned_at: chrono::Utc::now().timestamp(),
+            }),
             ..Default::default()
         });
         let query_context = crate::storage::traits::StorageQueryContext {
@@ -346,12 +354,20 @@ mod tests {
     async fn test_compaction_operation() -> Result<()> {
         let engine = create_test_engine().await?;
 
-        // Create collection config with dimension
+        // Create collection config with dimension and storage assignment
         let collection = crate::proto::proximadb_v1::Collection {
             id: "test_collection".to_string(),
             config: Some(crate::proto::proximadb_v1::CollectionConfig {
                 dimension: 4,
                 ..Default::default()
+            }),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: "/tmp/proximadb-test/raptor".to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Raptor as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: "/tmp/proximadb-test".to_string(),
+                assigned_at: 0,
             }),
             ..Default::default()
         };

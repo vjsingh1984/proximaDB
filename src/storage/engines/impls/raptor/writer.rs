@@ -4702,6 +4702,11 @@ impl RaptorWriter {
 
             // Build edges for each node in the cluster
             for &node_idx in &cluster_nodes {
+                // Skip if node_idx is out of bounds for vectors array
+                if node_idx >= self.ivf_builder.vectors.len() {
+                    continue;
+                }
+
                 let mut edges = Vec::new();
                 let node_vector = &self.ivf_builder.vectors[node_idx];
 

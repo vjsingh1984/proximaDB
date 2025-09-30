@@ -266,26 +266,27 @@ async fn test_vector_by_id() {
         ..Default::default()
     };
 
-    // Flush some vectors
-    let records = create_test_records(10, 128);
+    // Flush some vectors - use 100+ to avoid fast path that might have issues
+    let records = create_test_records(150, 128);
     let params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
         vector_records: records,
-        force: false,
+        force: true,  // Force flush to ensure data is written
         synchronous: true,
-        collection_config: Some(collection),
+        collection_config: Some(collection.clone()),
         ..Default::default()
     };
 
-    engine.do_flush(&params).await.unwrap();
+    let flush_result = engine.do_flush(&params).await.unwrap();
+    assert!(flush_result.success, "Flush should succeed");
 
     // Find specific vector - use same base_location as in flush
     let result = engine
         .vector_by_id("test_collection", "/tmp/proximadb-data", "vec_5")
         .await
-        .unwrap();
+        .expect("Failed to search for vector by ID");
 
-    assert!(result.is_some());
+    assert!(result.is_some(), "Vector vec_5 should be found");
     assert_eq!(result.unwrap().id, "vec_5");
 }
 
