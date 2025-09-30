@@ -196,20 +196,15 @@ impl EventLogQuery for EventLogServiceAdapter {
 
     async fn get_health(&self) -> Result<ServiceHealth> {
         let stats = self.stats.read().await;
-        // TODO: Add stats method to EventLogManager
-        let manager_stats = EventLogStats {
-            total_events: 0,
-            total_pending_events: 0,
-            collections_tracked: 0,
-            oldest_event_timestamp: None,
-        };
+        // Get actual stats from EventLogManager
+        let manager_stats = self.manager.stats().await;
 
         Ok(ServiceHealth {
             status: HealthStatus::Healthy,
             mode: format!("{:?}", self.mode),
-            pending_events: manager_stats.total_pending_events as usize,
+            pending_events: manager_stats.total_pending_events,
             processed_events: stats.total_events_processed as usize,
-            active_collections: manager_stats.collections_tracked,
+            active_collections: manager_stats.collections_with_queues,
             uptime_seconds: self.start_time.elapsed().as_secs(),
             last_sync: stats.last_sync_timestamp,
         })

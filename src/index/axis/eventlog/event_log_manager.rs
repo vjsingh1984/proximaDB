@@ -147,7 +147,7 @@ impl EventLogManager {
             has_fp32,
         );
 
-        event_log.add_event(event);
+        event_log.add_event(event).await;
         debug!("Added flush event for collection {}", collection_id);
         Ok(())
     }
@@ -169,7 +169,7 @@ impl EventLogManager {
             storage_engine,
         );
 
-        event_log.add_event(event);
+        event_log.add_event(event).await;
         debug!("Added compaction event for collection {}", collection_id);
         Ok(())
     }

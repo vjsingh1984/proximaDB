@@ -1265,7 +1265,7 @@ impl UnifiedIvfIndex {
                 // Search within posting list
                 for vector_id in &posting_list.vector_ids {
                     // Get vector from zero-overhead collection
-                    if let Some(collection_entry) = self.vectors.get(vector_id) {
+                    if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
                         let collection = collection_entry.read().unwrap();
                         if let Some(view) = collection.get(vector_id) {
                             if let Some(vector_data) = view.as_f32() {

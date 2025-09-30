@@ -132,6 +132,18 @@ mod tests {
         let graph_service = Arc::new(GraphOperationsService::new());
         let executor = QueryExecutor::new(graph_service.clone());
 
+        // First create the graph collection
+        let create_graph_request = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: "test_graph".to_string(),
+            name: Some("Test Graph".to_string()),
+            description: None,
+            schema: None,
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        graph_service.create_graph_collection(create_graph_request).await.unwrap();
+
         // Create a dummy node
         let node = crate::graph::Node {
             id: "test_node_1".to_string(),

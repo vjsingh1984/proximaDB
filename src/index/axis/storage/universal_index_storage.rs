@@ -273,12 +273,14 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 } else if let Some(ref bucket) = self.s3_bucket {
                     self.demote_to_s3(id, data, bucket).await?;
                 } else {
-                    // No lower tier available - evict anyway to prevent memory pressure
+                    // No lower tier available - keep in memory but log warning
+                    // We can't actually evict without losing data
                     warn!(
-                        "No lower tier available, evicting {} from memory to prevent crash",
+                        "No lower tier available for {}, keeping in memory",
                         id
                     );
-                    self.data_locations.remove(id);
+                    // Put the data back in memory cache since we can't evict it
+                    self.memory_cache.insert(id.clone(), bytes);
                 }
 
                 info!("Evicted {} data {} from mem", self.index_type, id);
@@ -650,14 +652,14 @@ mod tests {
             storage.put(node).await.unwrap();
         }
 
-        // Memory should have at most max_memory_items + 1 (due to eviction happening after insert)
-        // Items will be evicted even without lower tier to prevent memory pressure
-        assert!(
-            storage.memory_cache.len() <= 11,
-            "Expected at most 11 items in memory after eviction"
+        // Without a lower tier, data cannot be evicted and will stay in memory
+        // This is expected behavior to prevent data loss
+        assert_eq!(
+            storage.memory_cache.len(), 15,
+            "All items should remain in memory when no lower tier is available"
         );
 
-        // Retrieve should promote back to memory
+        // Retrieve should work since data is still in memory
         let node = storage.get("node_0_0").await.unwrap();
         assert!(node.is_some());
     }

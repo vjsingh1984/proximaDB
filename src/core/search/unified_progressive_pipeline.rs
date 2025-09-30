@@ -246,7 +246,7 @@ impl UnifiedProgressiveSearchPipeline {
             Strategy::SmartDefaults => {
                 stages.push(SearchStage::Binary);
                 stages.push(SearchStage::Int8);
-                stages.push(SearchStage::Pq8);
+                // Don't add Pq8 here - let FP32 be the third stage
             }
             Strategy::Minimal => {
                 stages.push(SearchStage::Int8);

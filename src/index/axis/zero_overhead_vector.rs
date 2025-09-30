@@ -246,9 +246,15 @@ impl ZeroOverheadCollection {
         }
 
         let zero_overhead = ZeroOverheadVector::from_fp32(&id, vector)?;
-        let index = self.vectors.len();
-        self.vectors.push(zero_overhead);
-        self.id_index.insert(id, index);
+
+        // Check if ID already exists and replace if so
+        if let Some(existing_index) = self.id_index.get(&id) {
+            self.vectors[*existing_index] = zero_overhead;
+        } else {
+            let index = self.vectors.len();
+            self.vectors.push(zero_overhead);
+            self.id_index.insert(id, index);
+        }
         Ok(())
     }
 
@@ -260,9 +266,15 @@ impl ZeroOverheadCollection {
         }
 
         let zero_overhead = ZeroOverheadVector::from_quantized(&id, quantized_vector)?;
-        let index = self.vectors.len();
-        self.vectors.push(zero_overhead);
-        self.id_index.insert(id, index);
+
+        // Check if ID already exists and replace if so
+        if let Some(existing_index) = self.id_index.get(&id) {
+            self.vectors[*existing_index] = zero_overhead;
+        } else {
+            let index = self.vectors.len();
+            self.vectors.push(zero_overhead);
+            self.id_index.insert(id, index);
+        }
         Ok(())
     }
 
