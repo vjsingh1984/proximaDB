@@ -265,7 +265,7 @@ impl UnifiedAuthService {
 
         match &self.jwt_service {
             Some(jwt_service) => {
-                match jwt_service.verify_token(token) {
+                match jwt_service.verify_token(token).await {
                     Ok(claims) => {
                         let user_context = self.convert_jwt_claims_to_unified(claims);
                         Ok(AuthenticationResult {

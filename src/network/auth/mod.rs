@@ -171,7 +171,7 @@ impl AuthService {
     
     /// Authenticate using JWT token
     async fn authenticate_jwt(&self, token: &str) -> Result<AuthResult, AuthError> {
-        let claims = self.jwt_service.verify_token(token)?;
+        let claims = self.jwt_service.verify_token(token).await?;
         
         // Get user roles and permissions
         let roles = self.rbac.get_user_roles(&claims.sub)?;

@@ -172,9 +172,9 @@ impl JwtService {
     }
     
     /// Verify and decode a JWT token
-    pub fn verify_token(&self, token: &str) -> Result<Claims, AuthError> {
+    pub async fn verify_token(&self, token: &str) -> Result<Claims, AuthError> {
         // Check if token is blacklisted
-        let blacklist = self.blacklist.blocking_read();
+        let blacklist = self.blacklist.read().await;
         if blacklist.contains(token) {
             return Err(AuthError::InvalidToken("Token has been revoked".to_string()));
         }
@@ -209,7 +209,7 @@ impl JwtService {
         refresh_token: &str,
         new_roles: Option<Vec<String>>,
     ) -> Result<TokenPair, AuthError> {
-        let claims = self.verify_token(refresh_token)?;
+        let claims = self.verify_token(refresh_token).await?;
         
         // Verify this is a refresh token
         if claims.typ != TokenType::Refresh {
@@ -234,8 +234,8 @@ impl JwtService {
     }
     
     /// Get remaining token validity time in seconds
-    pub fn get_token_ttl(&self, token: &str) -> Result<i64, AuthError> {
-        let claims = self.verify_token(token)?;
+    pub async fn get_token_ttl(&self, token: &str) -> Result<i64, AuthError> {
+        let claims = self.verify_token(token).await?;
         let now = chrono::Utc::now().timestamp();
         Ok((claims.exp - now).max(0))
     }
@@ -288,13 +288,13 @@ mod tests {
             .unwrap();
         
         // Verify access token
-        let claims = jwt_service.verify_token(&token_pair.access_token).unwrap();
+        let claims = jwt_service.verify_token(&token_pair.access_token).await.unwrap();
         assert_eq!(claims.sub, user_id);
         assert_eq!(claims.roles, roles);
         assert_eq!(claims.typ, TokenType::Access);
-        
+
         // Verify refresh token
-        let refresh_claims = jwt_service.verify_token(&token_pair.refresh_token).unwrap();
+        let refresh_claims = jwt_service.verify_token(&token_pair.refresh_token).await.unwrap();
         assert_eq!(refresh_claims.sub, user_id);
         assert_eq!(refresh_claims.typ, TokenType::Refresh);
         assert!(refresh_claims.roles.is_empty()); // Refresh tokens don't have roles
@@ -322,12 +322,12 @@ mod tests {
             .unwrap();
         
         // Verify new access token has updated roles
-        let claims = jwt_service.verify_token(&new_token_pair.access_token).unwrap();
+        let claims = jwt_service.verify_token(&new_token_pair.access_token).await.unwrap();
         assert_eq!(claims.sub, user_id);
         assert_eq!(claims.roles, new_roles);
-        
+
         // Old refresh token should now be revoked
-        assert!(jwt_service.verify_token(&token_pair.refresh_token).is_err());
+        assert!(jwt_service.verify_token(&token_pair.refresh_token).await.is_err());
     }
     
     #[tokio::test]
@@ -345,13 +345,13 @@ mod tests {
             .unwrap();
         
         // Token should be valid initially
-        assert!(jwt_service.verify_token(&token_pair.access_token).is_ok());
-        
+        assert!(jwt_service.verify_token(&token_pair.access_token).await.is_ok());
+
         // Revoke the token
         jwt_service.revoke_token(&token_pair.access_token).await.unwrap();
-        
+
         // Token should now be invalid
-        assert!(jwt_service.verify_token(&token_pair.access_token).is_err());
+        assert!(jwt_service.verify_token(&token_pair.access_token).await.is_err());
     }
     
     #[tokio::test]
@@ -364,7 +364,7 @@ mod tests {
             .await
             .unwrap();
         
-        let ttl = jwt_service.get_token_ttl(&token_pair.access_token).unwrap();
+        let ttl = jwt_service.get_token_ttl(&token_pair.access_token).await.unwrap();
         assert!(ttl > 0);
         assert!(ttl <= 3600); // Should be less than or equal to expiration time
     }
