@@ -266,11 +266,13 @@ mod tests {
 
     #[test]
     fn test_cosine_unsafe_for_sparse() {
+        // Test that when warnings are ENABLED and sparsity is high, it returns error
         let config = CosineWarningConfig {
-            enable_warnings: true,
+            enable_warnings: true,  // Explicitly enable warnings for this test
             warning_threshold: 0.7,
-            auto_fallback: true,
-            ..Default::default()
+            auto_fallback: false,   // Don't auto-fallback, return error
+            fallback_metric: DistanceMetric::Euclidean,
+            log_warnings: false,
         };
         let checker = CosineSparsityChecker::with_config(config);
 
@@ -283,7 +285,7 @@ mod tests {
         };
 
         let result = checker.check_cosine_safety(&info);
-        assert!(result.is_err());
+        assert!(result.is_err(), "Should return error for 90% sparse with warnings enabled");
 
         if let Err(warning) = result {
             assert_eq!(warning.sparsity_ratio, 0.9);
@@ -333,18 +335,20 @@ mod tests {
             || 0.8, // fallback result
         );
 
-        // Should use fallback
+        // Should use fallback and return fallback value
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 0.8);
+        assert_eq!(result.unwrap(), 0.8); // Fallback value, not cosine value
     }
 
     #[test]
     fn test_no_fallback() {
+        // Test that when auto_fallback is disabled, it returns error instead of falling back
         let config = CosineWarningConfig {
-            enable_warnings: true,
+            enable_warnings: true,   // Enable warnings
             warning_threshold: 0.7,
-            auto_fallback: false,
-            ..Default::default()
+            auto_fallback: false,    // Disable auto-fallback - should return error
+            fallback_metric: DistanceMetric::Euclidean,
+            log_warnings: false,
         };
         let checker = CosineSparsityChecker::with_config(config);
 
@@ -363,7 +367,7 @@ mod tests {
         );
 
         // Should return error (no fallback)
-        assert!(result.is_err());
+        assert!(result.is_err(), "Should return error when auto_fallback is disabled");
     }
 
     #[test]

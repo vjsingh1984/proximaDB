@@ -186,9 +186,11 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // TODO: Fix search - returns empty results despite successful flush
+    // #[ignore] // TODO: Fix search - returns empty results despite successful flush
     async fn test_search_vectors() -> Result<()> {
+        println!("=== RAPTOR SEARCH TEST DEBUG ===");
         let engine = create_test_engine().await?;
+        println!("Engine created successfully");
 
         // Insert test vectors
         let vectors = vec![
@@ -237,20 +239,26 @@ mod tests {
         };
 
         // Use flush instead of insert_batch
+        println!("Creating flush parameters with {} vectors", vectors.len());
         let flush_params = crate::storage::traits::FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            vector_records: vectors,
+            vector_records: vectors.clone(),
             force: true,
             synchronous: true,
             collection_config: Some(collection.clone()),
             ..Default::default()
         };
+        println!("Calling do_flush...");
         let flush_result = engine.do_flush(&flush_params).await?;
+        println!("Flush result: success={}, entries_flushed={:?}, files_created={:?}",
+                 flush_result.success, flush_result.entries_flushed, flush_result.files_created);
         assert!(flush_result.success, "Flush must succeed");
         assert!(flush_result.entries_flushed.unwrap_or(0) > 0, "Must flush some entries");
 
         // Search for similar vectors
+        println!("\n=== Starting search phase ===");
         let query = vec![1.0, 0.0, 0.0, 0.0];
+        println!("Query vector: {:?}", query);
         let search_params = std::sync::Arc::new(crate::core::search::SearchParams {
             vector: Some(query.clone()),
             top_k: Some(2),
@@ -277,11 +285,17 @@ mod tests {
             collection,
             metadata: crate::storage::traits::StorageQueryMetadata::default(),
         };
+        println!("Calling search_vectors_unified...");
         let results = engine
             .search_vectors_unified(&query_context)
             .await?;
 
-        assert!(!results.is_empty());
+        println!("Search returned {} results", results.len());
+        for (i, result) in results.iter().enumerate() {
+            println!("  Result {}: id={}, score={}", i, result.id, result.score);
+        }
+
+        assert!(!results.is_empty(), "Expected non-empty results, got {} results", results.len());
         assert!(results.len() <= 2);
 
         // First result should be the exact match

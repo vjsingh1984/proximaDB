@@ -500,13 +500,21 @@ fn bench_compression_with_search(c: &mut Criterion) {
                                     }
                                 }
                             }
-                            if results.len() > 10 {
-                                eprintln!("      ⚠️  WARNING: Expected <= 10 results, got {}", results.len());
-                            }
+                            // Only log warnings once to avoid spam
+                            static mut VEC_0_WARNING_LOGGED: bool = false;
+                            static mut RESULT_SIZE_WARNING_LOGGED: bool = false;
 
-                            // Verify we found the expected vector
-                            if !results.iter().any(|r| r.id == "vec_0") {
-                                eprintln!("      ⚠️  WARNING: Did not find expected vec_0 in results!");
+                            unsafe {
+                                if results.len() > 10 && !RESULT_SIZE_WARNING_LOGGED {
+                                    eprintln!("      ⚠️  WARNING: Expected <= 10 results, got {} (further size warnings suppressed)", results.len());
+                                    RESULT_SIZE_WARNING_LOGGED = true;
+                                }
+
+                                // Verify we found the expected vector
+                                if !results.iter().any(|r| r.id == "vec_0") && !VEC_0_WARNING_LOGGED {
+                                    eprintln!("      ⚠️  WARNING: Did not find expected vec_0 in results! (further warnings suppressed)");
+                                    VEC_0_WARNING_LOGGED = true;
+                                }
                             }
                         }
                     } else if let Err(ref e) = result {

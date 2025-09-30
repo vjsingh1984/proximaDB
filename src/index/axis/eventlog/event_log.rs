@@ -299,26 +299,14 @@ impl EventLogQueue {
         // In test mode or when transaction coordinator is not available, write directly
         #[cfg(test)]
         {
-            // Ensure parent directory exists
+            // Ensure parent directory exists using filesystem API
             let state_dir = format!("{}/queue/{}", self.base_url, self.collection_id);
-            if let Err(_) = self.filesystem.list(&state_dir).await {
-                // Directory doesn't exist, try to create it by attempting a write operation
-                // The filesystem should handle directory creation
-            }
+            self.filesystem.create_dir_all(&state_dir).await
+                .map_err(|e| anyhow::anyhow!("Failed to create queue directory: {}", e))?;
 
-            // Try to write the state file
-            match self.filesystem.write(&state_path, &json, None).await {
-                Ok(_) => {},
-                Err(e) => {
-                    // If it fails due to directory issues, that's expected in some test environments
-                    if e.to_string().contains("No such file or directory") {
-                        // In test mode, ignore persistence failures for now
-                        return Ok(());
-                    } else {
-                        return Err(anyhow::anyhow!("Failed to persist queue state: {}", e));
-                    }
-                }
-            }
+            // Now write the actual state file
+            self.filesystem.write(&state_path, &json, None).await
+                .map_err(|e| anyhow::anyhow!("Failed to persist queue state: {}", e))?;
         }
 
         #[cfg(not(test))]
