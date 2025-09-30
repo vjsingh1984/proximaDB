@@ -31,7 +31,7 @@ mod tests {
         UnifiedStorageEngine, StorageQueryContext, FlushParameters,
         StorageQueryMetadata,
     };
-    use crate::proto::proximadb_v1::SearchParams;
+    use crate::core::search::SearchParams;
     use crate::core::search::{FilterExpression, ComparisonOperator};
     use tracing::{info, debug};
 
