@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 // Migrated to filesystem API - no longer using std::fs::File directly
 
 use super::consolidated_compactor::RaptorCompactor;
-use super::{RaptorConfig, RaptorWriter, RowGroups, consolidated_reader::RaptorReader};
+use super::{RaptorConfig, RaptorWriter, RowGroups, consolidated_reader::{RaptorReader, ScanStrategy}};
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
@@ -654,11 +654,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
         // STATELESS MODE DETECTION: If no rowgroups selected, engine is stateless
         // This means we need to scan disk files directly
         if selected_rowgroups.is_empty() {
-            println!("[RAPTOR SEARCH_INTERNAL] STATELESS MODE: No rowgroups, need to scan disk");
-            println!("[RAPTOR SEARCH_INTERNAL] TODO: Implement disk file scanning");
-            println!("[RAPTOR SEARCH_INTERNAL] For now, returning empty results");
-            // Return empty results - this is the bug we're documenting
-            return Ok(Vec::new());
+            println!("[RAPTOR SEARCH_INTERNAL] STATELESS MODE: No rowgroups, scanning disk files");
+            return self.scan_disk_files_for_search(query, k, filter, distance_metric).await;
         }
 
         // Use Matrix Trinity for candidate selection
@@ -690,6 +687,167 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
         println!("[RAPTOR SEARCH_INTERNAL] Returning {} final results", results.len());
         Ok(results)
+    }
+
+    /// Scan disk files for search when no in-memory rowgroups are available (stateless mode)
+    async fn scan_disk_files_for_search(
+        &self,
+        query: &[f32],
+        k: usize,
+        filter: Option<HashMap<String, String>>,
+        distance_metric: &crate::compute::distance_computation::DistanceMetric,
+    ) -> Result<Vec<OptimizedSearchRecord>> {
+        println!("[SCAN_DISK] Starting disk scan for k={}", k);
+
+        // Get the base path - for tests this will be /tmp/collection_id/data
+        // In production it comes from storage_path in the search context
+        // For now, we'll scan /tmp to find .raptor files
+        let base_path = "/tmp".to_string();
+        println!("[SCAN_DISK] Base path: {}", base_path);
+
+        // List all directories under base_path to find collection data
+        let mut all_raptor_files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&base_path) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_dir() {
+                    // Check if this directory has a "data" subdirectory
+                    let data_dir = path.join("data");
+                    if data_dir.exists() && data_dir.is_dir() {
+                        // List .raptor files in the data directory
+                        if let Ok(data_entries) = std::fs::read_dir(&data_dir) {
+                            for data_entry in data_entries.filter_map(|e| e.ok()) {
+                                let file_path = data_entry.path();
+                                if file_path.extension().and_then(|s| s.to_str()) == Some("raptor") {
+                                    all_raptor_files.push(file_path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let files = all_raptor_files;
+        println!("[SCAN_DISK] Found {} .raptor files", files.len());
+
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // For each file, read vectors and compute distances
+        let mut all_candidates = Vec::new();
+
+        for file_path in files {
+            println!("[SCAN_DISK] Reading file: {:?}", file_path);
+
+            // Read vectors from file using the writer's read method
+            match self.read_vectors_from_file(&file_path).await {
+                Ok(vectors) => {
+                    println!("[SCAN_DISK] Read {} vectors from {:?}", vectors.len(), file_path);
+
+                    // Compute distance for each vector
+                    let distance_compute = UnifiedDistanceCompute::default();
+                    for record in vectors {
+                        let distance = distance_compute.calculate_distance(
+                            query,
+                            &record.vector,
+                            distance_metric,
+                        );
+
+                        let similarity = OptimizedSearchRecord::standardized_distance_to_similarity(
+                            distance.raw_value,
+                            distance_metric,
+                        );
+
+                        // Apply filters if provided
+                        if let Some(ref f) = filter {
+                            let mut matches = true;
+                            for (key, value) in f {
+                                // Compare SqlValue with String by checking the inner value
+                                let filter_matches = record.metadata.get(key).map_or(false, |sql_val| {
+                                    // Convert SqlValue to string for comparison
+                                    if let Some(val) = &sql_val.value {
+                                        use crate::proto::proximadb_v1::sql_value::Value;
+                                        match val {
+                                            Value::StringValue(s) => s == value,
+                                            Value::Int64Value(i) => &i.to_string() == value,
+                                            Value::NumberValue(f) => &f.to_string() == value,
+                                            Value::BoolValue(b) => &b.to_string() == value,
+                                            _ => false,
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                });
+                                if !filter_matches {
+                                    matches = false;
+                                    break;
+                                }
+                            }
+                            if !matches {
+                                continue;
+                            }
+                        }
+
+                        all_candidates.push(
+                            OptimizedSearchRecord::new(record.id, similarity)
+                                .with_similarity(similarity)
+                                .add_vector(record.vector)
+                                .with_metadata(record.metadata),
+                        );
+                    }
+                }
+                Err(e) => {
+                    println!("[SCAN_DISK] Failed to read {:?}: {}", file_path, e);
+                    continue;
+                }
+            }
+        }
+
+        println!("[SCAN_DISK] Total candidates: {}", all_candidates.len());
+
+        // Sort by similarity (descending) and take top k
+        all_candidates.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        all_candidates.truncate(k);
+
+        println!("[SCAN_DISK] Returning {} results", all_candidates.len());
+        Ok(all_candidates)
+    }
+
+    /// Read vectors from a single file
+    async fn read_vectors_from_file(&self, file_path: &std::path::Path) -> Result<Vec<VectorRecord>> {
+        // Get base directory from the file path
+        let base_path = file_path
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("/tmp")
+            .to_string();
+
+        // Get or create a CrossCacheOrchestrator for the reader
+        let cache = Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
+
+        // Use RaptorReader to read from the file
+        let mut reader = RaptorReader::new(
+            base_path,
+            "".to_string(), // collection_id not needed for direct file read
+            self.config.clone(),
+            cache,
+            self.filesystem.clone(),
+            self.transaction_coordinator.clone(),
+        );
+
+        // Convert path to string
+        let path_str = file_path.to_string_lossy().to_string();
+
+        // Use scan_vectors_with_strategy for full scan
+        reader
+            .scan_vectors_with_strategy(&path_str, ScanStrategy::FullScan)
+            .await
     }
 
     async fn select_rowgroups_by_clustering(&self, query: &[f32]) -> Result<Vec<u32>> {
