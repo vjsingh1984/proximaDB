@@ -292,12 +292,10 @@ impl UnifiedMetricsCollector {
         // Fire and forget - don't block the operation
         // This spawns a lightweight task that will update metrics asynchronously
         tokio::spawn(async move {
-            // Try to acquire write lock without blocking
-            if let Ok(mut m) = metrics.try_write() {
-                m.record_operation(op_type, duration_ms, success, bytes);
-            }
-            // If we can't get the lock, skip metrics to avoid blocking
-            // Production performance > metrics accuracy
+            // Acquire write lock, waiting if needed
+            // This ensures metrics are always recorded accurately
+            let mut m = metrics.write().await;
+            m.record_operation(op_type, duration_ms, success, bytes);
         });
     }
 
@@ -320,6 +318,24 @@ impl UnifiedMetricsCollector {
         duration: std::time::Duration,
     ) {
         self.record(
+            op_type,
+            duration.as_millis() as u64,
+            success,
+            if bytes > 0 { Some(bytes) } else { None },
+        );
+    }
+
+    /// Record an operation with timing, blocking until recorded
+    /// Use this in tests or when you need guaranteed recording
+    pub async fn record_operation_blocking(
+        &self,
+        op_type: MetricsOperationType,
+        success: bool,
+        bytes: usize,
+        duration: std::time::Duration,
+    ) {
+        let mut metrics = self.metrics.write().await;
+        metrics.record_operation(
             op_type,
             duration.as_millis() as u64,
             success,

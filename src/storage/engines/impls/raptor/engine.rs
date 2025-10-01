@@ -105,44 +105,224 @@ type VectorSearchResult = OptimizedSearchRecord;
 // The universal optimizer provides all these capabilities through a unified interface
 
 pub struct RaptorEngine {
+    /// **Engine Configuration**
+    ///
+    /// Runtime settings for RAPTOR behavior:
+    /// - Row group size (adaptive: 500-5000 vectors based on k)
+    /// - HNSW parameters (M=16, ef_construction=200)
+    /// - PxK optimization settings (P partitions, K clusters)
+    /// - Memory limits for caching and graph storage
+    ///
+    /// Tuned for adaptive row-group management
     config: RaptorConfig,
 
-    // Core components
+    /// **Row Group Manager** (RwLock for concurrent access)
+    ///
+    /// Manages row group metadata and lifecycle:
+    /// - Tracks active row groups per collection
+    /// - Maintains row group statistics (count, size, min/max)
+    /// - Handles row group creation and merging
+    /// - Coordinates with smart sizing for adaptive granularity
+    ///
+    /// RwLock allows concurrent readers, exclusive writer during flush
     rowgroup_manager: Arc<RwLock<RowGroups>>,
-    writer: Arc<RwLock<RaptorWriter>>,
-    reader: Arc<RaptorReader>, // Using consolidated reader
-    compactor: Arc<RaptorCompactor>,
-    // HNSW functionality handled by individual rowgroup segments
 
-    // Dual quantization architecture for optimal performance
+    /// **RAPTOR Writer** (RwLock for exclusive writes)
+    ///
+    /// Handles write path with PxK optimization:
+    /// - Batches vectors into row groups
+    /// - Assigns vectors to partitions (P) and clusters (K)
+    /// - Writes Parquet with embedded HNSW graphs
+    /// - Updates global graph connections
+    ///
+    /// RwLock ensures single writer at a time
+    writer: Arc<RwLock<RaptorWriter>>,
+
+    /// **Consolidated Reader** (Shared, Lock-Free)
+    ///
+    /// Unified read interface with scan strategies:
+    /// - ScanStrategy::HnswGraph (dual-level HNSW navigation)
+    /// - ScanStrategy::Columnar (SIMD-optimized full scan)
+    /// - ScanStrategy::Hybrid (graph + verification)
+    /// - Memory-mapped I/O for zero-copy access
+    ///
+    /// Lock-free design for maximum read concurrency
+    reader: Arc<RaptorReader>,
+
+    /// **Compaction Manager**
+    ///
+    /// Streaming compaction for large files:
+    /// - Maintains single L0 file (no multi-level LSM)
+    /// - Triggers at 2 files to preserve graph quality
+    /// - Rebuilds global HNSW during compaction
+    /// - Streaming I/O for files >100GB
+    ///
+    /// Asynchronous background process
+    compactor: Arc<RaptorCompactor>,
+
+    /// **Storage Quantization Engine** (Collection-Aware)
+    ///
+    /// Persistent quantization with PxK integration:
+    /// - Binary quantization per partition
+    /// - INT8 quantization per cluster
+    /// - PQ8 codebooks trained on cluster centroids
+    /// - Codebooks stored in file header
+    ///
+    /// Critical for progressive search in row groups
     storage_quantization_engine: Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
+
+    /// **Fallback Quantization Engine** (Stateless)
+    ///
+    /// In-memory quantization for new data:
+    /// - Used before codebook training
+    /// - Ad-hoc quantization for queries
+    /// - Same algorithms as storage engine
+    /// - No persistence overhead
+    ///
+    /// Falls back when collection lacks trained codebooks
     fallback_quantization_engine: Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
-    // Deep integration with AXIS clustering
+    /// **Cluster Manager** (RwLock for concurrent access)
+    ///
+    /// PxK clustering coordinator:
+    /// - Manages P partitions (coarse-grained)
+    /// - Manages K clusters per partition (fine-grained)
+    /// - Computes centroids and assignments
+    /// - Integrates with AXIS for ML clustering
+    ///
+    /// RwLock allows concurrent reads during search
     cluster_manager: Arc<RwLock<ClusterManager>>,
-    clustering_config: ClusteringConfig,
-    cluster_assignments: Arc<RwLock<HashMap<u32, Vec<ClusterAssignment>>>>, // RowGroup -> Clusters
 
-    // Deep integration with filesystem API
+    /// **Clustering Configuration**
+    ///
+    /// PxK algorithm parameters:
+    /// - P (partitions): Default 32, range 8-256
+    /// - K (clusters per partition): Default 64, range 16-512
+    /// - Distance metric for clustering
+    /// - Training sample size and iteration limits
+    ///
+    /// Immutable after engine initialization
+    clustering_config: ClusteringConfig,
+
+    /// **Cluster Assignments** (RwLock for updates)
+    ///
+    /// Maps row groups to their cluster assignments:
+    /// - Key: Row group ID (u32)
+    /// - Value: List of (partition, cluster) assignments
+    /// - Updated during flush and compaction
+    /// - Used for partition pruning during search
+    ///
+    /// RwLock for concurrent read access during queries
+    cluster_assignments: Arc<RwLock<HashMap<u32, Vec<ClusterAssignment>>>>,
+
+    /// **Filesystem Interface**
+    ///
+    /// Base filesystem for storage operations:
+    /// - Handles local, S3, Azure, GCS backends
+    /// - Provides async I/O primitives
+    /// - Supports range reads for streaming
+    /// - Enables parallel I/O for row groups
+    ///
+    /// Shared across all file operations
     filesystem: Arc<dyn FileSystem>,
+
+    /// **Tier Configuration**
+    ///
+    /// Storage tier optimization settings:
+    /// - Hot tier: NVMe/SSD for active row groups
+    /// - Warm tier: HDD/S3 for older row groups
+    /// - Cold tier: Glacier for archived data
+    /// - Migration policies based on access patterns
+    ///
+    /// Used by filesystem for intelligent placement
     tier_config: TierConfig,
+
+    /// **File Options**
+    ///
+    /// I/O optimization parameters:
+    /// - Buffer sizes for reads/writes
+    /// - Concurrency limits for parallel I/O
+    /// - Retry policies for cloud storage
+    /// - Timeout settings per operation
+    ///
+    /// Applied to all file operations
     file_options: FileOptions,
 
-    // Zero-copy filesystem and transaction coordinator - now using unified filesystem
+    /// **Zero-Copy Filesystem**
+    ///
+    /// Memory-mapped I/O optimized filesystem:
+    /// - Direct memory mapping for row groups
+    /// - Page-aligned buffers for kernel bypass
+    /// - Prefetch strategies for sequential access
+    /// - Huge pages (2MB/1GB) when available
+    ///
+    /// Critical for low-latency access to large files
     zero_copy_filesystem: Arc<dyn FileSystem>,
+
+    /// **Transaction Coordinator**
+    ///
+    /// ACID guarantees for file operations:
+    /// - Two-phase commit for compaction
+    /// - WAL for crash recovery
+    /// - Atomic file swaps for consistency
+    /// - Rollback on failures
+    ///
+    /// Ensures data integrity during failures
     transaction_coordinator: Arc<crate::storage::transaction_coordinator::TransactionCoordinator>,
 
-    // Universal performance optimization (replaces RAPTOR-specific optimization)
+    /// **Universal Performance Optimizer**
+    ///
+    /// Cross-cutting optimization coordinator:
+    /// - Adaptive row group sizing based on k
+    /// - Memory pooling for graph structures
+    /// - I/O coalescing for parallel reads
+    /// - Query plan optimization
+    ///
+    /// Replaces RAPTOR-specific optimizers
     universal_optimizer: UniversalPerformanceOptimizer,
 
-    // Keep hardware capabilities for RAPTOR-specific needs (like SIMD)
+    /// **Hardware Capabilities**
+    ///
+    /// System feature detection for SIMD:
+    /// - AVX2/AVX512 for distance calculations
+    /// - NEON for ARM processors
+    /// - Memory architecture (NUMA awareness)
+    /// - Storage backend capabilities
+    ///
+    /// Used for algorithm selection at runtime
     hardware_capabilities: Arc<HardwareCapabilities>,
 
-    // Cache and metadata
+    /// **Row Group Cache** (RwLock for LRU updates)
+    ///
+    /// LRU cache for hot row groups:
+    /// - Default: 512 row groups (~2GB @ 1024-dim)
+    /// - Memory-mapped regions cached
+    /// - Adaptive sizing based on hit rate
+    /// - Prefetch for predicted access patterns
+    ///
+    /// RwLock for concurrent reads, exclusive eviction
     cache: Arc<RwLock<RowGroupCache>>,
+
+    /// **File Registry** (RwLock for concurrent access)
+    ///
+    /// Tracks active Parquet files:
+    /// - File paths and sizes per collection
+    /// - Row group count and distributions
+    /// - Global graph locations (file headers)
+    /// - Compaction eligibility status
+    ///
+    /// RwLock allows concurrent reads during queries
     file_registry: Arc<RwLock<FileRegistry>>,
 
-    // Unified metrics for AutoML integration
+    /// **Metrics Collector** (Optional)
+    ///
+    /// Integration with AutoML and monitoring:
+    /// - Row group access patterns
+    /// - Cache hit rates and eviction stats
+    /// - Graph navigation efficiency
+    /// - Partition/cluster effectiveness
+    ///
+    /// None if monitoring disabled, Some for AutoML
     metrics_collector: Option<Arc<EngineMetricsCollector>>,
 }
 

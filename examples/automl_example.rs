@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("Preparing preemptive optimization for future workload...");
 
         // Preemptively optimize for predicted pattern
-        let future_config = pipeline.optimize(
+        let _future_config = pipeline.optimize(
             "demo_collection",
             OptimizationGoal::Balanced,
             OptimizationStrategy::RandomSearch { budget: 10 },

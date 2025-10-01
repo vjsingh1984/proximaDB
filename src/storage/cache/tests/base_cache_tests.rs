@@ -97,7 +97,7 @@ async fn test_tier_selection() {
     assert_eq!(large_tier, crate::storage::cache::backend::CacheTier::L1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_metrics_recording() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
@@ -112,11 +112,23 @@ async fn test_metrics_recording() {
 
     // Put and get
     cache.put_with_hooks(key1.clone(), value.clone()).await;
-    let _ = cache.get_with_hooks(&key1).await; // Hit
-    let _ = cache.get_with_hooks(&key2).await; // Miss
+    eprintln!("After put");
+
+    let result1 = cache.get_with_hooks(&key1).await;
+    eprintln!("After get1: got value = {}", result1.is_some());
+
+    let result2 = cache.get_with_hooks(&key2).await;
+    eprintln!("After get2: got value = {}", result2.is_some());
+
+    // Wait for async metrics recording to complete (metrics are recorded via tokio::spawn)
+    // With multi-thread runtime, spawned tasks run on other threads
+    // Need enough time for all 3 spawned tasks to complete and acquire write locks
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     let snapshot = cache.metrics().get_snapshot().await;
-    assert_eq!(snapshot.total_operations, 2);
+    eprintln!("Snapshot: total_operations={}, cache_hits={}, cache_misses={}",
+        snapshot.total_operations, snapshot.cache_hits, snapshot.cache_misses);
+    assert_eq!(snapshot.total_operations, 3, "Should have 1 put + 2 gets");
     assert_eq!(snapshot.cache_misses, 1);
     assert!(snapshot.cache_hits > 0);
 }

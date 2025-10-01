@@ -178,11 +178,11 @@ impl Default for ParquetWriterConfig {
             compression: Compression::SNAPPY,
             compression_level: None,
             enable_dictionary: true,
-            enable_bloom_filters: false,
+            enable_bloom_filters: true,  // Enable by default for better filtering
             bloom_filter_fpp: 0.05,
             bloom_filter_ndv: 1000000,
             enable_statistics: true,
-            enable_page_index: false,
+            enable_page_index: true,  // Enable by default for cloud-optimized access
             sort_columns: Vec::new(),
             id_less_storage: false,
             filterable_metadata_columns: None,

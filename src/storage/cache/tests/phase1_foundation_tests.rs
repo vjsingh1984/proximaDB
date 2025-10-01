@@ -117,6 +117,9 @@ async fn test_base_cache_trait_template_method() {
     assert!(retrieved.is_some());
     assert_eq!(retrieved.unwrap().size, 100);
 
+    // Wait for async metrics recording to complete
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
     // Check metrics were updated
     let snapshot = cache.metrics.get_snapshot().await;
     assert_eq!(snapshot.total_operations, 1);
@@ -226,6 +229,9 @@ async fn test_metrics_collection() {
     metrics.record(MetricsOperationType::CacheMiss, 1, false, None);
     metrics.record(MetricsOperationType::CacheMiss, 1, false, None);
 
+    // Wait for async metrics recording to complete
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
     // Check hit rate
     let snapshot = metrics.get_snapshot().await;
     assert_eq!(snapshot.total_operations, 5);
@@ -239,6 +245,10 @@ async fn test_metrics_collection() {
     // Record additional operations to test latency
     metrics.record(MetricsOperationType::Read, 1, true, Some(100));
     metrics.record(MetricsOperationType::Write, 3, true, Some(200));
+
+    // Wait for async metrics recording to complete
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
     // Check that we have recorded some latency
     let snapshot = metrics.get_snapshot().await;
     assert!(snapshot.total_operations > 0);

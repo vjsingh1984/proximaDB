@@ -198,6 +198,9 @@ async fn test_cache_under_memory_pressure() {
             .await;
     }
 
+    // Wait for async metrics recording to complete
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
     // Verify operations occurred
     let metrics = vector_cache.metrics();
     let snapshot = metrics.get_snapshot().await;

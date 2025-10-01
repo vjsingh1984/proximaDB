@@ -1202,7 +1202,9 @@ impl UnifiedParquetReader {
         } else if !allow_slow_queries {
             // No optimization possible and slow queries not allowed
             debug!("  Rejected: Slow scan required but not allowed");
-            Ok(vec![])
+            Err(anyhow::anyhow!(
+                "Query requires scanning extra_meta column which is slow. Set allow_slow_queries=true to allow this operation."
+            ))
         } else {
             // FALLBACK: Full scan without any optimization
             debug!("  Fallback: Full file scan");

@@ -352,6 +352,9 @@ async fn test_cache_compression() {
         .put_with_hooks("large".to_string(), filter_result)
         .await;
 
+    // Wait for async metrics recording to complete
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
     // Verify compression ratio
     // Note: The cache may not track memory immediately or may use lazy allocation
     // For testing, just verify the cache operation succeeded by checking operations

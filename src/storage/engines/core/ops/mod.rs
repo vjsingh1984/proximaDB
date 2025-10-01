@@ -43,7 +43,13 @@ pub mod zero_copy_reader_integration;
 
 /// Proxima SIMD-optimized encoding for columnar data within blocks
 /// Used by SST, SWIFT, RAPTOR, and PRISM for efficient vector storage
+///
+/// NOTE: proximaencoder is now modularized. The legacy monolithic module
+/// is available at proximaencoder_legacy during the transition period.
 pub mod proximaencoder;
+
+// Legacy monolithic module - will be removed after full modularization
+pub mod proximaencoder_legacy;
 
 /// Unified Proxima SIMD optimization module for HELIX, SST, and SWIFT engines
 /// Provides hardware-accelerated encoding/decoding with engine-specific optimizations

@@ -324,8 +324,8 @@ impl Default for HybridWriterBuilder {
 pub struct ParquetPresets;
 
 impl ParquetPresets {
-    /// Maximum performance configuration (all optimizations enabled)
-    /// This is the DEFAULT configuration
+    /// Maximum performance configuration (optimized for read performance)
+    /// Enables all optimizations for fastest query execution
     pub fn maximum_performance() -> ParquetWriterConfig {
         ParquetWriterConfig::default()
     }
@@ -410,7 +410,8 @@ mod tests {
     #[test]
     fn test_presets() {
         let perf = ParquetPresets::maximum_performance();
-        assert!(!perf.enable_bloom_filters); // Default is false
+        assert!(perf.enable_bloom_filters); // Enabled for max read performance
+        assert!(perf.enable_page_index); // Enabled for efficient data skipping
 
         let memory = ParquetPresets::memory_constrained();
         assert!(!memory.enable_bloom_filters);

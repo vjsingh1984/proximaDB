@@ -41,7 +41,10 @@ async fn test_id_column_always_preserved() {
     // Write test records with IDs
     let test_records = create_test_records(100);
     writer.write_batch(&test_records).await.unwrap();
-    let (stats, _data, _collector) = writer.finalize().await.unwrap();
+    let (stats, data, _collector) = writer.finalize().await.unwrap();
+
+    // Write the data using tokio::fs (local files)
+    tokio::fs::write(&file_path, &data).await.unwrap();
 
     assert_eq!(stats.total_records, 100);
     assert!(stats.file_size > 0);
@@ -66,7 +69,8 @@ async fn test_id_less_storage_warning() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test_id_less_warning.parquet");
+    let file_name = format!("test_id_less_warning.parquet");
+    let file_url = format!("file://{}/{}", dir.path().to_str().unwrap(), file_name);
 
     // Test with id_less_storage = true (should trigger warning)
     let config = ParquetWriterConfig {
@@ -75,13 +79,36 @@ async fn test_id_less_storage_warning() {
         ..Default::default()
     };
 
-    let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
+    // Create filesystem factory
+    let filesystem_factory = Arc::new(
+        FilesystemFactory::new(FilesystemConfig::default())
+            .await
+            .unwrap(),
+    );
+
+    let mut writer = StreamingParquetWriter::with_filesystem_factory(
+        &file_url,
+        128,
+        config,
+        None,
+        filesystem_factory.clone()
+    ).unwrap();
 
     let test_records = create_test_records(50);
     writer.write_batch(&test_records).await.unwrap();
-    let (_stats, _data, _collector) = writer.finalize().await.unwrap();
+    let (_stats, data, _collector) = writer.finalize().await.unwrap();
+
+    // Write the data using filesystem API
+    let fs = filesystem_factory.get_filesystem(&file_url).unwrap();
+    let write_options = crate::storage::persistence::filesystem::FileOptions {
+        create_dirs: true,
+        overwrite: true,
+        ..Default::default()
+    };
+    fs.write(&file_url, &data, Some(write_options)).await.unwrap();
 
     // Even with id_less_storage = true, ID column should still be present
+    let file_path = dir.path().join(&file_name);
     let parquet_schema = read_parquet_schema(&file_path).unwrap();
     assert!(
         parquet_schema.field_with_name(FIELD_ID).is_ok(),
@@ -270,8 +297,11 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     let mut writer = StreamingParquetWriter::new(&file_path, 128, config, None).unwrap();
     writer.write_batch(&test_records).await.unwrap();
-    let (stats, _data, _collector) = writer.finalize().await.unwrap();
+    let (stats, data, _collector) = writer.finalize().await.unwrap();
     assert_eq!(stats.total_records, 200);
+
+    // Write the data using tokio::fs (local files)
+    tokio::fs::write(&file_path, &data).await.unwrap();
 
     // Read back and verify schema
     let filesystem = Arc::new(
@@ -357,7 +387,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         op: crate::proto::proximadb_v1::LogicalOp::And as i32,
     };
 
-    // Should fail without allow_slow_queries
+    // Should fail without allow_slow_queries when querying non-filterable columns
     let slow_result = reader
         .query_with_branched_filtering(
             file_path.to_str().unwrap(),
@@ -366,8 +396,9 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         )
         .await;
 
-    assert!(slow_result.is_err());
-    assert!(slow_result.unwrap_err().to_string().contains("allow_slow_queries"));
+    assert!(slow_result.is_err(), "Should return error when slow queries not allowed");
+    assert!(slow_result.unwrap_err().to_string().contains("allow_slow_queries"),
+        "Error message should mention allow_slow_queries");
 
     // Should succeed with allow_slow_queries
     let start_slow = std::time::Instant::now();

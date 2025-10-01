@@ -87,71 +87,180 @@ use crate::utils::StoragePath;
 /// - **Compression**: 5-10x vs 3-5x
 /// - **Query Pattern**: Scan/aggregate vs point lookup
 pub struct ViperEngine {
-    /// Configuration (internal engine config)
-    /// Contains batch sizes, compression levels, quantization settings
+    /// **Internal Engine Configuration**
+    ///
+    /// Runtime settings that control VIPER's behavior:
+    /// - Row group size (default: 128K vectors for optimal compression)
+    /// - Page size for Parquet (default: 1MB)
+    /// - Compression codec (ZSTD, Snappy, LZ4)
+    /// - Quantization levels to enable (binary, INT8, PQ)
+    /// - Write buffer thresholds and batch sizes
+    ///
+    /// Distinct from core_config which has user-facing settings
     config: ViperEngineConfig,
 
-    /// User-facing core config (for passing to flush operations)
-    /// Preserves original user settings for flush/compaction operations
+    /// **User-Facing Core Configuration**
+    ///
+    /// Original configuration from user/system:
+    /// - Passed to flush operations for consistency
+    /// - Contains compaction strategy settings
+    /// - Defines bloom filter parameters
+    /// - Preserves user intent across operations
+    ///
+    /// Used when flush/compaction needs original config context
     core_config: crate::core::config::ViperConfig,
 
-    /// Collection service for metadata access
-    /// Provides collection-specific settings like dimensions, distance metrics
+    /// **Collection Service** (Optional, Lazy-Loaded)
+    ///
+    /// Metadata provider for collection-specific information:
+    /// - Vector dimensions and data types
+    /// - Distance metric configuration (L2, cosine, dot)
+    /// - Collection-level settings (quantization, indexing)
+    /// - Schema evolution tracking
+    ///
+    /// RwLock<Option<>> because:
+    /// - None during engine initialization
+    /// - Some when first collection accessed
+    /// - Shared read access for concurrent queries
     collection_service:
         Arc<RwLock<Option<Arc<crate::services::collection::manager::CollectionService>>>>,
 
-    /// Unified caching filesystem for optimized storage operations
-    /// Provides metadata caching, range optimization, and access tracking
+    /// **Unified Caching Filesystem**
+    ///
+    /// Intelligent filesystem wrapper with:
+    /// - **Footer Caching**: Parquet footer metadata cached in memory
+    /// - **Range Optimization**: Coalesces small reads into larger ones
+    /// - **Access Tracking**: Records which row groups are hot
+    /// - **Prefetch Engine**: Predictive loading based on access patterns
+    ///
+    /// Critical for cloud storage performance (S3/Azure/GCS latency hiding)
     filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
 
-    /// Filesystem factory for components that need it
+    /// **Filesystem Factory**
+    ///
+    /// Creates filesystem instances for specific backends:
+    /// - Shared across flush, compaction, and read operations
+    /// - Handles URL scheme routing (s3://, azure://, file://)
+    /// - Maintains connection pools for cloud providers
+    /// - Provides unified interface regardless of backend
+    ///
+    /// Used by components that need direct filesystem access
     filesystem_factory: Arc<FilesystemFactory>,
 
-    /// Schema for columnar storage (shared with NOVA)
-    /// Defines column types, compression, and encoding strategies
+    /// **Columnar Schema** (Shared with NOVA)
+    ///
+    /// Defines Parquet table structure:
+    /// - Column definitions (id, vector, metadata, timestamps)
+    /// - Data types and encoding (dictionary, RLE, delta)
+    /// - Compression per column (ZSTD for vectors, Snappy for strings)
+    /// - Nested schema for complex metadata
+    ///
+    /// Shared between VIPER and NOVA for format compatibility
     schema: crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema,
-    /// Handles row group reorganization and file merging
-    /// Optimizes storage layout for better compression and query performance
+
+    /// **Compaction Service**
+    ///
+    /// Background process for storage optimization:
+    /// - **Row Group Merging**: Combines small row groups → larger ones
+    /// - **Tombstone Cleanup**: Removes deleted records from files
+    /// - **Statistics Update**: Recomputes min/max for better pruning
+    /// - **Size-Tiered Strategy**: Merges files of similar size
+    ///
+    /// Runs asynchronously, triggered by file count thresholds
     compaction: ViperCompactionService,
 
-    /// Manages batch writes and Parquet file creation
-    /// Coordinates quantization, compression, and row group formation
+    /// **Flush Manager**
+    ///
+    /// Coordinates write path from memory to Parquet:
+    /// - Batches vectors into row groups
+    /// - Applies quantization (binary → INT8 → PQ)
+    /// - Compresses with ZSTD/Snappy
+    /// - Writes Parquet files with bloom filters
+    /// - Updates collection metadata
+    ///
+    /// Invoked when MemTable reaches threshold or manual flush requested
     flush_manager: Flush,
 
-    // ml_clustering_engine: MLClusteringEngine, // Moved to AXIS
-    // ML clustering is now handled by AXIS service for clean separation
-    /// Utility functions for Parquet operations
-    /// Includes footer parsing, metadata extraction, statistics computation
+    /// **VIPER Utilities**
+    ///
+    /// Helper functions for Parquet operations:
+    /// - Footer parsing and validation
+    /// - Metadata extraction from files
+    /// - Statistics computation (min/max/count)
+    /// - Schema compatibility checks
+    /// - File format version handling
+    ///
+    /// Shared utility functions used across flush/search/compaction
     utilities: ViperUtilities,
 
-    // search_engine: Arc<ViperUnifiedSearchEngine>, // Removed - using IntegratedSearchOptimizer
-    // Search now uses the shared IntegratedSearchOptimizer from core module
-    /// Engine statistics for monitoring and optimization
-    /// Tracks compression ratios, query latencies, cache hit rates
-    stats: Arc<EngineStats>, // Lock-free atomic metrics
+    /// **Engine Statistics** (Lock-Free Atomics)
+    ///
+    /// Real-time metrics tracking:
+    /// - Compression ratios achieved per collection
+    /// - Query latencies (p50, p95, p99)
+    /// - Cache hit rates (footer, page, row group)
+    /// - Bytes written/read per operation
+    /// - Row group scan efficiency
+    ///
+    /// Updated atomically without locks for zero contention
+    stats: Arc<EngineStats>,
 
-    /// Collection metadata cache for fast access
-    /// Stores dimensions, schemas, compression settings per collection
+    /// **Collection Metadata Cache**
+    ///
+    /// In-memory cache of collection information:
+    /// - Dimensions and schema per collection
+    /// - Active Parquet files and their locations
+    /// - Compression settings and achieved ratios
+    /// - Last flush/compaction timestamps
+    ///
+    /// RwLock allows concurrent reads, exclusive writes during updates
     collections: Arc<RwLock<HashMap<String, CollectionMetadata>>>,
 
-    /// Storage-aware quantization engine for persistent collection-based PQ
-    /// Provides Binary, INT8, PQ4/8/16 quantization with hardware acceleration
+    /// **Storage Quantization Engine** (Collection-Aware)
+    ///
+    /// Persistent quantization with trained codebooks:
+    /// - Stores PQ codebooks in filesystem per collection
+    /// - Binary quantization (1 bit per dim)
+    /// - INT8 quantization with learned min/max
+    /// - PQ4/8/16/32 with k-means clustering
+    /// - Hardware-accelerated quantization (SIMD)
+    ///
+    /// Codebooks trained once during first flush, reused forever
     storage_quantization_engine:
         Arc<crate::compute::quantization::storage_engine::StorageQuantizationEngine>,
-    /// Fallback stateless quantization engine for ad-hoc queries
+
+    /// **Fallback Quantization Engine** (Stateless)
+    ///
+    /// In-memory quantization without persistence:
+    /// - Used when codebook not available
+    /// - Ad-hoc quantization for one-off queries
+    /// - Faster than storage engine (no I/O)
+    /// - Same algorithms as storage engine
+    ///
+    /// Falls back when collection doesn't have trained codebooks
     fallback_quantization_engine: Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
 
-    /// Universal performance optimizer eliminating code duplication
+    /// **Universal Performance Optimizer**
     ///
-    /// Provides cross-engine optimizations:
-    /// - Memory-mapped file access for fast reads
-    /// - Vector memory pooling to reduce allocations
-    /// - Adaptive batch sizing based on system load
-    /// - Progressive search coordination
-    /// - Cache management across storage tiers
+    /// Cross-engine optimization coordinator:
+    /// - **Memory-Mapped I/O**: Zero-copy file access
+    /// - **Vector Pooling**: Reuses allocated buffers
+    /// - **Adaptive Batching**: Adjusts batch size based on load
+    /// - **Progressive Search**: Binary → INT8 → PQ → FP32 pipeline
+    /// - **Cache Coordination**: Manages multi-tier caches
+    ///
+    /// Shared optimizations eliminating per-engine duplication
     universal_optimizer: UniversalPerformanceOptimizer,
 
-    /// Optional Cross-Cache Orchestrator for metadata/footer tracking
+    /// **Cross-Cache Orchestrator** (Optional)
+    ///
+    /// Coordinates caching across layers:
+    /// - Parquet footer cache invalidation
+    /// - Metadata cache dependency tracking
+    /// - Filter pushdown to storage layer
+    /// - Memory budget management across caches
+    ///
+    /// None when caching disabled, Some in production deployments
     orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 }
 

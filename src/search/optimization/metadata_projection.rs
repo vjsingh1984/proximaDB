@@ -228,8 +228,8 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_apply_projection() {
+    #[tokio::test]
+    async fn test_apply_projection() {
         let optimizer = MetadataProjectionOptimizer::new();
 
         let mut metadata = HashMap::new();
@@ -246,8 +246,8 @@ mod tests {
         assert!(!projected.contains_key("city"));
     }
 
-    #[test]
-    fn test_create_projection() {
+    #[tokio::test]
+    async fn test_create_projection() {
         let optimizer = MetadataProjectionOptimizer::new();
 
         let fields = vec!["col1".to_string(), "col2".to_string()];

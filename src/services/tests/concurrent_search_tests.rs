@@ -342,59 +342,85 @@ mod tests {
     #[tokio::test]
     async fn test_performance_with_no_double_scan() -> Result<()> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        info!("🧪 Testing performance improvement from eliminating double WAL scan");
+        info!("🧪 Testing that search operations scan WAL only once");
 
-        use std::time::Instant;
-        use tracing::{debug, error, info};
+        use tracing::info;
 
-        // Simulate old behavior (with double scan)
-        async fn search_with_double_scan(data_size: usize) -> std::time::Duration {
-            let start = Instant::now();
+        // Counter to track WAL scan operations
+        let wal_scan_counter = Arc::new(AtomicUsize::new(0));
 
-            // First WAL scan (in service)
-            tokio::time::sleep(tokio::time::Duration::from_micros(data_size as u64)).await;
+        // Mock WAL scanner that counts scans
+        struct MockWALScanner {
+            scan_count: Arc<AtomicUsize>,
+        }
 
-            // Second WAL scan (in storage engine) - REMOVED
-            // tokio::time::sleep(tokio::time::Duration::from_micros(data_size as u64)).await;
+        impl MockWALScanner {
+            fn new(counter: Arc<AtomicUsize>) -> Self {
+                Self {
+                    scan_count: counter,
+                }
+            }
+
+            async fn scan_wal(&self) {
+                // Increment scan counter
+                self.scan_count.fetch_add(1, Ordering::SeqCst);
+                // Simulate scan work
+                tokio::time::sleep(tokio::time::Duration::from_micros(100)).await;
+            }
+
+            async fn scan_storage(&self) {
+                // Storage scan doesn't count as WAL scan
+                tokio::time::sleep(tokio::time::Duration::from_micros(50)).await;
+            }
+        }
+
+        // Test OLD behavior (double scan) - should scan WAL twice
+        async fn search_with_double_scan(scanner: &MockWALScanner) {
+            // First WAL scan (in service layer)
+            scanner.scan_wal().await;
+
+            // Second WAL scan (in storage engine) - OLD BEHAVIOR
+            scanner.scan_wal().await;
 
             // Storage scan
-            tokio::time::sleep(tokio::time::Duration::from_micros(data_size as u64 / 2)).await;
-
-            start.elapsed()
+            scanner.scan_storage().await;
         }
 
-        // Simulate new behavior (single scan)
-        async fn search_with_single_scan(data_size: usize) -> std::time::Duration {
-            let start = Instant::now();
+        // Test NEW behavior (single scan) - should scan WAL once
+        async fn search_with_single_scan(scanner: &MockWALScanner) {
+            // Single WAL scan (in service layer only)
+            scanner.scan_wal().await;
 
-            // Single WAL scan (in service)
-            tokio::time::sleep(tokio::time::Duration::from_micros(data_size as u64)).await;
-
-            // Storage scan
-            tokio::time::sleep(tokio::time::Duration::from_micros(data_size as u64 / 2)).await;
-
-            start.elapsed()
+            // Storage scan (no WAL scan)
+            scanner.scan_storage().await;
         }
 
-        let data_sizes = vec![100, 500, 1000, 5000];
+        // Test old behavior
+        wal_scan_counter.store(0, Ordering::SeqCst);
+        let old_scanner = MockWALScanner::new(wal_scan_counter.clone());
+        search_with_double_scan(&old_scanner).await;
+        let old_scan_count = wal_scan_counter.load(Ordering::SeqCst);
 
-        for size in data_sizes {
-            let single_time = search_with_single_scan(size).await;
-            let double_time = search_with_double_scan(size * 2).await; // Simulate double scan overhead
+        assert_eq!(old_scan_count, 2, "Old behavior should scan WAL twice");
+        info!("✅ Old behavior confirmed: 2 WAL scans");
 
-            debug!(
-                "Data size {}: Single scan {:?}, Double scan (simulated) {:?}",
-                size, single_time, double_time
-            );
+        // Test new behavior
+        wal_scan_counter.store(0, Ordering::SeqCst);
+        let new_scanner = MockWALScanner::new(wal_scan_counter.clone());
+        search_with_single_scan(&new_scanner).await;
+        let new_scan_count = wal_scan_counter.load(Ordering::SeqCst);
 
-            // Single scan should be faster
-            assert!(
-                single_time < double_time,
-                "Single WAL scan should be faster than double scan"
-            );
-        }
+        assert_eq!(new_scan_count, 1, "New behavior should scan WAL only once");
+        info!("✅ New behavior confirmed: 1 WAL scan (50% reduction)");
 
-        info!("✅ Performance improvement from single WAL scan verified");
+        // Verify performance improvement
+        assert!(
+            new_scan_count < old_scan_count,
+            "New implementation should scan WAL fewer times than old: {} >= {}",
+            new_scan_count, old_scan_count
+        );
+
+        info!("✅ WAL scan optimization verified: {} → {} scans", old_scan_count, new_scan_count);
         Ok(())
     }
 }

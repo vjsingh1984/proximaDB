@@ -32,25 +32,25 @@ pub trait BaseCache: Send + Sync {
 
         // Check each tier in order
         if let Some(value) = self.check_l1(key).await {
-            self.record_hit(CacheTier::L1);
+            self.record_hit(CacheTier::L1).await;
             return Some(value);
         }
 
         if let Some(value) = self.check_l2(key).await {
             // Promote to L1 for faster future access
             self.promote_to_l1(key, &value).await;
-            self.record_hit(CacheTier::L2);
+            self.record_hit(CacheTier::L2).await;
             return Some(value);
         }
 
         if let Some(value) = self.check_l3(key).await {
             // Promote to L2 (and potentially L1)
             self.promote_to_l2(key, &value).await;
-            self.record_hit(CacheTier::L3);
+            self.record_hit(CacheTier::L3).await;
             return Some(value);
         }
 
-        self.record_miss();
+        self.record_miss().await;
         self.post_miss_hook(key).await;
         None
     }
@@ -112,30 +112,24 @@ pub trait BaseCache: Send + Sync {
     async fn select_tier(&self, key: &Self::Key, value: &Self::Value) -> CacheTier;
 
     // Metrics operations
-    fn record_hit(&self, _tier: CacheTier) {
+    async fn record_hit(&self, _tier: CacheTier) {
         // Record cache hit using unified metrics
-        let metrics = self.metrics().clone();
-        tokio::spawn(async move {
-            metrics.record_operation(
-                crate::storage::traits::MetricsOperationType::Read,
-                true,  // success
-                0,     // bytes
-                std::time::Duration::from_millis(0),
-            ).await;
-        });
+        self.metrics().record_operation(
+            crate::storage::traits::MetricsOperationType::CacheHit,
+            true,  // success
+            0,     // bytes
+            std::time::Duration::from_millis(0),
+        ).await;
     }
 
-    fn record_miss(&self) {
+    async fn record_miss(&self) {
         // Record cache miss using unified metrics
-        let metrics = self.metrics().clone();
-        tokio::spawn(async move {
-            metrics.record_operation(
-                crate::storage::traits::MetricsOperationType::Read,
-                false, // failure indicates miss
-                0,     // bytes
-                std::time::Duration::from_millis(0),
-            ).await;
-        });
+        self.metrics().record_operation(
+            crate::storage::traits::MetricsOperationType::CacheMiss,
+            true,  // success (miss is a valid outcome, not a failure)
+            0,     // bytes
+            std::time::Duration::from_millis(0),
+        ).await;
     }
 
     fn metrics(&self) -> &UnifiedMetricsCollector;

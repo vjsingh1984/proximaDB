@@ -805,8 +805,8 @@ impl CascadeInvalidator {
         }
 
         // Process transitive dependencies
-        while let Some(_current) = queue.pop_front() {
-            if let Some(entry) = self.reverse_index.get(key) {
+        while let Some(current) = queue.pop_front() {
+            if let Some(entry) = self.reverse_index.get(&current) {
                 for dependent in entry.value() {
                     if visited.insert(dependent.clone()) {
                         queue.push_back(dependent.clone());

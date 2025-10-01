@@ -542,27 +542,35 @@ impl RowGroups {
                 let start = group_idx * group_size;
                 let end = ((group_idx + 1) * group_size).min(dimension);
 
-                // Encode each group with SIMD
+                // Encode each group with SIMD using pattern-based scheme selection
+                // FIXED (2025-01-30): Use pattern detection instead of unimplemented Adaptive scheme
                 for dim_idx in start..end {
                     if dim_idx < simd_transposed.len() {
-                        let encoded_dim = self.simd_encoder.simd_encode_dimension(&simd_transposed[dim_idx],
-                                                                           &ProximaScheme::Adaptive)?;
+                        // Detect pattern and choose optimal scheme
+                        let pattern = self.simd_encoder.simd_detect_pattern(&simd_transposed[dim_idx])?;
+                        let scheme = self.simd_encoder.pattern_to_engine_scheme(&pattern);
+
+                        let encoded_dim = self.simd_encoder.simd_encode_dimension(&simd_transposed[dim_idx], &scheme)?;
                         encoded.push(encoded_dim);
-                        schemes.push(ProximaScheme::Adaptive);
+                        schemes.push(scheme);
                     }
                 }
             }
             (encoded, schemes)
         } else {
-            // For lower dimensions, encode each dimension directly
+            // For lower dimensions, encode each dimension directly using pattern detection
+            // FIXED (2025-01-30): Use pattern detection instead of unimplemented Adaptive scheme
             let mut encoded = Vec::new();
             let mut schemes = Vec::new();
 
             for dim_data in &simd_transposed {
-                let encoded_dim = self.simd_encoder.simd_encode_dimension(dim_data,
-                                                                   &ProximaScheme::Adaptive)?;
+                // Detect pattern and choose optimal scheme
+                let pattern = self.simd_encoder.simd_detect_pattern(dim_data)?;
+                let scheme = self.simd_encoder.pattern_to_engine_scheme(&pattern);
+
+                let encoded_dim = self.simd_encoder.simd_encode_dimension(dim_data, &scheme)?;
                 encoded.push(encoded_dim);
-                schemes.push(ProximaScheme::Adaptive);
+                schemes.push(scheme);
             }
             (encoded, schemes)
         };

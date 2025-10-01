@@ -166,15 +166,12 @@ where
         match self.l1_backend.put(key.clone(), entry.clone()).await {
             Ok(_) => {
                 // Success - update metrics (eviction handled by global orchestrator)
-                let metrics = self.metrics.clone();
-                tokio::spawn(async move {
-                    metrics.record_operation(
-                        MetricsOperationType::Write,
-                        true,
-                        0,
-                        std::time::Duration::from_secs(0),
-                    ).await;
-                });
+                self.metrics.record_operation(
+                    MetricsOperationType::Write,
+                    true,
+                    0,
+                    std::time::Duration::from_secs(0),
+                ).await;
             }
             Err(crate::storage::cache::backend::StorageError::CapacityExceeded) => {
                 // Cache is full - trigger eviction through global orchestrator

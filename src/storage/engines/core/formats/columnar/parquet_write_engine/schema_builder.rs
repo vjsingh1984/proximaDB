@@ -242,19 +242,24 @@ mod tests {
 
     #[test]
     fn test_schema_with_quantization() {
+        use crate::storage::engines::core::formats::columnar::constants::*;
+
         let mut config = ParquetWriterConfig::default();
         config.quantization.enable_binary = true;
         config.quantization.enable_int8 = true;
         config.quantization.enable_pq = true;
+        config.quantization.pq_bits = 8; // Use PQ8
 
         let builder = ParquetSchemaBuilder::new(256, config);
         let schema = builder.build_schema().unwrap();
 
-        // Check quantization fields
-        assert!(schema.field_with_name("vector_binary").is_ok());
-        assert!(schema.field_with_name("vector_int8").is_ok());
-        assert!(schema.field_with_name("int8_scale").is_ok());
-        assert!(schema.field_with_name("vector_pq").is_ok());
+        // Check quantization fields using constants
+        assert!(schema.field_with_name(FIELD_Q_BINARY).is_ok());
+        assert!(schema.field_with_name(FIELD_Q_INT8).is_ok());
+        assert!(schema.field_with_name(FIELD_QP_INT8_SCALE).is_ok());
+        assert!(schema.field_with_name(FIELD_QP_INT8_MIN).is_ok());
+        assert!(schema.field_with_name(FIELD_QP_INT8_MAX).is_ok());
+        assert!(schema.field_with_name(FIELD_Q_PQ8).is_ok());
         // Note: pq_codebook stored as file metadata, not column
     }
 
