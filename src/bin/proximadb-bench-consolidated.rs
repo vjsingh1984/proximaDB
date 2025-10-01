@@ -201,8 +201,8 @@ enum Commands {
     /// [10] Columnar VIPER benchmarks
     #[command(name = "bench_10", alias = "viper")]
     Bench10Viper {
-        /// Sample size for statistical analysis
-        #[arg(short = 's', long, default_value_t = 100)]
+        /// Sample size for statistical analysis (encoding ops are slow, use 10-20 for large datasets)
+        #[arg(short = 's', long, default_value_t = 20)]
         sample_size: usize,
     },
 
@@ -1177,21 +1177,38 @@ fn measure_function<F, R>(mut f: F, iterations: usize) -> (f64, f64)
 where
     F: FnMut() -> R,
 {
-    // Warm-up
-    for _ in 0..10 {
+    // Reduced warmup for slow operations (was 10, now adaptive)
+    let warmup_iterations = if iterations > 50 { 3 } else { 5 };
+    for _ in 0..warmup_iterations {
         black_box(f());
     }
 
     let mut times = Vec::with_capacity(iterations);
-    for _ in 0..iterations {
+    for i in 0..iterations {
+        // Progress indicator for slow operations
+        if iterations > 20 && i % 10 == 0 && i > 0 {
+            eprint!(".");
+            if i % 50 == 0 {
+                eprint!(" {}/{}\r", i, iterations);
+            }
+        }
+
         let start = Instant::now();
         black_box(f());
-        times.push(start.elapsed().as_secs_f64() * 1_000_000.0); // Convert to microseconds
+        let elapsed = start.elapsed().as_secs_f64() * 1_000_000.0; // microseconds
+        times.push(elapsed);
+
+        // Safety check: if single iteration takes > 10 seconds, reduce iterations
+        if i == 0 && elapsed > 10_000_000.0 {
+            eprintln!("\n⚠️  Warning: First iteration took {:.2}s, reducing sample size...", elapsed / 1_000_000.0);
+            break;
+        }
     }
 
     // Calculate mean and std dev
-    let mean = times.iter().sum::<f64>() / iterations as f64;
-    let variance = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / iterations as f64;
+    let actual_iterations = times.len();
+    let mean = times.iter().sum::<f64>() / actual_iterations as f64;
+    let variance = times.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / actual_iterations as f64;
     let std_dev = variance.sqrt();
 
     (mean, std_dev)
