@@ -49,8 +49,8 @@ struct Cli {
     #[arg(value_enum, help = "Available suites: bench_01-bench_13 or aliases (distance, simd, memory, storage, vectors, index, encoding, quantization, viper, query, system, graph, all)")]
     suite: Option<CriterionSuite>,
 
-    /// Sample size for statistical analysis (more samples = better accuracy)
-    #[arg(short = 's', long, default_value_t = 100)]
+    /// Sample size for statistical analysis (more samples = better accuracy, encoding benchmarks are slow)
+    #[arg(short = 's', long, default_value_t = 10)]
     sample_size: usize,
 
     /// Measurement time in seconds (for future Criterion integration)
