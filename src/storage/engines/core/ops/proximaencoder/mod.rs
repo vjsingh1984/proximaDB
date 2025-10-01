@@ -74,6 +74,8 @@ pub mod types;
 pub mod encoding;
 pub mod decoding;
 pub mod analysis;
+pub mod encoder;
+pub mod decoder;
 
 // Re-export commonly used types
 pub use markers::{
@@ -98,12 +100,12 @@ pub use analysis::{
     analyze_and_choose_scheme_f32,
 };
 
-// Temporary re-export of main proximaencoder module until full modularization is complete
-// This ensures existing code continues to work during the transition
+pub use encoder::ProximaEncoder;
+pub use decoder::ProximaDecoder;
+
+// Temporary re-export of helper structs from legacy module
+// These will be migrated in future phases
 pub use super::proximaencoder_legacy::{
-    ProximaEncoder,
-    ProximaDecoder,
-    // Helper structs for encoding output
     DimensionGroup,
     ColumnarEncodedVectors,
     RowWiseEncodedVectors,
