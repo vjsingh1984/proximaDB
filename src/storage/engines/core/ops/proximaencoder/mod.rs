@@ -73,6 +73,7 @@ pub mod markers;
 pub mod types;
 pub mod encoding;
 pub mod decoding;
+pub mod analysis;
 
 // Re-export commonly used types
 pub use markers::{
@@ -92,13 +93,16 @@ pub use types::{
     EncodedDimension,
 };
 
+pub use analysis::{
+    analyze_and_choose_scheme,
+    analyze_and_choose_scheme_f32,
+};
+
 // Temporary re-export of main proximaencoder module until full modularization is complete
 // This ensures existing code continues to work during the transition
 pub use super::proximaencoder_legacy::{
     ProximaEncoder,
     ProximaDecoder,
-    analyze_and_choose_scheme,
-    analyze_and_choose_scheme_f32,
     // Helper structs for encoding output
     DimensionGroup,
     ColumnarEncodedVectors,

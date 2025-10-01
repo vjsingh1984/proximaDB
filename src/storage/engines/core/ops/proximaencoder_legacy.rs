@@ -2262,6 +2262,14 @@ impl ProximaDecoder {
 }
 
 /// Analyze data to choose optimal encoding scheme
+// Re-export analysis functions from the modular analysis module
+pub use super::proximaencoder::analysis::{
+    analyze_and_choose_scheme,
+    analyze_and_choose_scheme_f32,
+};
+
+// Legacy implementations removed - now delegated to analysis module
+/*
 pub fn analyze_and_choose_scheme(data: &[i64]) -> ProximaScheme {
     if data.is_empty() {
         // Use BitPacked with 64 bits as fallback for empty data
@@ -2313,7 +2321,9 @@ pub fn analyze_and_choose_scheme(data: &[i64]) -> ProximaScheme {
         ProximaScheme::BitPacked { bits: range_bits }
     }
 }
+*/
 
+/*
 /// Analyze float data to choose optimal encoding scheme
 ///
 /// Comprehensive scheme selection based on data patterns:
@@ -2414,6 +2424,7 @@ pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
     // Default to Delta encoding with base 0 for general data
     ProximaScheme::Delta { base: 0 }
 }
+*/
 
 // Re-export everything from tensor encoding for consolidated access
 pub use super::proxima_tensor_encoding::*;
