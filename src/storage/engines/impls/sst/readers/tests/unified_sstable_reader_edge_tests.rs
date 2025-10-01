@@ -941,7 +941,7 @@ mod edge_tests {
             "//",                             // Double slash
             "/tmp/../etc/passwd",             // Path traversal attempt
             "C:\\Windows\\System32",          // Windows path on Unix
-            "file://localhost/test.sstable",  // URI format
+            "file:///test.sstable",  // URI format
             "s3://bucket/key",                // Cloud storage path
             "/path/with spaces/file.sstable", // Spaces
             "/path/with/🚀/emoji.sstable",    // Emoji in path

@@ -144,7 +144,7 @@ impl OrionGraphEngine {
         enable_wal: bool,
     ) -> Result<Self> {
         // Use default base URL if path is provided
-        let base_url = format!("file://{}", base_path.as_ref().display());
+        let base_url = format!("file:///{}", base_path.as_ref().display());
         let graph_id = "default".to_string(); // Default graph for backward compatibility
 
         let persistence = Arc::new(

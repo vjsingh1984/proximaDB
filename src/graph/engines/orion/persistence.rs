@@ -119,11 +119,11 @@ impl OrionPersistence {
     ) -> Result<Self> {
         // Create filesystem factory with default configuration and initialize filesystems
         let filesystem_factory = Arc::new(FilesystemFactory::new(FilesystemConfig::default()).await
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?);
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?);
 
         // Get the underlying filesystem from the factory
         let underlying_fs = filesystem_factory.get_filesystem(&base_url)
-            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Storage(crate::core::error::StorageError::SerializationError(e.to_string())))?;
 
         // Wrap with UnifiedCachingFilesystem
         let filesystem = Arc::new(UnifiedCachingFilesystem::new(

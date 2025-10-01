@@ -19,6 +19,8 @@
 //! Comprehensive tests for ProximaDB's native graph database functionality,
 //! testing the complete stack from API to storage engine.
 
+// mod helpers;
+// use helpers::graph_test_utils::*;
 use proximadb::{
     graph::{Edge, Node, OperationMode, PropertyValue, service::GraphOperationsService},
     proto::proximadb_v1::{property_value::Value, NodeQuery, TraversalRequest, TraversalAlgorithm, GraphStats, PropertyFilter, PropertyFilterOperator},
@@ -32,6 +34,26 @@ const TEST_GRAPH_ID: &str = "test_graph";
 #[tokio::test]
 async fn test_node_crud_operations() {
     let service = Arc::new(GraphOperationsService::new());
+
+    // Create the test graph collection first
+    let create_request = proximadb::proto::proximadb_v1::CreateGraphRequest {
+        graph_id: TEST_GRAPH_ID.to_string(),
+        name: Some("Test Graph Collection".to_string()),
+        description: Some("Test graph for integration testing".to_string()),
+        schema: None,
+        storage_config: None,
+        engine_config: None,
+        access_control: None,
+    };
+
+    // Create the graph collection (ignore if it already exists)
+    match service.create_graph_collection(create_request).await {
+        Ok(_) => println!("Created test graph collection: {}", TEST_GRAPH_ID),
+        Err(e) if e.to_string().contains("already exists") => {
+            println!("Test graph collection already exists: {}", TEST_GRAPH_ID);
+        }
+        Err(e) => panic!("Failed to create test graph collection: {}", e),
+    }
 
     // Create a test node
     let node = Node {

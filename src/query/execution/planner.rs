@@ -206,6 +206,13 @@ impl ExecutionPlanner {
     fn analyze_query(&self, select: &Select) -> Result<QueryAnalysis> {
         let mut analysis = QueryAnalysis::default();
 
+        // Check projections for SKS functions
+        for proj_item in &select.projection {
+            if self.contains_sks_funcs(&proj_item.expr) {
+                analysis.has_sks_functions = true;
+            }
+        }
+
         // Check ORDER BY for vector functions
         for order_expr in &select.order_by {
             if let Expr::FuncCall { name, .. } = &order_expr.expr {
@@ -219,7 +226,7 @@ impl ExecutionPlanner {
 
         // Check for SKS functions in WHERE clause
         if let Some(where_expr) = &select.selection {
-            analysis.has_sks_functions =
+            analysis.has_sks_functions = analysis.has_sks_functions ||
                 self.detect_sks_functions(where_expr) || self.contains_sks_funcs(where_expr);
         }
 
@@ -1094,9 +1101,9 @@ mod planner_tests {
     use super::*;
     use crate::query::ast::*;
 
-    #[test]
-    fn test_vector_query_planning() {
-        let planner = create_test_planner();
+    #[tokio::test]
+    async fn test_vector_query_planning() {
+        let planner = create_test_planner().await;
 
         // Create vector query AST
         let query = Query::Select(Select {
@@ -1167,10 +1174,91 @@ mod planner_tests {
         );
     }
 
-    fn create_test_planner() -> ExecutionPlanner {
-        // Simplified approach for testing - just skip the test since the setup is complex
-        // This test would require proper mock services setup which is beyond the scope of fixing the unimplemented panic
-        panic!("Test requires complex service setup - skipping for now")
+    async fn create_test_planner() -> ExecutionPlanner {
+        use crate::services::collection::manager::CollectionService;
+        use crate::services::operations::vectors::VectorOperationsService;
+        use crate::graph::service::GraphOperationsService;
+        use crate::storage::engines::impls::sst::SstEngine;
+        use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
+        use crate::index::AxisManager;
+        use std::sync::Arc;
+
+        // Create temporary directory for storage
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let storage_url = format!("file:///{}", temp_dir.path().display());
+
+        // Create SST storage engine
+        let storage_engine = Arc::new(SstEngine::new().await.expect("Failed to create SST engine"));
+
+        // Create WAL manager with default config
+        use crate::storage::persistence::write_ahead_log::{WALConfig, WALBatchFactory, WriteBufferStrategyType};
+        use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
+        let fs_config = FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::new(fs_config).await.expect("Failed to create filesystem"));
+        let wal_config = WALConfig::default();
+        let strategy = WALBatchFactory::create_batch_serialization_strategy(
+            WriteBufferStrategyType::AvroBatch,
+            &wal_config,
+            filesystem
+        ).await.expect("Failed to create WAL strategy");
+        let wal_manager = Arc::new(WriteAheadLogManager::new(
+            strategy,
+            wal_config
+        ).await.expect("Failed to create WAL manager"));
+
+        // Create Axis index manager with default config
+        use crate::index::axis::AxisConfig;
+        let axis_config = AxisConfig::default();
+        let axis_manager = Arc::new(AxisManager::new(
+            axis_config
+        ).await.expect("Failed to create Axis manager"));
+
+        // Create collection service with universal metadata backend
+        use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
+        use crate::storage::traits::InternalCollectionProvider;
+        use crate::core::config::StorageConfig;
+
+        let fs_config = FilesystemConfig::default();
+        let filesystem2 = Arc::new(FilesystemFactory::new(fs_config).await.expect("Failed to create filesystem"));
+
+        use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
+        let metadata_config = UniversalMetadataConfig {
+            storage_url: storage_url.clone(),
+            compression: true,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+        };
+        let metadata_backend = Arc::new(UniversalMetadataBackend::new(
+            metadata_config,
+            filesystem2
+        ).await.expect("Failed to create metadata backend")) as Arc<dyn InternalCollectionProvider>;
+        let storage_config = StorageConfig {
+            metadata_url: storage_url.clone(),
+            ..Default::default()
+        };
+        let collection_service = Arc::new(CollectionService::new(
+            metadata_backend,
+            storage_config
+        ).await.expect("Failed to create collection service"));
+
+        // Create vector operations service with all dependencies
+        let vector_service = Arc::new(VectorOperationsService::new(
+            storage_engine,
+            wal_manager,
+            axis_manager,
+            collection_service,
+        ));
+
+        // Create graph service
+        let graph_service = Arc::new(GraphOperationsService::new());
+
+        // Keep temp_dir alive by leaking it (tests are short-lived)
+        std::mem::forget(temp_dir);
+
+        ExecutionPlanner::new(vector_service, graph_service)
     }
 
     #[test]

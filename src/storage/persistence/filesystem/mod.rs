@@ -1091,17 +1091,27 @@ impl FilesystemFactory {
             url.to_string()
         };
 
+        // For file:// URLs, don't use URL parsing to avoid issues
+        if normalized_url.starts_with("file://") {
+            // File URLs must have absolute paths
+            let path = if normalized_url.starts_with("file:///") {
+                &normalized_url[8..]  // Remove "file:///"
+            } else {
+                &normalized_url[7..]  // Remove "file://"
+            };
+
+            if !path.starts_with('/') && !path.starts_with("./") {
+                return Err(FilesystemError::InvalidPath(
+                    "File URLs must have absolute paths or explicit relative paths (./...)".to_string(),
+                ));
+            }
+            return Ok(());
+        }
+
+        // For non-file URLs, use URL parsing
         let parsed_url = Url::parse(&normalized_url)?;
 
         match parsed_url.scheme() {
-            "file" => {
-                // File URLs must have absolute paths
-                if !parsed_url.path().starts_with('/') {
-                    return Err(FilesystemError::InvalidPath(
-                        "File URLs must have absolute paths".to_string(),
-                    ));
-                }
-            }
             "s3" => {
                 // S3 URLs must have bucket name
                 if parsed_url.host_str().is_none() || parsed_url.host_str().unwrap().is_empty() {
@@ -1167,6 +1177,11 @@ impl FilesystemFactory {
             url.to_string()
         };
 
+        // For file:// URLs, there's no bucket
+        if normalized_url.starts_with("file://") {
+            return Ok(None);
+        }
+
         let parsed_url = Url::parse(&normalized_url)?;
 
         match parsed_url.scheme() {
@@ -1208,6 +1223,11 @@ impl FilesystemFactory {
         } else {
             url.to_string()
         };
+
+        // For file:// URLs, there's no account
+        if normalized_url.starts_with("file://") {
+            return Ok(None);
+        }
 
         let parsed_url = Url::parse(&normalized_url)?;
 
@@ -1252,6 +1272,20 @@ impl FilesystemFactory {
         // Log the normalized URL for debugging
         info!("    normalized_url: {}", normalized_url);
 
+        // Handle file:// URLs specially to avoid URL parsing issues
+        if normalized_url.starts_with("file://") {
+            let path = if normalized_url.starts_with("file:///") {
+                // Absolute path
+                format!("/{}", &normalized_url[8..])
+            } else {
+                // Relative or other path
+                normalized_url[7..].to_string()
+            };
+            info!("    scheme: file, returning path: {}", path);
+            return Ok(path);
+        }
+
+        // For non-file URLs, use URL parsing
         let parsed_url = match Url::parse(&normalized_url) {
             Ok(url) => url,
             Err(e) => {
@@ -1263,11 +1297,6 @@ impl FilesystemFactory {
         info!("    parsed path: {}", path);
 
         match parsed_url.scheme() {
-            "file" => {
-                // For file URLs, return the full absolute path
-                info!("    scheme: file, returning path as-is");
-                Ok(path.to_string())
-            }
             "s3" | "gcs" | "gs" => {
                 // For object stores, remove the bucket from path
                 let path_without_bucket = path.trim_start_matches('/');
@@ -1302,16 +1331,21 @@ impl FilesystemFactory {
 
     /// Extract scheme from URL, handling paths without schemes
     fn extract_scheme(&self, url: &str) -> FsResult<String> {
-        if url.contains("://") {
-            let parsed = Url::parse(url)?;
-            let raw_scheme = parsed.scheme().to_string();
+        debug!("extract_scheme called with URL: {}", url);
+        if let Some(scheme_end) = url.find("://") {
+            // Extract just the scheme part without parsing the full URL
+            let raw_scheme = &url[..scheme_end];
+            debug!("extracted scheme: {}", raw_scheme);
 
             // Check for scheme mapping (e.g., gs -> gcs)
-            let mapped_scheme = self.config.scheme_mapping.get(&raw_scheme);
+            let mapped_scheme = self.config.scheme_mapping.get(raw_scheme);
 
-            Ok(mapped_scheme.cloned().unwrap_or_else(|| raw_scheme.clone()))
+            let result = mapped_scheme.cloned().unwrap_or_else(|| raw_scheme.to_string());
+            debug!("returning scheme: {}", result);
+            Ok(result)
         } else {
             // No scheme present - assume local file
+            debug!("no scheme found, returning 'file'");
             Ok("file".to_string())
         }
     }
@@ -1333,14 +1367,10 @@ impl FilesystemFactory {
             return Ok(url.to_string());
         }
 
-        // Case 2: Parse URL with scheme
-        let parsed_url = Url::parse(url)
-            .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
-
-        // Case 3: Handle file:// URLs with special logic to preserve relative paths
-        if parsed_url.scheme() == "file" {
-            // CRITICAL: Always preserve the original path structure from the URL
-            // The URL parser mangles relative paths, so we extract manually
+        // Case 2: Handle file:// URLs specially to avoid URL parsing issues
+        if url.starts_with("file://") {
+            // CRITICAL: Avoid URL parsing for file:// to prevent international domain name errors
+            // The URL parser can fail on paths that look like domain names
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
                 let relative_path = &url[7..]; // Remove "file://" prefix, keep "./"
@@ -1351,10 +1381,10 @@ impl FilesystemFactory {
                 Ok(relative_path.to_string())
             } else if url.starts_with("file:///") {
                 // Absolute path: file:///absolute/path
-                let absolute_path = parsed_url.path();
-                debug!("🔍 DEBUG resolve_path: Absolute path: '{}'", absolute_path);
-                Ok(absolute_path.to_string())
-            } else if url.starts_with("file://") {
+                let absolute_path = &url[8..]; // Remove "file:///" prefix
+                debug!("🔍 DEBUG resolve_path: Absolute path: '/{}'", absolute_path);
+                Ok(format!("/{}", absolute_path))
+            } else {
                 // Implicit relative path: file://relative/path (treat as relative)
                 let relative_path = &url[7..]; // Remove "file://" prefix
                 debug!(
@@ -1362,14 +1392,11 @@ impl FilesystemFactory {
                     relative_path
                 );
                 Ok(relative_path.to_string())
-            } else {
-                // Fallback
-                let path = parsed_url.path();
-                debug!("🔍 DEBUG resolve_path: Fallback path: '{}'", path);
-                Ok(path.to_string())
             }
         } else {
-            // Case 4: Non-file schemes (s3://, azure://, etc.)
+            // Case 3: Non-file schemes still need URL parsing (s3://, azure://, etc.)
+            let parsed_url = Url::parse(url)
+                .map_err(|e| FilesystemError::InvalidPath(format!("Invalid URL: {}", e)))?;
             let path = parsed_url.path();
             debug!("🔍 DEBUG resolve_path: Non-file scheme path: '{}'", path);
             Ok(path.to_string())

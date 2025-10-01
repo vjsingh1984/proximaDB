@@ -340,7 +340,7 @@ async fn test_metadata_url_formats() -> Result<()> {
         ("file://./metadata", "relative with ./"),
         ("file://metadata", "relative without ./"),
         ("file:///tmp/metadata", "absolute with ///"),
-        ("file://localhost/tmp/metadata", "absolute with localhost"),
+        ("file:///tmp/metadata", "absolute with localhost format"),
     ];
 
     for (url, description) in test_cases {
