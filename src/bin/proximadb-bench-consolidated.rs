@@ -2987,20 +2987,24 @@ fn benchmark_encoding_statistical_with_compression(
     // ============ TRANSPOSE FIELD-COMPRESSED (Field-Level Compression) ============
     compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
 
+    // Serialize once to get valid data for decode benchmark
+    let transpose_field_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
+    let transpose_field_serialized = transpose_field_block.serialize_with_config(&compression_config)?;
+
     // Measure encode time (create fresh block each time to avoid state corruption)
     let transpose_field_encode_times = measure_function(
         || {
             let block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-            block.serialize_with_config(&compression_config).unwrap()
+            let _data = block.serialize_with_config(&compression_config).unwrap();
         },
         sample_size,
     );
 
-    // Serialize once for decode benchmark
-    let transpose_field_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-    let transpose_field_serialized = transpose_field_block.serialize_with_config(&compression_config)?;
+    // Measure decode time using the pre-serialized data
     let transpose_field_decode_times = measure_function(
-        || ProximaDataBlock::deserialize(&transpose_field_serialized).unwrap(),
+        || {
+            let _block = ProximaDataBlock::deserialize(&transpose_field_serialized).unwrap();
+        },
         sample_size,
     );
 
@@ -3012,18 +3016,21 @@ fn benchmark_encoding_statistical_with_compression(
     // ============ TRANSPOSE BLOCK-COMPRESSED (Block-Level Compression) ============
     compression_config.vector_layout = VectorEncodingLayout::TransposeFieldEncodedBlockCompressedVector;
 
+    let transpose_block_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
+    let transpose_block_serialized = transpose_block_block.serialize_with_config(&compression_config)?;
+
     let transpose_block_encode_times = measure_function(
         || {
             let block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-            block.serialize_with_config(&compression_config).unwrap()
+            let _data = block.serialize_with_config(&compression_config).unwrap();
         },
         sample_size,
     );
 
-    let transpose_block_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-    let transpose_block_serialized = transpose_block_block.serialize_with_config(&compression_config)?;
     let transpose_block_decode_times = measure_function(
-        || ProximaDataBlock::deserialize(&transpose_block_serialized).unwrap(),
+        || {
+            let _block = ProximaDataBlock::deserialize(&transpose_block_serialized).unwrap();
+        },
         sample_size,
     );
 
@@ -3035,22 +3042,24 @@ fn benchmark_encoding_statistical_with_compression(
     // ============ ROW-WISE ENCODING (FullVector) ============
     compression_config.vector_layout = VectorEncodingLayout::FullVector;
 
-    // Measure combined serialization + compression + encoding time
-    let rowwise_encode_times = measure_function(
-        || {
-            let block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-            block.serialize_with_config(&compression_config).unwrap()
-        },
-        sample_size,
-    );
-
     // Get serialized data for size measurement
     let rowwise_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
     let rowwise_serialized = rowwise_block.serialize_with_config(&compression_config)?;
 
+    // Measure combined serialization + compression + encoding time
+    let rowwise_encode_times = measure_function(
+        || {
+            let block = ProximaDataBlock::new(records.clone(), compression_config.clone());
+            let _data = block.serialize_with_config(&compression_config).unwrap();
+        },
+        sample_size,
+    );
+
     // Measure row-wise deserialization (decompression + decoding)
     let rowwise_decode_times = measure_function(
-        || ProximaDataBlock::deserialize(&rowwise_serialized).unwrap(),
+        || {
+            let _block = ProximaDataBlock::deserialize(&rowwise_serialized).unwrap();
+        },
         sample_size,
     );
 
@@ -3067,18 +3076,21 @@ fn benchmark_encoding_statistical_with_compression(
     if dimension > 128 {
         compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedAndCompressedVector;
 
+        let grouped_field_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
+        grouped_field_serialized = grouped_field_block.serialize_with_config(&compression_config)?;
+
         grouped_field_encode_times = measure_function(
             || {
                 let block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-                block.serialize_with_config(&compression_config).unwrap()
+                let _data = block.serialize_with_config(&compression_config).unwrap();
             },
             sample_size,
         );
 
-        let grouped_field_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-        grouped_field_serialized = grouped_field_block.serialize_with_config(&compression_config)?;
         grouped_field_decode_times = measure_function(
-            || ProximaDataBlock::deserialize(&grouped_field_serialized).unwrap(),
+            || {
+                let _block = ProximaDataBlock::deserialize(&grouped_field_serialized).unwrap();
+            },
             sample_size,
         );
 
@@ -3100,18 +3112,21 @@ fn benchmark_encoding_statistical_with_compression(
     if dimension > 128 {
         compression_config.vector_layout = VectorEncodingLayout::GroupedFieldEncodedBlockCompressedVector;
 
+        let grouped_block_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
+        grouped_block_serialized = grouped_block_block.serialize_with_config(&compression_config)?;
+
         grouped_block_encode_times = measure_function(
             || {
                 let block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-                block.serialize_with_config(&compression_config).unwrap()
+                let _data = block.serialize_with_config(&compression_config).unwrap();
             },
             sample_size,
         );
 
-        let grouped_block_block = ProximaDataBlock::new(records.clone(), compression_config.clone());
-        grouped_block_serialized = grouped_block_block.serialize_with_config(&compression_config)?;
         grouped_block_decode_times = measure_function(
-            || ProximaDataBlock::deserialize(&grouped_block_serialized).unwrap(),
+            || {
+                let _block = ProximaDataBlock::deserialize(&grouped_block_serialized).unwrap();
+            },
             sample_size,
         );
 
