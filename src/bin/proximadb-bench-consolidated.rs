@@ -133,12 +133,12 @@ enum Commands {
     /// [07] Proxima encoding strategies (columnar vs row-wise)
     #[command(name = "bench_07", alias = "encoding")]
     Bench07Encoding {
-        /// Vector counts to test (realistic rowgroup sizes)
-        #[arg(short, long, value_delimiter = ',', default_values = vec!["512", "1024", "1536", "2048"])]
+        /// Vector counts to test (powers of 2 for consistent benchmarking)
+        #[arg(short, long, value_delimiter = ',', default_values = vec!["128", "1024", "4096"])]
         vector_counts: Vec<usize>,
 
-        /// Dimensions to test
-        #[arg(short, long, value_delimiter = ',', default_values = vec!["384", "512", "768", "1024", "1536", "2048", "3072"])]
+        /// Dimensions to test (powers of 2 for consistent benchmarking)
+        #[arg(short, long, value_delimiter = ',', default_values = vec!["256", "512", "1024", "2048"])]
         dimensions: Vec<usize>,
 
         /// Generate detailed matrix output
@@ -626,10 +626,12 @@ async fn main() -> Result<()> {
             Commands::Bench06Index { .. } => {
                 run_criterion_benchmarks(CriterionSuite::IndexOps, cli.sample_size, cli.measurement_time).await?;
             }
-            Commands::Bench07Encoding { compression, compression_level, .. } => {
-                // Pass compression settings to encoding benchmarks
-                run_encoding_benchmarks_with_compression(
+            Commands::Bench07Encoding { vector_counts, dimensions, compression, compression_level, .. } => {
+                // Pass compression settings and test configurations to encoding benchmarks
+                run_encoding_benchmarks_with_config(
                     cli.sample_size,
+                    vector_counts.clone(),
+                    dimensions.clone(),
                     compression,
                     *compression_level
                 )?;
@@ -641,9 +643,9 @@ async fn main() -> Result<()> {
             Commands::Bench15SimdEncoding { vector_count, dimension, iterations, patterns, comprehensive } => {
                 println!("\n⚡ Running SIMD Encoding Schemes Benchmark");
                 if *comprehensive {
-                    // Run comprehensive matrix: all batch sizes × all dimensions
+                    // Run comprehensive matrix: all batch sizes × all dimensions (powers of 2)
                     let batch_sizes = vec![256, 1024, 4096];
-                    let dimensions = vec![384, 768, 1536, 3072];
+                    let dimensions = vec![256, 512, 1024, 2048];
 
                     println!("\n╔═══════════════════════════════════════════════════════════════╗");
                     println!("║     COMPREHENSIVE PATTERN DETECTION BENCHMARK MATRIX         ║");
@@ -1828,7 +1830,7 @@ fn run_memory_vector_benchmarks(sample_size: usize) -> Result<()> {
 
     // Test different dimensions and batch sizes
     let dimensions = vec![384, 768, 1536, 3072];
-    let batch_sizes = vec![100, 1000, 5000];
+    let batch_sizes = vec![128, 1024, 4096];
 
     for dimension in &dimensions {
         println!("\n🧪 Testing dimension: {}", dimension);
@@ -2120,8 +2122,8 @@ fn run_storage_unified_benchmarks(sample_size: usize) -> Result<()> {
         (CompressionAlgorithm::Lz4, "LZ4"),
     ];
     let test_dimensions = vec![384, 768, 784, 1024, 1536, 2048];
-    let test_batch_sizes = vec![1000, 5000];
-    let fixed_dimensions = vec![784, 1536];
+    let test_batch_sizes = vec![1024, 4096];
+    let fixed_dimensions = vec![512, 1024, 2048];
 
     // Part 1: Dimension sensitivity (fixed batch size = 1000)
     println!("📈 Part 1: Dimension Sensitivity Analysis (Batch Size = 1000)");
@@ -2371,8 +2373,10 @@ fn parse_compression_algorithm(s: &str) -> Result<CompressionAlgorithm> {
     }
 }
 
-fn run_encoding_benchmarks_with_compression(
+fn run_encoding_benchmarks_with_config(
     sample_size: usize,
+    vector_counts: Vec<usize>,
+    dimensions: Vec<usize>,
     compression_str: &str,
     compression_level: u8,
 ) -> Result<()> {
@@ -2381,13 +2385,11 @@ fn run_encoding_benchmarks_with_compression(
     println!("\n📊 Encoding Benchmarks (Statistical Framework)");
     println!("Sample size: {} iterations", sample_size);
     println!("Compression: {:?} (level: {})\n", algorithm, compression_level);
+    println!("Vector counts: {:?}", vector_counts);
+    println!("Dimensions: {:?}\n", dimensions);
 
     // Print interpretation guide
     print_encoding_interpretation_guide();
-
-    // Test different vector counts and dimensions
-    let vector_counts = vec![100, 1000, 5000];
-    let dimensions = vec![384, 768, 1536];
 
     // Collect results for summary table
     let mut results = Vec::new();
@@ -2402,6 +2404,10 @@ fn run_encoding_benchmarks_with_compression(
                 algorithm,
                 compression_level,
             )?;
+
+            // Print per-scenario summary immediately after completion
+            print_scenario_summary(&result);
+
             results.push(result);
         }
     }
@@ -2410,6 +2416,24 @@ fn run_encoding_benchmarks_with_compression(
     print_encoding_summary_table(&results);
 
     Ok(())
+}
+
+fn run_encoding_benchmarks_with_compression(
+    sample_size: usize,
+    compression_str: &str,
+    compression_level: u8,
+) -> Result<()> {
+    // Default test matrix: powers of 2 for consistency
+    // 128/1024/4096 vectors × 256/512/1024 dimensions
+    let vector_counts = vec![128, 1024, 4096];
+    let dimensions = vec![256, 512, 1024];
+    run_encoding_benchmarks_with_config(
+        sample_size,
+        vector_counts,
+        dimensions,
+        compression_str,
+        compression_level
+    )
 }
 
 fn run_encoding_benchmarks_statistical(sample_size: usize) -> Result<()> {
@@ -2433,6 +2457,65 @@ struct EncodingResult {
     rowwise_compression: f64,
     columnar_size_mb: f64,
     rowwise_size_mb: f64,
+}
+
+fn print_scenario_summary(result: &EncodingResult) {
+    println!("\n✅ Scenario Complete: {} vectors × {} dimensions", result.vector_count, result.dimension);
+    println!("\n  ┌─────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐");
+    println!("  │ Metric              │ Columnar     │ Row-wise     │ Speedup      │ Winner       │");
+    println!("  ├─────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤");
+
+    // Encoding time comparison
+    let encode_speedup = result.rowwise_encode_ms / result.columnar_encode_ms;
+    let encode_winner = if encode_speedup > 1.0 { "Columnar ⭐" } else { "Row-wise ⭐" };
+    println!("  │ Encode Time (ms)    │ {:>12.2} │ {:>12.2} │ {:>11.2}x │ {:<12} │",
+        result.columnar_encode_ms, result.rowwise_encode_ms, encode_speedup, encode_winner);
+
+    // Decode time comparison
+    let decode_speedup = result.rowwise_decode_ms / result.columnar_decode_ms;
+    let decode_winner = if decode_speedup > 1.0 { "Columnar ⭐" } else { "Row-wise ⭐" };
+    println!("  │ Decode Time (ms)    │ {:>12.2} │ {:>12.2} │ {:>11.2}x │ {:<12} │",
+        result.columnar_decode_ms, result.rowwise_decode_ms, decode_speedup, decode_winner);
+
+    // Serialization time comparison
+    let serial_speedup = result.rowwise_serialize_ms / result.columnar_serialize_ms;
+    let serial_winner = if serial_speedup > 1.0 { "Columnar ⭐" } else { "Row-wise ⭐" };
+    println!("  │ Serialize Time (ms) │ {:>12.2} │ {:>12.2} │ {:>11.2}x │ {:<12} │",
+        result.columnar_serialize_ms, result.rowwise_serialize_ms, serial_speedup, serial_winner);
+
+    // Compression ratio comparison
+    let comp_winner = if result.columnar_compression > result.rowwise_compression { "Columnar ⭐" } else { "Row-wise ⭐" };
+    println!("  │ Compression Ratio   │ {:>11.2}x │ {:>11.2}x │ {:>12} │ {:<12} │",
+        result.columnar_compression, result.rowwise_compression, "-", comp_winner);
+
+    // Size comparison
+    let size_winner = if result.columnar_size_mb < result.rowwise_size_mb { "Columnar ⭐" } else { "Row-wise ⭐" };
+    let size_saving = ((result.rowwise_size_mb - result.columnar_size_mb) / result.rowwise_size_mb * 100.0).abs();
+    println!("  │ Storage Size (MB)   │ {:>12.3} │ {:>12.3} │ {:>10.1}% │ {:<12} │",
+        result.columnar_size_mb, result.rowwise_size_mb, size_saving, size_winner);
+
+    println!("  └─────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘");
+
+    // Quick recommendation
+    let total_col_time = result.columnar_encode_ms + result.columnar_serialize_ms;
+    let total_row_time = result.rowwise_encode_ms + result.rowwise_serialize_ms;
+
+    println!("\n  💡 Recommendation for this workload:");
+    if result.vector_count <= 1000 && total_row_time < total_col_time * 0.8 {
+        println!("     → Use ROW-WISE for low-latency operations ({:.1}ms total vs {:.1}ms)",
+            total_row_time, total_col_time);
+    } else if result.columnar_compression > result.rowwise_compression * 1.3 {
+        println!("     → Use COLUMNAR for storage efficiency ({:.1}x compression vs {:.1}x)",
+            result.columnar_compression, result.rowwise_compression);
+    } else if total_col_time < total_row_time {
+        println!("     → Use COLUMNAR for throughput ({:.1}ms total vs {:.1}ms)",
+            total_col_time, total_row_time);
+    } else {
+        println!("     → Use ROW-WISE for balanced performance ({:.1}ms total)",
+            total_row_time);
+    }
+
+    println!();
 }
 
 fn print_encoding_summary_table(results: &[EncodingResult]) {
