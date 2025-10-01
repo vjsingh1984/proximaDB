@@ -63,7 +63,7 @@ fn bench_quantization_speed(c: &mut Criterion) {
     init_hardware();
 
     let mut group = c.benchmark_group("quantization_speed");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     // Test different dimensions
     for dim in &[128, 256, 384, 512, 768, 1536] {
@@ -110,7 +110,7 @@ fn bench_progressive_search(c: &mut Criterion) {
     init_hardware();
 
     let mut group = c.benchmark_group("progressive_search");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     // Test different dataset sizes
     for size in &[1000, 5000, 10000] {
@@ -206,7 +206,7 @@ fn bench_pq_distance_tables(c: &mut Criterion) {
     init_hardware();
 
     let mut group = c.benchmark_group("pq_distance_tables");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     // Test different PQ configurations
     for (subvectors, bits) in &[(8, 8), (16, 8), (32, 8), (16, 4)] {
@@ -320,7 +320,7 @@ fn bench_binary_filtering(c: &mut Criterion) {
     init_hardware();
 
     let mut group = c.benchmark_group("binary_filtering");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     for size in &[1000, 5000, 10000] {
         let vectors = generate_vectors(*size, 384);

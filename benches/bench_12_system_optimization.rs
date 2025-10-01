@@ -117,7 +117,7 @@ fn create_optimized_record(id: &str, vector: Vec<f32>, score: f32) -> OptimizedS
 fn bench_record_cloning(c: &mut Criterion) {
     print_system_info("System Optimization Benchmarks");
     let mut group = c.benchmark_group("record_cloning");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     // Use subset of standard dimensions for cloning tests
     let dimensions = vec![384, 768, 1536];  // MiniLM, BERT, OpenAI
@@ -183,7 +183,7 @@ fn bench_record_cloning(c: &mut Criterion) {
 /// Benchmark memory sharing patterns with Arc
 fn bench_arc_memory_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_sharing");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     let dimensions = vec![256, 768, 1536, 3072];
     let clone_counts = vec![1, 5, 10, 20, 50];
@@ -244,7 +244,7 @@ fn bench_arc_memory_patterns(c: &mut Criterion) {
 /// Benchmark result aggregation and sorting strategies
 fn bench_result_aggregation(c: &mut Criterion) {
     let mut group = c.benchmark_group("result_aggregation");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     let result_counts = vec![100, 500, 1000, 5000, 10000];
     let top_k_values = vec![10, 50, 100, 500];
@@ -376,7 +376,7 @@ fn bench_result_aggregation(c: &mut Criterion) {
 /// Benchmark sparse vs dense vector operations
 fn bench_sparsity_impact(c: &mut Criterion) {
     let mut group = c.benchmark_group("sparsity_impact");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     let dimension = 1024;
     let sparsity_levels = vec![
@@ -463,7 +463,7 @@ fn bench_sparsity_impact(c: &mut Criterion) {
 /// Benchmark batch processing optimizations
 fn bench_batch_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_processing");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(Duration::from_secs(5));
 
     let dimension = 768;  // BERT dimension
     let total_vectors = 5000;  // Use standard large batch size

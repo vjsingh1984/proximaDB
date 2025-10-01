@@ -76,6 +76,7 @@ pub mod decoding;
 pub mod analysis;
 pub mod encoder;
 pub mod decoder;
+pub mod vector_types;
 
 // Re-export commonly used types
 pub use markers::{
@@ -103,9 +104,7 @@ pub use analysis::{
 pub use encoder::ProximaEncoder;
 pub use decoder::ProximaDecoder;
 
-// Temporary re-export of helper structs from legacy module
-// These will be migrated in future phases
-pub use super::proximaencoder_legacy::{
+pub use vector_types::{
     DimensionGroup,
     ColumnarEncodedVectors,
     RowWiseEncodedVectors,

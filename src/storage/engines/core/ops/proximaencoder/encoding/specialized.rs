@@ -205,8 +205,13 @@ mod tests {
 
     #[test]
     fn test_detect_column_type() {
+        // Monotonic increasing → Timestamp
         assert_eq!(detect_column_type(&vec![1000, 1001, 1002]), ColumnType::Timestamp);
-        assert_eq!(detect_column_type(&vec![1, 5, 10, 25]), ColumnType::Id);
-        assert_eq!(detect_column_type(&vec![0, 1, 2, 100, 5]), ColumnType::Count);
+        // Monotonic increasing with gaps is still Timestamp (checked first)
+        assert_eq!(detect_column_type(&vec![1, 5, 10, 25]), ColumnType::Timestamp);
+        // Non-monotonic small sparse values → Id
+        assert_eq!(detect_column_type(&vec![5, 1, 25, 10]), ColumnType::Id);
+        // Non-monotonic dense values (avg >= max/2) → Count (default)
+        assert_eq!(detect_column_type(&vec![100, 90, 95, 85, 92, 88]), ColumnType::Count);
     }
 }

@@ -76,7 +76,7 @@ impl ProximaDataType {
 /// - Delta: 2-4:1 for sequential
 /// - FrameOfReference: 3-6:1 for normalized
 /// - BitPacked: 1.5-3:1 for general
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ProximaScheme {
     /// Bit-packing with configurable bit width
     BitPacked { bits: u8 },

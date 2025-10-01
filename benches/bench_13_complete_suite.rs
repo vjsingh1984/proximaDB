@@ -114,7 +114,7 @@ fn bench_vector_operations(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("vector_operations");
     group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(3));
+    group.measurement_time(Duration::from_secs(5));
 
     // Use subset of standard dimensions and batch sizes
     let dimensions = vec![384, 768, 1536];  // MiniLM, BERT, OpenAI
@@ -188,7 +188,7 @@ fn bench_hnsw_index(c: &mut Criterion) {
     init_hardware();
 
     let mut group = c.benchmark_group("hnsw_index");
-    group.warm_up_time(Duration::from_secs(2));
+    group.warm_up_time(Duration::from_secs(1));
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
@@ -270,7 +270,7 @@ fn bench_lsh_index(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("lsh_index");
     group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(3));
+    group.measurement_time(Duration::from_secs(5));
     group.sample_size(10);
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -353,7 +353,7 @@ fn bench_concurrent_operations(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("concurrent_operations");
     group.warm_up_time(Duration::from_secs(1));
-    group.measurement_time(Duration::from_secs(3));
+    group.measurement_time(Duration::from_secs(5));
 
     let dimension = 768;  // BERT dimension
     let num_threads = vec![1, 2, 4, 8];

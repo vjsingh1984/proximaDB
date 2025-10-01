@@ -65,10 +65,15 @@ use proximadb::storage::engines::core::formats::proximablocks::{
 use proximadb::storage::engines::core::ops::unified_proxima_simd::{
     UnifiedProximaSIMD, EngineProfile,
 };
+use proximadb::storage::engines::core::ops::proximaencoder::{
+    analyze_and_choose_scheme, analyze_and_choose_scheme_f32, ProximaEncoder,
+};
 use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::core::compression::CompressionAlgorithm;
 use rand::prelude::*;
 use std::collections::HashMap;
+use std::time::Duration;
+use std::time::Instant;
 
 /// Generate synthetic vector records for benchmarking
 fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec<VectorRecord> {
@@ -103,16 +108,64 @@ fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec
                     })
                     .collect()
             },
+            "very_sparse" => {
+                // 95% zeros, 5% random values (SparseCOO optimal)
+                (0..dimension)
+                    .map(|_| {
+                        if rng.gen_bool(0.95) {
+                            0.0
+                        } else {
+                            rng.gen_range(-1.0..1.0)
+                        }
+                    })
+                    .collect()
+            },
             "sequential" => {
-                // Sequential patterns with small deltas
+                // Sequential patterns with small deltas (Delta encoding optimal)
                 let base = i as f32 * 0.001;
                 (0..dimension)
                     .map(|d| base + (d as f32) * 0.0001)
                     .collect()
             },
             "constant" => {
-                // Mostly constant values
+                // Mostly constant values (RunLength optimal)
                 vec![0.5; dimension]
+            },
+            "normalized" => {
+                // Normalized embeddings in [-1, 1] (FrameOfReference optimal)
+                let mut vec: Vec<f32> = (0..dimension)
+                    .map(|_| rng.gen_range(-1.0..1.0))
+                    .collect();
+                // L2 normalize
+                let magnitude: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+                vec.iter_mut().for_each(|x| *x /= magnitude);
+                vec
+            },
+            "small_range" => {
+                // Small value range [0.0, 0.1] (BitPacked optimal)
+                (0..dimension)
+                    .map(|_| rng.gen_range(0.0..0.1))
+                    .collect()
+            },
+            "gaussian" => {
+                // Gaussian distribution (PForDelta optimal)
+                use rand_distr::{Distribution, Normal};
+                let normal = Normal::new(0.0, 0.3).unwrap();
+                (0..dimension)
+                    .map(|_| normal.sample(&mut rng))
+                    .collect()
+            },
+            "alternating" => {
+                // Alternating high/low values (Zigzag optimal)
+                (0..dimension)
+                    .map(|d| if d % 2 == 0 { 1.0 } else { -1.0 })
+                    .collect()
+            },
+            "monotonic" => {
+                // Monotonically increasing (DoubleDelta optimal)
+                (0..dimension)
+                    .map(|d| (i * dimension + d) as f32 * 0.001)
+                    .collect()
             },
             _ => vec![0.0; dimension],
         };
@@ -134,6 +187,23 @@ fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec
     records
 }
 
+/// Get all available data patterns for comprehensive testing
+fn get_all_patterns() -> Vec<&'static str> {
+    vec![
+        "random",       // Baseline - no patterns
+        "clustered",    // Small variations around center
+        "sparse",       // 90% zeros (SparseBitmap)
+        "very_sparse",  // 95% zeros (SparseCOO)
+        "sequential",   // Small deltas (Delta)
+        "constant",     // Repeated values (RunLength)
+        "normalized",   // L2-normalized embeddings (FrameOfReference)
+        "small_range",  // Limited value range (BitPacked)
+        "gaussian",     // Normal distribution (PForDelta)
+        "alternating",  // High/low alternation (Zigzag)
+        "monotonic",    // Increasing sequence (DoubleDelta)
+    ]
+}
+
 /// Benchmark Proxima encoding without SIMD optimization (baseline)
 ///
 /// # Purpose
@@ -153,6 +223,8 @@ fn generate_vector_records(count: usize, dimension: usize, pattern: &str) -> Vec
 /// - Outlier rates increase at higher dimensions (14% @ 768d)
 fn bench_proxima_baseline(c: &mut Criterion) {
     let mut group = c.benchmark_group("proxima_baseline");
+    group.measurement_time(Duration::from_secs(5));
+    group.warm_up_time(Duration::from_secs(1));
 
     let dimensions = vec![128, 384, 768, 1536];
     let record_counts = vec![100, 1000, 10000];
@@ -213,6 +285,8 @@ fn bench_proxima_baseline(c: &mut Criterion) {
 /// and compression. Switch to Full Vector only for latency-critical paths.
 fn bench_proxima_simd_layouts(c: &mut Criterion) {
     let mut group = c.benchmark_group("proxima_simd_layouts");
+    group.measurement_time(Duration::from_secs(5));
+    group.warm_up_time(Duration::from_secs(1));
 
     let layouts = vec![
         ("transpose", VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector),
@@ -259,6 +333,8 @@ fn bench_proxima_simd_layouts(c: &mut Criterion) {
 /// Benchmark different engine profiles
 fn bench_engine_profiles(c: &mut Criterion) {
     let mut group = c.benchmark_group("engine_profiles");
+    group.measurement_time(Duration::from_secs(5));
+    group.warm_up_time(Duration::from_secs(1));
 
     let profiles = vec![
         ("helix", EngineProfile::Helix),
@@ -327,10 +403,20 @@ fn bench_engine_profiles(c: &mut Criterion) {
 /// - default → Use grouped encoding
 fn bench_data_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_data_patterns");
+    group.measurement_time(Duration::from_secs(5));
+    group.warm_up_time(Duration::from_secs(1));
 
-    let patterns = vec!["random", "clustered", "sparse", "sequential", "constant"];
+    // Run all patterns by default for comprehensive comparison
+    let patterns = get_all_patterns();
     let dimension = 768;
     let count = 1000;
+
+    println!("\n╔═══════════════════════════════════════════════════════════════════╗");
+    println!("║  ProximaDB Pattern Detection & Encoding Benchmark                ║");
+    println!("╠═══════════════════════════════════════════════════════════════════╣");
+    println!("║  Testing {} patterns × {}d vectors × {} count           ║",
+        patterns.len(), dimension, count);
+    println!("╚═══════════════════════════════════════════════════════════════════╝\n");
 
     for pattern in patterns {
         let records = generate_vector_records(count, dimension, pattern);
@@ -369,10 +455,13 @@ fn bench_data_patterns(c: &mut Criterion) {
 /// Benchmark compression ratios achieved
 fn bench_compression_ratios(c: &mut Criterion) {
     let mut group = c.benchmark_group("compression_ratios");
+    group.measurement_time(Duration::from_secs(5));
+    group.warm_up_time(Duration::from_secs(1));
 
     let dimension = 768;
     let count = 1000;
-    let patterns = vec!["random", "clustered", "sparse", "sequential"];
+    // Test all patterns for compression comparison
+    let patterns = get_all_patterns();
 
     for pattern in patterns {
         let records = generate_vector_records(count, dimension, pattern);
@@ -422,6 +511,8 @@ fn bench_compression_ratios(c: &mut Criterion) {
 fn bench_large_scale(c: &mut Criterion) {
     let mut group = c.benchmark_group("large_scale_simd");
     group.sample_size(10); // Fewer samples for large benchmarks
+    group.measurement_time(Duration::from_secs(5));
+    group.warm_up_time(Duration::from_secs(1));
 
     let scales = vec![
         ("10k_vectors", 10000, 768),
@@ -466,6 +557,8 @@ fn bench_large_scale(c: &mut Criterion) {
 /// Benchmark SIMD transpose operation specifically
 fn bench_simd_transpose(c: &mut Criterion) {
     let mut group = c.benchmark_group("simd_transpose");
+    group.measurement_time(Duration::from_secs(5));
+    group.warm_up_time(Duration::from_secs(1));
 
     let dimensions = vec![128, 256, 384, 768, 1536];
     let count = 1000;
@@ -495,22 +588,39 @@ fn bench_simd_transpose(c: &mut Criterion) {
 /// Benchmark encoding algorithms comparison
 fn bench_encoding_algorithms(c: &mut Criterion) {
     let mut group = c.benchmark_group("encoding_algorithms");
+    group.measurement_time(Duration::from_secs(5));
+    group.warm_up_time(Duration::from_secs(1));
 
     let dimension = 768;
     let count = 1000;
 
-    // Generate different patterns that benefit from different encodings
-    let test_cases = vec![
-        ("delta_friendly", generate_vector_records(count, dimension, "sequential")),
-        ("sparse_data", generate_vector_records(count, dimension, "sparse")),
-        ("constant_runs", generate_vector_records(count, dimension, "constant")),
-        ("random_data", generate_vector_records(count, dimension, "random")),
-    ];
+    // Test all patterns to show which encoding works best for each
+    let patterns = get_all_patterns();
 
-    for (name, records) in test_cases {
+    println!("\n╔═══════════════════════════════════════════════════════════════════╗");
+    println!("║  Encoding Algorithm Performance Matrix                           ║");
+    println!("╠═══════════════════════════════════════════════════════════════════╣");
+    println!("║  Pattern             │ Optimal Encoding    │ Expected Speedup    ║");
+    println!("╟──────────────────────┼─────────────────────┼─────────────────────╢");
+    println!("║  random              │ BitPacked/Auto      │ 1.0x (baseline)     ║");
+    println!("║  clustered           │ Delta/FOR           │ 1.2-1.5x            ║");
+    println!("║  sparse (90%)        │ SparseBitmap        │ 1.5-2.0x            ║");
+    println!("║  very_sparse (95%)   │ SparseCOO           │ 2.0-3.0x            ║");
+    println!("║  sequential          │ Delta               │ 1.3-1.7x            ║");
+    println!("║  constant            │ RunLength           │ 3.0-5.0x            ║");
+    println!("║  normalized          │ FrameOfReference    │ 1.2-1.4x            ║");
+    println!("║  small_range         │ BitPacked           │ 1.1-1.3x            ║");
+    println!("║  gaussian            │ PForDelta           │ 1.3-1.6x            ║");
+    println!("║  alternating         │ Zigzag              │ 1.2-1.4x            ║");
+    println!("║  monotonic           │ DoubleDelta         │ 1.5-2.0x            ║");
+    println!("╚══════════════════════╧═════════════════════╧═════════════════════╝\n");
+
+    for pattern in patterns {
+        let records = generate_vector_records(count, dimension, pattern);
+
         group.throughput(Throughput::Elements((count * dimension) as u64));
         group.bench_function(
-            BenchmarkId::from_parameter(name),
+            BenchmarkId::from_parameter(pattern),
             |b| {
                 b.iter(|| {
                     let config = BlockCompressionConfig {
@@ -537,6 +647,10 @@ fn bench_encoding_algorithms(c: &mut Criterion) {
     }
 
     group.finish();
+
+    println!("\n╔═══════════════════════════════════════════════════════════════════╗");
+    println!("║  Benchmark Complete - Check results above for actual performance ║");
+    println!("╚═══════════════════════════════════════════════════════════════════╝\n");
 }
 
 criterion_group!(

@@ -363,6 +363,195 @@ impl ProximaEncoder {
         encoded.extend_from_slice(binary_vec);
         Ok(encoded)
     }
+
+    // ================================
+    // Vector Batch Encoding Methods
+    // ================================
+
+    /// Encode multiple vectors using columnar layout
+    ///
+    /// Columnar layout groups dimensions together for better compression when
+    /// dimensions have similar characteristics.
+    ///
+    /// # Parameters
+    /// - `vectors`: Slice of vectors to encode
+    /// - `dims_per_group`: Number of dimensions to group together
+    ///
+    /// # Returns
+    /// `ColumnarEncodedVectors` with encoded dimension groups
+    pub fn encode_vectors_columnar(
+        &self,
+        vectors: &[Vec<f32>],
+        dims_per_group: usize,
+    ) -> Result<super::vector_types::ColumnarEncodedVectors> {
+        use super::vector_types::{ColumnarEncodedVectors, DimensionGroup};
+        use super::types::EncodedDimension;
+
+        if vectors.is_empty() {
+            return Ok(ColumnarEncodedVectors {
+                num_vectors: 0,
+                dimension: 0,
+                dimension_groups: vec![],
+            });
+        }
+
+        let dimension = vectors[0].len();
+        let num_groups = (dimension + dims_per_group - 1) / dims_per_group;
+        let mut dimension_groups = Vec::with_capacity(num_groups);
+
+        // Process dimension groups
+        for group_idx in 0..num_groups {
+            let start_dim = group_idx * dims_per_group;
+            let end_dim = ((group_idx + 1) * dims_per_group).min(dimension);
+
+            let mut dimensions = Vec::with_capacity(end_dim - start_dim);
+
+            for dim in start_dim..end_dim {
+                // Transpose: collect values for this dimension
+                let dim_values: Vec<f32> = vectors.iter().map(|v| v[dim]).collect();
+
+                // Apply encoding
+                let encoded = self.encode_f32(&dim_values, Some(vectors.len()))?;
+
+                dimensions.push(EncodedDimension {
+                    dimension_index: dim,
+                    encoded_data: encoded,
+                    encoding_scheme: self.scheme.clone(),
+                });
+            }
+
+            dimension_groups.push(DimensionGroup {
+                start_dim,
+                end_dim,
+                dimensions,
+            });
+        }
+
+        Ok(ColumnarEncodedVectors {
+            num_vectors: vectors.len(),
+            dimension,
+            dimension_groups,
+        })
+    }
+
+    /// Encode multiple vectors using row-wise layout
+    ///
+    /// Row-wise layout stores complete vectors sequentially, which is simpler
+    /// but may have worse compression than columnar.
+    ///
+    /// # Parameters
+    /// - `vectors`: Slice of vectors to encode
+    /// - `apply_simd_encoding`: Whether to encode each vector individually (true)
+    ///   or store as a single compressed block (false)
+    ///
+    /// # Returns
+    /// `RowWiseEncodedVectors` with encoded vector data
+    pub fn encode_vectors_rowwise(
+        &self,
+        vectors: &[Vec<f32>],
+        apply_simd_encoding: bool,
+    ) -> Result<super::vector_types::RowWiseEncodedVectors> {
+        use super::vector_types::RowWiseEncodedVectors;
+        use bytemuck::cast_slice;
+
+        if vectors.is_empty() {
+            return Ok(RowWiseEncodedVectors {
+                num_vectors: 0,
+                dimension: 0,
+                padded_dimension: 0,
+                encoded_vectors: vec![],
+            });
+        }
+
+        let dimension = vectors[0].len();
+
+        // For SIMD efficiency, align to 64-byte boundaries (16 floats)
+        const SIMD_ALIGNMENT: usize = 16; // 16 x f32 = 64 bytes (cache line)
+        let padded_dimension = ((dimension + SIMD_ALIGNMENT - 1) / SIMD_ALIGNMENT) * SIMD_ALIGNMENT;
+
+        if apply_simd_encoding {
+            // Process each vector with encoding
+            let mut encoded_vectors = Vec::with_capacity(vectors.len());
+
+            for vector in vectors {
+                // Create SIMD-aligned vector with padding
+                let mut aligned_vector = vec![0.0f32; padded_dimension];
+                aligned_vector[..dimension].copy_from_slice(&vector[..]);
+
+                // Apply encoding to the entire vector
+                let encoded = self.encode_f32(&aligned_vector, None)?;
+                encoded_vectors.push(encoded);
+            }
+
+            Ok(RowWiseEncodedVectors {
+                num_vectors: vectors.len(),
+                dimension,
+                padded_dimension,
+                encoded_vectors,
+            })
+        } else {
+            // Buffer all vectors into a single contiguous block
+            let total_floats = vectors.len() * padded_dimension;
+            let mut block_buffer = Vec::with_capacity(total_floats);
+
+            // Pack all vectors consecutively using row-wise layout
+            for vector in vectors {
+                // Create SIMD-aligned vector with padding
+                let mut aligned_vector = vec![0.0f32; padded_dimension];
+                aligned_vector[..dimension].copy_from_slice(&vector[..]);
+                block_buffer.extend_from_slice(&aligned_vector);
+            }
+
+            // Convert entire block to bytes using bytemuck (zero-copy)
+            let block_bytes: &[u8] = cast_slice(&block_buffer);
+
+            // Store as single compressed block instead of individual vectors
+            let compressed_block = vec![block_bytes.to_vec()];
+
+            Ok(RowWiseEncodedVectors {
+                num_vectors: vectors.len(),
+                dimension,
+                padded_dimension,
+                encoded_vectors: compressed_block,
+            })
+        }
+    }
+
+    /// Encode vectors with automatic layout selection
+    ///
+    /// Automatically chooses between columnar and row-wise encoding based on dimension:
+    /// - dimension <= 512: Columnar layout (better compression)
+    /// - dimension > 512: Row-wise layout (faster reconstruction)
+    ///
+    /// # Parameters
+    /// - `vectors`: Slice of vectors to encode
+    ///
+    /// # Returns
+    /// `EncodedVectors` with optimal layout
+    pub fn encode_vectors_auto(&self, vectors: &[Vec<f32>]) -> Result<super::vector_types::EncodedVectors> {
+        use super::vector_types::{EncodedVectors, ColumnarEncodedVectors};
+
+        if vectors.is_empty() {
+            return Ok(EncodedVectors::Columnar(ColumnarEncodedVectors {
+                num_vectors: 0,
+                dimension: 0,
+                dimension_groups: vec![],
+            }));
+        }
+
+        let dimension = vectors[0].len();
+
+        // Use columnar for low-medium dimensions (better compression)
+        // Use row-wise for high dimensions (faster reconstruction)
+        if dimension <= 512 {
+            let encoded = self.encode_vectors_columnar(vectors, 64)?;
+            Ok(EncodedVectors::Columnar(encoded))
+        } else {
+            // High dimensional vectors benefit from row-wise storage
+            let encoded = self.encode_vectors_rowwise(vectors, dimension <= 2048)?;
+            Ok(EncodedVectors::RowWise(encoded))
+        }
+    }
 }
 
 #[cfg(test)]

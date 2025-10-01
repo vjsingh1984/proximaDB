@@ -166,24 +166,28 @@ enum Commands {
         dimensions: Vec<usize>,
     },
 
-    /// [15] SIMD encoding schemes benchmark - all algorithms
+    /// [15] SIMD encoding schemes benchmark - all algorithms with pattern detection
     #[command(name = "bench_15", alias = "simd-encoding")]
     Bench15SimdEncoding {
-        /// Number of vectors to test (power of 2: 256, 512, 1024, 2048, 4096)
-        #[arg(short = 'v', long, default_value_t = 1024)]
-        vector_count: usize,
+        /// Number of vectors to test (optional in comprehensive mode)
+        #[arg(short = 'v', long)]
+        vector_count: Option<usize>,
 
-        /// Dimension to test (power of 2: 256, 384, 512, 768, 1024, 1536, 2048)
-        #[arg(short, long, default_value_t = 768)]
-        dimension: usize,
+        /// Dimension to test (optional in comprehensive mode)
+        #[arg(short, long)]
+        dimension: Option<usize>,
 
         /// Number of iterations for timing
         #[arg(short = 'i', long, default_value_t = 100)]
         iterations: usize,
 
-        /// Data patterns to test (sequential, normalized, sparse, random, constant)
+        /// Data patterns to test (default: all 11 patterns)
         #[arg(short = 'p', long, value_delimiter = ',')]
         patterns: Option<Vec<String>>,
+
+        /// Run comprehensive matrix (all batch sizes × all dimensions)
+        #[arg(long, default_value_t = false)]
+        comprehensive: bool,
     },
 
     /// [09] Quantization SST benchmarks
@@ -634,9 +638,30 @@ async fn main() -> Result<()> {
                 println!("\n🗜️  Running Comprehensive Compression Benchmarks");
                 benchmark_compression_algorithms(1024, 768)?;
             }
-            Commands::Bench15SimdEncoding { vector_count, dimension, iterations, patterns } => {
+            Commands::Bench15SimdEncoding { vector_count, dimension, iterations, patterns, comprehensive } => {
                 println!("\n⚡ Running SIMD Encoding Schemes Benchmark");
-                benchmark_simd_encoding_schemes(*vector_count, *dimension, *iterations, patterns.as_deref())?;
+                if *comprehensive {
+                    // Run comprehensive matrix: all batch sizes × all dimensions
+                    let batch_sizes = vec![256, 1024, 4096];
+                    let dimensions = vec![384, 768, 1536, 3072];
+
+                    println!("\n╔═══════════════════════════════════════════════════════════════╗");
+                    println!("║     COMPREHENSIVE PATTERN DETECTION BENCHMARK MATRIX         ║");
+                    println!("║  {} batch sizes × {} dimensions = {} configurations    ║",
+                        batch_sizes.len(), dimensions.len(), batch_sizes.len() * dimensions.len());
+                    println!("╚═══════════════════════════════════════════════════════════════╝\n");
+
+                    for batch in &batch_sizes {
+                        for dim in &dimensions {
+                            benchmark_simd_encoding_schemes(*batch, *dim, *iterations, patterns.as_deref())?;
+                        }
+                    }
+                } else {
+                    // Use specified or default values
+                    let vec_count = vector_count.unwrap_or(1024);
+                    let dim = dimension.unwrap_or(768);
+                    benchmark_simd_encoding_schemes(vec_count, dim, *iterations, patterns.as_deref())?;
+                }
             }
             Commands::Bench09Quantization { sample_size } => {
                 run_criterion_benchmarks(CriterionSuite::QuantizationSst, *sample_size, cli.measurement_time).await?;
@@ -3367,7 +3392,7 @@ fn benchmark_simd_encoding_schemes(
     println!("  • Iterations: {}", iterations);
     println!();
 
-    // Default patterns if none specified - comprehensive real-world coverage
+    // Default patterns if none specified - ALL patterns for comprehensive coverage
     let default_patterns = vec![
         // Original 5 patterns (~35% coverage)
         "sequential".to_string(), "normalized".to_string(), "sparse".to_string(),
@@ -3380,6 +3405,12 @@ fn benchmark_simd_encoding_schemes(
         "correlated".to_string(), "periodic".to_string()
     ];
     let test_patterns = patterns.unwrap_or(&default_patterns);
+
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("📋 Pattern Detection & Encoding Performance Matrix");
+    println!("═══════════════════════════════════════════════════════════════");
+    println!("Testing {} patterns by default (use --patterns to filter)", test_patterns.len());
+    println!();
 
     // All encoding schemes to test
     let schemes = vec![
@@ -3407,6 +3438,8 @@ fn benchmark_simd_encoding_schemes(
         compression_ratio: f64,
         speedup: f64,
         success: bool,
+        pattern_detection_us: f64,  // Pattern detection time in microseconds
+        detected_scheme: String,
     }
 
     let mut all_results = Vec::new();
@@ -3417,6 +3450,15 @@ fn benchmark_simd_encoding_schemes(
 
         // Generate test data for this pattern
         let test_vectors = generate_pattern_data(pattern_name, vector_count, dimension);
+
+        // Benchmark pattern detection
+        use proximadb::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32;
+        let detection_start = Instant::now();
+        let detected_scheme = analyze_and_choose_scheme_f32(&test_vectors);
+        let detection_time_us = detection_start.elapsed().as_micros() as f64;
+
+        let detected_scheme_name = format!("{:?}", detected_scheme);
+        println!("  🔍 Pattern Detection: {:?} in {:.2} μs", detected_scheme, detection_time_us);
 
         for (scheme_name, scheme) in &schemes {
             // Test encoding with SIMD
@@ -3480,6 +3522,8 @@ fn benchmark_simd_encoding_schemes(
                 compression_ratio,
                 speedup,
                 success: true,
+                pattern_detection_us: detection_time_us,
+                detected_scheme: detected_scheme_name.clone(),
             });
 
             // Print result
@@ -3490,10 +3534,50 @@ fn benchmark_simd_encoding_schemes(
         }
     }
 
-    // Generate summary report
-    println!("\n═══════════════════════════════════════════════════════════════");
-    println!("📈 SUMMARY: Best Schemes by Pattern");
-    println!("═══════════════════════════════════════════════════════════════");
+    // Generate comprehensive summary tables
+    println!("\n╔═══════════════════════════════════════════════════════════════════════════╗");
+    println!("║                 PATTERN DETECTION PERFORMANCE SUMMARY                    ║");
+    println!("╠═══════════════════════════════════════════════════════════════════════════╣");
+    println!("║ Pattern              │ Detected Scheme      │ Detection Time │ Optimal? ║");
+    println!("╟──────────────────────┼──────────────────────┼────────────────┼──────────╢");
+
+    for pattern_name in test_patterns {
+        let pattern_results: Vec<_> = all_results.iter()
+            .filter(|r| r.pattern == *pattern_name)
+            .collect();
+
+        if pattern_results.is_empty() {
+            continue;
+        }
+
+        let first_result = pattern_results[0];
+        let detection_time = first_result.pattern_detection_us;
+
+        // Find best performer for this pattern
+        let best_scheme = pattern_results.iter()
+            .max_by(|a, b| {
+                let score_a = 0.67 * a.speedup + 0.33 * (1.0 / a.compression_ratio);
+                let score_b = 0.67 * b.speedup + 0.33 * (1.0 / b.compression_ratio);
+                score_a.partial_cmp(&score_b).unwrap()
+            })
+            .unwrap()
+            .scheme_name.as_str();
+
+        let is_optimal = first_result.detected_scheme.contains(best_scheme) || best_scheme.contains(&first_result.detected_scheme);
+        let optimal_mark = if is_optimal { "✓" } else { "✗" };
+
+        println!("║ {:20} │ {:20} │ {:11.2} μs │ {:^8} ║",
+            pattern_name,
+            first_result.detected_scheme.split('(').next().unwrap_or(&first_result.detected_scheme),
+            detection_time,
+            optimal_mark);
+    }
+    println!("╚══════════════════════════════════════════════════════════════════════════╝\n");
+
+    // Best schemes by pattern table
+    println!("╔═══════════════════════════════════════════════════════════════════════════╗");
+    println!("║              BEST ENCODING SCHEMES BY PATTERN (Top 3)                    ║");
+    println!("╠═══════════════════════════════════════════════════════════════════════════╣");
 
     for pattern_name in test_patterns {
         let pattern_results: Vec<_> = all_results.iter()
@@ -3505,12 +3589,10 @@ fn benchmark_simd_encoding_schemes(
         }
 
         // Calculate composite score: 67% speed weight, 33% compression weight
-        // Lower compression ratio is better (more compressed)
-        // Higher speedup is better (faster)
         let mut scored_results: Vec<_> = pattern_results.iter()
             .map(|r| {
-                let speed_score = r.speedup; // Higher is better
-                let compression_score = 1.0 / r.compression_ratio; // Invert so higher is better
+                let speed_score = r.speedup;
+                let compression_score = 1.0 / r.compression_ratio;
                 let composite_score = 0.67 * speed_score + 0.33 * compression_score;
                 (r, composite_score)
             })
@@ -3518,17 +3600,54 @@ fn benchmark_simd_encoding_schemes(
 
         scored_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
-        println!("\n🎯 Pattern: {}", pattern_name);
-        println!("   Top 3 schemes (67% speed, 33% compression):");
+        println!("║ Pattern: {:60} ║", pattern_name);
+        println!("╟───────────────────────────────────────────────────────────────────────────╢");
         for (i, (result, score)) in scored_results.iter().take(3).enumerate() {
-            println!("     {}. {:20} - Score: {:.2} (Speed: {:.2}x, Compress: {:.2}x)",
+            println!("║ {}. {:18} │ Score: {:5.2} │ Speed: {:4.2}x │ Compress: {:4.2}x ║",
                 i + 1, result.scheme_name, score, result.speedup, result.compression_ratio);
         }
+        if pattern_name != test_patterns.last().unwrap() {
+            println!("╟───────────────────────────────────────────────────────────────────────────╢");
+        }
     }
+    println!("╚═══════════════════════════════════════════════════════════════════════════╝\n");
 
-    println!("\n═══════════════════════════════════════════════════════════════");
-    println!("✅ Benchmark complete! Use these results for pattern detection.");
-    println!("═══════════════════════════════════════════════════════════════\n");
+    // Performance statistics table
+    println!("╔═══════════════════════════════════════════════════════════════════════════╗");
+    println!("║                    ENCODING PERFORMANCE STATISTICS                        ║");
+    println!("╠═══════════════════════════════════════════════════════════════════════════╣");
+    println!("║ Scheme            │ Avg Speedup │ Avg Compress │ Best For               ║");
+    println!("╟───────────────────┼─────────────┼──────────────┼────────────────────────╢");
+
+    let unique_schemes: Vec<&str> = schemes.iter().map(|(name, _)| *name).collect();
+    for scheme_name in unique_schemes {
+        let scheme_results: Vec<_> = all_results.iter()
+            .filter(|r| r.scheme_name == scheme_name)
+            .collect();
+
+        if scheme_results.is_empty() {
+            continue;
+        }
+
+        let avg_speedup: f64 = scheme_results.iter().map(|r| r.speedup).sum::<f64>() / scheme_results.len() as f64;
+        let avg_compression: f64 = scheme_results.iter().map(|r| r.compression_ratio).sum::<f64>() / scheme_results.len() as f64;
+
+        // Find which pattern this scheme performs best on
+        let best_pattern = scheme_results.iter()
+            .max_by(|a, b| a.speedup.partial_cmp(&b.speedup).unwrap())
+            .map(|r| r.pattern.as_str())
+            .unwrap_or("N/A");
+
+        println!("║ {:17} │ {:10.2}x │ {:11.2}x │ {:22} ║",
+            scheme_name, avg_speedup, avg_compression, best_pattern);
+    }
+    println!("╚═══════════════════════════════════════════════════════════════════════════╝\n");
+
+    println!("╔═══════════════════════════════════════════════════════════════════════════╗");
+    println!("║  ✅ Benchmark Complete - {} patterns × {} schemes tested      ║",
+        test_patterns.len(), schemes.len());
+    println!("║  📊 Use these results to optimize pattern detection in production         ║");
+    println!("╚═══════════════════════════════════════════════════════════════════════════╝\n");
 
     Ok(())
 }
