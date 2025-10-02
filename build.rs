@@ -1,6 +1,20 @@
 use tracing::debug;
+
+// Only import these when actually compiling GPU kernels
+#[cfg(any(
+    all(feature = "gpu", target_os = "linux", target_arch = "x86_64"),
+    all(feature = "gpu", target_os = "macos", target_arch = "aarch64")
+))]
 use std::env;
+#[cfg(any(
+    all(feature = "gpu", target_os = "linux", target_arch = "x86_64"),
+    all(feature = "gpu", target_os = "macos", target_arch = "aarch64")
+))]
 use std::path::PathBuf;
+#[cfg(any(
+    all(feature = "gpu", target_os = "linux", target_arch = "x86_64"),
+    all(feature = "gpu", target_os = "macos", target_arch = "aarch64")
+))]
 use std::process::Command;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,6 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Compile CUDA kernels if feature is enabled
     #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
     compile_cuda_kernels()?;
+
+    // Compile Metal shaders if feature is enabled
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    compile_metal_shaders()?;
 
     // Compile v1 protobuf schemas with zero-copy support and serde derives
     tracing::debug!("Compiling v1 protobuf schemas - legacy migration complete!");
@@ -298,6 +316,127 @@ fn compile_cuda_kernels() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tracing::info!("✅ CUDA kernel compilation complete");
+
+    Ok(())
+}
+
+#[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+fn compile_metal_shaders() -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+
+    tracing::info!("🚀 Compiling Metal shaders for GPU acceleration on Apple Silicon");
+
+    // Check if xcrun is available
+    let xcrun_check = Command::new("xcrun")
+        .arg("--version")
+        .output();
+
+    if xcrun_check.is_err() {
+        tracing::warn!("⚠️  xcrun not found - Metal shaders will not be precompiled");
+        tracing::warn!("   GPU feature will fall back to runtime shader compilation");
+        tracing::warn!("   Install Xcode Command Line Tools to enable precompiled shaders");
+        return Ok(());
+    }
+
+    tracing::info!("✅ Found xcrun compiler");
+
+    // Metal shader source files
+    let metal_sources = vec![
+        "src/storage/engines/core/ops/proximacodec/impls/gpu/kernels/metal/kernels.metal",
+    ];
+
+    // Output directory
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    let metal_build_dir = out_dir.join("metal");
+    fs::create_dir_all(&metal_build_dir)?;
+
+    // Also create target/metal for the precompiled library
+    let target_metal_dir = PathBuf::from("target/metal");
+    fs::create_dir_all(&target_metal_dir)?;
+
+    // Compile each Metal shader source file
+    for source in &metal_sources {
+        tracing::info!("   Compiling Metal shader: {}", source);
+
+        let source_path = PathBuf::from(source);
+        let air_file = metal_build_dir.join(
+            source_path
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+                + ".air",
+        );
+
+        // Step 1: Compile .metal to .air (Apple Intermediate Representation)
+        let status = Command::new("xcrun")
+            .args(&[
+                "-sdk", "macosx",
+                "metal",
+                "-c",                           // Compile only
+                "-O3",                          // Optimization level 3
+                "-std=metal3.1",                // Metal 3.1 standard (macOS 14+)
+                "-mmacosx-version-min=12.0",    // Minimum macOS 12 (M1 launch)
+                source,
+                "-o",
+                air_file.to_str().unwrap(),
+            ])
+            .status()?;
+
+        if !status.success() {
+            return Err(format!("Failed to compile Metal shader: {}", source).into());
+        }
+
+        tracing::info!("   ✅ Compiled to AIR: {}", air_file.display());
+
+        // Tell cargo to rerun if Metal source changes
+        println!("cargo:rerun-if-changed={}", source);
+    }
+
+    // Step 2: Link all .air files into .metallib
+    let lib_file = metal_build_dir.join("libproximadb_metal.metallib");
+    let target_lib_file = target_metal_dir.join("libproximadb_metal.metallib");
+
+    tracing::info!("   Creating Metal library: {}", lib_file.display());
+
+    let air_files: Vec<PathBuf> = metal_sources
+        .iter()
+        .map(|source| {
+            let source_path = PathBuf::from(source);
+            metal_build_dir.join(
+                source_path
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+                    + ".air",
+            )
+        })
+        .collect();
+
+    let status = Command::new("xcrun")
+        .args(&["-sdk", "macosx", "metallib"])
+        .args(&air_files)
+        .arg("-o")
+        .arg(&lib_file)
+        .status()?;
+
+    if !status.success() {
+        return Err("Failed to create Metal library".into());
+    }
+
+    tracing::info!("   ✅ Created: {}", lib_file.display());
+
+    // Copy to target/metal for runtime loading
+    fs::copy(&lib_file, &target_lib_file)?;
+    tracing::info!("   ✅ Copied to: {}", target_lib_file.display());
+
+    // Set environment variable for runtime to find the library
+    println!("cargo:rustc-env=METAL_LIBRARY_PATH={}", target_lib_file.display());
+
+    tracing::info!("✅ Metal shader compilation complete");
 
     Ok(())
 }
