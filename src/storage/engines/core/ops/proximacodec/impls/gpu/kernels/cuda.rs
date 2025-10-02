@@ -829,4 +829,200 @@ mod tests {
             assert!((original - recovered).abs() < 0.01);
         }
     }
+
+    #[test]
+    fn test_cuda_delta_large_batch() {
+        // Test with larger batch to verify GPU execution path
+        let values: Vec<f32> = (0..1000).map(|i| i as f32 * 0.5).collect();
+        let base = 10.0;
+
+        let deltas = cuda_delta_encode_f32(&values, base).unwrap();
+        assert_eq!(deltas.len(), 1000);
+
+        let decoded = cuda_delta_decode_f32(&deltas, base).unwrap();
+        assert_eq!(decoded.len(), 1000);
+
+        for (original, recovered) in values.iter().zip(decoded.iter()) {
+            assert!((original - recovered).abs() < 0.01,
+                    "Mismatch: {} != {}", original, recovered);
+        }
+    }
+
+    #[test]
+    fn test_cuda_bitpack_roundtrip() {
+        let values = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let bits = 8;
+
+        let packed = cuda_bitpack_encode_f32(&values, bits).unwrap();
+        assert!(packed.len() > 0);
+
+        let decoded = cuda_bitpack_decode_f32(&packed, bits, values.len()).unwrap();
+        assert_eq!(decoded.len(), values.len());
+
+        // Bitpacking may lose precision depending on bit width
+        for (original, recovered) in values.iter().zip(decoded.iter()) {
+            let orig_bits = original.to_bits();
+            let recovered_bits = recovered.to_bits();
+            // With 8 bits, we should preserve the lower 8 bits
+            assert_eq!(orig_bits & 0xFF, recovered_bits & 0xFF);
+        }
+    }
+
+    #[test]
+    fn test_cuda_bitpack_various_widths() {
+        let values = vec![1.0f32, 2.0, 3.0, 4.0];
+
+        for bits in [4, 8, 16, 32] {
+            let packed = cuda_bitpack_encode_f32(&values, bits).unwrap();
+            let decoded = cuda_bitpack_decode_f32(&packed, bits, values.len()).unwrap();
+
+            assert_eq!(decoded.len(), values.len(),
+                      "Length mismatch for {} bits", bits);
+        }
+    }
+
+    #[test]
+    fn test_cuda_for_roundtrip() {
+        let values = vec![100.0f32, 200.0, 300.0, 400.0];
+        let reference = 50i64;
+        let bits = 16;
+
+        let packed = cuda_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
+        assert!(packed.len() > 0);
+
+        let decoded = cuda_frame_of_reference_decode_f32(&packed, reference, bits, values.len()).unwrap();
+        assert_eq!(decoded.len(), values.len());
+
+        for (i, (original, recovered)) in values.iter().zip(decoded.iter()).enumerate() {
+            assert!((original - recovered).abs() < 1.0,
+                   "FOR mismatch at {}: {} != {}", i, original, recovered);
+        }
+    }
+
+    #[test]
+    fn test_cuda_for_negative_values() {
+        let values = vec![-10.0f32, -5.0, 0.0, 5.0, 10.0];
+        let reference = 0i64;
+        let bits = 16;
+
+        let packed = cuda_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
+        let decoded = cuda_frame_of_reference_decode_f32(&packed, reference, bits, values.len()).unwrap();
+
+        assert_eq!(decoded.len(), values.len());
+
+        for (original, recovered) in values.iter().zip(decoded.iter()) {
+            assert!((original - recovered).abs() < 1.0);
+        }
+    }
+
+    #[test]
+    fn test_cuda_zigzag_roundtrip() {
+        let values = vec![1.0f32, -2.0, 3.0, -4.0, 5.0, -6.0];
+        let bits = 16;
+
+        let packed = cuda_zigzag_encode_f32(&values, bits).unwrap();
+        assert!(packed.len() > 0);
+
+        let decoded = cuda_zigzag_decode_f32(&packed, bits, values.len()).unwrap();
+        assert_eq!(decoded.len(), values.len());
+
+        for (i, (original, recovered)) in values.iter().zip(decoded.iter()).enumerate() {
+            assert!((original - recovered).abs() < 1.0,
+                   "Zigzag mismatch at {}: {} != {}", i, original, recovered);
+        }
+    }
+
+    #[test]
+    fn test_cuda_zigzag_positive_negative() {
+        // Zigzag should handle positive and negative values efficiently
+        let values = vec![-100.0f32, -50.0, 0.0, 50.0, 100.0];
+        let bits = 32;
+
+        let packed = cuda_zigzag_encode_f32(&values, bits).unwrap();
+        let decoded = cuda_zigzag_decode_f32(&packed, bits, values.len()).unwrap();
+
+        for (original, recovered) in values.iter().zip(decoded.iter()) {
+            assert!((original - recovered).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_cuda_empty_input() {
+        let empty: Vec<f32> = vec![];
+
+        // Delta
+        let result = cuda_delta_encode_f32(&empty, 0.0);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+
+        // BitPack
+        let result = cuda_bitpack_encode_f32(&empty, 8);
+        assert!(result.is_ok());
+
+        // FOR
+        let result = cuda_frame_of_reference_encode_f32(&empty, 0, 8);
+        assert!(result.is_ok());
+
+        // Zigzag
+        let result = cuda_zigzag_encode_f32(&empty, 8);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cuda_single_value() {
+        let single = vec![42.0f32];
+
+        // Delta
+        let deltas = cuda_delta_encode_f32(&single, 10.0).unwrap();
+        let decoded = cuda_delta_decode_f32(&deltas, 10.0).unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert!((decoded[0] - 42.0).abs() < 0.01);
+
+        // FOR
+        let packed = cuda_frame_of_reference_encode_f32(&single, 10, 16).unwrap();
+        let decoded = cuda_frame_of_reference_decode_f32(&packed, 10, 16, 1).unwrap();
+        assert_eq!(decoded.len(), 1);
+    }
+
+    #[test]
+    fn test_cuda_large_dataset() {
+        // Test with 10K values to ensure GPU code path is exercised
+        let values: Vec<f32> = (0..10000).map(|i| (i as f32) * 0.1).collect();
+        let base = 100.0;
+
+        let deltas = cuda_delta_encode_f32(&values, base).unwrap();
+        assert_eq!(deltas.len(), 10000);
+
+        let decoded = cuda_delta_decode_f32(&deltas, base).unwrap();
+        assert_eq!(decoded.len(), 10000);
+
+        // Spot check some values
+        for i in (0..10000).step_by(100) {
+            assert!((values[i] - decoded[i]).abs() < 0.01,
+                   "Mismatch at {}: {} != {}", i, values[i], decoded[i]);
+        }
+    }
+
+    #[test]
+    fn test_cuda_precision_edge_cases() {
+        let edge_cases = vec![
+            0.0f32,
+            f32::MIN_POSITIVE,
+            f32::MAX,
+            1.0,
+            -1.0,
+        ];
+
+        let base = 0.0;
+        let deltas = cuda_delta_encode_f32(&edge_cases, base).unwrap();
+        let decoded = cuda_delta_decode_f32(&deltas, base).unwrap();
+
+        for (original, recovered) in edge_cases.iter().zip(decoded.iter()) {
+            if original.is_finite() && recovered.is_finite() {
+                let relative_error = ((original - recovered) / original).abs();
+                assert!(relative_error < 0.01 || (original - recovered).abs() < 0.01,
+                       "Precision loss: {} != {}", original, recovered);
+            }
+        }
+    }
 }
