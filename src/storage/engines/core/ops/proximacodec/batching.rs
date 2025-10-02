@@ -88,91 +88,109 @@ impl BatchOptimizer {
         Self { backend }
     }
 
-    /// Determine optimal batch size based on backend and data characteristics
+    /// Determine optimal batch size based on backend
     ///
-    /// ## Strategy (Optimized for ProximaDB row groups: 1K vectors × 768-1536D)
-    /// - **GPU backends**: Process full row groups (1K vectors) or multiples
-    /// - **SIMD backends**: Process row groups in cache-friendly chunks
-    /// - **Scalar**: Process smaller chunks (100-500 vectors)
+    /// ## Strategy (Power-of-2 row groups: 1024 vectors/row group)
+    /// - **Row group size**: 1024 vectors (power of 2, not 1000)
+    /// - **Batch sizes**: Multiples of row groups: 1024, 2048, 4096, 8192
+    /// - **Backend-optimized**: Different backends process different row group multiples
     ///
-    /// ## Typical ProximaDB Workloads
-    /// - BERT embeddings: 1K vectors × 768D = ~3MB per row group
-    /// - OpenAI embeddings: 1K vectors × 1536D = ~6MB per row group
+    /// ## ProximaDB Row Groups (1024 vectors each)
+    /// - BERT-768: 1024 vectors = ~3MB
+    /// - BERT-1024: 1024 vectors = ~4MB
+    /// - OpenAI-1536: 1024 vectors = ~6MB
+    /// - Custom-2048: 1024 vectors = ~8MB
     ///
     /// ## Parameters
     /// - `total_vectors`: Total number of vectors to process
-    /// - `dimension`: Vector dimensionality (affects cache utilization)
+    /// - `_dimension`: Ignored (batch size determined by row groups only)
     ///
     /// ## Returns
-    /// Optimal batch size for this backend and data characteristics
-    pub fn optimal_batch_size(&self, total_vectors: usize, dimension: usize) -> usize {
-        // ProximaDB row group size
-        const ROW_GROUP_SIZE: usize = 1000;
+    /// Power-of-2 batch size (always multiple of 1024)
+    pub fn optimal_batch_size(&self, total_vectors: usize, _dimension: usize) -> usize {
+        // ProximaDB row group size (power of 2)
+        const ROW_GROUP_SIZE: usize = 1024;
 
-        match self.backend {
-            // GPU backends: Process multiple row groups at once
-            AccelerationBackend::CUDA | AccelerationBackend::ROCm => {
-                // Target: 5-10 row groups per batch (5K-10K vectors)
-                // For 1K × 1536D: ~6MB per row group, 30-60MB per batch
-                let min_row_groups = 5;
-                let max_row_groups = 10;
-                let min_batch = ROW_GROUP_SIZE * min_row_groups;
-                let max_batch = ROW_GROUP_SIZE * max_row_groups;
-                total_vectors.min(max_batch).max(min_batch.min(total_vectors))
-            }
-
-            // MPS (Apple Metal): Process 2-5 row groups (unified memory)
-            AccelerationBackend::MPS => {
-                // Target: 2-5 row groups per batch (2K-5K vectors)
-                // Fits well in unified memory architecture
-                let min_row_groups = 2;
-                let max_row_groups = 5;
-                let min_batch = ROW_GROUP_SIZE * min_row_groups;
-                let max_batch = ROW_GROUP_SIZE * max_row_groups;
-                total_vectors.min(max_batch).max(min_batch.min(total_vectors))
-            }
-
-            // OpenCL: Process 3-8 row groups
-            AccelerationBackend::OpenCL => {
-                let min_row_groups = 3;
-                let max_row_groups = 8;
-                let min_batch = ROW_GROUP_SIZE * min_row_groups;
-                let max_batch = ROW_GROUP_SIZE * max_row_groups;
-                total_vectors.min(max_batch).max(min_batch.min(total_vectors))
-            }
-
-            // SIMD: Process 1-2 row groups to fit in L3 cache
-            AccelerationBackend::AVX512 | AccelerationBackend::AVX2 => {
-                // AVX2/AVX512: L3 cache typically 8-32MB
-                // 1 row group (1K × 768D) = ~3MB fits comfortably
-                // 2 row groups (2K × 768D) = ~6MB fits in most L3 caches
-                // For 1536D: 1 row group = ~6MB, process 1 at a time
-                let bytes_per_row_group = ROW_GROUP_SIZE * dimension * 4;
-                let l3_cache_size = 16 * 1024 * 1024; // 16MB typical
-
-                let row_groups_in_cache = (l3_cache_size / bytes_per_row_group).max(1);
-                let batch_size = ROW_GROUP_SIZE * row_groups_in_cache;
-                total_vectors.min(batch_size).max(ROW_GROUP_SIZE.min(total_vectors))
-            }
-
-            AccelerationBackend::NEON | AccelerationBackend::SSE => {
-                // NEON/SSE: Smaller L2/L3 caches (8-16MB typical)
-                // Process 1 row group at a time for optimal cache utilization
-                let batch_size = ROW_GROUP_SIZE;
-                total_vectors.min(batch_size).max(100)
-            }
-
-            // Scalar: Process smaller chunks (100-500 vectors)
-            AccelerationBackend::Scalar => {
-                // For scalar, process in smaller chunks to maintain responsiveness
-                let chunk_size = if total_vectors >= ROW_GROUP_SIZE {
-                    500 // Half row group for large datasets
-                } else {
-                    100.max(total_vectors / 4) // Quarter of dataset, min 100
-                };
-                total_vectors.min(chunk_size).max(10)
-            }
+        // Helper to find previous power of 2
+        fn prev_power_of_2(n: usize) -> usize {
+            if n <= 1 { return 1; }
+            let mut p = 1;
+            while p * 2 <= n { p *= 2; }
+            p
         }
+
+        // Calculate batch as multiple of row groups
+        let batch_size = match self.backend {
+            // GPU backends: 4-8 row groups (4096-8192 vectors)
+            AccelerationBackend::CUDA | AccelerationBackend::ROCm => {
+                if total_vectors >= 8 * ROW_GROUP_SIZE {
+                    8 * ROW_GROUP_SIZE  // 8192 vectors
+                } else if total_vectors >= 4 * ROW_GROUP_SIZE {
+                    4 * ROW_GROUP_SIZE  // 4096 vectors
+                } else {
+                    prev_power_of_2(total_vectors.max(ROW_GROUP_SIZE))
+                }
+            }
+
+            // MPS (Apple Metal): 2-4 row groups (2048-4096 vectors)
+            AccelerationBackend::MPS => {
+                if total_vectors >= 4 * ROW_GROUP_SIZE {
+                    4 * ROW_GROUP_SIZE  // 4096 vectors
+                } else if total_vectors >= 2 * ROW_GROUP_SIZE {
+                    2 * ROW_GROUP_SIZE  // 2048 vectors
+                } else {
+                    prev_power_of_2(total_vectors.max(ROW_GROUP_SIZE))
+                }
+            }
+
+            // OpenCL: 2-8 row groups (2048-8192 vectors)
+            AccelerationBackend::OpenCL => {
+                if total_vectors >= 8 * ROW_GROUP_SIZE {
+                    8 * ROW_GROUP_SIZE
+                } else if total_vectors >= 4 * ROW_GROUP_SIZE {
+                    4 * ROW_GROUP_SIZE
+                } else if total_vectors >= 2 * ROW_GROUP_SIZE {
+                    2 * ROW_GROUP_SIZE
+                } else {
+                    prev_power_of_2(total_vectors.max(ROW_GROUP_SIZE))
+                }
+            }
+
+            // SIMD (AVX2/AVX512): 1-2 row groups (1024-2048 vectors)
+            AccelerationBackend::AVX512 | AccelerationBackend::AVX2 => {
+                if total_vectors >= 2 * ROW_GROUP_SIZE {
+                    2 * ROW_GROUP_SIZE  // 2048 vectors
+                } else {
+                    prev_power_of_2(total_vectors.max(ROW_GROUP_SIZE))
+                }
+            }
+
+            // NEON/SSE: 1 row group (1024 vectors)
+            AccelerationBackend::NEON | AccelerationBackend::SSE => {
+                if total_vectors >= ROW_GROUP_SIZE {
+                    ROW_GROUP_SIZE  // 1024 vectors
+                } else {
+                    prev_power_of_2(total_vectors.max(512))
+                }
+            }
+
+            // Scalar: Fraction of row group (128-512 vectors)
+            AccelerationBackend::Scalar => {
+                if total_vectors >= 512 {
+                    512  // Half row group
+                } else if total_vectors >= 256 {
+                    256  // Quarter row group
+                } else if total_vectors >= 128 {
+                    128  // 1/8 row group
+                } else {
+                    prev_power_of_2(total_vectors.max(16))
+                }
+            }
+        };
+
+        // Ensure batch size is power of 2
+        debug_assert_eq!(batch_size & (batch_size - 1), 0, "Batch size must be power of 2");
+        batch_size
     }
 
     /// Split data into optimal batches
@@ -384,43 +402,53 @@ mod tests {
         println!("\n📊 Batch Size Test: BERT Embeddings (768D)");
         let optimizer = BatchOptimizer::new();
 
-        // ProximaDB row group: 1K vectors × 768D = ~3MB
-        let row_group_size = 1000;
+        // Typical batch: 1024 vectors × 768D = ~3MB
+        let typical_batch = 1024;
         let bert_dim = 768;
 
-        let batch_size = optimizer.optimal_batch_size(row_group_size, bert_dim);
+        let batch_size = optimizer.optimal_batch_size(typical_batch, bert_dim);
         println!("   Backend: {:?}", optimizer.backend());
-        println!("   Row group: {} vectors × {}D = ~3MB", row_group_size, bert_dim);
-        println!("   Optimal batch: {} vectors", batch_size);
+        println!("   Input: {} vectors × {}D = ~{}MB", typical_batch, bert_dim,
+                 (typical_batch * bert_dim * 4) / (1024 * 1024));
+        println!("   Optimal batch: {} vectors (power of 2)", batch_size);
+
+        // Verify batch is power of 2
+        assert_eq!(batch_size & (batch_size - 1), 0, "Batch size must be power of 2");
 
         match optimizer.backend() {
             AccelerationBackend::CUDA | AccelerationBackend::ROCm => {
-                // GPU: Should process 5-10 row groups (5K-10K vectors)
-                assert!(batch_size >= 5000, "GPU should batch 5+ row groups");
-                assert!(batch_size <= 10000, "GPU should batch ≤10 row groups");
+                // GPU: Should be 4096 or 8192 (power of 2)
+                assert!(batch_size >= 1024, "GPU should batch at least 1024");
+                assert!(batch_size <= 8192, "GPU should batch ≤8192");
+                assert!(matches!(batch_size, 1024 | 2048 | 4096 | 8192));
             }
             AccelerationBackend::MPS => {
-                // MPS: Should process 2-5 row groups (2K-5K vectors)
-                assert!(batch_size >= 2000, "MPS should batch 2+ row groups");
-                assert!(batch_size <= 5000, "MPS should batch ≤5 row groups");
+                // MPS: Should be 2048 or 4096 (power of 2)
+                assert!(batch_size >= 1024, "MPS should batch at least 1024");
+                assert!(batch_size <= 4096, "MPS should batch ≤4096");
+                assert!(matches!(batch_size, 1024 | 2048 | 4096));
             }
             AccelerationBackend::AVX512 | AccelerationBackend::AVX2 => {
-                // AVX2/512: Should process 1-5 row groups (fits in L3)
-                assert!(batch_size >= 1000, "AVX should batch 1+ row group");
-                assert!(batch_size <= 5000, "AVX should fit in L3 cache");
+                // AVX: Should be 1024 or 2048 (cache-friendly)
+                assert!(batch_size >= 1024, "AVX should batch at least 1024");
+                assert!(batch_size <= 2048, "AVX should fit in L3 cache");
+                assert!(matches!(batch_size, 1024 | 2048));
             }
             AccelerationBackend::NEON | AccelerationBackend::SSE => {
-                // NEON/SSE: Should process 1 row group (1K vectors)
-                assert_eq!(batch_size, 1000, "NEON/SSE should batch 1 row group");
+                // NEON/SSE: Should be 512 or 1024
+                assert!(batch_size >= 512, "NEON/SSE should batch at least 512");
+                assert!(batch_size <= 1024, "NEON/SSE should batch ≤1024");
+                assert!(matches!(batch_size, 512 | 1024));
             }
             AccelerationBackend::Scalar => {
-                // Scalar: Should process smaller chunks (100-500)
-                assert!(batch_size >= 10);
-                assert!(batch_size <= 500);
+                // Scalar: Should be 128, 256, or 512
+                assert!(batch_size >= 64);
+                assert!(batch_size <= 512);
+                assert!(matches!(batch_size, 64 | 128 | 256 | 512));
             }
             _ => {}
         }
-        println!("   ✅ Batch size optimal for backend");
+        println!("   ✅ Batch size is power of 2 and optimal for backend");
     }
 
     #[test]
@@ -467,32 +495,57 @@ mod tests {
     }
 
     #[test]
-    fn test_optimal_batch_size_multi_row_groups() {
-        println!("\n📊 Batch Size Test: Multiple Row Groups");
+    fn test_optimal_batch_size_power_of_2_row_groups() {
+        println!("\n📊 Batch Size Test: Power-of-2 Row Groups");
         let optimizer = BatchOptimizer::new();
 
-        // Test with 10K vectors (10 row groups)
-        let total_vectors = 10_000;
+        // Test with 10240 vectors (10 row groups × 1024)
+        let total_vectors = 10240;
         let dimension = 768;
 
         let batch_size = optimizer.optimal_batch_size(total_vectors, dimension);
-        println!("   Total: {} vectors ({} row groups)", total_vectors, total_vectors / 1000);
+        println!("   Total: {} vectors ({} row groups of 1024)",
+                 total_vectors, total_vectors / 1024);
         println!("   Batch size: {} vectors", batch_size);
+        println!("   Row groups per batch: {}", batch_size / 1024);
         println!("   Batches needed: {}", (total_vectors + batch_size - 1) / batch_size);
 
-        // Verify batch size is row-group-aligned for efficiency
+        // Verify batch size is power of 2
+        assert_eq!(batch_size & (batch_size - 1), 0, "Batch size must be power of 2");
+
+        // Verify batch size is multiple of row group size (1024)
+        if batch_size >= 1024 {
+            assert_eq!(batch_size % 1024, 0, "Should be multiple of 1024 (row group size)");
+        }
+
         match optimizer.backend() {
-            AccelerationBackend::NEON | AccelerationBackend::SSE => {
-                // NEON/SSE: Exactly 1 row group
-                assert_eq!(batch_size % 1000, 0, "Should align to row group boundaries");
+            AccelerationBackend::CUDA | AccelerationBackend::ROCm => {
+                // GPU: 4-8 row groups (4096 or 8192)
+                assert!(matches!(batch_size, 4096 | 8192),
+                        "GPU should use 4096 or 8192 vectors");
+            }
+            AccelerationBackend::MPS => {
+                // MPS: 2-4 row groups (2048 or 4096)
+                assert!(matches!(batch_size, 2048 | 4096),
+                        "MPS should use 2048 or 4096 vectors");
             }
             AccelerationBackend::AVX512 | AccelerationBackend::AVX2 => {
-                // AVX: Multiple of row groups
-                assert_eq!(batch_size % 1000, 0, "Should align to row group boundaries");
+                // AVX: 1-2 row groups (1024 or 2048)
+                assert!(matches!(batch_size, 1024 | 2048),
+                        "AVX should use 1024 or 2048 vectors");
+            }
+            AccelerationBackend::NEON | AccelerationBackend::SSE => {
+                // NEON/SSE: 1 row group (1024)
+                assert_eq!(batch_size, 1024, "NEON/SSE should use 1024 vectors");
+            }
+            AccelerationBackend::Scalar => {
+                // Scalar: 128-512 (fractions of row group)
+                assert!(matches!(batch_size, 128 | 256 | 512),
+                        "Scalar should use 128, 256, or 512 vectors");
             }
             _ => {}
         }
-        println!("   ✅ Batch aligned to row group boundaries");
+        println!("   ✅ Batch aligned to power-of-2 row groups");
     }
 
     #[test]
