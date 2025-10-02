@@ -4,7 +4,8 @@
 // functionality that is reused across all storage engines (SST, SWIFT, RAPTOR, PRISM)
 // to eliminate code duplication and ensure consistency.
 
-use super::proximaencoder::{ProximaDecoder, ProximaEncoder, ProximaScheme};
+use super::proximacodec::{ProximaCodec, analysis};
+use super::proximacodec::types::ProximaScheme;
 use anyhow::Result;
 use std::io::{Read, Write};
 
@@ -71,9 +72,9 @@ pub fn encode_sparse_tensor(
             }
 
             // Analyze data and choose optimal encoding scheme
-            let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32(&values);
-            let encoder = ProximaEncoder::new(scheme);
-            let encoded_values = encoder.encode_f32(&values, Some(values.len()))?;
+            let scheme = analysis::analyze_and_choose_scheme_f32(&values);
+            let codec = ProximaCodec::global();
+            let encoded_values = codec.encode(&values, scheme)?;
             output.write_all(&(encoded_values.len() as u32).to_le_bytes())?;
             output.write_all(&encoded_values)?;
         }
@@ -98,9 +99,9 @@ pub fn encode_sparse_tensor(
             }
 
             // Analyze data and choose optimal encoding scheme
-            let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32(&values);
-            let encoder = ProximaEncoder::new(scheme);
-            let encoded_values = encoder.encode_f32(&values, Some(values.len()))?;
+            let scheme = analysis::analyze_and_choose_scheme_f32(&values);
+            let codec = ProximaCodec::global();
+            let encoded_values = codec.encode(&values, scheme)?;
             output.write_all(&(encoded_values.len() as u32).to_le_bytes())?;
             output.write_all(&encoded_values)?;
         }
@@ -168,9 +169,9 @@ pub fn decode_sparse_tensor(
         let mut val_data = vec![0u8; val_len];
         cursor.read_exact(&mut val_data)?;
 
-        // Auto-detect encoding scheme from the encoded data
-        let decoder = ProximaDecoder::new_from_data(&val_data);
-        let values = decoder.decode_f32(&val_data, Some(nnz))?;
+        // Auto-detect encoding scheme from the encoded data (ProximaCodec wire format)
+        let codec = ProximaCodec::global();
+        let values = codec.decode(&val_data)?;
 
         // Reconstruct dense matrix
         let mut dense = vec![0.0f32; num_vectors * dimension];
@@ -206,9 +207,9 @@ pub fn decode_sparse_tensor(
         let mut val_data = vec![0u8; val_len];
         cursor.read_exact(&mut val_data)?;
 
-        // Auto-detect encoding scheme from the encoded data
-        let decoder = ProximaDecoder::new_from_data(&val_data);
-        let values = decoder.decode_f32(&val_data, Some(nnz))?;
+        // Auto-detect encoding scheme from the encoded data (ProximaCodec wire format)
+        let codec = ProximaCodec::global();
+        let values = codec.decode(&val_data)?;
 
         // Reconstruct dense matrix
         let mut dense = vec![0.0f32; num_vectors * dimension];

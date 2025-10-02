@@ -6,15 +6,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::common::{
-    ColumnarBlock, ProximaEncodedData, ProximaScheme, MetadataColumns, QuantizationParams,
+    ColumnarBlock, ProximaEncodedData, MetadataColumns, QuantizationParams,
     QuantizedColumnarData, RowGroup, TransposedVectors,
 };
 use super::config::RaptorConfig;
 use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::proximaencoder::ProximaEncoder;
-use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
+// ProximaCodec system for encoding/decoding
+use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, types::ProximaScheme};
 use crate::storage::engines::core::formats::proximablocks::{BlockCompressionConfig, VectorEncodingLayout};
 use crate::core::compression::CompressionAlgorithm;
 
@@ -50,8 +50,7 @@ pub struct RowGroups {
     optimal_size: OptimalRowGroupSize,
     /// Quantization engine if enabled
     quantization_engine: Option<Arc<StorageQuantizationEngine>>,
-    /// SIMD-optimized encoder for RAPTOR
-    simd_encoder: UnifiedProximaSIMD,
+    /// Note: simd_encoder removed - encoding now done via ProximaCodec per-dimension
     /// Block compression configuration
     compression_config: BlockCompressionConfig,
     /// Configuration
@@ -69,8 +68,7 @@ impl RowGroups {
 
         tracing::info!("RAPTOR RowGroups initialized: {}", optimal_size.rationale);
 
-        // Use SIMD-optimized encoder with RAPTOR engine profile
-        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?;
+        // Note: SIMD encoding now done via ProximaCodec per-dimension (no global encoder)
 
         // Configure compression for optimal read performance
         let compression_config = BlockCompressionConfig {
@@ -92,7 +90,7 @@ impl RowGroups {
             smart_sizer,
             optimal_size,
             quantization_engine,
-            simd_encoder,
+            // Note: simd_encoder removed - encoding now done via ProximaCodec
             compression_config,
             config,
         })
@@ -526,53 +524,42 @@ impl RowGroups {
             vectors.push(vector);
         }
 
-        // Use SIMD-optimized transposition and encoding
-        let simd_transposed = self.simd_encoder.simd_transpose_vectors(&vectors)?;
-
-        // Determine optimal encoding strategy based on dimension
+        // Transpose vectors manually (ProximaCodec operates on Vec<f32> per dimension)
         let dimension = transposed.dimension;
-        let (encoded_dimensions, encoding_schemes) = if dimension > 128 {
-            // Use grouped field encoding for high-dimensional vectors
-            let group_size = 32;
-            let num_groups = (dimension + group_size - 1) / group_size;
-            let mut encoded = Vec::new();
-            let mut schemes = Vec::new();
-
-            for group_idx in 0..num_groups {
-                let start = group_idx * group_size;
-                let end = ((group_idx + 1) * group_size).min(dimension);
-
-                // Encode each group with SIMD using pattern-based scheme selection
-                // FIXED (2025-01-30): Use pattern detection instead of unimplemented Adaptive scheme
-                for dim_idx in start..end {
-                    if dim_idx < simd_transposed.len() {
-                        // Detect pattern and choose optimal scheme
-                        let pattern = self.simd_encoder.simd_detect_pattern(&simd_transposed[dim_idx])?;
-                        let scheme = self.simd_encoder.pattern_to_engine_scheme(&pattern);
-
-                        let encoded_dim = self.simd_encoder.simd_encode_dimension(&simd_transposed[dim_idx], &scheme)?;
-                        encoded.push(encoded_dim);
-                        schemes.push(scheme);
-                    }
+        let mut transposed_dimensions: Vec<Vec<f32>> = vec![Vec::with_capacity(vectors.len()); dimension];
+        for vector in &vectors {
+            for (dim_idx, &value) in vector.iter().enumerate() {
+                if dim_idx < dimension {
+                    transposed_dimensions[dim_idx].push(value);
                 }
             }
-            (encoded, schemes)
-        } else {
-            // For lower dimensions, encode each dimension directly using pattern detection
-            // FIXED (2025-01-30): Use pattern detection instead of unimplemented Adaptive scheme
-            let mut encoded = Vec::new();
-            let mut schemes = Vec::new();
+        }
 
-            for dim_data in &simd_transposed {
-                // Detect pattern and choose optimal scheme
-                let pattern = self.simd_encoder.simd_detect_pattern(dim_data)?;
-                let scheme = self.simd_encoder.pattern_to_engine_scheme(&pattern);
+        // Use ProximaCodec for hardware-aware encoding (migrated from old system)
+        let codec = ProximaCodec::global();
+        let mut encoded_dimensions = Vec::new();
+        let mut encoding_schemes = Vec::new();
 
-                let encoded_dim = self.simd_encoder.simd_encode_dimension(dim_data, &scheme)?;
-                encoded.push(encoded_dim);
-                schemes.push(scheme);
-            }
-            (encoded, schemes)
+        // Encode each dimension with adaptive scheme selection
+        for dim_data in &transposed_dimensions {
+            // Analyze pattern and choose optimal scheme
+            let detected_scheme = analysis::analyze_and_choose_scheme_f32(dim_data);
+
+            // Override lossy schemes with lossless alternatives
+            let scheme = match &detected_scheme {
+                ProximaScheme::Simple8b | ProximaScheme::RunLength |
+                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
+                ProximaScheme::PForDelta { .. } => {
+                    ProximaScheme::Delta { base: 0 }
+                },
+                _ => detected_scheme.clone(),
+            };
+
+            let encoded_dim = codec.encode(dim_data, scheme.clone())?;
+            encoded_dimensions.push(encoded_dim);
+
+            // Store the scheme directly (no conversion needed)
+            encoding_schemes.push(scheme);
         };
 
         // Calculate compression ratio
@@ -689,3 +676,4 @@ impl RowGroups {
         Ok(())
     }
 }
+

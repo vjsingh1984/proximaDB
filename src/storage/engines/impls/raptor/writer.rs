@@ -71,8 +71,8 @@ use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
-use crate::storage::engines::core::ops::unified_proxima_simd::{UnifiedProximaSIMD, EngineProfile};
+// ProximaCodec system for encoding/decoding
+use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, types::ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 
 // Import AXIS clustering for reuse
@@ -1471,12 +1471,15 @@ impl IvfClusteringBuilder {
             .map(|&d| ((d - q_min) * scale).round() as u8)
             .collect();
 
-        // Apply Proxima encoding for SIMD optimization
-        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
+        // Apply Proxima encoding for SIMD optimization (migrated to ProximaCodec)
         let scheme = ProximaScheme::BitPacked { bits: 8 }; // Efficient for sparse data
-        let proxima_encoder = ProximaEncoder::new(scheme);
-        let compressed_data = proxima_encoder
-            .encode_binary(&quantized_u8)
+
+        // Convert u8 to i32 for encoding (ProximaCodec operates on i32/i64/f32)
+        let quantized_i32: Vec<i32> = quantized_u8.iter().map(|&v| v as i32).collect();
+
+        let codec = ProximaCodec::global();
+        let compressed_data = codec
+            .encode_i32(&quantized_i32, scheme)
             .unwrap_or_else(|_| quantized_u8.clone()); // Fallback to uncompressed if encoding fails
 
         let sparsity_achieved = num_boundary_vectors as f32 / p as f32;
@@ -1594,8 +1597,7 @@ impl RaptorWriter {
             })
             .collect();
 
-        // Apply Proxima encoding using unified encoder
-        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
+        // Apply Proxima encoding using ProximaCodec
         let scheme = if max_distance - min_distance < 0.1 {
             // Small range - use delta encoding
             ProximaScheme::Delta {
@@ -1612,10 +1614,10 @@ impl RaptorWriter {
             }
         };
 
-        let proxima_encoder = ProximaEncoder::new(scheme);
-
-        // Encode with Proxima
-        let encoded = proxima_encoder.encode_binary(&quantized)?;
+        // Convert u8 to u32 for codec encoding
+        let quantized_u32: Vec<u32> = quantized.iter().map(|&v| v as u32).collect();
+        let codec = ProximaCodec::global();
+        let encoded = codec.encode_u32(&quantized_u32, scheme.clone())?;
         let compressed_size = encoded.len() as u32;
 
         Ok(P2Matrix {
@@ -1623,7 +1625,7 @@ impl RaptorWriter {
             distances: encoded,
             min_distance,
             max_distance,
-            compression: scheme, // Use the same scheme directly
+            compression: scheme, // Move scheme here (last use)
             compressed_size,
         })
     }
@@ -1675,10 +1677,10 @@ impl RaptorWriter {
             .collect();
 
         // Apply Proxima encoding
-        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
         let scheme = ProximaScheme::BitPacked { bits: 8 };
-        let proxima_encoder = ProximaEncoder::new(scheme);
-        let encoded = proxima_encoder.encode_binary(&quantized_distances)?;
+        let quantized_u32: Vec<u32> = quantized_distances.iter().map(|&v| v as u32).collect();
+        let codec = ProximaCodec::global();
+        let encoded = codec.encode_u32(&quantized_u32, scheme.clone())?;
         let encoded_len = encoded.len();
 
         tracing::info!(
@@ -2911,14 +2913,10 @@ impl RaptorWriter {
         Ok(())
     }
 
-    /// Helper: Encode vector column with Proxima
+    /// Helper: Encode vector column with Proxima (migrated to ProximaCodec)
     fn encode_vector_column(&self, page: &RowPageBuffer) -> Result<Vec<u8>> {
         let mut encoded = Vec::new();
         let num_rows = page.rows.len();
-
-        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
-        let scheme = ProximaScheme::BitPacked { bits: 16 };
 
         // Transpose vectors to columnar format
         let mut columns: Vec<Vec<f32>> = vec![Vec::with_capacity(num_rows); self.dimension];
@@ -2930,9 +2928,25 @@ impl RaptorWriter {
             }
         }
 
-        // Encode each dimension column with SIMD acceleration
+        // Use ProximaCodec with adaptive scheme selection
+        let codec = ProximaCodec::global();
+
+        // Encode each dimension column with hardware-aware encoding
         for column in columns {
-            let encoded_column = simd_encoder.simd_encode_dimension(&column, &scheme)?;
+            // Analyze pattern and choose optimal scheme
+            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&column);
+
+            // Override lossy schemes with lossless alternatives
+            let scheme = match &detected_scheme {
+                ProximaScheme::Simple8b | ProximaScheme::RunLength |
+                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
+                ProximaScheme::PForDelta { .. } => {
+                    ProximaScheme::Delta { base: 0 }  // Lossless fallback
+                },
+                _ => detected_scheme.clone(),
+            };
+
+            let encoded_column = codec.encode(&column, scheme)?;
             encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
             encoded.extend(&encoded_column);
         }
@@ -3049,10 +3063,8 @@ impl RaptorWriter {
             return Ok(encoded);
         }
 
-        // Phase 3: Use UnifiedProximaSIMD for f32 encoding, ProximaEncoder for binary/int8
-        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
-        let scheme = ProximaScheme::BitPacked { bits: 16 };
-        let proxima_encoder = ProximaEncoder::new(ProximaScheme::BitPacked { bits: 8 }); // For quantized vectors
+        // Use ProximaCodec for all encoding (migrated from old system)
+        let codec = ProximaCodec::global();
         let num_rows = page.rows.len();
 
         // === SECTION 1: IDs (columnar string storage) ===
@@ -3075,9 +3087,22 @@ impl RaptorWriter {
             }
         }
 
-        // Encode each dimension column with SIMD acceleration
+        // Encode each dimension column with ProximaCodec
         for column in fp32_columns {
-            let encoded_column = simd_encoder.simd_encode_dimension(&column, &scheme)?;
+            // Analyze and choose optimal scheme
+            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&column);
+
+            // Override lossy schemes
+            let scheme = match &detected_scheme {
+                ProximaScheme::Simple8b | ProximaScheme::RunLength |
+                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
+                ProximaScheme::PForDelta { .. } => {
+                    ProximaScheme::Delta { base: 0 }
+                },
+                _ => detected_scheme.clone(),
+            };
+
+            let encoded_column = codec.encode(&column, scheme)?;
             encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
             encoded.extend(&encoded_column);
         }
@@ -3116,7 +3141,10 @@ impl RaptorWriter {
                                 column.push(row.quantized_vector[dim_byte]);
                             }
                         }
-                        let encoded_column = proxima_encoder.encode_binary(&column)?;
+                        // Use ProximaCodec for binary quantized data
+                        let codec = ProximaCodec::global();
+                        let column_i32: Vec<i32> = column.iter().map(|&v| v as i32).collect();
+                        let encoded_column = codec.encode_i32(&column_i32, ProximaScheme::BitPacked { bits: 8 })?;
                         encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
                         encoded.extend(&encoded_column);
                     }
@@ -3133,7 +3161,10 @@ impl RaptorWriter {
                         }
                     }
                     for column in int8_columns {
-                        let encoded_column = proxima_encoder.encode_int8(&column)?;
+                        // Use ProximaCodec for INT8 quantized data
+                        let codec = ProximaCodec::global();
+                        let column_i32: Vec<i32> = column.iter().map(|&v| v as i32).collect();
+                        let encoded_column = codec.encode_i32(&column_i32, ProximaScheme::BitPacked { bits: 8 })?;
                         encoded.extend(&(encoded_column.len() as u32).to_le_bytes());
                         encoded.extend(&encoded_column);
                     }
@@ -3246,7 +3277,9 @@ impl RaptorWriter {
 
         // Timestamp column (always present)
         let timestamps: Vec<u32> = page.rows.iter().map(|r| r.timestamp).collect();
-        let encoded_timestamps = proxima_encoder.encode_u32(&timestamps)?;
+        let codec = ProximaCodec::global();
+        let timestamps_i32: Vec<i32> = timestamps.iter().map(|&v| v as i32).collect();
+        let encoded_timestamps = codec.encode_i32(&timestamps_i32, ProximaScheme::Delta { base: 0 })?;
         encoded.extend(&encoded_timestamps);
 
         // Updated_at column (optional)
@@ -3267,7 +3300,9 @@ impl RaptorWriter {
                     }
                 }
             }
-            let encoded_updated = proxima_encoder.encode_u32(&updated_values)?;
+            let codec = ProximaCodec::global();
+            let updated_i32: Vec<i32> = updated_values.iter().map(|&v| v as i32).collect();
+            let encoded_updated = codec.encode_i32(&updated_i32, ProximaScheme::Delta { base: 0 })?;
             encoded.extend(&encoded_updated);
         }
 
@@ -3288,7 +3323,9 @@ impl RaptorWriter {
                     }
                 }
             }
-            let encoded_expires = proxima_encoder.encode_u32(&expires_values)?;
+            let codec = ProximaCodec::global();
+            let expires_i32: Vec<i32> = expires_values.iter().map(|&v| v as i32).collect();
+            let encoded_expires = codec.encode_i32(&expires_i32, ProximaScheme::Delta { base: 0 })?;
             encoded.extend(&encoded_expires);
         }
 
@@ -3309,7 +3346,9 @@ impl RaptorWriter {
                     }
                 }
             }
-            let encoded_versions = proxima_encoder.encode_u32(&version_values)?;
+            let codec = ProximaCodec::global();
+            let versions_i32: Vec<i32> = version_values.iter().map(|&v| v as i32).collect();
+            let encoded_versions = codec.encode_i32(&versions_i32, ProximaScheme::Delta { base: 0 })?;
             encoded.extend(&encoded_versions);
         }
 
@@ -3747,7 +3786,6 @@ impl RaptorWriter {
     }
 
     fn encode_batch_with_proxima(&self, batch: &RecordBatch, marker: u8) -> Result<Vec<u8>> {
-        use crate::storage::engines::core::ops::proximaencoder::ProximaEncoder;
         use std::io::Write;
 
         // Extract vectors from RecordBatch
@@ -3779,31 +3817,31 @@ impl RaptorWriter {
             }
         }
 
-        let range = max_val - min_val;
-
-        // Choose optimal encoding for tensor data
-        let scheme = if range < 1e-6 {
-            ProximaScheme::RunLength
-        } else if range < 100.0 {
-            ProximaScheme::FrameOfReference {
-                reference: min_val as i64,
-                bits: (range.log2().ceil() as u8).max(8),
-            }
-        } else {
-            ProximaScheme::BitPacked { bits: 16 } // Good for dense tensors
-        };
-
-        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
+        // Use ProximaCodec for hardware-aware encoding (migrated from old system)
+        // Pattern analysis is now done per-column using analysis::analyze_and_choose_scheme_f32
+        let codec = ProximaCodec::global();
         let mut encoded_data = Vec::new();
 
         // Write metadata
         encoded_data.write_all(&(dimension as u32).to_le_bytes())?;
         encoded_data.write_all(&(vectors.len() as u32).to_le_bytes())?;
 
-        // Encode each dimension column with SIMD acceleration
+        // Encode each dimension column with ProximaCodec
         for column in columns {
-            let encoded_column = simd_encoder.simd_encode_dimension(&column, &scheme)?;
+            // Analyze and choose optimal scheme
+            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&column);
+
+            // Override lossy schemes
+            let codec_scheme = match &detected_scheme {
+                ProximaScheme::Simple8b | ProximaScheme::RunLength |
+                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
+                ProximaScheme::PForDelta { .. } => {
+                    ProximaScheme::Delta { base: 0 }
+                },
+                _ => detected_scheme.clone(),
+            };
+
+            let encoded_column = codec.encode(&column, codec_scheme)?;
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;
         }
@@ -4097,10 +4135,23 @@ impl RaptorWriter {
             ivf_data.extend(&centroid.mean_distance.to_le_bytes());
             ivf_data.extend(&centroid.std_deviation.to_le_bytes());
 
-            // Phase 3: Write centroid vector using UnifiedProximaSIMD
-            let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
-            let scheme = ProximaScheme::BitPacked { bits: 32 };
-            let encoded = simd_encoder.simd_encode_dimension(&centroid.vector, &scheme)?;
+            // Write centroid vector using ProximaCodec (migrated from old system)
+            let codec = ProximaCodec::global();
+
+            // Analyze and choose optimal scheme
+            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&centroid.vector);
+
+            // Override lossy schemes
+            let scheme = match &detected_scheme {
+                ProximaScheme::Simple8b | ProximaScheme::RunLength |
+                ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
+                ProximaScheme::PForDelta { .. } => {
+                    ProximaScheme::Delta { base: 0 }
+                },
+                _ => detected_scheme.clone(),
+            };
+
+            let encoded = codec.encode(&centroid.vector, scheme)?;
             ivf_data.extend(&(encoded.len() as u32).to_le_bytes());
             ivf_data.extend(&encoded);
         }
@@ -4843,8 +4894,8 @@ impl RaptorWriter {
                         bits: ((range as f64).log2().ceil() as u8 + 1).min(32),
                     };
 
-                    let encoder = ProximaEncoder::new(scheme);
-                    let encoded_ints = encoder.encode_i64(&integers, None)?; // TODO: Pass expected count for optimization
+                    let codec = ProximaCodec::global();
+                    let encoded_ints = codec.encode_i64(&integers, scheme)?;
 
                     encoded.extend(&min.to_le_bytes());
                     encoded.extend(&max.to_le_bytes());
@@ -4871,9 +4922,23 @@ impl RaptorWriter {
                         .map(|v| v.parse::<f32>().unwrap_or(0.0))
                         .collect();
 
-                    let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?; // SST profile for write-optimized
-                    let scheme = ProximaScheme::BitPacked { bits: 16 };
-                    let encoded_floats = simd_encoder.simd_encode_dimension(&floats, &scheme)?;
+                    // Use ProximaCodec for metadata float encoding (migrated from old system)
+                    let codec = ProximaCodec::global();
+
+                    // Analyze and choose optimal scheme
+                    let detected_scheme = analysis::analyze_and_choose_scheme_f32(&floats);
+
+                    // Override lossy schemes
+                    let scheme = match &detected_scheme {
+                        ProximaScheme::Simple8b | ProximaScheme::RunLength |
+                        ProximaScheme::VByte | ProximaScheme::Zigzag { .. } |
+                        ProximaScheme::PForDelta { .. } => {
+                            ProximaScheme::Delta { base: 0 }
+                        },
+                        _ => detected_scheme.clone(),
+                    };
+
+                    let encoded_floats = codec.encode(&floats, scheme)?;
 
                     encoded.extend(&(encoded_floats.len() as u32).to_le_bytes());
                     encoded.extend(&encoded_floats);

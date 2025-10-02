@@ -19,7 +19,7 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
-use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
+use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -233,9 +233,6 @@ pub struct RaptorReader {
     /// Unified distance computation (replaces simd_encoder.rs distance logic)
     distance_compute: Arc<UnifiedDistanceCompute>,
 
-    /// Proxima decoder for SIMD-optimized decompression
-    proxima_decoder: ProximaDecoder,
-
     /// Filesystem for unified caching operations
     filesystem: Arc<dyn FileSystem>,
 
@@ -292,20 +289,12 @@ impl RaptorReader {
         filesystem: Arc<dyn FileSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
-        // Initialize Proxima decoder based on config
-        let proxima_scheme = if config.use_proximaencoder {
-            ProximaScheme::BitPacked { bits: 32 }
-        } else {
-            ProximaScheme::BitPacked { bits: 32 } // Default to raw
-        };
-
         Self {
             base_path,
             collection_id,
             config,
             cache,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
-            proxima_decoder: ProximaDecoder::new(proxima_scheme),
             filesystem,
             transaction_coordinator,
         }
@@ -1476,10 +1465,9 @@ impl RaptorReader {
             distances: vec![128; (1000 * 999) / 2], // Default quantized distances
             min_distance: 0.0,
             max_distance: 2.0,
-            compression:
-                crate::storage::engines::core::ops::proximaencoder::ProximaScheme::BitPacked {
-                    bits: 8,
-                },
+            compression: ProximaScheme::BitPacked {
+                bits: 8,
+            },
             compressed_size: 64000,
         };
         Ok(Arc::new(default_matrix))
@@ -3593,9 +3581,8 @@ impl RaptorReader {
         // Parse vector column
         let mut cursor = std::io::Cursor::new(&vector_data);
 
-        // Import Proxima decoder
-        use crate::storage::engines::core::ops::proximaencoder::{ProximaDecoder, ProximaScheme};
-        let proxima_decoder = ProximaDecoder::new(ProximaScheme::BitPacked { bits: 16 });
+        // Use ProximaCodec for decoding
+        let codec = ProximaCodec::global();
 
         // Read columnar vectors (transposed format)
         let mut columns: Vec<Vec<f32>> = vec![Vec::with_capacity(num_rows); dimension];
@@ -3627,8 +3614,8 @@ impl RaptorReader {
             let mut encoded_data = vec![0u8; encoded_len];
             cursor.read_exact(&mut encoded_data)?;
 
-            // Decode using Proxima
-            let decoded = proxima_decoder.decode_f32(&encoded_data, Some(num_rows))?; // Pass expected count for smart decoding
+            // Decode using ProximaCodec
+            let decoded = codec.decode(&encoded_data)?;
             columns[dim_idx] = decoded;
         }
 

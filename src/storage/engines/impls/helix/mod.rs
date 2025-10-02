@@ -522,10 +522,12 @@ impl HelixEngine {
         filesystem_factory: Arc<FilesystemFactory>,
         distance_compute: Arc<UnifiedDistanceCompute>,
     ) -> Result<Self> {
+        // Use a unique temp directory for each test instance to avoid cross-test contamination
+        let test_data_dir = std::env::temp_dir().join(format!("helix_test_{}", uuid::Uuid::new_v4()));
         Self::new_with_orchestrator_and_filesystem(
-            "placeholder".to_string(),  // collection_id (ignored)
+            "placeholder".to_string(),  // collection_id (ignored in test mode)
             config,
-            std::path::PathBuf::from("/tmp"), // data_dir (ignored)
+            test_data_dir, // Unique test data directory
             None,  // event_log
             None,  // orchestrator
             Some(filesystem_factory),
@@ -1028,7 +1030,7 @@ impl UnifiedStorageEngine for HelixEngine {
                 .collect(),
                 bloom_filter: None,
             };
-            levels.entry(0).or_insert_with(Vec::new).push(metadata);
+            levels.entry(0).or_insert_with(Vec::new).push(metadata.clone());
         }
 
         // Notify EventLog for AXIS indexing
@@ -1201,7 +1203,7 @@ impl UnifiedStorageEngine for HelixEngine {
         // Prune and select SSTables to search
         let mut sstables_to_search = Vec::new();
 
-        for (_level, sstables) in levels.iter() {
+        for (_level_id, sstables) in levels.iter() {
             for sstable in sstables {
                 // Pruning logic based on Hilbert range
                 if let (Some(query_key), Some((min_key, max_key))) =

@@ -10,7 +10,7 @@ use crate::compute::quantization::precompute::{
 use crate::storage::engines::core::formats::proximablocks::{
     ProximaDataBlock, BlockCompressionConfig, VectorEncodingLayout, QuantizedSection
 };
-use crate::storage::engines::core::ops::unified_proxima_simd::EngineProfile;
+use super::engine_profile::EngineProfile;
 
 /// Trait for ProximaDataBlock-based engines to handle quantization
 #[async_trait]

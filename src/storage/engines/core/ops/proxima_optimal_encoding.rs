@@ -1,36 +1,24 @@
 // Optimal Proxima Encoding - Minimal redundancy
 use anyhow::Result;
 
-/// Encoding markers that indicate whether count is stored
+/// Encoding markers for Proxima format
 pub mod markers {
-    // High bit indicates if count follows marker
-    const HAS_COUNT_FLAG: u8 = 0x80;
+    // Count mode constants (second byte)
+    pub const COUNT_MODE_NONE: u8 = 0x00;
+    pub const COUNT_MODE_U8: u8 = 0x01;
+    pub const COUNT_MODE_U16: u8 = 0x02;
+    pub const COUNT_MODE_U32: u8 = 0x03;
 
-    // Base markers (without count flag)
+    // Scheme markers (first byte)
     pub const DELTA: u8 = 0x20;
-    pub const BITPACKED: u8 = 0x21;
-    pub const RLE: u8 = 0x22;
-    pub const DICTIONARY: u8 = 0x23;
-    pub const RAW: u8 = 0x24;
-
-    // With count flag (for sparse/variable data)
-    pub const DELTA_WITH_COUNT: u8 = DELTA | HAS_COUNT_FLAG;        // 0xA0
-    pub const BITPACKED_WITH_COUNT: u8 = BITPACKED | HAS_COUNT_FLAG; // 0xA1
-    pub const RLE_WITH_COUNT: u8 = RLE | HAS_COUNT_FLAG;            // 0xA2
-
-    #[inline]
-    pub fn has_count(marker: u8) -> bool {
-        (marker & HAS_COUNT_FLAG) != 0
-    }
-
-    #[inline]
-    pub fn base_scheme(marker: u8) -> u8 {
-        marker & !HAS_COUNT_FLAG
-    }
+    pub const BITPACKED: u8 = 0x10;
+    pub const RLE: u8 = 0x60;
+    pub const DICTIONARY: u8 = 0x50;
+    pub const RAW: u8 = 0x00;
 }
 
 impl ProximaEncoder {
-    /// Encode with smart count handling
+    /// Encode with smart count handling using Proxima format
     pub fn encode_columnar(
         &self,
         data: &[i64],
@@ -44,15 +32,32 @@ impl ProximaEncoder {
             None => true, // No context, must store count
         };
 
+        // Helper to write Proxima format header
+        let write_header = |buf: &mut Vec<u8>, scheme: u8, count: usize, store_count: bool| {
+            buf.push(scheme); // First byte: scheme
+            if store_count {
+                match count {
+                    0..=255 => {
+                        buf.push(markers::COUNT_MODE_U8);
+                        buf.push(count as u8);
+                    },
+                    256..=65535 => {
+                        buf.push(markers::COUNT_MODE_U16);
+                        buf.extend(&(count as u16).to_le_bytes());
+                    },
+                    _ => {
+                        buf.push(markers::COUNT_MODE_U32);
+                        buf.extend(&(count as u32).to_le_bytes());
+                    }
+                }
+            } else {
+                buf.push(markers::COUNT_MODE_NONE);
+            }
+        };
+
         match self.scheme {
             ProximaScheme::Delta { base } => {
-                if needs_count {
-                    encoded.push(markers::DELTA_WITH_COUNT);
-                    encoded.extend(&(data.len() as u32).to_le_bytes());
-                } else {
-                    encoded.push(markers::DELTA);
-                    // No count needed - decoder will use file header count
-                }
+                write_header(&mut encoded, markers::DELTA, data.len(), needs_count);
 
                 // Delta encoding data
                 encoded.extend(&base.to_le_bytes());
@@ -61,9 +66,7 @@ impl ProximaEncoder {
             },
 
             ProximaScheme::RunLength => {
-                // RLE often has different output count
-                encoded.push(markers::RLE_WITH_COUNT);
-                encoded.extend(&(data.len() as u32).to_le_bytes());
+                write_header(&mut encoded, markers::RLE, data.len(), true);
 
                 // RLE encoding (run_count, value) pairs
                 let runs = compute_runs(data);
@@ -81,7 +84,7 @@ impl ProximaEncoder {
 }
 
 impl ProximaDecoder {
-    /// Decode with smart count handling
+    /// Decode with smart count handling using Proxima format
     pub fn decode_columnar(
         &self,
         data: &[u8],
@@ -91,24 +94,41 @@ impl ProximaDecoder {
             return Err(anyhow::anyhow!("Empty data"));
         }
 
-        let marker = data[0];
-        let mut offset = 1;
+        if data.len() < 2 {
+            return Err(anyhow::anyhow!("Insufficient data for Proxima format"));
+        }
 
-        // Determine element count
-        let element_count = if markers::has_count(marker) {
-            // Count is stored in data
-            let count = u32::from_le_bytes(data[offset..offset+4].try_into()?) as usize;
-            offset += 4;
-            count
-        } else {
-            // Use expected count from file header
-            expected_count.ok_or_else(|| {
-                anyhow::anyhow!("No count in data and no expected count provided")
-            })?
+        let scheme_marker = data[0];
+        let count_mode = data[1];
+        let mut offset = 2;
+
+        // Extract count based on count mode
+        let element_count = match count_mode {
+            markers::COUNT_MODE_NONE => {
+                expected_count.ok_or_else(|| anyhow::anyhow!("No count in data and no expected count provided"))?
+            },
+            markers::COUNT_MODE_U8 => {
+                let c = data[offset] as usize;
+                offset += 1;
+                c
+            },
+            markers::COUNT_MODE_U16 => {
+                let c = u16::from_le_bytes(data[offset..offset+2].try_into()?) as usize;
+                offset += 2;
+                c
+            },
+            markers::COUNT_MODE_U32 => {
+                let c = u32::from_le_bytes(data[offset..offset+4].try_into()?) as usize;
+                offset += 4;
+                c
+            },
+            _ => {
+                return Err(anyhow::anyhow!("Invalid count mode: 0x{:02x}", count_mode));
+            }
         };
 
         // Decode based on scheme
-        match markers::base_scheme(marker) {
+        match scheme_marker {
             markers::DELTA => {
                 let base = i64::from_le_bytes(data[offset..offset+8].try_into()?);
                 offset += 8;
@@ -134,7 +154,7 @@ impl ProximaDecoder {
                 Ok(result)
             },
             // ... other schemes
-            _ => Err(anyhow::anyhow!("Unknown scheme: 0x{:02x}", marker))
+            _ => Err(anyhow::anyhow!("Unknown scheme: 0x{:02x}", scheme_marker))
         }
     }
 }

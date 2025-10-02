@@ -151,6 +151,7 @@ pub mod block_structures;
 pub mod bloom_filter; // Row-based bloom filter for SST and Swift
 // Block-level compression now integrated into main block_structures.rs
 pub mod compression_config;
+pub mod engine_profile; // Engine-specific optimization profiles
 pub mod index_structures;
 // Quantization now handled by unified compute module
 pub mod batch_operations;

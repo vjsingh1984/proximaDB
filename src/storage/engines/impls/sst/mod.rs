@@ -1206,19 +1206,17 @@ mod block_utils {
         }
     }
 
-    /// Encode vectors using Proxima SIMD-optimized encoding
+    /// Deprecated: Not used in production - ProximaDataBlock handles encoding internally
+    #[allow(dead_code)]
     pub fn encode_with_proxima(block: &ProximaDataBlock) -> anyhow::Result<Vec<u8>> {
-        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        use crate::storage::engines::core::ops::unified_proxima_simd::{
-            UnifiedProximaSIMD, EngineProfile,
-        };
-        use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
+        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
+        use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme as CodecScheme;
         use std::io::Write;
 
         // Get dimension from the first record since metadata doesn't have it directly
         let dimension = block.records.first().map(|r| r.vector.len()).unwrap_or(0);
 
-        // Transpose vectors from row-major to column-major for SIMD
+        // Transpose vectors from row-major to column-major
         let mut columns: Vec<Vec<f32>> = vec![vec![]; dimension];
         for record in &block.records {
             for (dim_idx, &value) in record.vector.iter().enumerate() {
@@ -1228,18 +1226,30 @@ mod block_utils {
             }
         }
 
-        // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
-        let simd_encoder = UnifiedProximaSIMD::new(EngineProfile::SST)?;
-        let scheme = ProximaScheme::BitPacked { bits: 16 };
+        // Use ProximaCodec for hardware-aware encoding
+        let codec = ProximaCodec::global();
         let mut encoded_data = Vec::new();
 
         // Write metadata first
         encoded_data.write_all(&(dimension as u32).to_le_bytes())?;
         encoded_data.write_all(&(block.records.len() as u32).to_le_bytes())?;
 
-        // Encode each column with SIMD acceleration
+        // Encode each column with adaptive scheme selection
         for column in columns {
-            let encoded_column = simd_encoder.simd_encode_dimension(&column, &scheme)?;
+            // Analyze pattern and choose optimal scheme
+            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&column);
+
+            // Override lossy schemes with lossless alternatives
+            let scheme = match &detected_scheme {
+                CodecScheme::Simple8b | CodecScheme::RunLength |
+                CodecScheme::VByte | CodecScheme::Zigzag { .. } |
+                CodecScheme::PForDelta { .. } => {
+                    CodecScheme::Delta { base: 0 }
+                },
+                _ => detected_scheme.clone(),
+            };
+
+            let encoded_column = codec.encode(&column, scheme)?;
             encoded_data.write_all(&(encoded_column.len() as u32).to_le_bytes())?;
             encoded_data.write_all(&encoded_column)?;
         }
@@ -1260,9 +1270,7 @@ mod block_utils {
 
     /// Decode vectors from Proxima format
     pub fn decode_with_proxima(data: &[u8], marker: u8) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::storage::engines::core::ops::proximaencoder::{
-            ProximaDecoder, ProximaScheme,
-        };
+        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
         use std::io::Read;
 
         let mut cursor = std::io::Cursor::new(data);
@@ -1287,7 +1295,7 @@ mod block_utils {
             _ => ProximaScheme::BitPacked { bits: 32 },
         };
 
-        let decoder = ProximaDecoder::new(scheme);
+        let codec = ProximaCodec::global();
 
         // Decode each dimension column
         let mut columns = Vec::with_capacity(dimension);
@@ -1298,7 +1306,7 @@ mod block_utils {
             let mut column_data = vec![0u8; column_len];
             cursor.read_exact(&mut column_data)?;
 
-            let decoded_column = decoder.decode_f32(&column_data, Some(vector_count))?;
+            let decoded_column = codec.decode(&column_data)?;
             columns.push(decoded_column);
         }
 

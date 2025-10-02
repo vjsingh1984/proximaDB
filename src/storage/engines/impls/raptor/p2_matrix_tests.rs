@@ -6,7 +6,7 @@ mod tests {
     use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
     // P2Matrix not available in infrastructure module
     // use crate::infrastructure::P2Matrix;
-    use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
+    use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
     use anyhow::Result;
     use tempfile::TempDir;
 
@@ -145,7 +145,9 @@ mod tests {
     async fn test_p2_matrix_proximaencoder() -> Result<()> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-        use crate::storage::engines::core::ops::proximaencoder::ProximaEncoder;
+        // Use ProximaCodec for encoding (migrated from old ProximaEncoder)
+        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
+        use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme as CodecScheme;
 
         // Create larger set of vectors to test compression
         let mut vectors = Vec::new();
@@ -172,12 +174,24 @@ mod tests {
         let quantization_engine = StorageQuantizationEngine::new_default();
         let (quantized, min_dist, max_dist) = quantization_engine.quantize_to_u8(&distances);
 
-        // Apply Proxima encoding
-        let proxima_encoder = ProximaEncoder::new(ProximaScheme::Dictionary);
-        let quantized_i64: Vec<i64> = quantized.iter().map(|&v| v as i64).collect();
-        let scheme = crate::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme(&quantized_i64);
-        let quantized_i8: Vec<i8> = quantized.iter().map(|&v| v as i8).collect();
-        let encoded = proxima_encoder.encode_int8(&quantized_i8)?;
+        // Apply ProximaCodec encoding
+        let codec = ProximaCodec::global();
+        let quantized_i32: Vec<i32> = quantized.iter().map(|&v| v as i32).collect();
+
+        // Analyze and choose optimal scheme for i32 data
+        let detected_scheme = analysis::analyze_and_choose_scheme_i32(&quantized_i32);
+
+        // Override lossy schemes
+        let scheme = match &detected_scheme {
+            CodecScheme::Simple8b | CodecScheme::RunLength |
+            CodecScheme::VByte | CodecScheme::Zigzag { .. } |
+            CodecScheme::PForDelta { .. } => {
+                CodecScheme::Delta { base: 0 }
+            },
+            _ => detected_scheme.clone(),
+        };
+
+        let encoded = codec.encode_i32(&quantized_i32, scheme)?;
 
         // Verify compression
         let uncompressed_size = 32 * 31 / 2; // Upper triangle size

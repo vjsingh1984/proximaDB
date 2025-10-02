@@ -17,6 +17,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
+use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
     UnifiedStorageEngine,
@@ -1266,9 +1267,7 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
     }
 
     fn deserialize_proxima_batch(&self, data: &[u8], marker: u8) -> Result<RecordBatch> {
-        use crate::storage::engines::core::ops::proximaencoder::{
-            ProximaDecoder, ProximaScheme,
-        };
+        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
         use arrow_array::{ArrayRef, Float32Array, Int64Array, StringArray, UInt32Array};
         use std::io::Read;
 
@@ -1293,13 +1292,9 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             let mut column_data = vec![0u8; column_len];
             cursor.read_exact(&mut column_data)?;
 
-            // Decode using Proxima
-            // The scheme information should be embedded in the column data
-            let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
-                reference: 0,
-                bits: 16,
-            });
-            let decoded = decoder.decode_f32(&column_data, Some(num_vectors))?; // Pass expected count for smart decoding
+            // Decode using ProximaCodec
+            let codec = ProximaCodec::global();
+            let decoded = codec.decode(&column_data)?;
             columns.push(decoded);
         }
 
@@ -1423,14 +1418,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             cursor.read_exact(&mut values_data)?;
 
             // Decode values using Proxima
-            use crate::storage::engines::core::ops::proximaencoder::{
-                ProximaDecoder, ProximaScheme,
-            };
-            let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
-                reference: 0,
-                bits: 16,
-            });
-            let values = decoder.decode_f32(&values_data, Some(num_nonzeros))?; // Pass expected count for smart decoding
+            let codec = ProximaCodec::global();
+            let values = codec.decode(&values_data)?;
 
             // Reconstruct dense vectors from sparse representation
             let mut dense_vectors = vec![0.0f32; num_vectors * dimension];
@@ -1470,14 +1459,8 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
             let mut values_data = vec![0u8; values_len];
             cursor.read_exact(&mut values_data)?;
 
-            use crate::storage::engines::core::ops::proximaencoder::{
-                ProximaDecoder, ProximaScheme,
-            };
-            let decoder = ProximaDecoder::new(ProximaScheme::FrameOfReference {
-                reference: 0,
-                bits: 16,
-            });
-            let values = decoder.decode_f32(&values_data, Some(num_nonzeros))?; // Pass expected count for smart decoding
+            let codec = ProximaCodec::global();
+            let values = codec.decode(&values_data)?;
 
             // Reconstruct dense vectors from CSR
             let mut dense_vectors = vec![0.0f32; num_vectors * dimension];

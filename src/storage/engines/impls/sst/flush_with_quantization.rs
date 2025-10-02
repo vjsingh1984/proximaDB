@@ -10,7 +10,7 @@ use crate::compute::quantization::precompute::{
 use crate::storage::engines::core::formats::proximablocks::{
     ProximaDataBlock, BlockCompressionConfig, VectorEncodingLayout, QuantizedSection
 };
-use crate::storage::engines::core::ops::unified_proxima_simd::EngineProfile;
+// EngineProfile functionality is now in ProximaCodec
 use crate::proto::proximadb_v1::VectorRecord;
 
 impl SstEngine {

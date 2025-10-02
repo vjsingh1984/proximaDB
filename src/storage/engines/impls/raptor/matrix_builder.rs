@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 
 use super::common::{
     CompressionType, DeltaEntry, HierarchicalData, InterCentroidCompressionMetadata,

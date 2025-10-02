@@ -17,7 +17,8 @@ use crate::index::axis::clustering::{
     ReusableClusteringEngine,
 };
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
+// ProximaCodec is now used in writer.rs for encoding
+use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -28,7 +29,7 @@ pub struct RaptorCompactor {
 
     // DIRECT references to unified modules
     distance_compute: Arc<UnifiedDistanceCompute>,
-    proxima_encoder: ProximaEncoder,
+    // Note: proxima_encoder removed - encoding now done via ProximaCodec in writer.rs
     filesystem: Arc<dyn FileSystem>,
     transaction_coordinator: Arc<TransactionCoordinator>,
 }
@@ -40,17 +41,11 @@ impl RaptorCompactor {
         filesystem: Arc<dyn FileSystem>,
         transaction_coordinator: Arc<TransactionCoordinator>,
     ) -> Self {
-        let proxima_scheme = if config.use_proximaencoder {
-            ProximaScheme::BitPacked { bits: 32 }
-        } else {
-            ProximaScheme::BitPacked { bits: 32 }
-        };
-
         Self {
             config,
             reader,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
-            proxima_encoder: ProximaEncoder::new(proxima_scheme),
+            // Note: proxima_encoder removed - encoding now done via ProximaCodec in writer.rs
             filesystem,
             transaction_coordinator,
         }

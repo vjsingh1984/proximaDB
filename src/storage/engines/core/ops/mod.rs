@@ -41,16 +41,27 @@ pub enum ColumnData {
 /// Zero-copy reader integration examples and utilities
 pub mod zero_copy_reader_integration;
 
-/// Proxima SIMD-optimized encoding for columnar data within blocks
-/// Used by SST, SWIFT, RAPTOR, and PRISM for efficient vector storage
-///
-/// NOTE: proximaencoder is now fully modularized. The legacy monolithic module
-/// has been migrated and marked obsolete (see proximaencoder_legacy.rs.obsolete)
-pub mod proximaencoder;
+/// ProximaCodec - Modern unified encoding/decoding architecture (NEW)
+/// Replaces old ProximaEncoder/ProximaDecoder with clean design:
+/// - Single entry point: ProximaCodec::global()
+/// - Hardware-aware routing: GPU → SIMD → Baseline
+/// - Versioned wire format
+/// - Unified metrics integration
+pub mod proximacodec;
 
-/// Unified Proxima SIMD optimization module for HELIX, SST, and SWIFT engines
-/// Provides hardware-accelerated encoding/decoding with engine-specific optimizations
-pub mod unified_proxima_simd;
+/// OBSOLETE: Old encoder/decoder modules - replaced by proximacodec
+///
+/// The old proximaencoder and unified_proxima_simd modules have been moved to .obsolete
+/// to force all remaining call sites to migrate to the new ProximaCodec API.
+///
+/// Migration: Replace `ProximaEncoder`/`ProximaDecoder` with `ProximaCodec::global()`
+/// See: src/storage/engines/core/ops/proximacodec/
+///
+/// Modules are kept as .obsolete for reference but not compiled:
+/// - proximaencoder.obsolete/
+/// - unified_proxima_simd.obsolete/
+// pub mod proximaencoder;  // OBSOLETE - use proximacodec instead
+// pub mod unified_proxima_simd;  // OBSOLETE - use proximacodec instead
 
 /// SIMD configuration system for fine-tuning optimization behavior
 pub mod simd_config;

@@ -64,10 +64,7 @@ use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, HashAlgorithm};
 use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, ProximaBlockMetadata};
 
-// NEW: Import unified SIMD module for SST optimization
-use crate::storage::engines::core::ops::unified_proxima_simd::{
-    UnifiedProximaSIMD, EngineProfile, SIMDConfig,
-};
+// UnifiedProximaSIMD functionality is now in ProximaCodec
 
 /// ✅ SST-specific metadata using Proxima composition pattern (like HELIX)
 /// This follows the same pattern as HelixBlockMetadata but for SST engine optimizations
@@ -105,8 +102,9 @@ use crate::core::compression::{
     CompressionContext, CompressionProvider, StandardCompression,
 };
 
-// Proxima encoding delegation
-use crate::storage::engines::core::ops::proximaencoder::{ProximaEncoder, ProximaScheme};
+// ProximaCodec system for encoding/decoding
+use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, types::ProximaScheme};
+use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
 
 /// Proxima encoding markers as constants
 mod encoding_markers {
@@ -1189,13 +1187,10 @@ impl SstableWriter {
             return Ok(data_block.clone());
         }
 
-        // Analyze vectors to choose optimal Proxima scheme
-        let scheme = self.analyze_vector_patterns(&data_block.records)?;
+        // Note: Vector encoding is now handled by ProximaDataBlock which uses ProximaCodec
+        // No need for separate encoding here - ProximaDataBlock serialization handles it
 
-        // Create encoder with chosen scheme
-        let encoder = ProximaEncoder::new(scheme);
-
-        // Clone the block and encode vector data using Proxima
+        // Clone the block - encoding happens during serialization
         let encoded_block = data_block.clone();
 
         // SST can handle multiple quantization levels in the same block

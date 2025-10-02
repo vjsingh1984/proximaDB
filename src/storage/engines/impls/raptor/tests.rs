@@ -300,7 +300,9 @@ mod tests {
 
         // First result should be the exact match
         assert_eq!(results[0].id, "vec1");
-        assert!(results[0].score < 0.01); // Very close to 0 distance
+        // score is a SIMILARITY score (higher = more similar), not distance
+        // For an exact match with cosine similarity, score should be ~1.0
+        assert!(results[0].score > 0.99, "Expected similarity score > 0.99 for exact match, got {}", results[0].score);
 
         Ok(())
     }

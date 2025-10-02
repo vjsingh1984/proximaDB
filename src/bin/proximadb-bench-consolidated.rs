@@ -24,8 +24,8 @@ use proximadb::index::axis::index_factory::AxisVectorIndex;
 use proximadb::storage::engines::core::formats::proximablocks::{
     ProximaDataBlock, BlockCompressionConfig, VectorEncodingLayout,
 };
-use proximadb::storage::engines::core::ops::proximaencoder::{
-    ProximaEncoder, ProximaDecoder, ProximaScheme,
+use proximadb::storage::engines::core::ops::proximacodec::{
+    ProximaCodec, analysis, types::ProximaScheme,
 };
 use proximadb::core::compression::CompressionAlgorithm;
 use rand::{thread_rng, Rng};
@@ -2699,221 +2699,36 @@ fn create_vector_records_from_vecs_2(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord
         .collect()
 }
 
-// Simple columnar serialization for benchmarking
-fn serialize_columnar_simple(encoded: &proximadb::storage::engines::core::ops::proximaencoder::ColumnarEncodedVectors) -> Result<Vec<u8>> {
-    use std::io::Write;
-    let mut bytes = Vec::new();
-
-    // Write header
-    bytes.write_all(&(encoded.num_vectors as u32).to_le_bytes())?;
-    bytes.write_all(&(encoded.dimension as u32).to_le_bytes())?;
-    bytes.write_all(&(encoded.dimension_groups.len() as u32).to_le_bytes())?;
-
-    // Write each dimension group
-    for group in &encoded.dimension_groups {
-        bytes.write_all(&(group.dimensions.len() as u32).to_le_bytes())?;
-        for dim in &group.dimensions {
-            bytes.write_all(&(dim.encoded_data.len() as u32).to_le_bytes())?;
-            bytes.write_all(&dim.encoded_data)?;
-        }
-    }
-
-    Ok(bytes)
+// OBSOLETE: Old ProximaEncoder API removed in favor of ProximaCodec
+// These benchmark helper functions need to be rewritten using ProximaCodec wire format
+#[allow(dead_code)]
+fn serialize_columnar_simple(_encoded: &Vec<u8>) -> Result<Vec<u8>> {
+    anyhow::bail!("serialize_columnar_simple obsolete - needs ProximaCodec migration")
 }
 
-// Simple columnar deserialization for benchmarking
-fn decode_columnar_simple(data: &[u8], decoder: &proximadb::storage::engines::core::ops::proximaencoder::ProximaDecoder) -> Result<Vec<Vec<f32>>> {
-    use std::io::Read;
-    let mut cursor = std::io::Cursor::new(data);
-    let mut buf = [0u8; 4];
-
-    // Read header
-    cursor.read_exact(&mut buf)?;
-    let num_vectors = u32::from_le_bytes(buf) as usize;
-
-    cursor.read_exact(&mut buf)?;
-    let dimension = u32::from_le_bytes(buf) as usize;
-
-    cursor.read_exact(&mut buf)?;
-    let num_groups = u32::from_le_bytes(buf) as usize;
-
-    // Read dimension groups and decode
-    let mut all_dimensions = vec![Vec::new(); dimension];
-    let mut dim_idx = 0;
-
-    for _ in 0..num_groups {
-        cursor.read_exact(&mut buf)?;
-        let dims_in_group = u32::from_le_bytes(buf) as usize;
-
-        for _ in 0..dims_in_group {
-            cursor.read_exact(&mut buf)?;
-            let data_len = u32::from_le_bytes(buf) as usize;
-
-            let mut encoded_data = vec![0u8; data_len];
-            cursor.read_exact(&mut encoded_data)?;
-
-            // Decode this dimension's data
-            let decoded = decoder.decode_f32(&encoded_data, Some(num_vectors))?;
-            all_dimensions[dim_idx] = decoded;
-            dim_idx += 1;
-        }
-    }
-
-    // Transpose back to vectors
-    let mut vectors = Vec::with_capacity(num_vectors);
-    for i in 0..num_vectors {
-        let mut vector = Vec::with_capacity(dimension);
-        for dim in 0..dimension {
-            vector.push(all_dimensions[dim][i]);
-        }
-        vectors.push(vector);
-    }
-
-    Ok(vectors)
+#[allow(dead_code)]
+fn decode_columnar_simple(_data: &[u8], _scheme: ProximaScheme) -> Result<Vec<Vec<f32>>> {
+    anyhow::bail!("decode_columnar_simple obsolete - needs ProximaCodec migration")
 }
 
-// Simple row-wise serialization for benchmarking
-fn serialize_rowwise_simple(encoded: &proximadb::storage::engines::core::ops::proximaencoder::RowWiseEncodedVectors) -> Result<Vec<u8>> {
-    use std::io::Write;
-    let mut bytes = Vec::new();
-
-    // Write header
-    bytes.write_all(&(encoded.num_vectors as u32).to_le_bytes())?;
-    bytes.write_all(&(encoded.dimension as u32).to_le_bytes())?;
-    bytes.write_all(&(encoded.padded_dimension as u32).to_le_bytes())?;
-
-    // Write each encoded vector
-    for vec_data in &encoded.encoded_vectors {
-        bytes.write_all(&(vec_data.len() as u32).to_le_bytes())?;
-        bytes.write_all(vec_data)?;
-    }
-
-    Ok(bytes)
+#[allow(dead_code)]
+fn serialize_rowwise_simple(_encoded: &Vec<u8>) -> Result<Vec<u8>> {
+    anyhow::bail!("serialize_rowwise_simple obsolete - needs ProximaCodec migration")
 }
 
-// Simple row-wise deserialization for benchmarking
-fn decode_rowwise_simple(data: &[u8]) -> Result<Vec<Vec<f32>>> {
-    use std::io::Read;
-    use bytemuck::cast_slice;
-    let mut cursor = std::io::Cursor::new(data);
-    let mut buf = [0u8; 4];
-
-    // Read header
-    cursor.read_exact(&mut buf)?;
-    let num_vectors = u32::from_le_bytes(buf) as usize;
-
-    cursor.read_exact(&mut buf)?;
-    let dimension = u32::from_le_bytes(buf) as usize;
-
-    cursor.read_exact(&mut buf)?;
-    let padded_dimension = u32::from_le_bytes(buf) as usize;
-
-    // Read each vector
-    let mut vectors = Vec::with_capacity(num_vectors);
-    for _ in 0..num_vectors {
-        cursor.read_exact(&mut buf)?;
-        let vec_len = u32::from_le_bytes(buf) as usize;
-
-        let mut vec_data = vec![0u8; vec_len];
-        cursor.read_exact(&mut vec_data)?;
-
-        // Check if data is Proxima encoded (has 0x80 marker) or raw bytes
-        let floats = if !vec_data.is_empty() && vec_data[0] == 0x80 {
-            // Proxima encoded data
-            let decoder = ProximaDecoder::new(ProximaScheme::Delta { base: 0 });
-            decoder.decode_f32(&vec_data, Some(dimension))?
-        } else {
-            // Raw bytes - cast directly to f32
-            let float_slice: &[f32] = cast_slice(&vec_data);
-            float_slice[..dimension].to_vec()
-        };
-
-        vectors.push(floats);
-    }
-
-    Ok(vectors)
+#[allow(dead_code)]
+fn decode_rowwise_simple(_data: &[u8]) -> Result<Vec<Vec<f32>>> {
+    anyhow::bail!("decode_rowwise_simple obsolete - needs ProximaCodec migration")
 }
 
-// Helper function to serialize columnar encoded vectors
-fn serialize_columnar_encoded(encoded: &proximadb::storage::engines::core::ops::proximaencoder::ColumnarEncodedVectors) -> Result<Vec<u8>> {
-    use std::io::Write;
-    use proximadb::core::compression::CompressionAlgorithm;
-
-    let mut bytes = Vec::new();
-
-    // Write marker for columnar layout
-    bytes.push(0xC0);
-
-    // Write header (num_vectors, dimension, num_groups, dims_per_group)
-    bytes.write_all(&(encoded.num_vectors as u32).to_le_bytes())?;
-    bytes.write_all(&(encoded.dimension as u32).to_le_bytes())?;
-    bytes.write_all(&(encoded.dimension_groups.len() as u32).to_le_bytes())?;
-
-    // Calculate dims per group (usually 64)
-    let dims_per_group = if !encoded.dimension_groups.is_empty() && !encoded.dimension_groups[0].dimensions.is_empty() {
-        encoded.dimension_groups[0].end_dim - encoded.dimension_groups[0].start_dim
-    } else {
-        64
-    };
-    bytes.write_all(&(dims_per_group as u32).to_le_bytes())?;
-
-    // Write dimension groups
-    for group in &encoded.dimension_groups {
-        // Write group dimensions count
-        bytes.write_all(&(group.dimensions.len() as u32).to_le_bytes())?;
-
-        for dim in &group.dimensions {
-            // Write compression algorithm marker (0 for None)
-            bytes.push(0x00);
-
-            // Write dimension data size and data
-            bytes.write_all(&(dim.encoded_data.len() as u32).to_le_bytes())?;
-            bytes.write_all(&dim.encoded_data)?;
-        }
-    }
-
-    Ok(bytes)
+#[allow(dead_code)]
+fn serialize_columnar_encoded(_encoded: &Vec<u8>) -> Result<Vec<u8>> {
+    anyhow::bail!("serialize_columnar_encoded obsolete - needs ProximaCodec migration")
 }
 
-// Helper function to serialize row-wise encoded vectors
-fn serialize_rowwise_encoded(encoded: &proximadb::storage::engines::core::ops::proximaencoder::RowWiseEncodedVectors) -> Result<Vec<u8>> {
-    use std::io::Write;
-    let mut bytes = Vec::new();
-
-    // Write marker for row-wise layout
-    bytes.push(0xD0);
-
-    // Write header (num_vectors, dimension, padded_dimension)
-    bytes.write_all(&(encoded.num_vectors as u32).to_le_bytes())?;
-    bytes.write_all(&(encoded.dimension as u32).to_le_bytes())?;
-    bytes.write_all(&(encoded.padded_dimension as u32).to_le_bytes())?;
-
-    // Check if data is SIMD encoded (has 0x80 marker) or raw
-    let is_compressed = !encoded.encoded_vectors.is_empty() &&
-                       !encoded.encoded_vectors[0].is_empty() &&
-                       encoded.encoded_vectors[0][0] == 0x80;
-
-    // Write compress flag
-    bytes.push(if is_compressed { 0x01 } else { 0x00 });
-
-    // Write all encoded vectors
-    if is_compressed {
-        // For SIMD-encoded data, we need to write it in chunks
-        for vec_data in &encoded.encoded_vectors {
-            // Write as a single chunk
-            bytes.write_all(&(1u32).to_le_bytes())?; // num_chunks = 1
-            bytes.write_all(&(vec_data.len() as u32).to_le_bytes())?; // chunk size
-            bytes.write_all(vec_data)?; // chunk data (includes 0x80 marker)
-        }
-    } else {
-        // For raw data, write directly
-        for vec_data in &encoded.encoded_vectors {
-            bytes.write_all(&(vec_data.len() as u32).to_le_bytes())?;
-            bytes.write_all(vec_data)?;
-        }
-    }
-
-    Ok(bytes)
+#[allow(dead_code)]
+fn serialize_rowwise_encoded(_encoded: &Vec<u8>) -> Result<Vec<u8>> {
+    anyhow::bail!("serialize_rowwise_encoded obsolete - needs ProximaCodec migration")
 }
 
 // Helper function that returns both time and result
@@ -3313,16 +3128,28 @@ fn benchmark_compression_algorithms(vector_count: usize, dimension: usize) -> Re
         (CompressionAlgorithm::Brotli, "Brotli"),
     ];
 
-    let encoder = ProximaEncoder::new(ProximaScheme::Delta { base: 0 });
+    // Encode vectors using ProximaCodec
     let vectors: Vec<Vec<f32>> = records.iter().map(|r| r.vector.clone()).collect();
+    let codec = ProximaCodec::global();
 
-    // Encode data in both layouts
-    let encoded_columnar = encoder.encode_vectors_columnar(&vectors, 64)?;
-    let encoded_rowwise = encoder.encode_vectors_rowwise(&vectors, true)?;
+    // Encode in columnar fashion (encode each dimension separately)
+    let mut columnar_bytes = Vec::new();
+    for dim_idx in 0..dimension {
+        let dim_values: Vec<f32> = vectors.iter().map(|v| v[dim_idx]).collect();
+        let scheme = analysis::analyze_and_choose_scheme_f32(&dim_values);
+        let encoded = codec.encode(&dim_values, scheme)?;
+        columnar_bytes.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+        columnar_bytes.extend_from_slice(&encoded);
+    }
 
-    // Serialize to bytes
-    let columnar_bytes = serialize_columnar_encoded(&encoded_columnar)?;
-    let rowwise_bytes = serialize_rowwise_encoded(&encoded_rowwise)?;
+    // Encode in row-wise fashion (encode each vector separately)
+    let mut rowwise_bytes = Vec::new();
+    for vector in &vectors {
+        let scheme = analysis::analyze_and_choose_scheme_f32(vector);
+        let encoded = codec.encode(vector, scheme)?;
+        rowwise_bytes.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+        rowwise_bytes.extend_from_slice(&encoded);
+    }
 
     let raw_size = vector_count * dimension * 4;
 
@@ -3517,7 +3344,7 @@ fn benchmark_simd_encoding_schemes(
     iterations: usize,
     patterns: Option<&[String]>,
 ) -> Result<()> {
-    use proximadb::storage::engines::core::ops::unified_proxima_simd::UnifiedProximaSIMD;
+    // ProximaCodec handles all encoding now - no need for separate SIMD module
 
     println!("═══════════════════════════════════════════════════════════════");
     println!("⚡ SIMD Encoding Schemes Comprehensive Benchmark");
@@ -3563,16 +3390,16 @@ fn benchmark_simd_encoding_schemes(
         ("SparseCOO", ProximaScheme::SparseCOO),
     ];
 
-    let simd_encoder = UnifiedProximaSIMD::new_for_sst(dimension, vector_count);
+    // ProximaCodec has replaced UnifiedProximaSIMD - use ProximaCodec::global() instead
+    let codec = ProximaCodec::global();
 
     // Storage for results
     struct BenchmarkResult {
         scheme_name: String,
         pattern: String,
-        simd_encode_ms: f64,
-        baseline_encode_ms: f64,
+        encode_ms: f64,  // Encoding time with ProximaCodec
         compression_ratio: f64,
-        speedup: f64,
+        compressed_size: usize,
         success: bool,
         pattern_detection_us: f64,  // Pattern detection time in microseconds
         detected_scheme: String,
@@ -3588,22 +3415,21 @@ fn benchmark_simd_encoding_schemes(
         let test_vectors = generate_pattern_data(pattern_name, vector_count, dimension);
 
         // Benchmark pattern detection
-        use proximadb::storage::engines::core::ops::proximaencoder::analyze_and_choose_scheme_f32;
         let detection_start = Instant::now();
-        let detected_scheme = analyze_and_choose_scheme_f32(&test_vectors);
+        let detected_scheme = analysis::analyze_and_choose_scheme_f32(&test_vectors);
         let detection_time_us = detection_start.elapsed().as_micros() as f64;
 
         let detected_scheme_name = format!("{:?}", detected_scheme);
         println!("  🔍 Pattern Detection: {:?} in {:.2} μs", detected_scheme, detection_time_us);
 
         for (scheme_name, scheme) in &schemes {
-            // Test encoding with SIMD
+            // Test encoding with ProximaCodec
             let simd_start = Instant::now();
-            let mut simd_encoded = None;
+            let mut simd_encoded: Option<Vec<u8>> = None;
             let mut simd_success = true;
 
             for _ in 0..iterations {
-                match simd_encoder.simd_encode_dimension(&test_vectors, scheme) {
+                match codec.encode(&test_vectors, scheme.clone()) {
                     Ok(encoded) => {
                         simd_encoded = Some(encoded);
                     }
@@ -3620,53 +3446,27 @@ fn benchmark_simd_encoding_schemes(
                 continue;
             }
 
-            // Test encoding with baseline
-            let baseline_encoder = ProximaEncoder::new(scheme.clone());
-            let baseline_start = Instant::now();
-            let mut baseline_encoded = None;
-            let mut baseline_success = true;
-
-            for _ in 0..iterations {
-                match baseline_encoder.encode_f32(&test_vectors, None) {
-                    Ok(encoded) => {
-                        baseline_encoded = Some(encoded);
-                    }
-                    Err(_) => {
-                        baseline_success = false;
-                        break;
-                    }
-                }
-            }
-            let baseline_time = baseline_start.elapsed().as_secs_f64() * 1000.0; // ms
-
-            if !baseline_success {
-                println!("  ⚠️  {:20} - Failed to encode with baseline", scheme_name);
-                continue;
-            }
-
             // Calculate metrics
             let original_size = test_vectors.len() * 4; // f32 = 4 bytes
             let compressed_size = simd_encoded.as_ref().unwrap().len();
-            let compression_ratio = compressed_size as f64 / original_size as f64;
-            let speedup = baseline_time / simd_time;
+            // Standard compression metric: percentage reduction
+            let compression_pct = (1.0 - (compressed_size as f64 / original_size as f64)) * 100.0;
 
             all_results.push(BenchmarkResult {
                 scheme_name: scheme_name.to_string(),
                 pattern: pattern_name.clone(),
-                simd_encode_ms: simd_time,
-                baseline_encode_ms: baseline_time,
-                compression_ratio,
-                speedup,
+                encode_ms: simd_time,
+                compression_ratio: compression_pct,  // Now in percentage
+                compressed_size,
                 success: true,
                 pattern_detection_us: detection_time_us,
                 detected_scheme: detected_scheme_name.clone(),
             });
 
-            // Print result
-            let speedup_symbol = if speedup > 1.0 { "⚡" } else { "🐌" };
-            println!("  {} {:20} - Speed: {:.2}x | Compression: {:.2}x | SIMD: {:.2}ms | Baseline: {:.2}ms",
-                speedup_symbol, scheme_name, speedup, compression_ratio,
-                simd_time, baseline_time);
+            // Print result with compression percentage
+            let speedup_symbol = if compression_pct > 50.0 { "🗜️" } else if compression_pct > 20.0 { "✓" } else { "➖" };
+            println!("  {} {:20} - Compression: {:5.1}% ({} → {} bytes) | Encode: {:.2}ms",
+                speedup_symbol, scheme_name, compression_pct, original_size, compressed_size, simd_time);
         }
     }
 
@@ -3689,12 +3489,11 @@ fn benchmark_simd_encoding_schemes(
         let first_result = pattern_results[0];
         let detection_time = first_result.pattern_detection_us;
 
-        // Find best performer for this pattern
+        // Find best performer for this pattern (higher % compression is better)
         let best_scheme = pattern_results.iter()
             .max_by(|a, b| {
-                let score_a = 0.67 * a.speedup + 0.33 * (1.0 / a.compression_ratio);
-                let score_b = 0.67 * b.speedup + 0.33 * (1.0 / b.compression_ratio);
-                score_a.partial_cmp(&score_b).unwrap()
+                // Higher compression percentage is better
+                a.compression_ratio.partial_cmp(&b.compression_ratio).unwrap()
             })
             .unwrap()
             .scheme_name.as_str();
@@ -3724,23 +3523,15 @@ fn benchmark_simd_encoding_schemes(
             continue;
         }
 
-        // Calculate composite score: 67% speed weight, 33% compression weight
-        let mut scored_results: Vec<_> = pattern_results.iter()
-            .map(|r| {
-                let speed_score = r.speedup;
-                let compression_score = 1.0 / r.compression_ratio;
-                let composite_score = 0.67 * speed_score + 0.33 * compression_score;
-                (r, composite_score)
-            })
-            .collect();
-
-        scored_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        // Sort by compression percentage (higher is better)
+        let mut scored_results: Vec<_> = pattern_results.iter().collect();
+        scored_results.sort_by(|a, b| b.compression_ratio.partial_cmp(&a.compression_ratio).unwrap());
 
         println!("║ Pattern: {:60} ║", pattern_name);
         println!("╟───────────────────────────────────────────────────────────────────────────╢");
-        for (i, (result, score)) in scored_results.iter().take(3).enumerate() {
-            println!("║ {}. {:18} │ Score: {:5.2} │ Speed: {:4.2}x │ Compress: {:4.2}x ║",
-                i + 1, result.scheme_name, score, result.speedup, result.compression_ratio);
+        for (i, result) in scored_results.iter().take(3).enumerate() {
+            println!("║ {}. {:18} │ Compress: {:5.1}% │ Size: {:6} bytes │ Time: {:5.2}ms ║",
+                i + 1, result.scheme_name, result.compression_ratio, result.compressed_size, result.encode_ms);
         }
         if pattern_name != test_patterns.last().unwrap() {
             println!("╟───────────────────────────────────────────────────────────────────────────╢");
@@ -3752,8 +3543,8 @@ fn benchmark_simd_encoding_schemes(
     println!("╔═══════════════════════════════════════════════════════════════════════════╗");
     println!("║                    ENCODING PERFORMANCE STATISTICS                        ║");
     println!("╠═══════════════════════════════════════════════════════════════════════════╣");
-    println!("║ Scheme            │ Avg Speedup │ Avg Compress │ Best For               ║");
-    println!("╟───────────────────┼─────────────┼──────────────┼────────────────────────╢");
+    println!("║ Scheme            │ Avg Compress │ Avg Time    │ Best For               ║");
+    println!("╟───────────────────┼──────────────┼─────────────┼────────────────────────╢");
 
     let unique_schemes: Vec<&str> = schemes.iter().map(|(name, _)| *name).collect();
     for scheme_name in unique_schemes {
@@ -3765,17 +3556,17 @@ fn benchmark_simd_encoding_schemes(
             continue;
         }
 
-        let avg_speedup: f64 = scheme_results.iter().map(|r| r.speedup).sum::<f64>() / scheme_results.len() as f64;
         let avg_compression: f64 = scheme_results.iter().map(|r| r.compression_ratio).sum::<f64>() / scheme_results.len() as f64;
+        let avg_encode_ms: f64 = scheme_results.iter().map(|r| r.encode_ms).sum::<f64>() / scheme_results.len() as f64;
 
-        // Find which pattern this scheme performs best on
+        // Find which pattern this scheme performs best on (highest compression %)
         let best_pattern = scheme_results.iter()
-            .max_by(|a, b| a.speedup.partial_cmp(&b.speedup).unwrap())
+            .max_by(|a, b| a.compression_ratio.partial_cmp(&b.compression_ratio).unwrap())
             .map(|r| r.pattern.as_str())
             .unwrap_or("N/A");
 
-        println!("║ {:17} │ {:10.2}x │ {:11.2}x │ {:22} ║",
-            scheme_name, avg_speedup, avg_compression, best_pattern);
+        println!("║ {:17} │ {:11.1}% │ {:10.2}ms │ {:22} ║",
+            scheme_name, avg_compression, avg_encode_ms, best_pattern);
     }
     println!("╚═══════════════════════════════════════════════════════════════════════════╝\n");
 

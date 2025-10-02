@@ -19,10 +19,8 @@ use crate::storage::engines::core::formats::proximablocks::block_structures::{
 use crate::core::{VectorRecord, compression::CompressionAlgorithm};
 use crate::storage::persistence::filesystem::FileSystem;
 
-// NEW: Import the unified SIMD module (now integrated into ProximaDataBlock)
-use crate::storage::engines::core::ops::unified_proxima_simd::{
-    UnifiedProximaSIMD, EngineProfile, SIMDConfig,
-};
+// ProximaDataBlock now uses ProximaCodec internally
+use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
 
 // Re-export for convenience
 pub use crate::storage::engines::core::formats::proximablocks::block_structures::ProximaMetadata as ProximaMetadata;

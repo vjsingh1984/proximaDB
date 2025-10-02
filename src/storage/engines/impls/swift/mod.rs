@@ -179,11 +179,9 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::core::bloom::SstableBloomFilter;
 // Proxima encoding for columnar vector optimization
 
-// NEW: SIMD optimization for SWIFT low-latency requirements
-use crate::storage::engines::core::ops::unified_proxima_simd::{
-    UnifiedProximaSIMD, EngineProfile, SIMDConfig,
-};
-use crate::storage::engines::core::ops::proximaencoder::ProximaScheme;
+// ProximaCodec system for encoding/decoding
+use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, types::ProximaScheme};
+use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;
 // NOTE: Quantization now uses unified engine from compute module
 
 // Import Proxima common structures (SWIFT uses hierarchical structure)
@@ -333,8 +331,7 @@ pub struct SwiftFile {
     /// Memory management
     memory_manager: Arc<MemoryManager>,
 
-    /// SIMD-optimized Proxima encoder for low-latency operations
-    simd_encoder: UnifiedProximaSIMD,
+    // Note: simd_encoder removed - encoding now done via ProximaCodec per-operation
 }
 
 /// Magic constant for SWIFT files (4 bytes)
@@ -714,7 +711,7 @@ impl SwiftFile {
                 max_memory_bytes: 4 * 1024 * 1024 * 1024, // 4GB
                 current_usage: std::sync::atomic::AtomicUsize::new(0),
             }),
-            simd_encoder: UnifiedProximaSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder"),
+            // Note: simd_encoder removed - encoding now done via ProximaCodec per-operation
         }
     }
 
@@ -791,7 +788,7 @@ impl SwiftFile {
                 // TODO: Implement proper bloom filter aggregation
                 if let Some(ref first_block) = superblock.blocks.first() {
                     if let Some(ref bloom) = first_block.bloom_filter {
-                        let bloom_bytes = bloom.serialize()?;
+                        let bloom_bytes: Vec<u8> = bloom.serialize()?;
                         buffer.extend_from_slice(&(bloom_bytes.len() as u32).to_le_bytes());
                         buffer.extend_from_slice(&bloom_bytes);
                     } else {
@@ -932,7 +929,7 @@ impl SwiftFile {
                 max_memory_bytes: 4 * 1024 * 1024 * 1024,
                 current_usage: std::sync::atomic::AtomicUsize::new(0),
             }),
-            simd_encoder: UnifiedProximaSIMD::new(EngineProfile::Swift).expect("Failed to create Swift SIMD encoder"),
+            // Note: simd_encoder removed - encoding now done via ProximaCodec per-operation
         })
     }
 
