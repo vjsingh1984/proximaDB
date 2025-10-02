@@ -120,7 +120,7 @@ use std::arch::x86_64::*;
 use std::arch::aarch64::*;
 
 /// Cached SIMD backend (detected once at process start)
-static SIMD_BACKEND: OnceLock<SIMDBackend> = OnceLock::new();
+static SIMD_BACKEND: OnceLock<HardwareBackend> = OnceLock::new();
 
 /// Global memory pool for SIMD operations (zero-allocation hot paths)
 static SIMD_MEMORY_POOL: OnceLock<Arc<VectorMemoryPool>> = OnceLock::new();
@@ -131,10 +131,10 @@ fn get_memory_pool() -> Arc<VectorMemoryPool> {
         .get_or_init(|| {
             let backend = get_simd_backend();
 
-            // Configure pool based on acceleration backend
+            // Configure pool based on hardware backend
             let config = match backend {
                 // GPU backends: Large pools for high throughput
-                AccelerationBackend::CUDA | AccelerationBackend::ROCm => PoolConfig {
+                HardwareBackend::CUDA | HardwareBackend::ROCm => PoolConfig {
                     initial_size: 32,
                     max_size: 512,
                     min_size: 16,
@@ -143,7 +143,7 @@ fn get_memory_pool() -> Arc<VectorMemoryPool> {
                 },
 
                 // MPS: Medium-large pools (unified memory)
-                AccelerationBackend::MPS | AccelerationBackend::OpenCL => PoolConfig {
+                HardwareBackend::MPS | HardwareBackend::OpenCL => PoolConfig {
                     initial_size: 24,
                     max_size: 384,
                     min_size: 12,
@@ -152,8 +152,8 @@ fn get_memory_pool() -> Arc<VectorMemoryPool> {
                 },
 
                 // CPU SIMD: Medium pools
-                AccelerationBackend::AVX512 | AccelerationBackend::AVX2 |
-                AccelerationBackend::NEON | AccelerationBackend::SSE => PoolConfig {
+                HardwareBackend::AVX512 | HardwareBackend::AVX2 |
+                HardwareBackend::NEON | HardwareBackend::SSE => PoolConfig {
                     initial_size: 16,
                     max_size: 256,
                     min_size: 8,
@@ -162,7 +162,7 @@ fn get_memory_pool() -> Arc<VectorMemoryPool> {
                 },
 
                 // Scalar: Small pools
-                AccelerationBackend::Scalar => PoolConfig {
+                HardwareBackend::Scalar => PoolConfig {
                     initial_size: 4,
                     max_size: 64,
                     min_size: 2,
@@ -203,163 +203,23 @@ fn acquire_compression_buffer() -> crate::core::memory::pool::PooledItem<Vec<u8>
     pool.compression_buffers.acquire()
 }
 
-/// Acceleration backend selection (SIMD + GPU)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AccelerationBackend {
-    // ===== GPU Backends (Highest Priority) =====
-    /// NVIDIA CUDA (highest performance for large batches)
-    CUDA,
-    /// AMD ROCm/HIP (AMD GPU acceleration)
-    ROCm,
-    /// Apple Metal Performance Shaders (M1/M2/M3 unified memory)
-    MPS,
-    /// OpenCL (cross-platform GPU fallback)
-    OpenCL,
-
-    // ===== CPU SIMD Backends (Medium Priority) =====
-    /// AVX-512: 512-bit registers, 16x f32 processing
-    AVX512,
-    /// AVX2: 256-bit registers, 8x f32 processing
-    AVX2,
-    /// NEON: 128-bit registers, 4x f32 processing (ARM)
-    NEON,
-    /// SSE: 128-bit registers, 4x f32 processing (x86)
-    SSE,
-
-    // ===== Scalar Fallback (Lowest Priority) =====
-    /// Scalar fallback (no acceleration)
-    Scalar,
+/// Get the best available SIMD/GPU backend
+///
+/// This is a convenience wrapper around HardwareBackend::detect()
+pub fn get_simd_backend() -> HardwareBackend {
+    HardwareBackend::detect()
 }
 
-impl AccelerationBackend {
-    /// Check if this is a GPU backend
-    pub fn is_gpu(&self) -> bool {
-        matches!(
-            self,
-            AccelerationBackend::CUDA
-                | AccelerationBackend::ROCm
-                | AccelerationBackend::MPS
-                | AccelerationBackend::OpenCL
-        )
-    }
-
-    /// Check if this is a CPU SIMD backend
-    pub fn is_simd(&self) -> bool {
-        matches!(
-            self,
-            AccelerationBackend::AVX512
-                | AccelerationBackend::AVX2
-                | AccelerationBackend::NEON
-                | AccelerationBackend::SSE
-        )
-    }
-
-    /// Check if acceleration is available (not scalar)
-    pub fn has_acceleration(&self) -> bool {
-        !matches!(self, AccelerationBackend::Scalar)
-    }
-}
-
-/// Legacy alias for compatibility
-pub type SIMDBackend = AccelerationBackend;
-
-impl AccelerationBackend {
-    /// Get the optimal acceleration backend for this platform (GPU > SIMD > Scalar)
-    ///
-    /// ## Compilation Strategy
-    /// - Uses `#[cfg(...)]` to compile only supported backends for this platform
-    /// - Runtime detection selects the best available backend from compiled options
-    /// - Gracefully falls back if hardware not available (e.g., no GPU installed)
-    ///
-    /// ## Priority Order
-    /// 1. GPU backends (CUDA, ROCm, MPS, OpenCL) - for large batches >1000 vectors
-    /// 2. CPU SIMD (AVX-512, AVX2, NEON, SSE) - for medium batches 100-1000 vectors
-    /// 3. Scalar fallback - for small batches <100 vectors or no acceleration
-    pub fn detect() -> Self {
-        let hw = get_hardware_capabilities();
-
-        // Get preferred backend from hardware capabilities
-        let preferred = hw.preferred_backend();
-
-        // ===== TIER 1: GPU ACCELERATION (cfg-gated) =====
-
-        // CUDA support (requires feature = "cuda" or feature = "gpu")
-        #[cfg(all(feature = "gpu", target_os = "linux"))]
-        if hw.has_gpu() && matches!(preferred, HardwareBackend::CUDA) {
-            return AccelerationBackend::CUDA;
-        }
-
-        // ROCm support (requires feature = "gpu", AMD-specific)
-        #[cfg(all(feature = "gpu", target_os = "linux"))]
-        if hw.has_gpu() && matches!(preferred, HardwareBackend::ROCm) {
-            return AccelerationBackend::ROCm;
-        }
-
-        // MPS support (requires feature = "gpu", macOS M1/M2/M3 only)
-        #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
-        if hw.has_gpu() && matches!(preferred, HardwareBackend::MPS) {
-            return AccelerationBackend::MPS;
-        }
-
-        // OpenCL support (requires feature = "gpu", cross-platform fallback)
-        #[cfg(feature = "gpu")]
-        if hw.has_gpu() && matches!(preferred, HardwareBackend::OpenCL) {
-            return AccelerationBackend::OpenCL;
-        }
-
-        // ===== TIER 2: CPU SIMD (cfg-gated by architecture) =====
-
-        // AVX-512 (x86_64 only, requires CPU support)
-        #[cfg(target_arch = "x86_64")]
-        if hw.has_avx512() {
-            return AccelerationBackend::AVX512;
-        }
-
-        // AVX2 (x86_64 only, most modern Intel/AMD CPUs)
-        #[cfg(target_arch = "x86_64")]
-        if hw.cpu.features.avx2_support {
-            return AccelerationBackend::AVX2;
-        }
-
-        // SSE4.2 (x86_64 only, fallback for older CPUs)
-        #[cfg(target_arch = "x86_64")]
-        if hw.cpu.features.sse42_support || hw.cpu.features.sse41_support {
-            return AccelerationBackend::SSE;
-        }
-
-        // NEON (ARM only, Apple Silicon, ARM servers)
-        #[cfg(target_arch = "aarch64")]
-        if matches!(preferred, HardwareBackend::NEON) {
-            return AccelerationBackend::NEON;
-        }
-
-        // ===== TIER 3: SCALAR FALLBACK (always available) =====
-        AccelerationBackend::Scalar
-    }
-
-    /// Get the vector width (number of f32 elements processed in parallel)
-    pub fn vector_width(&self) -> usize {
-        match self {
-            // GPU backends (process large batches in parallel)
-            AccelerationBackend::CUDA | AccelerationBackend::ROCm => 1024, // Typical GPU warp/wavefront
-            AccelerationBackend::MPS => 32, // Metal SIMD group size
-            AccelerationBackend::OpenCL => 256, // Typical work group size
-
-            // CPU SIMD backends
-            AccelerationBackend::AVX512 => 16,
-            AccelerationBackend::AVX2 => 8,
-            AccelerationBackend::NEON | AccelerationBackend::SSE => 4,
-
-            // Scalar fallback
-            AccelerationBackend::Scalar => 1,
-        }
-    }
-}
+// ===== REMOVED: AccelerationBackend =====
+// AccelerationBackend has been consolidated into HardwareBackend in core::hardware_capabilities
+// All acceleration logic (GPU, SIMD, Scalar) now lives in one place for consistency
 
 /// Get the cached SIMD backend (detects once, caches forever)
-pub fn get_simd_backend() -> SIMDBackend {
+///
+/// Returns the best available hardware backend (GPU > SIMD > Scalar)
+pub fn get_cached_backend() -> HardwareBackend {
     *SIMD_BACKEND.get_or_init(|| {
-        let backend = SIMDBackend::detect();
+        let backend = HardwareBackend::detect();
         debug!("🚀 SIMD backend detected: {:?} ({}x f32 width)", backend, backend.vector_width());
         backend
     })
@@ -394,8 +254,8 @@ pub fn simd_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
     let backend = get_simd_backend();
 
     match backend {
-        SIMDBackend::AVX2 | SIMDBackend::AVX512 => simd_delta_encode_avx2(values, base),
-        SIMDBackend::NEON => simd_delta_encode_neon(values, base),
+        HardwareBackend::AVX2 | HardwareBackend::AVX512 => simd_delta_encode_avx2(values, base),
+        HardwareBackend::NEON => simd_delta_encode_neon(values, base),
         _ => simd_delta_encode_scalar(values, base),
     }
 }
@@ -532,7 +392,7 @@ pub fn simd_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     let backend = get_simd_backend();
 
     match backend {
-        SIMDBackend::AVX2 | SIMDBackend::AVX512 => simd_bitpack_encode_avx2(values, bits),
+        HardwareBackend::AVX2 | HardwareBackend::AVX512 => simd_bitpack_encode_avx2(values, bits),
         _ => simd_bitpack_encode_scalar(values, bits),
     }
 }
@@ -628,7 +488,7 @@ pub fn has_simd_support() -> bool {
 }
 
 /// Get SIMD backend information for diagnostics
-pub fn get_simd_info() -> (SIMDBackend, usize) {
+pub fn get_simd_info() -> (HardwareBackend, usize) {
     let backend = get_simd_backend();
     (backend, backend.vector_width())
 }
@@ -665,8 +525,8 @@ pub fn simd_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
     let backend = get_simd_backend();
 
     match backend {
-        SIMDBackend::AVX2 | SIMDBackend::AVX512 => simd_delta_decode_avx2(deltas, base),
-        SIMDBackend::NEON => simd_delta_decode_neon(deltas, base),
+        HardwareBackend::AVX2 | HardwareBackend::AVX512 => simd_delta_decode_avx2(deltas, base),
+        HardwareBackend::NEON => simd_delta_decode_neon(deltas, base),
         _ => simd_delta_decode_scalar(deltas, base),
     }
 }
@@ -811,7 +671,7 @@ pub fn simd_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
     let backend = get_simd_backend();
 
     match backend {
-        SIMDBackend::AVX2 | SIMDBackend::AVX512 => simd_bitpack_decode_avx2(packed, bits, count),
+        HardwareBackend::AVX2 | HardwareBackend::AVX512 => simd_bitpack_decode_avx2(packed, bits, count),
         _ => simd_bitpack_decode_scalar(packed, bits, count),
     }
 }
@@ -904,6 +764,383 @@ fn simd_unpack_bits_scalar(packed: &[u8], bits: u8, count: usize) -> Result<Vec<
 }
 
 // ============================================================================
+// HELPER FUNCTIONS FOR ADVANCED SCHEMES
+// ============================================================================
+
+/// Helper: Pack i64 values into bits (wrapper around existing bit-packing)
+fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Convert i64 to i32 (with overflow check for safety)
+    let values_i32: Vec<i32> = values.iter().map(|&v| v as i32).collect();
+
+    // Calculate output size
+    let total_bits = values.len() * bits as usize;
+    let byte_count = (total_bits + 7) / 8;
+    let mut result = vec![0u8; byte_count];
+
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
+
+    for (i, &value) in values_i32.iter().enumerate() {
+        let bit_offset = i * bits as usize;
+        let byte_offset = bit_offset / 8;
+        let bit_in_byte = bit_offset % 8;
+
+        let masked_value = (value as u32) & mask;
+
+        // Pack value across byte boundaries if needed
+        let bits_in_first_byte = (8 - bit_in_byte).min(bits as usize);
+        result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+
+        if bits_in_first_byte < bits as usize {
+            let remaining_bits = bits as usize - bits_in_first_byte;
+            let next_byte_value = (masked_value >> bits_in_first_byte) as u8;
+            if byte_offset + 1 < result.len() {
+                result[byte_offset + 1] |= next_byte_value;
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Helper: Unpack bytes into i32 values (wrapper around existing bit-unpacking)
+fn bitunpack_bytes_to_i32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
+    simd_unpack_bits_scalar(packed, bits, count)
+}
+
+// ============================================================================
+// FRAME OF REFERENCE ENCODING (SIMD)
+// ============================================================================
+//
+// FrameOfReference: subtract reference value, then bit-pack
+// Best for: Values clustered around a common value
+//
+// Example: [100, 102, 105, 98] with reference=100, bits=3
+// → [0, 2, 5, -2] (offset from reference)
+// → bit-pack into 3 bits per value
+
+/// SIMD-accelerated Frame of Reference encoding for f32
+///
+/// # Algorithm
+/// 1. Subtract reference value from each input (creates offsets)
+/// 2. Bit-pack offsets using specified bit width
+///
+/// # Arguments
+/// * `values` - Input f32 values
+/// * `reference` - Reference value to subtract
+/// * `bits` - Bit width per value (1-32)
+pub fn simd_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits: u8) -> Result<Vec<u8>> {
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if bits == 0 || bits > 32 {
+        anyhow::bail!("Invalid bit width: {} (must be 1-32)", bits);
+    }
+
+    trace!("🔧 [SIMD] FrameOfReference encode: {} values, ref={}, {}b/val", values.len(), reference, bits);
+
+    // Step 1: Compute offsets (value - reference)
+    let reference_f32 = reference as f32;
+    let offsets: Vec<i64> = values.iter().map(|&v| (v - reference_f32) as i64).collect();
+
+    // Step 2: Bit-pack offsets
+    let packed = bitpack_i64_to_bytes(&offsets, bits)?;
+
+    debug!("✅ [SIMD] FrameOfReference encoded {} values → {} bytes", values.len(), packed.len());
+    Ok(packed)
+}
+
+/// SIMD-accelerated Frame of Reference decoding for f32
+///
+/// # Algorithm
+/// 1. Bit-unpack offsets
+/// 2. Add reference value back to each offset
+///
+/// # Arguments
+/// * `packed` - Packed bytes containing offsets
+/// * `reference` - Reference value to add back
+/// * `bits` - Bit width per value (1-32)
+/// * `count` - Number of values to decode
+pub fn simd_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: u8, count: usize) -> Result<Vec<f32>> {
+    if packed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if bits == 0 || bits > 32 {
+        anyhow::bail!("Invalid bit width: {} (must be 1-32)", bits);
+    }
+
+    trace!("🔧 [SIMD] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}", packed.len(), reference, bits, count);
+
+    // Step 1: Bit-unpack offsets
+    let offsets = bitunpack_bytes_to_i32(packed, bits, count)?;
+
+    // Step 2: Add reference back
+    let reference_f32 = reference as f32;
+    let values: Vec<f32> = offsets.iter().map(|&offset| offset as f32 + reference_f32).collect();
+
+    debug!("✅ [SIMD] FrameOfReference decoded {} bytes → {} values", packed.len(), values.len());
+    Ok(values)
+}
+
+// ============================================================================
+// ZIGZAG ENCODING (SIMD)
+// ============================================================================
+//
+// Zigzag encoding: maps signed integers to unsigned for better compression
+// Best for: Signed integers with small absolute values
+//
+// Mapping: 0 → 0, -1 → 1, 1 → 2, -2 → 3, 2 → 4, ...
+// Formula: (n << 1) ^ (n >> 31)  for i32
+//          (n << 1) ^ (n >> 63)  for i64
+
+/// SIMD-accelerated Zigzag encoding for f32 (via i32 reinterpretation)
+///
+/// # Algorithm
+/// 1. Reinterpret f32 bits as i32
+/// 2. Apply zigzag: (n << 1) ^ (n >> 31)
+/// 3. Bit-pack zigzag-encoded values
+///
+/// # Arguments
+/// * `values` - Input f32 values
+/// * `bits` - Bit width after zigzag encoding (1-32)
+pub fn simd_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if bits == 0 || bits > 32 {
+        anyhow::bail!("Invalid bit width: {} (must be 1-32)", bits);
+    }
+
+    trace!("🔧 [SIMD] Zigzag encode: {} values, {}b/val", values.len(), bits);
+
+    // Step 1: Reinterpret f32 as i32 and apply zigzag
+    let zigzag: Vec<i64> = values.iter().map(|&v| {
+        let n = v.to_bits() as i32;
+        let zz = (n << 1) ^ (n >> 31);
+        zz as i64
+    }).collect();
+
+    // Step 2: Bit-pack zigzag values
+    let packed = bitpack_i64_to_bytes(&zigzag, bits)?;
+
+    debug!("✅ [SIMD] Zigzag encoded {} values → {} bytes", values.len(), packed.len());
+    Ok(packed)
+}
+
+/// SIMD-accelerated Zigzag decoding for f32
+///
+/// # Algorithm
+/// 1. Bit-unpack zigzag-encoded values
+/// 2. Reverse zigzag: (n >>> 1) ^ -(n & 1)
+/// 3. Reinterpret i32 bits as f32
+///
+/// # Arguments
+/// * `packed` - Packed bytes containing zigzag-encoded values
+/// * `bits` - Bit width per value (1-32)
+/// * `count` - Number of values to decode
+pub fn simd_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
+    if packed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if bits == 0 || bits > 32 {
+        anyhow::bail!("Invalid bit width: {} (must be 1-32)", bits);
+    }
+
+    trace!("🔧 [SIMD] Zigzag decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
+
+    // Step 1: Bit-unpack zigzag values
+    let zigzag = bitunpack_bytes_to_i32(packed, bits, count)?;
+
+    // Step 2: Reverse zigzag and reinterpret as f32
+    let values: Vec<f32> = zigzag.iter().map(|&zz| {
+        let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
+        f32::from_bits(n as u32)
+    }).collect();
+
+    debug!("✅ [SIMD] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
+    Ok(values)
+}
+
+// ============================================================================
+// PFOR-DELTA ENCODING (SIMD)
+// ============================================================================
+//
+// PForDelta: Patched Frame of Reference - majority bit-width + exceptions
+// Best for: Data with outliers
+//
+// Example: [1, 2, 3, 1000] with majority_bits=2, base=0
+// → Majority values [1, 2, 3] fit in 2 bits
+// → Exception [1000] stored separately with patch offset
+
+/// SIMD-accelerated PForDelta encoding for f32
+///
+/// # Algorithm
+/// 1. Subtract base from all values
+/// 2. Identify values that fit in majority_bits (non-exceptions)
+/// 3. Bit-pack majority values
+/// 4. Store exceptions separately with their indices
+///
+/// # Wire Format
+/// [majority_count: u32][packed_majority: bytes][exception_count: u32][exceptions: (index: u32, value: i64)*]
+///
+/// # Arguments
+/// * `values` - Input f32 values
+/// * `majority_bits` - Bit width for majority values (1-32)
+/// * `base` - Base value to subtract
+pub fn simd_pfor_delta_encode_f32(values: &[f32], majority_bits: u8, base: i64) -> Result<Vec<u8>> {
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if majority_bits == 0 || majority_bits > 32 {
+        anyhow::bail!("Invalid majority_bits: {} (must be 1-32)", majority_bits);
+    }
+
+    trace!("🔧 [SIMD] PForDelta encode: {} values, {}b majority, base={}", values.len(), majority_bits, base);
+
+    // Step 1: Compute deltas (value - base)
+    let base_f32 = base as f32;
+    let deltas: Vec<i64> = values.iter().map(|&v| (v - base_f32) as i64).collect();
+
+    // Step 2: Identify exceptions (values that don't fit in majority_bits)
+    let max_value = (1i64 << majority_bits) - 1;
+    let mut majority_values = Vec::with_capacity(values.len());
+    let mut exceptions: Vec<(u32, i64)> = Vec::new();
+
+    for (idx, &delta) in deltas.iter().enumerate() {
+        if delta >= 0 && delta <= max_value {
+            majority_values.push(delta);
+        } else {
+            majority_values.push(0); // Placeholder
+            exceptions.push((idx as u32, delta));
+        }
+    }
+
+    // Step 3: Bit-pack majority values
+    let packed_majority = bitpack_i64_to_bytes(&majority_values, majority_bits)?;
+
+    // Step 4: Build wire format
+    let exception_count = exceptions.len();
+    let mut result = Vec::with_capacity(
+        4 + packed_majority.len() + 4 + exception_count * 12
+    );
+
+    // Write majority_count
+    result.extend_from_slice(&(majority_values.len() as u32).to_le_bytes());
+
+    // Write packed majority values
+    result.extend_from_slice(&packed_majority);
+
+    // Write exception_count
+    result.extend_from_slice(&(exception_count as u32).to_le_bytes());
+
+    // Write exceptions (index, value) pairs
+    for (idx, value) in exceptions {
+        result.extend_from_slice(&idx.to_le_bytes());
+        result.extend_from_slice(&value.to_le_bytes());
+    }
+
+    debug!("✅ [SIMD] PForDelta encoded {} values → {} bytes ({} exceptions)",
+           values.len(), result.len(), exception_count);
+    Ok(result)
+}
+
+/// SIMD-accelerated PForDelta decoding for f32
+///
+/// # Arguments
+/// * `data` - Encoded data in PForDelta wire format
+/// * `majority_bits` - Bit width for majority values (1-32)
+/// * `base` - Base value to add back
+/// * `count` - Number of values to decode
+pub fn simd_pfor_delta_decode_f32(data: &[u8], majority_bits: u8, base: i64, count: usize) -> Result<Vec<f32>> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if majority_bits == 0 || majority_bits > 32 {
+        anyhow::bail!("Invalid majority_bits: {} (must be 1-32)", majority_bits);
+    }
+
+    trace!("🔧 [SIMD] PForDelta decode: {} bytes, {}b majority, base={}, count={}",
+           data.len(), majority_bits, base, count);
+
+    let mut cursor = 0;
+
+    // Read majority_count
+    if data.len() < cursor + 4 {
+        anyhow::bail!("Insufficient data for majority_count");
+    }
+    let majority_count = u32::from_le_bytes([
+        data[cursor], data[cursor + 1], data[cursor + 2], data[cursor + 3]
+    ]) as usize;
+    cursor += 4;
+
+    // Calculate packed majority size
+    let packed_size = ((majority_count * majority_bits as usize) + 7) / 8;
+    if data.len() < cursor + packed_size {
+        anyhow::bail!("Insufficient data for packed majority values");
+    }
+
+    // Unpack majority values
+    let packed_majority = &data[cursor..cursor + packed_size];
+    let majority_values = bitunpack_bytes_to_i32(packed_majority, majority_bits, majority_count)?;
+    cursor += packed_size;
+
+    // Read exception_count
+    if data.len() < cursor + 4 {
+        anyhow::bail!("Insufficient data for exception_count");
+    }
+    let exception_count = u32::from_le_bytes([
+        data[cursor], data[cursor + 1], data[cursor + 2], data[cursor + 3]
+    ]) as usize;
+    cursor += 4;
+
+    // Read exceptions
+    let mut result: Vec<i32> = majority_values;
+    for _ in 0..exception_count {
+        if data.len() < cursor + 12 {
+            anyhow::bail!("Insufficient data for exception");
+        }
+
+        let idx = u32::from_le_bytes([
+            data[cursor], data[cursor + 1], data[cursor + 2], data[cursor + 3]
+        ]) as usize;
+        cursor += 4;
+
+        let value = i64::from_le_bytes([
+            data[cursor], data[cursor + 1], data[cursor + 2], data[cursor + 3],
+            data[cursor + 4], data[cursor + 5], data[cursor + 6], data[cursor + 7]
+        ]);
+        cursor += 8;
+
+        if idx >= result.len() {
+            anyhow::bail!("Exception index {} out of range (len={})", idx, result.len());
+        }
+
+        result[idx] = value as i32;
+    }
+
+    // Add base back and convert to f32
+    let base_f32 = base as f32;
+    let values: Vec<f32> = result.iter().map(|&delta| delta as f32 + base_f32).collect();
+
+    debug!("✅ [SIMD] PForDelta decoded {} bytes → {} values ({} exceptions)",
+           data.len(), values.len(), exception_count);
+    Ok(values)
+}
+
+// ============================================================================
 // NOTE: Batching framework moved to batching.rs
 // ============================================================================
 //
@@ -943,7 +1180,7 @@ mod tests {
             println!("   Platform: ARM64 (Apple Silicon)");
             // Should be NEON (SIMD) or MPS (GPU) on Apple Silicon
             assert!(
-                matches!(backend, AccelerationBackend::NEON | AccelerationBackend::MPS),
+                matches!(backend, HardwareBackend::NEON | HardwareBackend::MPS),
                 "Expected NEON or MPS on Apple Silicon M4, got {:?}",
                 backend
             );
@@ -952,23 +1189,23 @@ mod tests {
 
     #[test]
     fn test_backend_priority() {
-        let backend = AccelerationBackend::detect();
+        let backend = HardwareBackend::detect();
         println!("\n🎯 Backend Priority Test");
 
         // Backend priority should be: GPU > SIMD > Scalar
         match backend {
-            AccelerationBackend::CUDA
-            | AccelerationBackend::ROCm
-            | AccelerationBackend::MPS
-            | AccelerationBackend::OpenCL => {
+            HardwareBackend::CUDA
+            | HardwareBackend::ROCm
+            | HardwareBackend::MPS
+            | HardwareBackend::OpenCL => {
                 println!("   ✅ GPU backend detected: {:?}", backend);
                 println!("   Vector width: {} (GPU threads/warps)", backend.vector_width());
                 assert!(backend.is_gpu());
             }
-            AccelerationBackend::AVX512
-            | AccelerationBackend::AVX2
-            | AccelerationBackend::NEON
-            | AccelerationBackend::SSE => {
+            HardwareBackend::AVX512
+            | HardwareBackend::AVX2
+            | HardwareBackend::NEON
+            | HardwareBackend::SSE => {
                 println!("   ✅ CPU SIMD backend detected: {:?}", backend);
                 println!("   Vector width: {}x f32", backend.vector_width());
                 assert!(backend.is_simd());
@@ -976,11 +1213,11 @@ mod tests {
                 // On ARM64 (M4), should specifically be NEON
                 #[cfg(target_arch = "aarch64")]
                 {
-                    assert_eq!(backend, AccelerationBackend::NEON, "Expected NEON on ARM64");
+                    assert_eq!(backend, HardwareBackend::NEON, "Expected NEON on ARM64");
                     assert_eq!(backend.vector_width(), 4, "NEON should process 4x f32");
                 }
             }
-            AccelerationBackend::Scalar => {
+            HardwareBackend::Scalar => {
                 println!("   ⚠️  Scalar fallback (no acceleration available)");
                 assert!(!backend.has_acceleration());
             }

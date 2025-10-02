@@ -1,7 +1,7 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-//! SIMD encoder/decoder - Platform-specific implementations
+//! SIMD encoder/decoder - Hardware-accelerated implementations
 //!
 //! This module provides SIMD-accelerated encoding/decoding with
 //! conditional compilation based on target architecture:
@@ -9,6 +9,11 @@
 //! - x86_64: AVX2 and AVX-512
 //! - aarch64: NEON
 //!
-//! TODO: Phase 3 - Migrate from unified_proxima_simd and add conditional compilation
+//! These implementations are registered with ProximaCodec and automatically
+//! selected when SIMD acceleration is available on the platform.
 
-// Stub for now - will be implemented in Phase 3
+pub mod encoder;
+pub mod decoder;
+
+pub use encoder::SimdEncoder;
+pub use decoder::SimdDecoder;

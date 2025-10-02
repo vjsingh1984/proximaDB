@@ -265,6 +265,110 @@ pub enum HardwareBackend {
     Scalar,
 }
 
+impl HardwareBackend {
+    /// Check if this is a GPU backend
+    pub fn is_gpu(&self) -> bool {
+        matches!(self, Self::CUDA | Self::ROCm | Self::MPS | Self::OpenCL)
+    }
+
+    /// Check if this is a SIMD backend
+    pub fn is_simd(&self) -> bool {
+        matches!(self, Self::AVX512 | Self::AVX2 | Self::NEON | Self::SSE)
+    }
+
+    /// Check if this backend has any acceleration (GPU or SIMD)
+    pub fn has_acceleration(&self) -> bool {
+        !matches!(self, Self::Scalar)
+    }
+
+    /// Get the vector width (number of f32 elements processed in parallel)
+    pub fn vector_width(&self) -> usize {
+        match self {
+            // GPU backends: Warp/Wavefront sizes
+            Self::CUDA => 32,      // NVIDIA warp size
+            Self::ROCm => 64,      // AMD wavefront size
+            Self::MPS => 32,       // Metal SIMD group size
+            Self::OpenCL => 32,    // Typical work-group size
+
+            // CPU SIMD backends
+            Self::AVX512 => 16,    // 512 bits / 32 bits = 16x f32
+            Self::AVX2 => 8,       // 256 bits / 32 bits = 8x f32
+            Self::NEON => 4,       // 128 bits / 32 bits = 4x f32
+            Self::SSE => 4,        // 128 bits / 32 bits = 4x f32
+
+            // Scalar: No parallelism
+            Self::Scalar => 1,
+        }
+    }
+
+    /// Detect the best available backend
+    ///
+    /// Priority: GPU > SIMD > Scalar
+    pub fn detect() -> Self {
+        // Detect SIMD capabilities directly (important for tests where global may not be initialized)
+        let simd = SimdCapabilities::detect();
+
+        // ===== TIER 1: GPU ACCELERATION (cfg-gated) =====
+        // Note: GPU detection requires global hardware capabilities to be initialized
+        #[cfg(feature = "gpu")]
+        {
+            use crate::core::hardware_capabilities::get_hardware_capabilities;
+            let hw = get_hardware_capabilities();
+            if hw.has_gpu() {
+                let preferred = hw.preferred_backend();
+
+                #[cfg(all(target_os = "linux"))]
+                if matches!(preferred, Self::CUDA) {
+                    return Self::CUDA;
+                }
+
+                #[cfg(all(target_os = "linux"))]
+                if matches!(preferred, Self::ROCm) {
+                    return Self::ROCm;
+                }
+
+                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                if matches!(preferred, Self::MPS) {
+                    return Self::MPS;
+                }
+
+                if matches!(preferred, Self::OpenCL) {
+                    return Self::OpenCL;
+                }
+            }
+        }
+
+        // ===== TIER 2: CPU SIMD (cfg-gated by architecture) =====
+
+        // AVX-512 (x86_64 only, requires CPU support)
+        #[cfg(target_arch = "x86_64")]
+        if simd.has_avx512 {
+            return Self::AVX512;
+        }
+
+        // AVX2 (x86_64 only, most modern Intel/AMD CPUs)
+        #[cfg(target_arch = "x86_64")]
+        if simd.has_avx2 {
+            return Self::AVX2;
+        }
+
+        // SSE4.2 (x86_64 only, fallback for older CPUs)
+        #[cfg(target_arch = "x86_64")]
+        if simd.has_sse {
+            return Self::SSE;
+        }
+
+        // NEON (ARM only, Apple Silicon, ARM servers)
+        #[cfg(target_arch = "aarch64")]
+        if simd.has_neon {
+            return Self::NEON;
+        }
+
+        // ===== TIER 3: SCALAR FALLBACK (always available) =====
+        Self::Scalar
+    }
+}
+
 #[cfg(not(feature = "gpu"))]
 impl std::fmt::Display for GpuBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -395,7 +499,8 @@ impl SimdCapabilities {
                 has_avx: false,
                 has_avx2: false,
                 has_avx512: false,
-                has_neon: cfg!(target_feature = "neon"),
+                // NEON is always available on aarch64 (ARMv8-A baseline requirement)
+                has_neon: true,
                 has_fma: cfg!(target_feature = "fma"),
             }
         }
@@ -1247,6 +1352,8 @@ impl HardwareCapabilities {
             HardwareBackend::AVX512
         } else if self.cpu.simd.has_avx2 {
             HardwareBackend::AVX2
+        } else if self.cpu.simd.has_neon {
+            HardwareBackend::NEON
         } else if self.cpu.simd.has_sse {
             HardwareBackend::SSE
         } else {

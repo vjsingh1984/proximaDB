@@ -18,6 +18,9 @@ use super::wire_format::WireFormatManager;
 use super::registry::ImplementationRegistry;
 use super::impls::baseline::{BaselineEncoder, BaselineDecoder};
 
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+use super::impls::simd::{SimdEncoder, SimdDecoder};
+
 /// The ONLY public encoding/decoding interface
 ///
 /// Usage:
@@ -46,12 +49,29 @@ impl ProximaCodec {
         let hw_caps = HardwareCapabilities::default();
         let mut registry = ImplementationRegistry::new(hw_caps);
 
-        // Phase 1: Baseline only (always available)
+        // Registration order matters! First registered = highest priority
+        // Priority: GPU > SIMD > Baseline
+
+        // Phase 1: GPU implementations (highest priority, CUDA/ROCm/MPS/OpenCL)
+        #[cfg(feature = "gpu")]
+        {
+            use crate::storage::engines::core::ops::proximacodec::impls::gpu::{GpuEncoder, GpuDecoder};
+
+            // GPU encoders/decoders only activate if GPU backend is detected
+            registry.register_encoder(Box::new(GpuEncoder));
+            registry.register_decoder(Box::new(GpuDecoder));
+        }
+
+        // Phase 2: SIMD implementations (medium priority, ARM64 NEON/x86_64 AVX2/AVX512)
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+        {
+            registry.register_encoder(Box::new(SimdEncoder));
+            registry.register_decoder(Box::new(SimdDecoder));
+        }
+
+        // Phase 3: Baseline implementation (lowest priority, always available as fallback)
         registry.register_encoder(Box::new(BaselineEncoder));
         registry.register_decoder(Box::new(BaselineDecoder));
-
-        // TODO Phase 2: SIMD implementations
-        // TODO Phase 3: GPU implementations
 
         Self {
             wire_format: WireFormatManager::new(),
