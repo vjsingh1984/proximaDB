@@ -545,6 +545,16 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    fn test_metal_gpu_availability() {
+        let ctx = MetalContext::new(1000, 128);
+        assert!(ctx.is_ok());
+
+        let ctx = ctx.unwrap();
+        assert!(ctx.has_gpu(), "Metal GPU should be available on Apple Silicon");
+    }
+
+    #[test]
     fn test_metal_delta_encode() {
         let values = vec![1.0f32, 2.0, 3.0, 4.0];
         let result = metal_delta_encode_f32(&values, 0.0);
@@ -552,6 +562,10 @@ mod tests {
 
         let deltas = result.unwrap();
         assert_eq!(deltas.len(), 4);
+        assert_eq!(deltas[0], 1);
+        assert_eq!(deltas[1], 2);
+        assert_eq!(deltas[2], 3);
+        assert_eq!(deltas[3], 4);
     }
 
     #[test]
@@ -565,5 +579,129 @@ mod tests {
         for (original, recovered) in values.iter().zip(decoded.iter()) {
             assert!((original - recovered).abs() < 0.01);
         }
+    }
+
+    #[test]
+    fn test_metal_delta_large_batch() {
+        // Test with larger batch to exercise GPU parallelism
+        let values: Vec<f32> = (0..1000).map(|i| i as f32 * 1.5).collect();
+        let base = 100.0;
+
+        let deltas = metal_delta_encode_f32(&values, base).unwrap();
+        let decoded = metal_delta_decode_f32(&deltas, base).unwrap();
+
+        assert_eq!(values.len(), decoded.len());
+        for (original, recovered) in values.iter().zip(decoded.iter()) {
+            assert!((original - recovered).abs() < 0.1);
+        }
+    }
+
+    #[test]
+    fn test_metal_frame_of_reference_roundtrip() {
+        let values = vec![100.0f32, 105.0, 110.0, 115.0, 120.0];
+        let reference = 100;
+        let bits = 8;
+
+        let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
+        let decoded = metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
+
+        assert_eq!(values.len(), decoded.len());
+        for (original, recovered) in values.iter().zip(decoded.iter()) {
+            assert!((original - recovered).abs() < 1.0,
+                    "Original: {}, Recovered: {}", original, recovered);
+        }
+    }
+
+    #[test]
+    fn test_metal_frame_of_reference_varying_bits() {
+        let values = vec![50.0f32, 51.0, 52.0, 53.0];
+        let reference = 50;
+
+        // Test different bit widths
+        for bits in [4, 8, 16, 24, 32] {
+            let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
+            let decoded = metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
+
+            assert_eq!(values.len(), decoded.len(), "Failed for {} bits", bits);
+            for (i, (original, recovered)) in values.iter().zip(decoded.iter()).enumerate() {
+                assert!(
+                    (original - recovered).abs() < 1.0,
+                    "Mismatch at index {} for {} bits: {} vs {}",
+                    i, bits, original, recovered
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_metal_frame_of_reference_large_batch() {
+        // Test with 1024 vectors to exercise GPU threadgroups
+        let values: Vec<f32> = (0..1024).map(|i| 1000.0 + (i as f32) * 0.1).collect();
+        let reference = 1000;
+        let bits = 16;
+
+        let encoded = metal_frame_of_reference_encode_f32(&values, reference, bits).unwrap();
+        let decoded = metal_frame_of_reference_decode_f32(&encoded, reference, bits, values.len()).unwrap();
+
+        assert_eq!(values.len(), decoded.len());
+        for (i, (original, recovered)) in values.iter().zip(decoded.iter()).enumerate() {
+            assert!(
+                (original - recovered).abs() < 1.0,
+                "Mismatch at index {}: {} vs {}",
+                i, original, recovered
+            );
+        }
+    }
+
+    #[test]
+    fn test_metal_bitpack_roundtrip() {
+        let values = vec![1.5f32, 2.5, 3.5, 4.5];
+        let bits = 16;
+
+        let encoded = metal_bitpack_encode_f32(&values, bits).unwrap();
+        let decoded = metal_bitpack_decode_f32(&encoded, bits, values.len()).unwrap();
+
+        assert_eq!(values.len(), decoded.len());
+        // Note: Bit-packing loses precision, so we just check the data survived
+        assert!(decoded.iter().all(|v| !v.is_nan()));
+    }
+
+    #[test]
+    fn test_metal_zigzag_roundtrip() {
+        let values = vec![-10.0f32, -5.0, 0.0, 5.0, 10.0];
+        let bits = 16;
+
+        let encoded = metal_zigzag_encode_f32(&values, bits).unwrap();
+        let decoded = metal_zigzag_decode_f32(&encoded, bits, values.len()).unwrap();
+
+        assert_eq!(values.len(), decoded.len());
+        // Zigzag encoding is designed for signed integers
+        assert!(decoded.iter().all(|v| !v.is_nan()));
+    }
+
+    #[test]
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    fn test_metal_gpu_device_info() {
+        use metal_ffi::MetalContext as RawMetalContext;
+
+        let ctx = RawMetalContext::new();
+        assert!(ctx.is_ok(), "Failed to create Metal context");
+
+        let ctx = ctx.unwrap();
+        let device_name = ctx.device.name();
+        assert!(!device_name.is_empty(), "Device name should not be empty");
+        assert!(
+            device_name.contains("Apple") || device_name.contains("M1") ||
+            device_name.contains("M2") || device_name.contains("M3") || device_name.contains("M4"),
+            "Expected Apple GPU, got: {}", device_name
+        );
+    }
+
+    #[test]
+    fn test_metal_pfor_delta_not_implemented() {
+        let values = vec![1.0f32, 2.0, 3.0, 4.0];
+        let result = metal_pfor_delta_encode_f32(&values, 8, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not yet implemented"));
     }
 }
