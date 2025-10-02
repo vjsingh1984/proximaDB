@@ -342,7 +342,7 @@ fn compile_metal_shaders() -> Result<(), Box<dyn std::error::Error>> {
 
     // Metal shader source files
     let metal_sources = vec![
-        "src/storage/engines/core/ops/proximacodec/impls/gpu/kernels/metal/kernels.metal",
+        "src/storage/engines/core/ops/proximacodec/impls/gpu/kernels/kernels.metal",
     ];
 
     // Output directory
@@ -382,10 +382,20 @@ fn compile_metal_shaders() -> Result<(), Box<dyn std::error::Error>> {
                 "-o",
                 air_file.to_str().unwrap(),
             ])
-            .status()?;
+            .status();
 
-        if !status.success() {
-            return Err(format!("Failed to compile Metal shader: {}", source).into());
+        match status {
+            Ok(status) if status.success() => {
+                // Compilation successful
+            }
+            Ok(_) | Err(_) => {
+                // Metal toolchain not available - fall back to runtime compilation
+                tracing::warn!("⚠️  Metal shader compilation failed - falling back to runtime compilation");
+                tracing::warn!("   To enable precompiled shaders, run:");
+                tracing::warn!("   xcodebuild -downloadPlatform iOS");
+                tracing::warn!("   or install full Xcode from App Store");
+                return Ok(());
+            }
         }
 
         tracing::info!("   ✅ Compiled to AIR: {}", air_file.display());

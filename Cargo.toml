@@ -240,7 +240,8 @@ cloud-full = ["aws", "azure", "gcp"]
 sql_frontend = []
 
 # Hardware acceleration features
-gpu = []  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
+gpu = ["metal"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
+metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
 debug-filters = []  # Enable debug filtering for search operations
