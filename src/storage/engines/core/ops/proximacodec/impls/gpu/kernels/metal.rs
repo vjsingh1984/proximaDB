@@ -28,9 +28,15 @@ use tracing::{debug, trace};
 use super::utils::{GpuBatchConfig, GpuBuffer};
 use crate::core::hardware_capabilities::HardwareBackend;
 
+// Import Metal FFI bindings
+#[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+use super::metal as metal_ffi;
+
 /// Metal/MPS context wrapper
 pub struct MetalContext {
     config: GpuBatchConfig,
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    metal_ctx: Option<metal_ffi::MetalContext>,
 }
 
 impl MetalContext {
@@ -41,12 +47,42 @@ impl MetalContext {
         debug!("🍎 [Metal] Initializing context: {} vectors, dim={}",
                total_vectors, dimension);
 
-        Ok(Self { config })
+        #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+        {
+            let metal_ctx = metal_ffi::MetalContext::new()
+                .map_err(|e| anyhow::anyhow!("Failed to initialize Metal: {}", e))?;
+
+            debug!("✅ [Metal] Initialized GPU device: {}", metal_ctx.device.name());
+
+            Ok(Self {
+                config,
+                metal_ctx: Some(metal_ctx),
+            })
+        }
+
+        #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+        {
+            Ok(Self { config })
+        }
     }
 
     /// Get batch configuration
     pub fn config(&self) -> &GpuBatchConfig {
         &self.config
+    }
+
+    /// Check if Metal GPU is available
+    #[allow(dead_code)]
+    pub fn has_gpu(&self) -> bool {
+        #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+        {
+            self.metal_ctx.is_some()
+        }
+
+        #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+        {
+            false
+        }
     }
 }
 
@@ -70,12 +106,42 @@ impl MetalContext {
 pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
     trace!("🔧 [Metal] Delta encode: {} values, base={}", values.len(), base);
 
-    // TODO: Real Metal implementation using MTLDevice/MTLComputePipeline
-    // For now, use CPU fallback
-    let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer};
 
-    debug!("✅ [Metal] Delta encoded {} values → {} deltas", values.len(), deltas.len());
-    Ok(deltas)
+        let ctx = metal_ffi::MetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
+
+        // Get compute pipeline
+        let pipeline = ctx.get_pipeline("delta_encode_f32")
+            .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
+
+        // Create GPU buffers
+        let input_buffer = create_buffer(&ctx.device, values);
+        let output_buffer = create_empty_buffer::<i64>(&ctx.device, values.len());
+
+        // Create base value buffer
+        let base_buffer = create_buffer(&ctx.device, &[base]);
+
+        // Execute kernel
+        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &base_buffer], values.len())
+            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+
+        // Read results
+        let deltas = read_buffer::<i64>(&output_buffer, values.len());
+
+        debug!("✅ [Metal] Delta encoded {} values → {} deltas (GPU)", values.len(), deltas.len());
+        Ok(deltas)
+    }
+
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        // CPU fallback
+        let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
+        debug!("✅ [Metal] Delta encoded {} values → {} deltas (CPU fallback)", values.len(), deltas.len());
+        Ok(deltas)
+    }
 }
 
 /// Metal Delta decoding for f32
@@ -94,11 +160,35 @@ pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
 pub fn metal_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
     trace!("🔧 [Metal] Delta decode: {} deltas, base={}", deltas.len(), base);
 
-    // TODO: Real Metal implementation
-    let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer};
 
-    debug!("✅ [Metal] Delta decoded {} deltas → {} values", deltas.len(), values.len());
-    Ok(values)
+        let ctx = metal_ffi::MetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
+
+        let pipeline = ctx.get_pipeline("delta_decode_f32")
+            .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
+
+        let input_buffer = create_buffer(&ctx.device, deltas);
+        let output_buffer = create_empty_buffer::<f32>(&ctx.device, deltas.len());
+        let base_buffer = create_buffer(&ctx.device, &[base]);
+
+        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &base_buffer], deltas.len())
+            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+
+        let values = read_buffer::<f32>(&output_buffer, deltas.len());
+
+        debug!("✅ [Metal] Delta decoded {} deltas → {} values (GPU)", deltas.len(), values.len());
+        Ok(values)
+    }
+
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
+        debug!("✅ [Metal] Delta decoded {} deltas → {} values (CPU fallback)", deltas.len(), values.len());
+        Ok(values)
+    }
 }
 
 // ============================================================================
@@ -195,33 +285,74 @@ pub fn metal_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits:
     trace!("🔧 [Metal] FrameOfReference encode: {} values, ref={}, {}b/val",
            values.len(), reference, bits);
 
-    // Step 1: Compute offsets (parallel in Metal compute shader)
-    let reference_f32 = reference as f32;
-    let offsets: Vec<i64> = values.iter().map(|&v| (v - reference_f32) as i64).collect();
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer};
 
-    // Step 2: Bit-pack offsets
-    let total_bits = offsets.len() * bits as usize;
-    let byte_count = (total_bits + 7) / 8;
-    let mut result = vec![0u8; byte_count];
+        let ctx = metal_ffi::MetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let pipeline = ctx.get_pipeline("for_encode_f32")
+            .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
-    for (i, &offset) in offsets.iter().enumerate() {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        let total_bits = values.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let word_count = (byte_count + 3) / 4;
 
-        let masked_value = (offset as u32) & mask;
-        result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+        let input_buffer = create_buffer(&ctx.device, values);
+        let output_buffer = create_empty_buffer::<u32>(&ctx.device, word_count);
+        let base_buffer = create_buffer(&ctx.device, &[reference as f32]);
+        let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
+        let n_buffer = create_buffer(&ctx.device, &[values.len() as i32]);
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
-            result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &base_buffer, &bit_width_buffer, &n_buffer], values.len())
+            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+
+        let packed_words = read_buffer::<u32>(&output_buffer, word_count);
+        let mut result = vec![0u8; byte_count];
+        for (i, &word) in packed_words.iter().enumerate() {
+            let bytes = word.to_le_bytes();
+            for j in 0..4 {
+                if i * 4 + j < byte_count {
+                    result[i * 4 + j] = bytes[j];
+                }
+            }
         }
+
+        debug!("✅ [Metal] FrameOfReference encoded {} values → {} bytes (GPU)",
+               values.len(), result.len());
+        Ok(result)
     }
 
-    debug!("✅ [Metal] FrameOfReference encoded {} values → {} bytes",
-           values.len(), result.len());
-    Ok(result)
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        // CPU fallback
+        let reference_f32 = reference as f32;
+        let offsets: Vec<i64> = values.iter().map(|&v| (v - reference_f32) as i64).collect();
+
+        let total_bits = offsets.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let mut result = vec![0u8; byte_count];
+
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+
+        for (i, &offset) in offsets.iter().enumerate() {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            let masked_value = (offset as u32) & mask;
+            result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
+                result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+            }
+        }
+
+        debug!("✅ [Metal] FrameOfReference encoded {} values → {} bytes (CPU fallback)",
+               values.len(), result.len());
+        Ok(result)
+    }
 }
 
 /// Metal FrameOfReference decoding
@@ -229,36 +360,64 @@ pub fn metal_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: 
     trace!("🔧 [Metal] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}",
            packed.len(), reference, bits, count);
 
-    // Step 1: Bit-unpack offsets
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
-    let mut offsets = Vec::with_capacity(count);
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer};
 
-    for i in 0..count {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        let ctx = metal_ffi::MetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-        if byte_offset >= packed.len() {
-            break;
-        }
+        let pipeline = ctx.get_pipeline("for_decode_f32")
+            .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
-        let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+        let input_buffer = create_buffer(&ctx.device, packed);
+        let output_buffer = create_empty_buffer::<f32>(&ctx.device, count);
+        let base_buffer = create_buffer(&ctx.device, &[reference as f32]);
+        let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
+        let n_buffer = create_buffer(&ctx.device, &[count as i32]);
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
-            let next_byte = packed[byte_offset + 1] as u32;
-            value |= next_byte << (8 - bit_in_byte);
-        }
+        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &base_buffer, &bit_width_buffer, &n_buffer], count)
+            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
 
-        offsets.push((value & mask) as i32);
+        let values = read_buffer::<f32>(&output_buffer, count);
+
+        debug!("✅ [Metal] FrameOfReference decoded {} bytes → {} values (GPU)",
+               packed.len(), values.len());
+        Ok(values)
     }
 
-    // Step 2: Add reference back (parallel in Metal)
-    let reference_f32 = reference as f32;
-    let values: Vec<f32> = offsets.iter().map(|&offset| offset as f32 + reference_f32).collect();
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        // CPU fallback
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mut offsets = Vec::with_capacity(count);
 
-    debug!("✅ [Metal] FrameOfReference decoded {} bytes → {} values",
-           packed.len(), values.len());
-    Ok(values)
+        for i in 0..count {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            if byte_offset >= packed.len() {
+                break;
+            }
+
+            let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
+                let next_byte = packed[byte_offset + 1] as u32;
+                value |= next_byte << (8 - bit_in_byte);
+            }
+
+            offsets.push((value & mask) as i32);
+        }
+
+        let reference_f32 = reference as f32;
+        let values: Vec<f32> = offsets.iter().map(|&offset| offset as f32 + reference_f32).collect();
+
+        debug!("✅ [Metal] FrameOfReference decoded {} bytes → {} values (CPU fallback)",
+               packed.len(), values.len());
+        Ok(values)
+    }
 }
 
 // ============================================================================
