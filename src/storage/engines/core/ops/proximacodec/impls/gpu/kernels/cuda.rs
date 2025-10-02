@@ -274,62 +274,142 @@ pub fn cuda_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 pub fn cuda_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!("🔧 [CUDA] BitPacked encode: {} values, {}b/val", values.len(), bits);
 
-    // TODO: Real CUDA implementation with parallel bit-packing
-    // For now, use CPU fallback
-    let total_bits = values.len() * bits as usize;
-    let byte_count = (total_bits + 7) / 8;
-    let mut result = vec![0u8; byte_count];
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    {
+        let n = values.len();
+        let output_size = ((n * bits as usize) + 7) / 8;
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        // Convert f32 to i64 for bitpacking
+        let values_i64: Vec<i64> = values.iter().map(|&v| v.to_bits() as i64).collect();
 
-    for (i, &value) in values.iter().enumerate() {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        // Allocate GPU memory
+        let mut input_gpu = GpuMemory::<i64>::allocate(n)?;
+        let mut output_gpu = GpuMemory::<u8>::allocate(output_size)?;
 
-        let masked_value = (value.to_bits()) & mask;
-        result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+        // Copy input to GPU
+        input_gpu.copy_from_host(&values_i64)?;
 
-        if bit_in_byte + bits as usize > 8 {
-            if byte_offset + 1 < result.len() {
-                result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
-            }
+        // Clear output buffer
+        let zero_buffer = vec![0u8; output_size];
+        output_gpu.copy_from_host(&zero_buffer)?;
+
+        // Launch CUDA kernel
+        unsafe {
+            cuda_bitpack_encode(
+                input_gpu.as_ptr(),
+                output_gpu.as_mut_ptr(),
+                bits as i32,
+                n as i32,
+                std::ptr::null_mut(),
+            );
+
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA kernel failed: {}", e))?;
         }
+
+        // Copy result back to host
+        let mut output = vec![0u8; output_size];
+        output_gpu.copy_to_host(&mut output)?;
+
+        debug!("✅ [CUDA] BitPacked encoded {} values → {} bytes (GPU)", values.len(), output.len());
+        Ok(output)
     }
 
-    debug!("✅ [CUDA] BitPacked encoded {} values → {} bytes", values.len(), result.len());
-    Ok(result)
+    #[cfg(not(all(feature = "gpu", target_os = "linux", target_arch = "x86_64")))]
+    {
+        // CPU fallback
+        let total_bits = values.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let mut result = vec![0u8; byte_count];
+
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+
+        for (i, &value) in values.iter().enumerate() {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            let masked_value = (value.to_bits()) & mask;
+            result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+
+            if bit_in_byte + bits as usize > 8 {
+                if byte_offset + 1 < result.len() {
+                    result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+                }
+            }
+        }
+
+        debug!("✅ [CUDA] BitPacked encoded {} values → {} bytes (CPU fallback)", values.len(), result.len());
+        Ok(result)
+    }
 }
 
 /// CUDA BitPacked decoding for f32
 pub fn cuda_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
     trace!("🔧 [CUDA] BitPacked decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
 
-    // TODO: Real CUDA implementation
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
-    let mut result = Vec::with_capacity(count);
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    {
+        // Allocate GPU memory
+        let mut input_gpu = GpuMemory::<u8>::allocate(packed.len())?;
+        let mut output_gpu = GpuMemory::<i64>::allocate(count)?;
 
-    for i in 0..count {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        // Copy input to GPU
+        input_gpu.copy_from_host(packed)?;
 
-        if byte_offset >= packed.len() {
-            break;
+        // Launch CUDA kernel
+        unsafe {
+            cuda_bitpack_decode(
+                input_gpu.as_ptr(),
+                output_gpu.as_mut_ptr(),
+                bits as i32,
+                count as i32,
+                std::ptr::null_mut(),
+            );
+
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA kernel failed: {}", e))?;
         }
 
-        let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+        // Copy result back to host
+        let mut output_i64 = vec![0i64; count];
+        output_gpu.copy_to_host(&mut output_i64)?;
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
-            let next_byte = packed[byte_offset + 1] as u32;
-            value |= next_byte << (8 - bit_in_byte);
-        }
+        // Convert i64 back to f32
+        let output: Vec<f32> = output_i64.iter().map(|&v| f32::from_bits(v as u32)).collect();
 
-        result.push(f32::from_bits(value & mask));
+        debug!("✅ [CUDA] BitPacked decoded {} bytes → {} values (GPU)", packed.len(), output.len());
+        Ok(output)
     }
 
-    debug!("✅ [CUDA] BitPacked decoded {} bytes → {} values", packed.len(), result.len());
-    Ok(result)
+    #[cfg(not(all(feature = "gpu", target_os = "linux", target_arch = "x86_64")))]
+    {
+        // CPU fallback
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mut result = Vec::with_capacity(count);
+
+        for i in 0..count {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            if byte_offset >= packed.len() {
+                break;
+            }
+
+            let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
+                let next_byte = packed[byte_offset + 1] as u32;
+                value |= next_byte << (8 - bit_in_byte);
+            }
+
+            result.push(f32::from_bits(value & mask));
+        }
+
+        debug!("✅ [CUDA] BitPacked decoded {} bytes → {} values (CPU fallback)", packed.len(), result.len());
+        Ok(result)
+    }
 }
 
 // ============================================================================
@@ -495,73 +575,199 @@ pub fn cuda_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: u
 pub fn cuda_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!("🔧 [CUDA] Zigzag encode: {} values, {}b/val", values.len(), bits);
 
-    // TODO: Real CUDA parallel zigzag
-    let zigzag: Vec<i64> = values.iter().map(|&v| {
-        let n = v.to_bits() as i32;
-        let zz = (n << 1) ^ (n >> 31);
-        zz as i64
-    }).collect();
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    {
+        let n = values.len();
+        let output_size = ((n * bits as usize) + 7) / 8;
 
-    // Bit-pack zigzag values
-    let total_bits = zigzag.len() * bits as usize;
-    let byte_count = (total_bits + 7) / 8;
-    let mut result = vec![0u8; byte_count];
+        // Convert f32 to i64
+        let values_i64: Vec<i64> = values.iter().map(|&v| v.to_bits() as i64).collect();
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        // Allocate GPU memory for zigzag step
+        let mut input_gpu = GpuMemory::<i64>::allocate(n)?;
+        let mut zigzag_gpu = GpuMemory::<u64>::allocate(n)?;
 
-    for (i, &zz) in zigzag.iter().enumerate() {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        // Copy input to GPU
+        input_gpu.copy_from_host(&values_i64)?;
 
-        let masked_value = (zz as u32) & mask;
-        result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+        // Step 1: Zigzag encode on GPU
+        unsafe {
+            cuda_zigzag_encode(
+                input_gpu.as_ptr(),
+                zigzag_gpu.as_mut_ptr(),
+                n as i32,
+                std::ptr::null_mut(),
+            );
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
-            result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA zigzag encode failed: {}", e))?;
         }
+
+        // Copy zigzag result back to convert to i64 for bitpacking
+        let mut zigzag_u64 = vec![0u64; n];
+        zigzag_gpu.copy_to_host(&mut zigzag_u64)?;
+
+        let zigzag_i64: Vec<i64> = zigzag_u64.iter().map(|&v| v as i64).collect();
+
+        // Step 2: Bitpack the zigzag values
+        let mut bitpack_input_gpu = GpuMemory::<i64>::allocate(n)?;
+        let mut output_gpu = GpuMemory::<u8>::allocate(output_size)?;
+
+        bitpack_input_gpu.copy_from_host(&zigzag_i64)?;
+
+        // Clear output buffer
+        let zero_buffer = vec![0u8; output_size];
+        output_gpu.copy_from_host(&zero_buffer)?;
+
+        unsafe {
+            cuda_bitpack_encode(
+                bitpack_input_gpu.as_ptr(),
+                output_gpu.as_mut_ptr(),
+                bits as i32,
+                n as i32,
+                std::ptr::null_mut(),
+            );
+
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA bitpack failed: {}", e))?;
+        }
+
+        // Copy result back to host
+        let mut output = vec![0u8; output_size];
+        output_gpu.copy_to_host(&mut output)?;
+
+        debug!("✅ [CUDA] Zigzag encoded {} values → {} bytes (GPU)", values.len(), output.len());
+        Ok(output)
     }
 
-    debug!("✅ [CUDA] Zigzag encoded {} values → {} bytes", values.len(), result.len());
-    Ok(result)
+    #[cfg(not(all(feature = "gpu", target_os = "linux", target_arch = "x86_64")))]
+    {
+        // CPU fallback
+        let zigzag: Vec<i64> = values.iter().map(|&v| {
+            let n = v.to_bits() as i32;
+            let zz = (n << 1) ^ (n >> 31);
+            zz as i64
+        }).collect();
+
+        let total_bits = zigzag.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let mut result = vec![0u8; byte_count];
+
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+
+        for (i, &zz) in zigzag.iter().enumerate() {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            let masked_value = (zz as u32) & mask;
+            result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
+                result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+            }
+        }
+
+        debug!("✅ [CUDA] Zigzag encoded {} values → {} bytes (CPU fallback)", values.len(), result.len());
+        Ok(result)
+    }
 }
 
 /// CUDA Zigzag decoding
 pub fn cuda_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
     trace!("🔧 [CUDA] Zigzag decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
 
-    // Step 1: Bit-unpack
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
-    let mut zigzag = Vec::with_capacity(count);
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    {
+        // Step 1: Bit-unpack on GPU
+        let mut packed_gpu = GpuMemory::<u8>::allocate(packed.len())?;
+        let mut zigzag_i64_gpu = GpuMemory::<i64>::allocate(count)?;
 
-    for i in 0..count {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        packed_gpu.copy_from_host(packed)?;
 
-        if byte_offset >= packed.len() {
-            break;
+        unsafe {
+            cuda_bitpack_decode(
+                packed_gpu.as_ptr(),
+                zigzag_i64_gpu.as_mut_ptr(),
+                bits as i32,
+                count as i32,
+                std::ptr::null_mut(),
+            );
+
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA bitunpack failed: {}", e))?;
         }
 
-        let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+        // Copy zigzag values back
+        let mut zigzag_i64 = vec![0i64; count];
+        zigzag_i64_gpu.copy_to_host(&mut zigzag_i64)?;
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
-            let next_byte = packed[byte_offset + 1] as u32;
-            value |= next_byte << (8 - bit_in_byte);
+        // Convert to u64 for zigzag decode
+        let zigzag_u64: Vec<u64> = zigzag_i64.iter().map(|&v| v as u64).collect();
+
+        // Step 2: Zigzag decode on GPU
+        let mut zigzag_u64_gpu = GpuMemory::<u64>::allocate(count)?;
+        let mut output_i64_gpu = GpuMemory::<i64>::allocate(count)?;
+
+        zigzag_u64_gpu.copy_from_host(&zigzag_u64)?;
+
+        unsafe {
+            cuda_zigzag_decode(
+                zigzag_u64_gpu.as_ptr(),
+                output_i64_gpu.as_mut_ptr(),
+                count as i32,
+                std::ptr::null_mut(),
+            );
+
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA zigzag decode failed: {}", e))?;
         }
 
-        zigzag.push((value & mask) as i32);
+        // Copy result back and convert to f32
+        let mut output_i64 = vec![0i64; count];
+        output_i64_gpu.copy_to_host(&mut output_i64)?;
+
+        let output: Vec<f32> = output_i64.iter().map(|&v| f32::from_bits(v as u32)).collect();
+
+        debug!("✅ [CUDA] Zigzag decoded {} bytes → {} values (GPU)", packed.len(), output.len());
+        Ok(output)
     }
 
-    // Step 2: Reverse zigzag (parallel)
-    // TODO: Real CUDA parallel zigzag reverse
-    let values: Vec<f32> = zigzag.iter().map(|&zz| {
-        let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
-        f32::from_bits(n as u32)
-    }).collect();
+    #[cfg(not(all(feature = "gpu", target_os = "linux", target_arch = "x86_64")))]
+    {
+        // CPU fallback
+        // Step 1: Bit-unpack
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mut zigzag = Vec::with_capacity(count);
 
-    debug!("✅ [CUDA] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
-    Ok(values)
+        for i in 0..count {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            if byte_offset >= packed.len() {
+                break;
+            }
+
+            let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
+                let next_byte = packed[byte_offset + 1] as u32;
+                value |= next_byte << (8 - bit_in_byte);
+            }
+
+            zigzag.push((value & mask) as i32);
+        }
+
+        // Step 2: Reverse zigzag
+        let values: Vec<f32> = zigzag.iter().map(|&zz| {
+            let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
+            f32::from_bits(n as u32)
+        }).collect();
+
+        debug!("✅ [CUDA] Zigzag decoded {} bytes → {} values (CPU fallback)", packed.len(), values.len());
+        Ok(values)
+    }
 }
 
 // ============================================================================
