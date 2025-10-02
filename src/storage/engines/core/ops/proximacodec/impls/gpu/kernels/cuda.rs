@@ -19,11 +19,90 @@
 //! - nvcc compiler
 //! - `cuda-sys` crate for bindings
 
-use anyhow::Result;
-use tracing::{debug, trace};
+use anyhow::{Result, anyhow};
+use tracing::{debug, trace, warn};
 
 use super::utils::{GpuBatchConfig, GpuBuffer};
 use crate::core::hardware_capabilities::HardwareBackend;
+
+// Import CUDA FFI bindings when available
+#[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+mod cuda;
+#[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+use cuda::ffi::*;
+
+// ============================================================================
+// GPU MEMORY MANAGEMENT (RAII wrapper)
+// ============================================================================
+
+#[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+struct GpuMemory<T> {
+    ptr: *mut T,
+    size: usize,
+}
+
+#[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+impl<T> GpuMemory<T> {
+    fn allocate(count: usize) -> Result<Self> {
+        let size = count * std::mem::size_of::<T>();
+        let mut ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+
+        unsafe {
+            let error = cudaMalloc(&mut ptr as *mut *mut std::ffi::c_void, size);
+            check_cuda_error(error).map_err(|e| anyhow!("cudaMalloc failed: {}", e))?;
+        }
+
+        Ok(Self { ptr: ptr as *mut T, size })
+    }
+
+    fn copy_from_host(&mut self, data: &[T]) -> Result<()> {
+        unsafe {
+            let error = cudaMemcpy(
+                self.ptr as *mut std::ffi::c_void,
+                data.as_ptr() as *const std::ffi::c_void,
+                data.len() * std::mem::size_of::<T>(),
+                CUDA_MEMCPY_HOST_TO_DEVICE,
+            );
+            check_cuda_error(error).map_err(|e| anyhow!("cudaMemcpy H2D failed: {}", e))?;
+        }
+        Ok(())
+    }
+
+    fn copy_to_host(&self, data: &mut [T]) -> Result<()> {
+        unsafe {
+            let error = cudaMemcpy(
+                data.as_mut_ptr() as *mut std::ffi::c_void,
+                self.ptr as *const std::ffi::c_void,
+                data.len() * std::mem::size_of::<T>(),
+                CUDA_MEMCPY_DEVICE_TO_HOST,
+            );
+            check_cuda_error(error).map_err(|e| anyhow!("cudaMemcpy D2H failed: {}", e))?;
+        }
+        Ok(())
+    }
+
+    fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut T {
+        self.ptr
+    }
+}
+
+#[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+impl<T> Drop for GpuMemory<T> {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe {
+                let error = cudaFree(self.ptr as *mut std::ffi::c_void);
+                if error != CUDA_SUCCESS {
+                    warn!("cudaFree failed: {}", get_last_cuda_error());
+                }
+            }
+        }
+    }
+}
 
 /// CUDA context wrapper
 pub struct CudaContext {
@@ -67,12 +146,46 @@ impl CudaContext {
 pub fn cuda_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
     trace!("🔧 [CUDA] Delta encode: {} values, base={}", values.len(), base);
 
-    // TODO: Real CUDA implementation
-    // For now, use CPU fallback (CUDA kernels require separate compilation)
-    let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    {
+        let n = values.len();
 
-    debug!("✅ [CUDA] Delta encoded {} values → {} deltas", values.len(), deltas.len());
-    Ok(deltas)
+        // Allocate GPU memory
+        let mut input_gpu = GpuMemory::<f32>::allocate(n)?;
+        let mut output_gpu = GpuMemory::<i64>::allocate(n)?;
+
+        // Copy input to GPU
+        input_gpu.copy_from_host(values)?;
+
+        // Launch CUDA kernel
+        unsafe {
+            cuda_delta_encode_f32(
+                input_gpu.as_ptr(),
+                output_gpu.as_mut_ptr(),
+                base,
+                n as i32,
+                std::ptr::null_mut(), // Default stream
+            );
+
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA kernel failed: {}", e))?;
+        }
+
+        // Copy result back to host
+        let mut output = vec![0i64; n];
+        output_gpu.copy_to_host(&mut output)?;
+
+        debug!("✅ [CUDA] Delta encoded {} values → {} deltas (GPU)", values.len(), output.len());
+        Ok(output)
+    }
+
+    #[cfg(not(all(feature = "gpu", target_os = "linux", target_arch = "x86_64")))]
+    {
+        // CPU fallback when CUDA not available
+        let deltas: Vec<i64> = values.iter().map(|&v| (v - base) as i64).collect();
+        debug!("✅ [CUDA] Delta encoded {} values → {} deltas (CPU fallback)", values.len(), deltas.len());
+        Ok(deltas)
+    }
 }
 
 /// CUDA Delta decoding for f32
@@ -91,11 +204,45 @@ pub fn cuda_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
 pub fn cuda_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
     trace!("🔧 [CUDA] Delta decode: {} deltas, base={}", deltas.len(), base);
 
-    // TODO: Real CUDA implementation
-    let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    {
+        let n = deltas.len();
 
-    debug!("✅ [CUDA] Delta decoded {} deltas → {} values", deltas.len(), values.len());
-    Ok(values)
+        // Allocate GPU memory
+        let mut input_gpu = GpuMemory::<i64>::allocate(n)?;
+        let mut output_gpu = GpuMemory::<f32>::allocate(n)?;
+
+        // Copy input to GPU
+        input_gpu.copy_from_host(deltas)?;
+
+        // Launch CUDA kernel
+        unsafe {
+            cuda_delta_decode_f32(
+                input_gpu.as_ptr(),
+                output_gpu.as_mut_ptr(),
+                base,
+                n as i32,
+                std::ptr::null_mut(),
+            );
+
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA kernel failed: {}", e))?;
+        }
+
+        // Copy result back to host
+        let mut output = vec![0.0f32; n];
+        output_gpu.copy_to_host(&mut output)?;
+
+        debug!("✅ [CUDA] Delta decoded {} deltas → {} values (GPU)", deltas.len(), output.len());
+        Ok(output)
+    }
+
+    #[cfg(not(all(feature = "gpu", target_os = "linux", target_arch = "x86_64")))]
+    {
+        let values: Vec<f32> = deltas.iter().map(|&d| d as f32 + base).collect();
+        debug!("✅ [CUDA] Delta decoded {} deltas → {} values (CPU fallback)", deltas.len(), values.len());
+        Ok(values)
+    }
 }
 
 // ============================================================================
@@ -196,34 +343,74 @@ pub fn cuda_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits: 
     trace!("🔧 [CUDA] FrameOfReference encode: {} values, ref={}, {}b/val",
            values.len(), reference, bits);
 
-    // Step 1: Compute offsets (parallel)
-    let reference_f32 = reference as f32;
-    let offsets: Vec<i64> = values.iter().map(|&v| (v - reference_f32) as i64).collect();
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    {
+        let n = values.len();
+        let output_size = ((n * bits as usize) + 7) / 8;
+        let reference_f32 = reference as f32;
 
-    // Step 2: Bit-pack offsets (parallel)
-    let total_bits = offsets.len() * bits as usize;
-    let byte_count = (total_bits + 7) / 8;
-    let mut result = vec![0u8; byte_count];
+        // Allocate GPU memory
+        let mut input_gpu = GpuMemory::<f32>::allocate(n)?;
+        let mut output_gpu = GpuMemory::<u8>::allocate(output_size)?;
 
-    // TODO: Real CUDA parallel bit-packing
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        // Copy input to GPU
+        input_gpu.copy_from_host(values)?;
 
-    for (i, &offset) in offsets.iter().enumerate() {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        // Clear output buffer
+        let zero_buffer = vec![0u8; output_size];
+        output_gpu.copy_from_host(&zero_buffer)?;
 
-        let masked_value = (offset as u32) & mask;
-        result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+        // Launch CUDA kernel
+        unsafe {
+            cuda_for_encode_f32(
+                input_gpu.as_ptr(),
+                output_gpu.as_mut_ptr(),
+                reference_f32,
+                bits as i32,
+                n as i32,
+                std::ptr::null_mut(),
+            );
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
-            result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA kernel failed: {}", e))?;
         }
+
+        // Copy result back to host
+        let mut output = vec![0u8; output_size];
+        output_gpu.copy_to_host(&mut output)?;
+
+        debug!("✅ [CUDA] FrameOfReference encoded {} values → {} bytes (GPU)", values.len(), output.len());
+        Ok(output)
     }
 
-    debug!("✅ [CUDA] FrameOfReference encoded {} values → {} bytes",
-           values.len(), result.len());
-    Ok(result)
+    #[cfg(not(all(feature = "gpu", target_os = "linux", target_arch = "x86_64")))]
+    {
+        // CPU fallback
+        let reference_f32 = reference as f32;
+        let offsets: Vec<i64> = values.iter().map(|&v| (v - reference_f32) as i64).collect();
+
+        let total_bits = offsets.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let mut result = vec![0u8; byte_count];
+
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+
+        for (i, &offset) in offsets.iter().enumerate() {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            let masked_value = (offset as u32) & mask;
+            result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
+                result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+            }
+        }
+
+        debug!("✅ [CUDA] FrameOfReference encoded {} values → {} bytes (CPU fallback)", values.len(), result.len());
+        Ok(result)
+    }
 }
 
 /// CUDA FrameOfReference decoding
@@ -231,37 +418,71 @@ pub fn cuda_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: u
     trace!("🔧 [CUDA] FrameOfReference decode: {} bytes, ref={}, {}b/val, count={}",
            packed.len(), reference, bits, count);
 
-    // Step 1: Bit-unpack offsets (parallel)
-    // TODO: Real CUDA parallel bit-unpacking
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
-    let mut offsets = Vec::with_capacity(count);
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    {
+        let reference_f32 = reference as f32;
 
-    for i in 0..count {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        // Allocate GPU memory
+        let mut input_gpu = GpuMemory::<u8>::allocate(packed.len())?;
+        let mut output_gpu = GpuMemory::<f32>::allocate(count)?;
 
-        if byte_offset >= packed.len() {
-            break;
+        // Copy input to GPU
+        input_gpu.copy_from_host(packed)?;
+
+        // Launch CUDA kernel
+        unsafe {
+            cuda_for_decode_f32(
+                input_gpu.as_ptr(),
+                output_gpu.as_mut_ptr(),
+                reference_f32,
+                bits as i32,
+                count as i32,
+                std::ptr::null_mut(),
+            );
+
+            let error = cudaDeviceSynchronize();
+            check_cuda_error(error).map_err(|e| anyhow!("CUDA kernel failed: {}", e))?;
         }
 
-        let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+        // Copy result back to host
+        let mut output = vec![0.0f32; count];
+        output_gpu.copy_to_host(&mut output)?;
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
-            let next_byte = packed[byte_offset + 1] as u32;
-            value |= next_byte << (8 - bit_in_byte);
-        }
-
-        offsets.push((value & mask) as i32);
+        debug!("✅ [CUDA] FrameOfReference decoded {} bytes → {} values (GPU)", packed.len(), output.len());
+        Ok(output)
     }
 
-    // Step 2: Add reference back (parallel)
-    let reference_f32 = reference as f32;
-    let values: Vec<f32> = offsets.iter().map(|&offset| offset as f32 + reference_f32).collect();
+    #[cfg(not(all(feature = "gpu", target_os = "linux", target_arch = "x86_64")))]
+    {
+        // CPU fallback
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mut offsets = Vec::with_capacity(count);
 
-    debug!("✅ [CUDA] FrameOfReference decoded {} bytes → {} values",
-           packed.len(), values.len());
-    Ok(values)
+        for i in 0..count {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            if byte_offset >= packed.len() {
+                break;
+            }
+
+            let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
+                let next_byte = packed[byte_offset + 1] as u32;
+                value |= next_byte << (8 - bit_in_byte);
+            }
+
+            offsets.push((value & mask) as i32);
+        }
+
+        let reference_f32 = reference as f32;
+        let values: Vec<f32> = offsets.iter().map(|&offset| offset as f32 + reference_f32).collect();
+
+        debug!("✅ [CUDA] FrameOfReference decoded {} bytes → {} values (CPU fallback)", packed.len(), values.len());
+        Ok(values)
+    }
 }
 
 // ============================================================================

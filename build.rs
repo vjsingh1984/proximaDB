@@ -1,10 +1,17 @@
 use tracing::debug;
+use std::env;
+use std::path::PathBuf;
+use std::process::Command;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize basic logging for build scripts
     tracing_subscriber::fmt::init();
 
     tracing::info!("🔨 Building ProximaDB protobuf schemas");
+
+    // Compile CUDA kernels if feature is enabled
+    #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+    compile_cuda_kernels()?;
 
     // Compile v1 protobuf schemas with zero-copy support and serde derives
     tracing::debug!("Compiling v1 protobuf schemas - legacy migration complete!");
@@ -162,5 +169,135 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/vector_types.proto");
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/collection_types.proto");
     debug!("cargo:rerun-if-changed=proto/proximadb/v1/collection.proto");
+    Ok(())
+}
+
+#[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+fn compile_cuda_kernels() -> Result<(), Box<dyn std::error::Error>> {
+    use std::fs;
+
+    tracing::info!("🚀 Compiling CUDA kernels for GPU acceleration");
+
+    // Check if nvcc is available
+    let nvcc_check = Command::new("nvcc")
+        .arg("--version")
+        .output();
+
+    if nvcc_check.is_err() {
+        tracing::warn!("⚠️  nvcc not found - CUDA kernels will not be compiled");
+        tracing::warn!("   GPU feature will fall back to CPU implementation");
+        tracing::warn!("   Install CUDA Toolkit 11.0+ to enable GPU acceleration");
+        return Ok(());
+    }
+
+    tracing::info!("✅ Found nvcc compiler");
+
+    // CUDA source files
+    let cuda_sources = vec![
+        "src/storage/engines/core/ops/proximacodec/impls/gpu/kernels/cuda/kernels.cu",
+    ];
+
+    // Output directory
+    let out_dir = PathBuf::from(env::var("OUT_DIR")?);
+    let cuda_build_dir = out_dir.join("cuda");
+    fs::create_dir_all(&cuda_build_dir)?;
+
+    // Compile each CUDA source file
+    for source in &cuda_sources {
+        tracing::info!("   Compiling CUDA kernel: {}", source);
+
+        let source_path = PathBuf::from(source);
+        let obj_file = cuda_build_dir.join(
+            source_path
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+                + ".o",
+        );
+
+        // Compile with nvcc
+        let status = Command::new("nvcc")
+            .args(&[
+                "-c",                           // Compile only (don't link)
+                "-O3",                          // Optimization level 3
+                "--compiler-options",           // Pass options to host compiler
+                "-fPIC",                        // Position-independent code
+                "-arch=sm_60",                  // Target compute capability 6.0+ (Pascal and newer)
+                "-gencode=arch=compute_60,code=sm_60",  // Pascal (GTX 10xx)
+                "-gencode=arch=compute_70,code=sm_70",  // Volta (V100)
+                "-gencode=arch=compute_75,code=sm_75",  // Turing (RTX 20xx)
+                "-gencode=arch=compute_80,code=sm_80",  // Ampere (RTX 30xx, A100)
+                "-gencode=arch=compute_86,code=sm_86",  // Ampere (RTX 30xx mobile)
+                "-gencode=arch=compute_89,code=sm_89",  // Ada Lovelace (RTX 40xx)
+                "-gencode=arch=compute_90,code=sm_90",  // Hopper (H100)
+                "--use_fast_math",              // Use fast math optimizations
+                "-Xptxas=-v",                   // Verbose PTX assembly (for debugging)
+                source,
+                "-o",
+                obj_file.to_str().unwrap(),
+            ])
+            .status()?;
+
+        if !status.success() {
+            return Err(format!("Failed to compile CUDA kernel: {}", source).into());
+        }
+
+        tracing::info!("   ✅ Compiled: {}", obj_file.display());
+
+        // Tell cargo to rerun if CUDA source changes
+        println!("cargo:rerun-if-changed={}", source);
+    }
+
+    // Link CUDA object files into static library
+    let lib_file = cuda_build_dir.join("libproximadb_cuda.a");
+
+    tracing::info!("   Creating static library: {}", lib_file.display());
+
+    let obj_files: Vec<PathBuf> = cuda_sources
+        .iter()
+        .map(|source| {
+            let source_path = PathBuf::from(source);
+            cuda_build_dir.join(
+                source_path
+                    .file_stem()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+                    + ".o",
+            )
+        })
+        .collect();
+
+    let status = Command::new("ar")
+        .arg("rcs")
+        .arg(&lib_file)
+        .args(&obj_files)
+        .status()?;
+
+    if !status.success() {
+        return Err("Failed to create CUDA static library".into());
+    }
+
+    tracing::info!("   ✅ Created: {}", lib_file.display());
+
+    // Tell cargo to link against CUDA runtime and our library
+    println!("cargo:rustc-link-search=native={}", cuda_build_dir.display());
+    println!("cargo:rustc-link-lib=static=proximadb_cuda");
+    println!("cargo:rustc-link-lib=cudart");
+
+    // Add CUDA library path
+    if let Ok(cuda_path) = env::var("CUDA_PATH") {
+        println!("cargo:rustc-link-search=native={}/lib64", cuda_path);
+    } else {
+        // Default CUDA installation paths
+        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib64");
+        println!("cargo:rustc-link-search=native=/usr/local/cuda/lib");
+    }
+
+    tracing::info!("✅ CUDA kernel compilation complete");
+
     Ok(())
 }
