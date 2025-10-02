@@ -22,19 +22,42 @@
 //!
 //! - ✅ **API Layer**: Complete - GpuEncoder and GpuDecoder traits implemented
 //! - ✅ **Backend Detection**: Complete - Integrated with HardwareBackend
-//! - ✅ **Memory Pooling**: Complete - Uses VectorMemoryPool for GPU buffers
-//! - ⏳ **GPU Kernels**: TODO - Currently falls back to SIMD implementations
+//! - ✅ **GPU Kernel Architecture**: Complete - All 4 backends with kernel dispatch
+//! - ✅ **Memory Utilities**: Complete - GpuBatchConfig and GpuBuffer infrastructure
+//! - ⏳ **Real GPU Compilation**: TODO - Kernels use CPU fallback until real GPU compilation added
+//! - ⏳ **VectorMemoryPool Integration**: TODO - Integrate with memory pooling system
 //!
-//! ## Future GPU Kernel Implementation
+//! ## GPU Kernel Implementation
 //!
-//! When GPU kernels are added, they will be implemented in:
-//! - `kernels/cuda.rs` - NVIDIA CUDA kernels
-//! - `kernels/rocm.rs` - AMD ROCm kernels
-//! - `kernels/metal.rs` - Apple Metal Shaders (MPS)
+//! GPU kernels are implemented in `kernels/` subdirectory:
+//! - `kernels/cuda.rs` - NVIDIA CUDA kernels (Linux x86_64)
+//! - `kernels/rocm.rs` - AMD ROCm/HIP kernels (Linux)
+//! - `kernels/metal.rs` - Apple Metal Shaders (macOS ARM64)
 //! - `kernels/opencl.rs` - Cross-platform OpenCL kernels
+//! - `kernels/utils.rs` - Common GPU utilities and batch configuration
+//!
+//! Each kernel module provides:
+//! - Delta encoding/decoding
+//! - BitPacked encoding/decoding
+//! - FrameOfReference encoding/decoding
+//! - Zigzag encoding/decoding
+//! - PForDelta encoding/decoding (stub - returns error)
+//!
+//! ## Next Steps for Real GPU Acceleration
+//!
+//! 1. Add CUDA kernel compilation using nvcc
+//! 2. Add Metal shader compilation using metal compiler
+//! 3. Add OpenCL kernel compilation using OpenCL runtime
+//! 4. Add ROCm/HIP kernel compilation using hipcc
+//! 5. Integrate with VectorMemoryPool for GPU memory management
+//! 6. Implement GPU batching with optimal batch sizes per backend
 
 pub mod encoder;
 pub mod decoder;
+pub mod kernels;
+pub mod batching;
+pub mod examples;
 
 pub use encoder::GpuEncoder;
 pub use decoder::GpuDecoder;
+pub use batching::{GpuBatchSizer, GpuBatchIterator, BatchingStrategy, BatchPerformanceEstimator};

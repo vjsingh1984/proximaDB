@@ -22,6 +22,19 @@ use crate::storage::engines::core::ops::proximacodec::simd::{
 };
 use crate::core::hardware_capabilities::HardwareBackend;
 
+// Import GPU kernels
+#[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+use super::kernels::cuda;
+
+#[cfg(all(feature = "gpu", target_os = "linux"))]
+use super::kernels::rocm;
+
+#[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+use super::kernels::metal;
+
+#[cfg(feature = "gpu")]
+use super::kernels::opencl;
+
 /// GPU-accelerated encoder
 ///
 /// Supports:
@@ -33,6 +46,119 @@ use crate::core::hardware_capabilities::HardwareBackend;
 ///
 /// Falls back to SIMD implementation if GPU is unavailable.
 pub struct GpuEncoder;
+
+impl GpuEncoder {
+    /// Dispatch Delta encoding to appropriate GPU backend
+    fn gpu_delta_encode(&self, values: &[f32], base: f32, backend: &HardwareBackend) -> Result<Vec<i64>> {
+        match backend {
+            #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+            HardwareBackend::CUDA => cuda::cuda_delta_encode_f32(values, base),
+
+            #[cfg(all(feature = "gpu", target_os = "linux"))]
+            HardwareBackend::ROCm => rocm::rocm_delta_encode_f32(values, base),
+
+            #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+            HardwareBackend::MPS => metal::metal_delta_encode_f32(values, base),
+
+            #[cfg(feature = "gpu")]
+            HardwareBackend::OpenCL => opencl::opencl_delta_encode_f32(values, base),
+
+            _ => {
+                // Fall back to SIMD if GPU kernel not available
+                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                simd_delta_encode_f32(values, base)
+            }
+        }
+    }
+
+    /// Dispatch BitPacked encoding to appropriate GPU backend
+    fn gpu_bitpack_encode(&self, values: &[f32], bits: u8, backend: &HardwareBackend) -> Result<Vec<u8>> {
+        match backend {
+            #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+            HardwareBackend::CUDA => cuda::cuda_bitpack_encode_f32(values, bits),
+
+            #[cfg(all(feature = "gpu", target_os = "linux"))]
+            HardwareBackend::ROCm => rocm::rocm_bitpack_encode_f32(values, bits),
+
+            #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+            HardwareBackend::MPS => metal::metal_bitpack_encode_f32(values, bits),
+
+            #[cfg(feature = "gpu")]
+            HardwareBackend::OpenCL => opencl::opencl_bitpack_encode_f32(values, bits),
+
+            _ => {
+                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                simd_bitpack_encode_f32(values, bits)
+            }
+        }
+    }
+
+    /// Dispatch FrameOfReference encoding to appropriate GPU backend
+    fn gpu_frame_of_reference_encode(&self, values: &[f32], reference: i64, bits: u8, backend: &HardwareBackend) -> Result<Vec<u8>> {
+        match backend {
+            #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+            HardwareBackend::CUDA => cuda::cuda_frame_of_reference_encode_f32(values, reference, bits),
+
+            #[cfg(all(feature = "gpu", target_os = "linux"))]
+            HardwareBackend::ROCm => rocm::rocm_frame_of_reference_encode_f32(values, reference, bits),
+
+            #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+            HardwareBackend::MPS => metal::metal_frame_of_reference_encode_f32(values, reference, bits),
+
+            #[cfg(feature = "gpu")]
+            HardwareBackend::OpenCL => opencl::opencl_frame_of_reference_encode_f32(values, reference, bits),
+
+            _ => {
+                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                simd_frame_of_reference_encode_f32(values, reference, bits)
+            }
+        }
+    }
+
+    /// Dispatch Zigzag encoding to appropriate GPU backend
+    fn gpu_zigzag_encode(&self, values: &[f32], bits: u8, backend: &HardwareBackend) -> Result<Vec<u8>> {
+        match backend {
+            #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+            HardwareBackend::CUDA => cuda::cuda_zigzag_encode_f32(values, bits),
+
+            #[cfg(all(feature = "gpu", target_os = "linux"))]
+            HardwareBackend::ROCm => rocm::rocm_zigzag_encode_f32(values, bits),
+
+            #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+            HardwareBackend::MPS => metal::metal_zigzag_encode_f32(values, bits),
+
+            #[cfg(feature = "gpu")]
+            HardwareBackend::OpenCL => opencl::opencl_zigzag_encode_f32(values, bits),
+
+            _ => {
+                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                simd_zigzag_encode_f32(values, bits)
+            }
+        }
+    }
+
+    /// Dispatch PForDelta encoding to appropriate GPU backend
+    fn gpu_pfor_delta_encode(&self, values: &[f32], majority_bits: u8, base: i64, backend: &HardwareBackend) -> Result<Vec<u8>> {
+        match backend {
+            #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
+            HardwareBackend::CUDA => cuda::cuda_pfor_delta_encode_f32(values, majority_bits, base),
+
+            #[cfg(all(feature = "gpu", target_os = "linux"))]
+            HardwareBackend::ROCm => rocm::rocm_pfor_delta_encode_f32(values, majority_bits, base),
+
+            #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+            HardwareBackend::MPS => metal::metal_pfor_delta_encode_f32(values, majority_bits, base),
+
+            #[cfg(feature = "gpu")]
+            HardwareBackend::OpenCL => opencl::opencl_pfor_delta_encode_f32(values, majority_bits, base),
+
+            _ => {
+                trace!("⚠️  [GPU] Backend {:?} not available, falling back to SIMD", backend);
+                simd_pfor_delta_encode_f32(values, majority_bits, base)
+            }
+        }
+    }
+}
 
 impl RawEncoder for GpuEncoder {
     fn name(&self) -> &'static str {
@@ -64,16 +190,11 @@ impl RawEncoder for GpuEncoder {
             anyhow::bail!("GPU encoder requires GPU backend, but got {:?}", backend);
         }
 
-        // GPU encoding is not yet implemented at the hardware level,
-        // so we fall back to optimized SIMD implementations.
-        // Future: Add actual GPU kernel implementations for CUDA/ROCm/MPS
-
         match scheme {
             ProximaScheme::Delta { base } => {
                 trace!("🚀 [GPU] Encoding {} values with Delta (base={})", values.len(), base);
 
-                // TODO: Replace with GPU kernel implementation
-                let deltas = simd_delta_encode_f32(values, *base as f32)?;
+                let deltas = self.gpu_delta_encode(values, *base as f32, &backend)?;
 
                 // Serialize deltas to bytes
                 let mut result = Vec::with_capacity(deltas.len() * 8);
@@ -88,8 +209,7 @@ impl RawEncoder for GpuEncoder {
             ProximaScheme::BitPacked { bits } => {
                 trace!("🚀 [GPU] Encoding {} values with BitPacked ({}b/val)", values.len(), bits);
 
-                // TODO: Replace with GPU kernel implementation
-                let packed = simd_bitpack_encode_f32(values, *bits)?;
+                let packed = self.gpu_bitpack_encode(values, *bits, &backend)?;
 
                 debug!("✅ [GPU] BitPacked encoded {} values → {} bytes", values.len(), packed.len());
                 Ok(packed)
@@ -98,8 +218,7 @@ impl RawEncoder for GpuEncoder {
             ProximaScheme::FrameOfReference { reference, bits } => {
                 trace!("🚀 [GPU] Encoding {} values with FrameOfReference (ref={}, {}b/val)", values.len(), reference, bits);
 
-                // TODO: Replace with GPU kernel implementation
-                let packed = simd_frame_of_reference_encode_f32(values, *reference, *bits)?;
+                let packed = self.gpu_frame_of_reference_encode(values, *reference, *bits, &backend)?;
 
                 debug!("✅ [GPU] FrameOfReference encoded {} values → {} bytes", values.len(), packed.len());
                 Ok(packed)
@@ -108,8 +227,7 @@ impl RawEncoder for GpuEncoder {
             ProximaScheme::Zigzag { bits } => {
                 trace!("🚀 [GPU] Encoding {} values with Zigzag ({}b/val)", values.len(), bits);
 
-                // TODO: Replace with GPU kernel implementation
-                let packed = simd_zigzag_encode_f32(values, *bits)?;
+                let packed = self.gpu_zigzag_encode(values, *bits, &backend)?;
 
                 debug!("✅ [GPU] Zigzag encoded {} values → {} bytes", values.len(), packed.len());
                 Ok(packed)
@@ -118,8 +236,7 @@ impl RawEncoder for GpuEncoder {
             ProximaScheme::PForDelta { majority_bits, base } => {
                 trace!("🚀 [GPU] Encoding {} values with PForDelta ({}b majority, base={})", values.len(), majority_bits, base);
 
-                // TODO: Replace with GPU kernel implementation
-                let packed = simd_pfor_delta_encode_f32(values, *majority_bits, *base)?;
+                let packed = self.gpu_pfor_delta_encode(values, *majority_bits, *base, &backend)?;
 
                 debug!("✅ [GPU] PForDelta encoded {} values → {} bytes", values.len(), packed.len());
                 Ok(packed)
