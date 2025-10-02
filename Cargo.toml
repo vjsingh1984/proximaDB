@@ -199,6 +199,10 @@ moka = { version = "0.12", features = ["future"] }
 # Lock-free data structures for Phase 2 optimization
 # arc-swap = "1.7"  # Unused - no imports found in codebase
 
+# GPU acceleration dependencies (platform-specific)
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+metal = { version = "0.27", optional = true }  # Metal GPU acceleration for Apple Silicon
+
 # Build dependencies
 [build-dependencies]
 tonic-build = "0.10"
