@@ -593,103 +593,9 @@ pub fn simd_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<
 // ============================================================================
 // HELPER FUNCTIONS FOR ADVANCED SCHEMES
 // ============================================================================
-
-/// Helper: Pack u32 values into bits (scalar bitpacking)
-///
-/// Used internally by other encoding schemes (PForDelta, FrameOfReference, etc.)
-/// that need to bitpack intermediate results.
-fn simd_pack_bits_scalar_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
-    let output_bits = values.len() * bits as usize;
-    let output_bytes = (output_bits + 7) / 8;
-    let mut output = vec![0u8; output_bytes];
-
-    let mask = if bits == 32 {
-        u32::MAX
-    } else {
-        (1u32 << bits) - 1
-    };
-
-    for (i, &val) in values.iter().enumerate() {
-        let bit_offset = i * bits as usize;
-        let byte_start = bit_offset / 8;
-        let bit_start = bit_offset % 8;
-
-        let masked_val = val & mask;
-
-        // Handle cross-byte boundaries
-        let mut remaining_bits = bits as usize;
-        let mut current_val = masked_val;
-        let mut current_byte = byte_start;
-        let mut current_bit = bit_start;
-
-        while remaining_bits > 0 && current_byte < output.len() {
-            let bits_in_byte = std::cmp::min(remaining_bits, 8 - current_bit);
-            let byte_mask = if bits_in_byte >= 8 {
-                0xFFu8
-            } else {
-                ((1u8 << bits_in_byte) - 1) << current_bit
-            };
-            let val_byte = ((current_val & ((1 << bits_in_byte) - 1)) as u8) << current_bit;
-
-            output[current_byte] = (output[current_byte] & !byte_mask) | val_byte;
-
-            current_val >>= bits_in_byte;
-            remaining_bits -= bits_in_byte;
-            current_byte += 1;
-            current_bit = 0;
-        }
-    }
-
-    Ok(output)
-}
-
-/// Helper: Unpack bits into u32 values (scalar bitunpacking)
-///
-/// Used internally by other encoding schemes that need to unpack intermediate results.
-fn simd_unpack_bits_scalar_u32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<u32>> {
-    let mut result = Vec::with_capacity(count);
-
-    let mask = if bits == 32 {
-        u32::MAX
-    } else {
-        (1u32 << bits) - 1
-    };
-
-    for i in 0..count {
-        let bit_offset = i * bits as usize;
-        let byte_start = bit_offset / 8;
-        let bit_start = bit_offset % 8;
-
-        if byte_start >= packed.len() {
-            break;
-        }
-
-        let mut value = 0u32;
-        let mut remaining_bits = bits as usize;
-        let mut current_byte = byte_start;
-        let mut current_bit = bit_start;
-
-        while remaining_bits > 0 && current_byte < packed.len() {
-            let bits_in_byte = std::cmp::min(remaining_bits, 8 - current_bit);
-            let byte_mask = if bits_in_byte >= 8 {
-                0xFFu8
-            } else {
-                ((1u8 << bits_in_byte) - 1) << current_bit
-            };
-            let byte_val = (packed[current_byte] & byte_mask) >> current_bit;
-
-            value |= (byte_val as u32) << (bits as usize - remaining_bits);
-
-            remaining_bits -= bits_in_byte;
-            current_byte += 1;
-            current_bit = 0;
-        }
-
-        result.push(value & mask);
-    }
-
-    Ok(result)
-}
+//
+// These helpers delegate to baseline implementations. SIMD.rs should contain
+// ONLY SIMD intrinsic code, not scalar implementations.
 
 /// Helper: Pack i64 values into bits (wrapper around existing bit-packing)
 fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
@@ -734,10 +640,11 @@ fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
     Ok(result)
 }
 
-/// Helper: Unpack bytes into i32 values (wrapper around existing bit-unpacking)
+/// Helper: Unpack bytes into i32 values (delegates to baseline)
 fn bitunpack_bytes_to_i32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
+    use super::impls::baseline::functions::bitpack;
     // Unpack to u32 first, then reinterpret as i32
-    let u32_values = simd_unpack_bits_scalar_u32(packed, bits, count)?;
+    let u32_values = bitpack::unbitpack_u32(packed, bits, count)?;
     Ok(u32_values.iter().map(|&v| v as i32).collect())
 }
 
@@ -1233,7 +1140,10 @@ unsafe fn compute_deltas_pfor_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
 }
 
 /// Bit-pack i32 values (helper for Frame of Reference and PForDelta)
+/// Helper: Pack i32 values into bits (delegates to baseline)
 fn bitpack_i32_scalar(values: &[i32], bits: u8) -> Result<Vec<u8>> {
+    use super::impls::baseline::functions::bitpack;
+
     if bits == 0 {
         return Ok(Vec::new());
     }
@@ -1243,7 +1153,7 @@ fn bitpack_i32_scalar(values: &[i32], bits: u8) -> Result<Vec<u8>> {
 
     // Convert i32 to u32 for bitpacking
     let u32_values: Vec<u32> = values.iter().map(|&v| v as u32).collect();
-    simd_pack_bits_scalar_u32(&u32_values, bits)
+    bitpack::bitpack_u32(&u32_values, bits)
 }
 
 /// SIMD-accelerated PForDelta decoding for f32

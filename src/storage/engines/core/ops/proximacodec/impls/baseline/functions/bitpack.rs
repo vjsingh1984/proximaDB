@@ -132,7 +132,10 @@ pub fn decode_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
 // ===== Bit-packing helpers =====
 
 /// Bit-pack u32 values (simple implementation, no SIMD)
-fn bitpack_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
+///
+/// **Note**: Made public for use by simd.rs helpers that need bitpacking
+/// for intermediate results (PForDelta, FrameOfReference, etc.)
+pub(crate) fn bitpack_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
     if bits == 0 {
         return Ok(Vec::new());
     }
@@ -202,7 +205,10 @@ fn bitpack_u64(values: &[u64], bits: u8) -> Result<Vec<u8>> {
 }
 
 /// Unpack u32 values from bit-packed data
-fn unbitpack_u32(data: &[u8], bits: u8, count: usize) -> Result<Vec<u32>> {
+///
+/// **Note**: Made public for use by simd.rs helpers that need bitunpacking
+/// for intermediate results (PForDelta, FrameOfReference, etc.)
+pub(crate) fn unbitpack_u32(data: &[u8], bits: u8, count: usize) -> Result<Vec<u32>> {
     if bits == 0 {
         return Ok(vec![0; count]);
     }
