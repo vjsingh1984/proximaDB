@@ -559,54 +559,6 @@ impl ProximaDataBlock {
         panic!("apply_simd_encoding is obsolete - use serialize_with_config() which uses ProximaCodec instead")
     }
 
-    /// Analyze float data pattern and return descriptive information
-    fn analyze_pattern_f32(data: &[f32]) -> String {
-        if data.is_empty() {
-            return "Empty".to_string();
-        }
-
-        // Check for constant data
-        let first = data[0];
-        if data.iter().all(|&v| v == first) {
-            return format!("Constant({})", first);
-        }
-
-        // Calculate statistics
-        let min = data.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let range = max - min;
-
-        // Check for sparsity
-        let zero_count = data.iter().filter(|&&v| v == 0.0).count();
-        let zero_ratio = zero_count as f64 / data.len() as f64;
-        if zero_ratio > 0.5 {
-            return format!("Sparse({:.1}% zeros)", zero_ratio * 100.0);
-        }
-
-        // Check for sequential pattern
-        let mut max_delta = 0.0f32;
-        let mut is_sequential = true;
-        for window in data.windows(2) {
-            let delta = (window[1] - window[0]).abs();
-            max_delta = max_delta.max(delta);
-            if delta > 1000.0 {
-                is_sequential = false;
-                break;
-            }
-        }
-        if is_sequential && max_delta < 100.0 {
-            return format!("Sequential(Δ≤{:.1})", max_delta);
-        }
-
-        // Check for normalized range
-        if range < 10.0 && min >= -10.0 && max <= 10.0 {
-            return format!("Normalized([{:.2},{:.2}])", min, max);
-        }
-
-        // General pattern
-        format!("General(range:{:.1}, min:{:.1}, max:{:.1})", range, min, max)
-    }
-
     /// **🚀 Create a new Proxima data block with AUTOMATIC optimization capabilities**
     ///
     /// **This method automatically generates ALL the features that storage engines typically implement manually:**
@@ -2381,7 +2333,7 @@ impl ProximaDataBlock {
         use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
 
         let detected_scheme = analysis::analyze_and_choose_scheme_f32(&all_floats);
-        let pattern_info = Self::analyze_pattern_f32(&all_floats);
+        let pattern_info = format!("{:?}", detected_scheme); // Use scheme name as pattern description
 
         // Override lossy schemes with lossless alternatives
         let scheme = match &detected_scheme {
@@ -2519,82 +2471,48 @@ impl ProximaDataBlock {
         };
         field_data.push(compression_intent);
 
-        // Create encoder with adaptive scheme selection
-        // Analyze first group to determine optimal encoding
-        let sample_group: Vec<f32> = vectors.iter()
-            .take(std::cmp::min(10, vectors.len()))
-            .flat_map(|v| v.iter().take(GROUP_SIZE))
-            .copied()
-            .collect();
-
         // ============================================================================
-        // CRITICAL: Scheme Selection for f32 Data (fixes count loss bug)
+        // CRITICAL: Per-Group Scheme Selection for Optimal Compression
         // ============================================================================
         //
-        // **Root Cause Analysis:**
-        // The ProximaEncoder's pattern detection (analyze_and_choose_scheme_f32) was
-        // selecting integer-optimized schemes like Simple8b for f32 data. While these
-        // schemes correctly encode/decode the COUNT, they are LOSSY for f32 values:
+        // **Strategy Change (2025-10-03):**
+        // Previously, GroupedFieldEncoded used a single scheme selected from a small
+        // sample (10 vectors × 32 dims = 320 floats). This caused:
+        // 1. Insufficient statistical coverage (0.04% of 1000 vectors × 768 dims)
+        // 2. Pattern mismatch between sample and full dataset
+        // 3. Suboptimal compression vs GroupedBlockCompressed
         //
-        // Example failure case:
-        //   Input:  320 f32 values (sin wave: [0.0, 0.099, 0.198, ...])
-        //   Detected: "Sequential(Δ≤0.2)" → Simple8b selected
-        //   Encoded: Simple8b converts f32→i64 via f32::to_bits() (IEEE 754)
-        //   Result:  Only 5 unique values stored (lossy compression)
-        //   Decoded: 5 floats instead of 320 → "Insufficient data for count" error
+        // **New Approach:**
+        // Analyze EACH group individually using ALL vectors in the row group:
+        // - For 1000 vectors × 768 dims with 32D groups:
+        //   - Group 0: Analyze 1000 vectors × dims 0-31 = 32,000 floats
+        //   - Group 1: Analyze 1000 vectors × dims 32-63 = 32,000 floats
+        //   - ... (24 groups total)
+        // - Each group gets optimal ProximaCodec scheme for its pattern
+        // - Matches GroupedBlockCompressed behavior for consistency
+        //
+        // **Scheme Safety for f32 Data:**
+        // Override lossy integer schemes (Simple8b, PForDelta, etc.) with lossless
+        // alternatives (Delta, FrameOfReference, BitPacked{32}) to preserve f32 semantics.
         //
         // **Why Integer Schemes Are Lossy for f32:**
-        // 1. Simple8b: Designed for small non-negative integers, packs values into 64-bit words
-        // 2. f32::to_bits(): Returns 32-bit IEEE 754 representation (sign + exp + mantissa)
-        // 3. Similar f32 values have VERY different bit patterns:
-        //    - 0.1 = 0x3DCCCCCD
-        //    - 0.2 = 0x3E4CCCCD
-        //    - Simple8b sees these as totally different integers, may deduplicate/compress
-        //
-        // **The Fix:**
-        // Override lossy integer schemes with lossless f32-safe schemes:
-        // - BitPacked{32}: Stores all 32 bits of each f32 (lossless, no compression)
-        // - Delta: Works well for f32 (stores base + deltas)
-        // - FrameOfReference: Works well for f32 (stores reference + offsets)
-        // - SparseBitmap/COO: Safe for sparse f32 data
-        //
-        // **Trade-off:**
-        // - BitPacked{32} is larger than Simple8b (no compression on bits)
-        // - But correctness > compression ratio
-        // - Block-level Zstd compression still provides good overall compression
+        // - Simple8b/PForDelta designed for small non-negative integers
+        // - f32::to_bits() produces 32-bit IEEE 754 representation
+        // - Similar f32 values (0.1, 0.2) have very different bit patterns
+        // - Integer schemes may deduplicate/compress incorrectly
         //
         // ============================================================================
-        let (scheme, pattern_info) = if !sample_group.is_empty() {
-            use crate::storage::engines::core::ops::proximacodec::{analysis, ProximaScheme as CodecScheme};
 
-            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&sample_group);
-            let pattern = Self::analyze_pattern_f32(&sample_group);
+        use crate::storage::engines::core::ops::proximacodec::{analysis, ProximaScheme as CodecScheme};
+        use std::collections::HashMap;
 
-            // Override lossy/problematic schemes with lossless alternatives for f32 data
-            let safe_scheme = match detected_scheme {
-                CodecScheme::Simple8b | CodecScheme::RunLength |
-                CodecScheme::VByte | CodecScheme::Zigzag { .. } |
-                CodecScheme::PForDelta { .. } => {
-                    // These schemes are lossy or problematic for f32:
-                    // - Treat data as integers (loses f32 semantics)
-                    // - May not preserve all bits correctly
-                    // Use Delta encoding (lossless, good compression for similar values)
-                    CodecScheme::Delta { base: 0 }
-                },
-                _ => detected_scheme, // Delta, FrameOfReference, SparseBitmap, BitPacked are safe for f32
-            };
+        // Track pattern distribution for debugging
+        let mut pattern_counts: HashMap<String, usize> = HashMap::new();
 
-            (safe_scheme, pattern)
-        } else {
-            use crate::storage::engines::core::ops::proximacodec::ProximaScheme as CodecScheme;
-            (CodecScheme::Delta { base: 0 }, "Empty".to_string())
-        };
-
-        debug!("[ENCODE_GV] GroupedFieldEncoded | Pattern: {} | Selected: {:?} | Reason: Better cache locality for grouped access", pattern_info, scheme);
         // Use ProximaCodec global singleton for hardware-optimized encoding
         let codec = ProximaCodec::global();
 
-        // Process each 64D group
+        // Process each 32D group with per-group scheme selection
         for group_idx in 0..num_groups {
             let start_dim = group_idx * GROUP_SIZE;
             let end_dim = ((group_idx + 1) * GROUP_SIZE).min(dimension);
@@ -2604,8 +2522,8 @@ impl ProximaDataBlock {
             field_data.extend(&(start_dim as u32).to_le_bytes());
             field_data.extend(&(group_dims as u32).to_le_bytes());
 
-            // Collect group data for encoding
-            // Store row-wise: each vector's 64D chunk contiguously
+            // Collect group data for encoding from ALL vectors
+            // Store row-wise: each vector's 32D chunk contiguously
             let mut group_floats = Vec::with_capacity(vectors.len() * group_dims);
 
             for vector in vectors {
@@ -2614,8 +2532,51 @@ impl ProximaDataBlock {
                 }
             }
 
-            trace!("[ENCODE_GV] Group {}: collected {} floats ({} vectors × {} dims)",
-                     group_idx, group_floats.len(), vectors.len(), group_dims);
+            // Analyze THIS group's pattern using full population
+            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&group_floats);
+            let pattern = format!("{:?}", detected_scheme); // Use scheme name as pattern description
+
+            // Use is_lossy() method to automatically filter lossy schemes
+            // This ensures future lossless schemes are automatically allowed
+            use crate::storage::engines::core::ops::proximacodec::TypeId;
+
+            let scheme = if detected_scheme.is_lossy(TypeId::F32) {
+                // Scheme is lossy for f32 - override with safe alternative
+                trace!("[ENCODE_GV] Group {}: Detected scheme {:?} is lossy for F32, overriding",
+                       group_idx, detected_scheme);
+
+                // Special case: upgrade PForDelta to PForDoubleDelta for better compression
+                match &detected_scheme {
+                    CodecScheme::PForDelta { .. } => {
+                        if let Some(base) = group_floats.first() {
+                            let base_bits = base.to_bits() as i64;
+                            let first_delta = if group_floats.len() > 1 {
+                                (group_floats[1].to_bits() as i64) - base_bits
+                            } else {
+                                0
+                            };
+                            CodecScheme::PForDoubleDelta { base: base_bits, first_delta }
+                        } else {
+                            CodecScheme::Delta { base: 0 }
+                        }
+                    },
+                    _ => {
+                        // Default fallback for all other lossy schemes
+                        CodecScheme::Delta { base: 0 }
+                    }
+                }
+            } else {
+                // Scheme is lossless for f32 - use it directly
+                // This includes: Delta, DoubleDelta, PForDoubleDelta, FrameOfReference,
+                // BitPacked{32}, SparseBitmap, SparseCOO, Dictionary, Adaptive, etc.
+                detected_scheme.clone()
+            };
+
+            // Track patterns for summary
+            *pattern_counts.entry(pattern.clone()).or_insert(0) += 1;
+
+            trace!("[ENCODE_GV] Group {} (dims {}-{}): Pattern: {} | Detected: {:?} | Selected: {:?} | {} floats ({} vectors × {} dims)",
+                   group_idx, start_dim, end_dim - 1, pattern, &detected_scheme, &scheme, group_floats.len(), vectors.len(), group_dims);
 
             // Encode the group using ProximaCodec (hardware-optimized)
             let encoded_group = codec.encode(&group_floats, scheme.clone())?;
@@ -2649,8 +2610,8 @@ impl ProximaDataBlock {
         // Add summary debug log
         let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
         let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
-        debug!("[ENCODE_GV] GroupedFieldEncoded Summary: {} vectors x {} dims | {} groups | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: 32D groups for cache locality",
-               vectors.len(), dimension, num_groups, total_raw_bytes, field_data.len(), compression_ratio);
+        debug!("[ENCODE_GV] GroupedFieldEncoded Summary: {} vectors x {} dims | {} groups | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: Per-group analysis with cache locality",
+               vectors.len(), dimension, num_groups, pattern_counts, total_raw_bytes, field_data.len(), compression_ratio);
 
         Ok(field_data)
     }
@@ -2701,16 +2662,42 @@ impl ProximaDataBlock {
             use crate::storage::engines::core::ops::proximacodec::{analysis, ProximaScheme as CodecScheme};
 
             let detected_scheme = analysis::analyze_and_choose_scheme_f32(&group_floats);
-            let pattern = Self::analyze_pattern_f32(&group_floats);
+            let pattern = format!("{:?}", detected_scheme); // Use scheme name as pattern description
 
-            // Override lossy/problematic schemes with lossless alternatives for f32 data
-            let scheme = match &detected_scheme {
-                CodecScheme::Simple8b | CodecScheme::RunLength |
-                CodecScheme::VByte | CodecScheme::Zigzag { .. } |
-                CodecScheme::PForDelta { .. } => {
-                    CodecScheme::Delta { base: 0 }
-                },
-                _ => detected_scheme.clone(),
+            // Use is_lossy() method to automatically filter lossy schemes
+            // This ensures future lossless schemes are automatically allowed
+            use crate::storage::engines::core::ops::proximacodec::TypeId;
+
+            let scheme = if detected_scheme.is_lossy(TypeId::F32) {
+                // Scheme is lossy for f32 - override with safe alternative
+                trace!("[ENCODE_GB] Group {}: Detected scheme {:?} is lossy for F32, overriding",
+                       group_idx, detected_scheme);
+
+                // Special case: upgrade PForDelta to PForDoubleDelta for better compression
+                match &detected_scheme {
+                    CodecScheme::PForDelta { .. } => {
+                        if let Some(base) = group_floats.first() {
+                            let base_bits = base.to_bits() as i64;
+                            let first_delta = if group_floats.len() > 1 {
+                                (group_floats[1].to_bits() as i64) - base_bits
+                            } else {
+                                0
+                            };
+                            CodecScheme::PForDoubleDelta { base: base_bits, first_delta }
+                        } else {
+                            CodecScheme::Delta { base: 0 }
+                        }
+                    },
+                    _ => {
+                        // Default fallback for all other lossy schemes
+                        CodecScheme::Delta { base: 0 }
+                    }
+                }
+            } else {
+                // Scheme is lossless for f32 - use it directly
+                // This includes: Delta, DoubleDelta, PForDoubleDelta, FrameOfReference,
+                // BitPacked{32}, SparseBitmap, SparseCOO, Dictionary, Adaptive, etc.
+                detected_scheme.clone()
             };
 
             // Track patterns for summary
@@ -2801,7 +2788,7 @@ impl ProximaDataBlock {
             use crate::storage::engines::core::ops::proximacodec::{analysis, ProximaScheme as CodecScheme};
 
             let detected_scheme = analysis::analyze_and_choose_scheme_f32(&sample_data);
-            let pattern = Self::analyze_pattern_f32(&sample_data);
+            let pattern = format!("{:?}", detected_scheme); // Use scheme name as pattern description
 
             // Override lossy/problematic schemes with lossless alternatives for f32 data
             let safe_scheme = match &detected_scheme {
@@ -2921,7 +2908,7 @@ impl ProximaDataBlock {
             use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
 
             let detected_scheme = analysis::analyze_and_choose_scheme_f32(&dimension_values);
-            let pattern = Self::analyze_pattern_f32(&dimension_values);
+            let pattern = format!("{:?}", detected_scheme); // Use scheme name as pattern description
 
             // Override lossy/problematic schemes with lossless alternatives for f32 data
             let scheme = match &detected_scheme {
