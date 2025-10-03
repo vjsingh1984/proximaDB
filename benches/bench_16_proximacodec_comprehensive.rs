@@ -142,15 +142,21 @@ fn get_platform_info() -> String {
     let os = std::env::consts::OS;
 
     #[cfg(all(feature = "metal", target_os = "macos"))]
-    return format!("{} {} (Metal GPU)", os, arch);
+    {
+        return format!("{} {} (Metal GPU)", os, arch);
+    }
 
     #[cfg(all(feature = "gpu", target_os = "linux", target_arch = "x86_64"))]
-    return format!("{} {} (CUDA GPU)", os, arch);
+    {
+        return format!("{} {} (CUDA GPU)", os, arch);
+    }
 
-    #[cfg(target_arch = "aarch64")]
-    return format!("{} {} (NEON SIMD)", os, arch);
+    #[cfg(all(target_arch = "aarch64", not(all(feature = "metal", target_os = "macos"))))]
+    {
+        return format!("{} {} (NEON SIMD)", os, arch);
+    }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(all(feature = "gpu", target_os = "linux"))))]
     {
         if std::is_x86_feature_detected!("avx512f") {
             return format!("{} {} (AVX-512 SIMD)", os, arch);
@@ -440,10 +446,10 @@ fn bench_zigzag_all_variants(c: &mut Criterion) {
 
 fn bench_summary_large_batch(c: &mut Criterion) {
     // Test column size: 1024 values (1 dimension across 1024 vectors)
-    let column_size = 1024;
+    let column_size: usize = 1024;
 
     let mut group = c.benchmark_group("summary_large_batch");
-    group.throughput(Throughput::Elements(column_size));
+    group.throughput(Throughput::Elements(column_size as u64));
 
     let values = generate_time_series(column_size, 1);
 
@@ -640,7 +646,7 @@ fn print_compression_summary(results: &[CompressionMetrics]) {
     println!("{}", "─".repeat(90));
 
     for pattern in &patterns {
-        let mut pattern_results: Vec<_> = results.iter()
+        let pattern_results: Vec<_> = results.iter()
             .filter(|r| r.pattern_name == *pattern)
             .collect();
 
@@ -667,7 +673,7 @@ fn print_compression_summary(results: &[CompressionMetrics]) {
         // Sort by composite score
         scored_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
 
-        if let Some((best, score)) = scored_results.first() {
+        if let Some((best, _score)) = scored_results.first() {
             // Check if Delta is within 5% compression of best and prefer it for speed
             let best_compression = pattern_results.iter()
                 .max_by(|a, b| a.compression_ratio.partial_cmp(&b.compression_ratio).unwrap())
