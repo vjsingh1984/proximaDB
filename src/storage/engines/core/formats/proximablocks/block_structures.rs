@@ -2777,53 +2777,61 @@ impl ProximaDataBlock {
             return Ok(field_data);
         }
 
-        // Create encoder with adaptive scheme selection
-        // Sample first few dimensions to get representative data
-        let sample_data: Vec<f32> = vectors.iter()
-            .take(std::cmp::min(100, vectors.len()))
-            .flat_map(|v| v.iter().take(std::cmp::min(50, dimension)).copied())
-            .collect();
+        trace!("[ENCODE_TB] Encoding {} vectors, {} dimensions with per-dimension analysis", vectors.len(), dimension);
 
-        let (scheme, pattern_info) = if !sample_data.is_empty() {
-            use crate::storage::engines::core::ops::proximacodec::{analysis, ProximaScheme as CodecScheme};
+        // Track pattern statistics across dimensions for summary
+        let mut pattern_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
-            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&sample_data);
-            let pattern = format!("{:?}", detected_scheme); // Use scheme name as pattern description
-
-            // Override lossy/problematic schemes with lossless alternatives for f32 data
-            let safe_scheme = match &detected_scheme {
-                CodecScheme::Simple8b | CodecScheme::RunLength |
-                CodecScheme::VByte | CodecScheme::Zigzag { .. } |
-                CodecScheme::PForDelta { .. } => {
-                    // Use Delta encoding (lossless, good compression for similar values)
-                    CodecScheme::Delta { base: 0 }
-                },
-                _ => detected_scheme.clone(), // Delta, FrameOfReference, SparseBitmap, BitPacked are safe for f32
-            };
-
-            (safe_scheme, pattern)
-        } else {
-            use crate::storage::engines::core::ops::proximacodec::ProximaScheme as CodecScheme;
-            (CodecScheme::Delta { base: 0 }, "Empty".to_string())
-        };
-
-        debug!("[ENCODE_GB] GroupedBlockCompressed | Pattern: {} | Selected: {:?} | Reason: Block-level compression for better ratios", pattern_info, scheme);
         // Use ProximaCodec for hardware-optimized encoding
+        use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, ProximaScheme as CodecScheme};
+        use crate::storage::engines::core::ops::proximacodec::TypeId;
         let codec = ProximaCodec::global();
 
-        // Transpose and encode each dimension (no per-dimension compression)
+        // Transpose and encode each dimension with per-dimension analysis
         let mut uncompressed_block = Vec::new();
 
         for dim_idx in 0..dimension {
-            // Extract this dimension across all vectors
+            // Extract this dimension across ALL vectors (100% coverage, not sample)
             let dim_values: Vec<f32> = vectors.iter()
                 .map(|v| v.get(dim_idx).copied().unwrap_or(0.0))
                 .collect();
 
-            trace!(" [ENCODE_TB] Encoding dimension {} with {} values", dim_idx, dim_values.len());
+            trace!(" [ENCODE_TB] Analyzing dimension {} with {} values", dim_idx, dim_values.len());
+
+            // Analyze EACH dimension separately for optimal encoding (same as TransposeField)
+            let detected_scheme = analysis::analyze_and_choose_scheme_f32(&dim_values);
+            let pattern = format!("{:?}", detected_scheme);
+
+            // Use is_lossy() method for dynamic filtering (same as GroupedField fix)
+            let scheme = if detected_scheme.is_lossy(TypeId::F32) {
+                // Upgrade PForDelta to PForDoubleDelta (lossless for f32)
+                match &detected_scheme {
+                    CodecScheme::PForDelta { .. } => {
+                        if let Some(base) = dim_values.first() {
+                            let base_bits = base.to_bits() as i64;
+                            let first_delta = if dim_values.len() > 1 {
+                                (dim_values[1].to_bits() as i64) - base_bits
+                            } else {
+                                0
+                            };
+                            CodecScheme::PForDoubleDelta { base: base_bits, first_delta }
+                        } else {
+                            CodecScheme::Delta { base: 0 }
+                        }
+                    },
+                    _ => CodecScheme::Delta { base: 0 }
+                }
+            } else {
+                detected_scheme.clone()  // Use lossless scheme as-is
+            };
+
+            trace!(" [ENCODE_TB] Dimension {}: Pattern: {} | Detected: {:?} | Selected: {:?}", dim_idx, pattern, detected_scheme, scheme);
+
+            // Track pattern for summary statistics
+            *pattern_counts.entry(pattern.clone()).or_insert(0) += 1;
 
             // Apply ProximaCodec encoding (no compression yet)
-            let encoded_dim = codec.encode(&dim_values, scheme.clone())
+            let encoded_dim = codec.encode(&dim_values, scheme)
                 .map_err(|e| anyhow::anyhow!("Proxima encoding failed for dimension {}: {}", dim_idx, e))?;
 
             // Write dimension size and encoded data
@@ -2859,8 +2867,8 @@ impl ProximaDataBlock {
         // Add summary debug log
         let total_raw_bytes = vectors.len() * dimension * std::mem::size_of::<f32>();
         let compression_ratio = total_raw_bytes as f64 / field_data.len() as f64;
-        debug!("[ENCODE_TB] TransposeBlockCompressed Summary: {} vectors x {} dims | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: Transpose then block compress",
-               vectors.len(), dimension, total_raw_bytes, field_data.len(), compression_ratio);
+        debug!("[ENCODE_TB] TransposeBlockCompressed Summary: {} vectors x {} dims | Patterns: {:?} | Raw: {} → Encoded: {} bytes | Compression: {:.2}x | Strategy: Per-dimension analysis then block compress",
+               vectors.len(), dimension, pattern_counts, total_raw_bytes, field_data.len(), compression_ratio);
 
         trace!(" [ENCODE_TB] TransposeFieldEncodedBlockCompressed complete: {} bytes", field_data.len());
         Ok(field_data)
@@ -2905,22 +2913,34 @@ impl ProximaDataBlock {
             }
 
             // Encode dimension data with adaptive encoding using ProximaCodec
-            use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis};
+            use crate::storage::engines::core::ops::proximacodec::{ProximaCodec, analysis, ProximaScheme as CodecScheme};
 
             let detected_scheme = analysis::analyze_and_choose_scheme_f32(&dimension_values);
             let pattern = format!("{:?}", detected_scheme); // Use scheme name as pattern description
 
-            // Override lossy/problematic schemes with lossless alternatives for f32 data
-            let scheme = match &detected_scheme {
-                crate::storage::engines::core::ops::proximacodec::ProximaScheme::Simple8b |
-                crate::storage::engines::core::ops::proximacodec::ProximaScheme::RunLength |
-                crate::storage::engines::core::ops::proximacodec::ProximaScheme::VByte |
-                crate::storage::engines::core::ops::proximacodec::ProximaScheme::Zigzag { .. } |
-                crate::storage::engines::core::ops::proximacodec::ProximaScheme::PForDelta { .. } => {
-                    // Use Delta encoding (lossless, good compression for similar values)
-                    crate::storage::engines::core::ops::proximacodec::ProximaScheme::Delta { base: 0 }
-                },
-                _ => detected_scheme.clone(), // Delta, FrameOfReference, SparseBitmap, BitPacked are safe for f32
+            // Use is_lossy() method for dynamic filtering (same as GroupedField fix)
+            use crate::storage::engines::core::ops::proximacodec::TypeId;
+
+            let scheme = if detected_scheme.is_lossy(TypeId::F32) {
+                // Upgrade PForDelta to PForDoubleDelta (lossless for f32)
+                match &detected_scheme {
+                    CodecScheme::PForDelta { .. } => {
+                        if let Some(base) = dimension_values.first() {
+                            let base_bits = base.to_bits() as i64;
+                            let first_delta = if dimension_values.len() > 1 {
+                                (dimension_values[1].to_bits() as i64) - base_bits
+                            } else {
+                                0
+                            };
+                            CodecScheme::PForDoubleDelta { base: base_bits, first_delta }
+                        } else {
+                            CodecScheme::Delta { base: 0 }
+                        }
+                    },
+                    _ => CodecScheme::Delta { base: 0 }
+                }
+            } else {
+                detected_scheme.clone()  // Use lossless scheme as-is
             };
 
             trace!("[ENCODE_DIM] Dimension {}: Pattern: {} | Detected: {:?} | Selected: {:?}", dim_idx, pattern, detected_scheme, scheme);
