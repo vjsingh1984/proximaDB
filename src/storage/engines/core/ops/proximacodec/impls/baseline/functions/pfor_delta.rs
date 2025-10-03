@@ -17,6 +17,13 @@
 
 use anyhow::Result;
 
+// ===== Bitpacking delegation to shared helpers =====
+//
+// All bitpacking operations now use the shared helpers in bitpack.rs
+// to avoid code duplication and ensure consistent sign extension behavior.
+
+use super::bitpack;
+
 /// Encode f32 values using PForDelta (raw, no headers)
 ///
 /// # Algorithm
@@ -99,8 +106,8 @@ pub fn encode_f32(values: &[f32], base: i64) -> Result<Vec<u8>> {
     let num_patches = patches.len() as u32;
     result.extend_from_slice(&num_patches.to_le_bytes());
 
-    // Bitpack regular values (now i64)
-    let packed = bitpack_i64(&regular_values, bits)?;
+    // Bitpack regular values (now i64) (delegate to shared helper)
+    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
     result.extend(packed);
 
     // Store patches (position:4 bytes + value:8 bytes = 12 bytes per patch)
@@ -167,8 +174,8 @@ pub fn encode_i64(values: &[i64], base: i64) -> Result<Vec<u8>> {
     let num_patches = patches.len() as u32;
     result.extend_from_slice(&num_patches.to_le_bytes());
 
-    // Bitpack regular values
-    let packed = bitpack_i64(&regular_values, bits)?;
+    // Bitpack regular values (delegate to shared helper)
+    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
     result.extend(packed);
 
     // Store patches
@@ -238,8 +245,8 @@ pub fn encode_i32(values: &[i32], base: i64) -> Result<Vec<u8>> {
     let num_patches = patches.len() as u32;
     result.extend_from_slice(&num_patches.to_le_bytes());
 
-    // Bitpack regular values (now i64)
-    let packed = bitpack_i64(&regular_values, bits)?;
+    // Bitpack regular values (now i64) (delegate to shared helper)
+    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
     result.extend(packed);
 
     // Store patches (position:4 bytes + value:8 bytes = 12 bytes per patch)
@@ -252,7 +259,19 @@ pub fn encode_i32(values: &[i32], base: i64) -> Result<Vec<u8>> {
 }
 
 /// Decode f32 values from PForDelta encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+/// Parse PForDelta header and apply patches to deltas
+///
+/// **Helper for SIMD**: Made public to allow SIMD module to reuse wire format parsing
+/// and patch application logic.
+///
+/// # Returns
+/// (base_i32, patched_deltas)
+///
+/// # Algorithm
+/// 1. Parse header (base, bits, num_patches)
+/// 2. Bitunpack deltas
+/// 3. Apply patches to deltas
+pub(crate) fn parse_header_and_patches_f32(data: &[u8], count: usize) -> Result<(i32, Vec<i64>)> {
     if data.len() < 9 {
         return Err(anyhow::anyhow!("PForDelta decode: insufficient data"));
     }
@@ -274,9 +293,9 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
         return Err(anyhow::anyhow!("PForDelta decode: insufficient data for patches"));
     }
 
-    // Unpack regular values (now i64!)
+    // Unpack regular values (now i64!) (delegate to shared helper with sign extension)
     let bitpacked_data = &data[9..9 + bitpacked_bytes];
-    let mut deltas = bitunpack_i64(bitpacked_data, bits, count)?;
+    let mut deltas = bitpack::unbitpack_i64_unsigned(bitpacked_data, bits, count)?;
 
     // Apply patches (patches are now i64)
     let patch_start = 9 + bitpacked_bytes;
@@ -305,17 +324,37 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
         }
     }
 
-    // Convert back to f32 using i64 arithmetic (NO OVERFLOW!)
-    let result = deltas
+    Ok((base_i32, deltas))
+}
+
+/// Reconstruct f32 values from deltas and base (scalar)
+///
+/// **Helper for SIMD**: Made public to allow SIMD module to provide vectorized version.
+///
+/// # Algorithm
+/// 1. Add base to each delta: `reconstructed = base + delta` (i64 arithmetic)
+/// 2. Convert to i32 and reinterpret as f32
+///
+/// # Arguments
+/// * `deltas` - Patched i64 deltas
+/// * `base_i32` - Base value (f32 bit representation as i32)
+pub(crate) fn reconstruct_values_scalar_f32(deltas: &[i64], base_i32: i32) -> Vec<f32> {
+    deltas
         .iter()
         .map(|&delta| {
             let reconstructed_i64 = (base_i32 as i64) + delta;  // i64 arithmetic - no overflow!
             let reconstructed_i32 = reconstructed_i64 as i32 as u32;
             f32::from_bits(reconstructed_i32)
         })
-        .collect();
+        .collect()
+}
 
-    Ok(result)
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    // Parse header and apply patches
+    let (base_i32, deltas) = parse_header_and_patches_f32(data, count)?;
+
+    // Reconstruct values (scalar)
+    Ok(reconstruct_values_scalar_f32(&deltas, base_i32))
 }
 
 /// Decode i64 values from PForDelta encoded data
@@ -343,9 +382,9 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
         return Err(anyhow::anyhow!("PForDelta decode: insufficient data for patches"));
     }
 
-    // Unpack regular values
+    // Unpack regular values (delegate to shared helper with sign extension)
     let bitpacked_data = &data[13..13 + bitpacked_bytes];
-    let mut deltas = bitunpack_i64(bitpacked_data, bits, count)?;
+    let mut deltas = bitpack::unbitpack_i64_unsigned(bitpacked_data, bits, count)?;
 
     // Apply patches
     let patch_start = 13 + bitpacked_bytes;
@@ -406,9 +445,9 @@ pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
         return Err(anyhow::anyhow!("PForDelta decode: insufficient data for patches"));
     }
 
-    // Unpack regular values (now i64!)
+    // Unpack regular values (now i64!) (delegate to shared helper with sign extension)
     let bitpacked_data = &data[9..9 + bitpacked_bytes];
-    let mut deltas = bitunpack_i64(bitpacked_data, bits, count)?;
+    let mut deltas = bitpack::unbitpack_i64_unsigned(bitpacked_data, bits, count)?;
 
     // Apply patches (patches are now i64)
     let patch_start = 9 + bitpacked_bytes;
@@ -445,142 +484,6 @@ pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
             value_i64 as i32
         })
         .collect();
-
-    Ok(result)
-}
-
-/// Bit-pack i32 values (helper function)
-fn bitpack_i32(values: &[i32], bits: u8) -> Result<Vec<u8>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
-    }
-
-    if bits == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
-    let mut result = vec![0u8; total_bytes];
-
-    let mut bit_offset = 0;
-    for &value in values {
-        let value_u32 = value as u32;
-
-        for bit_pos in 0..bits {
-            let bit = (value_u32 >> bit_pos) & 1;
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < result.len() {
-                result[byte_idx] |= (bit as u8) << bit_idx;
-            }
-
-            bit_offset += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-/// Bit-pack i64 values (helper function)
-fn bitpack_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
-    }
-
-    if bits == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
-    let mut result = vec![0u8; total_bytes];
-
-    let mut bit_offset = 0;
-    for &value in values {
-        let value_u64 = value as u64;
-
-        for bit_pos in 0..bits {
-            let bit = (value_u64 >> bit_pos) & 1;
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < result.len() {
-                result[byte_idx] |= (bit as u8) << bit_idx;
-            }
-
-            bit_offset += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-/// Unpack i32 values from bit-packed data (helper function)
-fn bitunpack_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
-    }
-
-    if bits == 0 {
-        return Ok(vec![0; count]);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut bit_offset = 0;
-
-    for _ in 0..count {
-        let mut value = 0u32;
-
-        for bit_pos in 0..bits {
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < data.len() {
-                let bit = (data[byte_idx] >> bit_idx) & 1;
-                value |= (bit as u32) << bit_pos;
-            }
-
-            bit_offset += 1;
-        }
-
-        result.push(value as i32);
-    }
-
-    Ok(result)
-}
-
-/// Unpack i64 values from bit-packed data (helper function)
-fn bitunpack_i64(data: &[u8], bits: u8, count: usize) -> Result<Vec<i64>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
-    }
-
-    if bits == 0 {
-        return Ok(vec![0; count]);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut bit_offset = 0;
-
-    for _ in 0..count {
-        let mut value = 0u64;
-
-        for bit_pos in 0..bits {
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < data.len() {
-                let bit = (data[byte_idx] >> bit_idx) & 1;
-                value |= (bit as u64) << bit_pos;
-            }
-
-            bit_offset += 1;
-        }
-
-        result.push(value as i64);
-    }
 
     Ok(result)
 }

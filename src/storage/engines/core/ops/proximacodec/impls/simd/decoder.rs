@@ -197,13 +197,13 @@ mod tests {
         let decoder = SimdDecoder;
         let values = vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0];
 
-        // Encode
-        let encoded = encoder.encode_f32(&values, &ProximaScheme::BitPacked { bits: 8 }).unwrap();
+        // Encode with 32 bits for lossless f32 (BitPacked with bits < 32 is lossy)
+        let encoded = encoder.encode_f32(&values, &ProximaScheme::BitPacked { bits: 32 }).unwrap();
 
         // Decode (count = number of values)
-        let decoded = decoder.decode_f32(&encoded, &ProximaScheme::BitPacked { bits: 8 }, values.len()).unwrap();
+        let decoded = decoder.decode_f32(&encoded, &ProximaScheme::BitPacked { bits: 32 }, values.len()).unwrap();
 
-        // Verify round-trip
+        // Verify lossless round-trip
         assert_eq!(values, decoded);
     }
 }

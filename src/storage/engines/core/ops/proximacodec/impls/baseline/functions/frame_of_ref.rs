@@ -76,8 +76,8 @@ pub fn encode_f32(values: &[f32], base: i64) -> Result<Vec<u8>> {
     // Store bit width
     result.push(bits);
 
-    // Bit-pack the offsets
-    let packed = bitpack_i32(&offsets, bits)?;
+    // Bit-pack the offsets (delegate to shared helper)
+    let packed = bitpack::bitpack_i32(&offsets, bits)?;
     result.extend(packed);
 
     Ok(result)
@@ -117,8 +117,8 @@ pub fn encode_i64(values: &[i64], base: i64) -> Result<Vec<u8>> {
     // Store bit width
     result.push(bits);
 
-    // Bit-pack the offsets
-    let packed = bitpack_i64(&offsets, bits)?;
+    // Bit-pack the offsets (delegate to shared helper)
+    let packed = bitpack::bitpack_i64(&offsets, bits)?;
     result.extend(packed);
 
     Ok(result)
@@ -158,19 +158,20 @@ pub fn encode_i32(values: &[i32], base: i64) -> Result<Vec<u8>> {
     // Store bit width
     result.push(bits);
 
-    // Bit-pack the offsets
-    let packed = bitpack_i32(&offsets, bits)?;
+    // Bit-pack the offsets (delegate to shared helper)
+    let packed = bitpack::bitpack_i32(&offsets, bits)?;
     result.extend(packed);
 
     Ok(result)
 }
 
-/// Decode f32 values from Frame of Reference encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
+/// Parse FrameOfReference header for f32 data
+///
+/// **Helper for SIMD**: Made public to allow SIMD module to reuse wire format parsing.
+///
+/// # Returns
+/// (base_i32, bits, offset_to_packed_data)
+pub(crate) fn parse_header_f32(data: &[u8]) -> Result<(i32, u8, usize)> {
     if data.len() < 5 {
         return Err(anyhow::anyhow!("FOR decode: insufficient data"));
     }
@@ -181,19 +182,44 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
     // Read bits (1 byte)
     let bits = data[4];
 
-    // Unpack offsets
-    let offsets = unbitpack_i32(&data[5..], bits, count)?;
+    Ok((base_i32, bits, 5))
+}
 
-    // Reconstruct values
-    let values: Vec<f32> = offsets
+/// Reconstruct f32 values from offsets and base (scalar)
+///
+/// **Helper for SIMD**: Made public to allow SIMD module to provide vectorized version.
+///
+/// # Algorithm
+/// 1. Add base to each offset: `value_bits = base + offset`
+/// 2. Reinterpret i32 bits as f32
+///
+/// # Arguments
+/// * `offsets` - Unpacked i32 offsets
+/// * `base_i32` - Base value (f32 bit representation as i32)
+pub(crate) fn reconstruct_values_scalar_f32(offsets: &[i32], base_i32: i32) -> Vec<f32> {
+    offsets
         .iter()
         .map(|&offset| {
             let value_bits = base_i32.wrapping_add(offset) as u32;
             f32::from_bits(value_bits)
         })
-        .collect();
+        .collect()
+}
 
-    Ok(values)
+/// Decode f32 values from Frame of Reference encoded data
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+
+    // Parse wire format header
+    let (base_i32, bits, offset) = parse_header_f32(data)?;
+
+    // Unpack offsets (delegate to shared helper with sign extension)
+    let offsets = bitpack::unbitpack_i32(&data[offset..], bits, count)?;
+
+    // Reconstruct values (scalar)
+    Ok(reconstruct_values_scalar_f32(&offsets, base_i32))
 }
 
 /// Decode i64 values from Frame of Reference encoded data
@@ -215,8 +241,8 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     // Read bits (1 byte)
     let bits = data[8];
 
-    // Unpack offsets
-    let offsets = unbitpack_i64(&data[9..], bits, count)?;
+    // Unpack offsets (delegate to shared helper with sign extension)
+    let offsets = bitpack::unbitpack_i64(&data[9..], bits, count)?;
 
     // Reconstruct values
     let values: Vec<i64> = offsets
@@ -243,8 +269,8 @@ pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
     // Read bits (1 byte)
     let bits = data[4];
 
-    // Unpack offsets
-    let offsets = unbitpack_i32(&data[5..], bits, count)?;
+    // Unpack offsets (delegate to shared helper with sign extension)
+    let offsets = bitpack::unbitpack_i32(&data[5..], bits, count)?;
 
     // Reconstruct values
     let values: Vec<i32> = offsets
@@ -255,161 +281,12 @@ pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
     Ok(values)
 }
 
-// ===== Bit-packing helpers =====
+// ===== Bitpacking delegation to shared helpers =====
+//
+// All bitpacking operations now use the shared helpers in bitpack.rs
+// to avoid code duplication and ensure consistent sign extension behavior.
 
-/// Bit-pack i32 values (simple implementation, no SIMD)
-fn bitpack_i32(values: &[i32], bits: u8) -> Result<Vec<u8>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
-    }
-
-    if bits == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
-    let mut result = vec![0u8; total_bytes];
-
-    let mut bit_offset = 0;
-    for &value in values {
-        let value_u32 = value as u32;
-
-        for bit_pos in 0..bits {
-            let bit = (value_u32 >> bit_pos) & 1;
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < result.len() {
-                result[byte_idx] |= (bit as u8) << bit_idx;
-            }
-
-            bit_offset += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-/// Bit-pack i64 values
-fn bitpack_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
-    }
-
-    if bits == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
-    let mut result = vec![0u8; total_bytes];
-
-    let mut bit_offset = 0;
-    for &value in values {
-        let value_u64 = value as u64;
-
-        for bit_pos in 0..bits {
-            let bit = (value_u64 >> bit_pos) & 1;
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < result.len() {
-                result[byte_idx] |= (bit as u8) << bit_idx;
-            }
-
-            bit_offset += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-/// Unpack i32 values from bit-packed data
-fn unbitpack_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
-    }
-
-    if bits == 0 {
-        return Ok(vec![0; count]);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut bit_offset = 0;
-
-    for _ in 0..count {
-        let mut value = 0u32;
-
-        for bit_pos in 0..bits {
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < data.len() {
-                let bit = (data[byte_idx] >> bit_idx) & 1;
-                value |= (bit as u32) << bit_pos;
-            }
-
-            bit_offset += 1;
-        }
-
-        // Sign extend: if high bit is set, extend with 1s
-        let signed_value = if bits < 32 && (value & (1 << (bits - 1))) != 0 {
-            // Sign bit is set - extend with 1s
-            let mask = !0u32 << bits;
-            (value | mask) as i32
-        } else {
-            value as i32
-        };
-
-        result.push(signed_value);
-    }
-
-    Ok(result)
-}
-
-/// Unpack i64 values from bit-packed data
-fn unbitpack_i64(data: &[u8], bits: u8, count: usize) -> Result<Vec<i64>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
-    }
-
-    if bits == 0 {
-        return Ok(vec![0; count]);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut bit_offset = 0;
-
-    for _ in 0..count {
-        let mut value = 0u64;
-
-        for bit_pos in 0..bits {
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < data.len() {
-                let bit = (data[byte_idx] >> bit_idx) & 1;
-                value |= (bit as u64) << bit_pos;
-            }
-
-            bit_offset += 1;
-        }
-
-        // Sign extend: if high bit is set, extend with 1s
-        let signed_value = if bits < 64 && (value & (1 << (bits - 1))) != 0 {
-            // Sign bit is set - extend with 1s
-            let mask = !0u64 << bits;
-            (value | mask) as i64
-        } else {
-            value as i64
-        };
-
-        result.push(signed_value);
-    }
-
-    Ok(result)
-}
+use super::bitpack;
 
 #[cfg(test)]
 mod tests {

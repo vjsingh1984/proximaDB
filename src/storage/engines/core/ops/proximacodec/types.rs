@@ -250,19 +250,15 @@ impl ProximaScheme {
             // IEEE 754 bit pattern preservation ensures lossless f32 encoding
             (Self::PForDoubleDelta { .. }, _) => false,
 
-            // FrameOfReference for floats: ALWAYS lossy (same reason as BitPacked)
-            (Self::FrameOfReference { .. }, TypeId::F32 | TypeId::F64) => true,
+            // FrameOfReference: LOSSLESS for floats (uses to_bits/from_bits)
+            // Lossy only if bits < type size (truncates offsets)
+            (Self::FrameOfReference { bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *bits < 32,
+            (Self::FrameOfReference { bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *bits < 64,
 
-            // FrameOfReference for integers: lossy only if bits < type size
-            (Self::FrameOfReference { bits, .. }, TypeId::I32 | TypeId::U32) => *bits < 32,
-            (Self::FrameOfReference { bits, .. }, TypeId::I64 | TypeId::U64) => *bits < 64,
-
-            // PForDelta for floats: ALWAYS lossy (same reason as BitPacked)
-            (Self::PForDelta { .. }, TypeId::F32 | TypeId::F64) => true,
-
-            // PForDelta for integers: lossy only if majority_bits < type size
-            (Self::PForDelta { majority_bits, .. }, TypeId::I32 | TypeId::U32) => *majority_bits < 32,
-            (Self::PForDelta { majority_bits, .. }, TypeId::I64 | TypeId::U64) => *majority_bits < 64,
+            // PForDelta: LOSSLESS for floats (uses to_bits/from_bits like FrameOfReference)
+            // Lossy only if majority_bits < type size
+            (Self::PForDelta { majority_bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *majority_bits < 32,
+            (Self::PForDelta { majority_bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *majority_bits < 64,
 
             // All other schemes are lossless (Delta, Simple8b, VByte, SparseBitmap, SparseCOO, Dictionary, RunLength)
             _ => false,

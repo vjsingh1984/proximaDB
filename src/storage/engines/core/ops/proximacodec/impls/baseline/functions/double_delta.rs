@@ -10,6 +10,13 @@
 
 use anyhow::Result;
 
+// ===== Bitpacking delegation to shared helpers =====
+//
+// All bitpacking operations now use the shared helpers in bitpack.rs
+// to avoid code duplication and ensure consistent sign extension behavior.
+
+use super::bitpack;
+
 /// Encode f32 values using double delta (raw, no headers)
 ///
 /// # Algorithm
@@ -96,7 +103,7 @@ pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
     result.push(bits);
 
     // Bit-pack double deltas (now i64)
-    let packed = bitpack_i64(&double_deltas, bits)?;
+    let packed = bitpack::bitpack_i64(&double_deltas, bits)?;
     result.extend(packed);
 
     Ok(result)
@@ -164,7 +171,7 @@ pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
 
     result.push(bits);
 
-    let packed = bitpack_i64(&double_deltas, bits)?;
+    let packed = bitpack::bitpack_i64(&double_deltas, bits)?;
     result.extend(packed);
 
     Ok(result)
@@ -231,7 +238,7 @@ pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
 
     result.push(bits);
 
-    let packed = bitpack_i32(&double_deltas, bits)?;
+    let packed = bitpack::bitpack_i32(&double_deltas, bits)?;
     result.extend(packed);
 
     Ok(result)
@@ -293,7 +300,7 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
 
     // Unpack double deltas (now i64!)
     let num_double_deltas = count - 2;
-    let double_deltas = bitunpack_i64(&data[13..], bits, num_double_deltas)?;
+    let double_deltas = bitpack::unbitpack_i64(&data[13..], bits, num_double_deltas)?;
 
     // Reconstruct values using i64 arithmetic (NO OVERFLOW!)
     let mut result = Vec::with_capacity(count);
@@ -367,7 +374,7 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     }
 
     let num_double_deltas = count - 2;
-    let double_deltas = bitunpack_i64(&data[17..], bits, num_double_deltas)?;
+    let double_deltas = bitpack::unbitpack_i64(&data[17..], bits, num_double_deltas)?;
 
     let mut result = Vec::with_capacity(count);
     result.push(base);
@@ -434,7 +441,7 @@ pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
     }
 
     let num_double_deltas = count - 2;
-    let double_deltas = bitunpack_i32(&data[9..], bits, num_double_deltas)?;
+    let double_deltas = bitpack::unbitpack_i32(&data[9..], bits, num_double_deltas)?;
 
     let mut result = Vec::with_capacity(count);
     result.push(base);
@@ -452,158 +459,6 @@ pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
         result.push(value);
         prev_value = value;
         prev_delta = delta;
-    }
-
-    Ok(result)
-}
-
-// ===== Bit-packing helpers =====
-
-fn bitpack_i32(values: &[i32], bits: u8) -> Result<Vec<u8>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
-    }
-
-    if bits == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
-    let mut result = vec![0u8; total_bytes];
-
-    let mut bit_offset = 0;
-    for &value in values {
-        let value_u32 = value as u32;
-
-        for bit_pos in 0..bits {
-            let bit = (value_u32 >> bit_pos) & 1;
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < result.len() {
-                result[byte_idx] |= (bit as u8) << bit_idx;
-            }
-
-            bit_offset += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-fn bitpack_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
-    }
-
-    if bits == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
-    let mut result = vec![0u8; total_bytes];
-
-    let mut bit_offset = 0;
-    for &value in values {
-        let value_u64 = value as u64;
-
-        for bit_pos in 0..bits {
-            let bit = (value_u64 >> bit_pos) & 1;
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < result.len() {
-                result[byte_idx] |= (bit as u8) << bit_idx;
-            }
-
-            bit_offset += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-fn bitunpack_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
-    }
-
-    if bits == 0 {
-        return Ok(vec![0; count]);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut bit_offset = 0;
-
-    for _ in 0..count {
-        let mut value = 0u32;
-
-        for bit_pos in 0..bits {
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < data.len() {
-                let bit = (data[byte_idx] >> bit_idx) & 1;
-                value |= (bit as u32) << bit_pos;
-            }
-
-            bit_offset += 1;
-        }
-
-        // Sign extend: if high bit is set, extend with 1s
-        let signed_value = if bits < 32 && (value & (1 << (bits - 1))) != 0 {
-            // Sign bit is set - extend with 1s
-            let mask = !0u32 << bits;
-            (value | mask) as i32
-        } else {
-            value as i32
-        };
-
-        result.push(signed_value);
-    }
-
-    Ok(result)
-}
-
-fn bitunpack_i64(data: &[u8], bits: u8, count: usize) -> Result<Vec<i64>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
-    }
-
-    if bits == 0 {
-        return Ok(vec![0; count]);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut bit_offset = 0;
-
-    for _ in 0..count {
-        let mut value = 0u64;
-
-        for bit_pos in 0..bits {
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < data.len() {
-                let bit = (data[byte_idx] >> bit_idx) & 1;
-                value |= (bit as u64) << bit_pos;
-            }
-
-            bit_offset += 1;
-        }
-
-        // Sign extend: if high bit is set, extend with 1s
-        let signed_value = if bits < 64 && (value & (1 << (bits - 1))) != 0 {
-            // Sign bit is set - extend with 1s
-            let mask = !0u64 << bits;
-            (value | mask) as i64
-        } else {
-            value as i64
-        };
-
-        result.push(signed_value);
     }
 
     Ok(result)

@@ -24,6 +24,13 @@
 
 use anyhow::Result;
 
+// ===== Bitpacking delegation to shared helpers =====
+//
+// All bitpacking operations now use the shared helpers in bitpack.rs
+// to avoid code duplication and ensure consistent sign extension behavior.
+
+use super::bitpack;
+
 /// Encode f32 values using PForDoubleDelta (raw, no headers)
 ///
 /// # Algorithm
@@ -149,7 +156,7 @@ pub fn encode_f32(values: &[f32], base: i64) -> Result<Vec<u8>> {
     result.extend_from_slice(&num_patches.to_le_bytes());
 
     // Step 6: Bitpack regular double deltas (now i64)
-    let packed = bitpack_i64(&regular_values, bits)?;
+    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
     result.extend(packed);
 
     // Step 7: Store patches (position:4 bytes + value:8 bytes)
@@ -207,7 +214,7 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
 
     // Unpack double deltas (now i64!)
     let bitpacked_data = &data[17..17 + bitpacked_bytes];
-    let mut double_deltas = bitunpack_i64(bitpacked_data, bits, double_delta_count)?;
+    let mut double_deltas = bitpack::unbitpack_i64_unsigned(bitpacked_data, bits, double_delta_count)?;
 
     // Apply patches to double deltas (patches are now i64)
     let patch_start = 17 + bitpacked_bytes;
@@ -335,7 +342,7 @@ pub fn encode_i64(values: &[i64], base: i64) -> Result<Vec<u8>> {
     result.extend_from_slice(&num_patches.to_le_bytes());
 
     // Bitpack regular double deltas
-    let packed = bitpack_i64(&regular_values, bits)?;
+    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
     result.extend(packed);
 
     // Store patches
@@ -386,7 +393,7 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     }
 
     let bitpacked_data = &data[21..21 + bitpacked_bytes];
-    let mut double_deltas = bitunpack_i64(bitpacked_data, bits, double_delta_count)?;
+    let mut double_deltas = bitpack::unbitpack_i64_unsigned(bitpacked_data, bits, double_delta_count)?;
 
     // Apply patches
     let patch_start = 21 + bitpacked_bytes;
@@ -508,7 +515,7 @@ pub fn encode_i32(values: &[i32], base: i64) -> Result<Vec<u8>> {
     result.extend_from_slice(&num_patches.to_le_bytes());
 
     // Bitpack regular double deltas
-    let packed = bitpack_i32(&regular_values, bits)?;
+    let packed = bitpack::bitpack_i32(&regular_values, bits)?;
     result.extend(packed);
 
     // Store patches
@@ -549,7 +556,7 @@ pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
     }
 
     let bitpacked_data = &data[13..13 + bitpacked_bytes];
-    let mut double_deltas = bitunpack_i32(bitpacked_data, bits, double_delta_count)?;
+    let mut double_deltas = bitpack::unbitpack_i32_unsigned(bitpacked_data, bits, double_delta_count)?;
 
     // Apply patches
     let patch_start = 13 + bitpacked_bytes;
@@ -587,140 +594,6 @@ pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
         .iter()
         .map(|&delta| base.wrapping_add(delta))
         .collect();
-
-    Ok(result)
-}
-
-// ===== Bit-packing helpers (copied from pfor_delta.rs) =====
-
-fn bitpack_i32(values: &[i32], bits: u8) -> Result<Vec<u8>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
-    }
-
-    if bits == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
-    let mut result = vec![0u8; total_bytes];
-
-    let mut bit_offset = 0;
-    for &value in values {
-        let value_u32 = value as u32;
-
-        for bit_pos in 0..bits {
-            let bit = (value_u32 >> bit_pos) & 1;
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < result.len() {
-                result[byte_idx] |= (bit as u8) << bit_idx;
-            }
-
-            bit_offset += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-fn bitpack_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
-    }
-
-    if bits == 0 {
-        return Ok(Vec::new());
-    }
-
-    let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
-    let mut result = vec![0u8; total_bytes];
-
-    let mut bit_offset = 0;
-    for &value in values {
-        let value_u64 = value as u64;
-
-        for bit_pos in 0..bits {
-            let bit = (value_u64 >> bit_pos) & 1;
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < result.len() {
-                result[byte_idx] |= (bit as u8) << bit_idx;
-            }
-
-            bit_offset += 1;
-        }
-    }
-
-    Ok(result)
-}
-
-fn bitunpack_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
-    }
-
-    if bits == 0 {
-        return Ok(vec![0; count]);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut bit_offset = 0;
-
-    for _ in 0..count {
-        let mut value = 0u32;
-
-        for bit_pos in 0..bits {
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < data.len() {
-                let bit = (data[byte_idx] >> bit_idx) & 1;
-                value |= (bit as u32) << bit_pos;
-            }
-
-            bit_offset += 1;
-        }
-
-        result.push(value as i32);
-    }
-
-    Ok(result)
-}
-
-fn bitunpack_i64(data: &[u8], bits: u8, count: usize) -> Result<Vec<i64>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
-    }
-
-    if bits == 0 {
-        return Ok(vec![0; count]);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut bit_offset = 0;
-
-    for _ in 0..count {
-        let mut value = 0u64;
-
-        for bit_pos in 0..bits {
-            let byte_idx = bit_offset / 8;
-            let bit_idx = bit_offset % 8;
-
-            if byte_idx < data.len() {
-                let bit = (data[byte_idx] >> bit_idx) & 1;
-                value |= (bit as u64) << bit_pos;
-            }
-
-            bit_offset += 1;
-        }
-
-        result.push(value as i64);
-    }
 
     Ok(result)
 }

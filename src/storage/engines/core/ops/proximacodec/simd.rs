@@ -841,6 +841,100 @@ unsafe fn compute_offsets_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
     offsets
 }
 
+// ===== FrameOfReference Decode Helpers (SIMD Reconstruction) =====
+
+/// Reconstruct f32 values from offsets and base using AVX2
+///
+/// # Algorithm (SIMD)
+/// 1. Broadcast base to all lanes
+/// 2. Load 8 offsets at once
+/// 3. Add base to all offsets (SIMD): `values = offsets + base`
+/// 4. Reinterpret i32 bits as f32
+///
+/// # Performance
+/// - Processes 8 values per iteration (AVX2 256-bit)
+/// - Expected speedup: 4-6x vs scalar
+#[cfg(target_arch = "x86_64")]
+unsafe fn reconstruct_for_decode_avx2(offsets: &[i32], base_i32: i32) -> Result<Vec<f32>> {
+    use std::arch::x86_64::*;
+
+    let mut result = Vec::with_capacity(offsets.len());
+    let base_vec = _mm256_set1_epi32(base_i32);
+    let chunks = offsets.len() / 8;
+
+    for i in 0..chunks {
+        let offset = i * 8;
+
+        // Load 8 offsets
+        let offsets_vec = _mm256_loadu_si256(offsets.as_ptr().add(offset) as *const __m256i);
+
+        // Add base to all 8 offsets (SIMD addition)
+        let values_vec = _mm256_add_epi32(offsets_vec, base_vec);
+
+        // Reinterpret i32 as f32
+        let f32_vec = _mm256_castsi256_ps(values_vec);
+
+        // Store 8 f32 values
+        let mut temp = [0.0f32; 8];
+        _mm256_storeu_ps(temp.as_mut_ptr(), f32_vec);
+        result.extend_from_slice(&temp);
+    }
+
+    // Handle remaining values (scalar)
+    for &offset in &offsets[chunks * 8..] {
+        let value_bits = base_i32.wrapping_add(offset) as u32;
+        result.push(f32::from_bits(value_bits));
+    }
+
+    Ok(result)
+}
+
+/// Reconstruct f32 values from offsets and base using NEON
+///
+/// # Algorithm (SIMD)
+/// 1. Broadcast base to all lanes
+/// 2. Load 4 offsets at once
+/// 3. Add base to all offsets (SIMD): `values = offsets + base`
+/// 4. Reinterpret i32 bits as f32
+///
+/// # Performance
+/// - Processes 4 values per iteration (NEON 128-bit)
+/// - Expected speedup: 2-4x vs scalar
+#[cfg(target_arch = "aarch64")]
+unsafe fn reconstruct_for_decode_neon(offsets: &[i32], base_i32: i32) -> Result<Vec<f32>> {
+    use std::arch::aarch64::*;
+
+    let mut result = Vec::with_capacity(offsets.len());
+    let base_vec = vdupq_n_s32(base_i32);
+    let chunks = offsets.len() / 4;
+
+    for i in 0..chunks {
+        let offset = i * 4;
+
+        // Load 4 offsets
+        let offsets_vec = vld1q_s32(offsets.as_ptr().add(offset));
+
+        // Add base to all 4 offsets (SIMD addition)
+        let values_vec = vaddq_s32(offsets_vec, base_vec);
+
+        // Reinterpret i32 as f32
+        let f32_vec = vreinterpretq_f32_s32(values_vec);
+
+        // Store 4 f32 values
+        let mut temp = [0.0f32; 4];
+        vst1q_f32(temp.as_mut_ptr(), f32_vec);
+        result.extend_from_slice(&temp);
+    }
+
+    // Handle remaining values (scalar)
+    for &offset in &offsets[chunks * 4..] {
+        let value_bits = base_i32.wrapping_add(offset) as u32;
+        result.push(f32::from_bits(value_bits));
+    }
+
+    Ok(result)
+}
+
 /// SIMD-accelerated Frame of Reference decoding for f32
 ///
 /// # Algorithm
@@ -853,10 +947,35 @@ unsafe fn compute_offsets_neon(values: &[f32], base_i32: i32) -> Vec<i32> {
 /// * `bits` - Bit width per value (1-32)
 /// * `count` - Number of values to decode
 pub fn simd_frame_of_reference_decode_f32(packed: &[u8], _reference: i64, _bits: u8, count: usize) -> Result<Vec<f32>> {
-    // WIRE COMPATIBILITY: Delegate to baseline to ensure identical decoding
-    // FrameOfReference uses specific wire format: [base:4][bits:1][bitpacked_offsets]
     use super::impls::baseline::functions::frame_of_ref;
-    frame_of_ref::decode_f32(packed, count)
+
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+
+    // 1. Parse wire format header (delegate to baseline)
+    let (base_i32, bits, offset) = frame_of_ref::parse_header_f32(packed)?;
+
+    // 2. Bitunpack offsets (delegate to baseline - hard to vectorize)
+    use super::impls::baseline::functions::bitpack;
+    let offsets_i32 = bitpack::unbitpack_i32(&packed[offset..], bits, count)?;
+
+    // 3. Reconstruct values with SIMD acceleration
+    let backend = get_simd_backend();
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        HardwareBackend::AVX2 | HardwareBackend::AVX512 => unsafe {
+            reconstruct_for_decode_avx2(&offsets_i32, base_i32)
+        },
+        #[cfg(target_arch = "aarch64")]
+        HardwareBackend::NEON => unsafe {
+            reconstruct_for_decode_neon(&offsets_i32, base_i32)
+        },
+        _ => {
+            // Fallback to scalar (reuse baseline helper)
+            Ok(frame_of_ref::reconstruct_values_scalar_f32(&offsets_i32, base_i32))
+        }
+    }
 }
 
 // ============================================================================
@@ -1164,10 +1283,137 @@ fn bitpack_i32_scalar(values: &[i32], bits: u8) -> Result<Vec<u8>> {
 /// * `base` - Base value to add back
 /// * `count` - Number of values to decode
 pub fn simd_pfor_delta_decode_f32(data: &[u8], _majority_bits: u8, _base: i64, count: usize) -> Result<Vec<f32>> {
-    // WIRE COMPATIBILITY: Delegate to baseline to ensure identical decoding
-    // PForDelta has complex wire format with patches
     use super::impls::baseline::functions::pfor_delta;
-    pfor_delta::decode_f32(data, count)
+
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+
+    // 1. Parse header and apply patches (delegate to baseline - complex wire format)
+    let (base_i32, deltas_i64) = pfor_delta::parse_header_and_patches_f32(data, count)?;
+
+    // 2. Reconstruct values with SIMD acceleration
+    let backend = get_simd_backend();
+    match backend {
+        #[cfg(target_arch = "x86_64")]
+        HardwareBackend::AVX2 | HardwareBackend::AVX512 => unsafe {
+            reconstruct_pfor_decode_avx2(&deltas_i64, base_i32)
+        },
+        #[cfg(target_arch = "aarch64")]
+        HardwareBackend::NEON => unsafe {
+            reconstruct_pfor_decode_neon(&deltas_i64, base_i32)
+        },
+        _ => {
+            // Fallback to scalar (reuse baseline helper)
+            Ok(pfor_delta::reconstruct_values_scalar_f32(&deltas_i64, base_i32))
+        }
+    }
+}
+
+// ===== PForDelta Decode Helpers (SIMD Reconstruction) =====
+
+/// Reconstruct f32 values from i64 deltas and base using AVX2
+///
+/// # Algorithm (SIMD)
+/// 1. Broadcast base to all lanes (i64)
+/// 2. Load 4 deltas at once (i64)
+/// 3. Add base to deltas: `reconstructed = base + delta` (i64 arithmetic, NO OVERFLOW!)
+/// 4. Convert to i32 and reinterpret as f32
+///
+/// # Performance
+/// - Processes 4 i64 values per iteration (AVX2 256-bit)
+/// - Expected speedup: 2-4x vs scalar
+///
+/// # Note
+/// Using i64 arithmetic prevents overflow when base and delta are large i32 values
+#[cfg(target_arch = "x86_64")]
+unsafe fn reconstruct_pfor_decode_avx2(deltas: &[i64], base_i32: i32) -> Result<Vec<f32>> {
+    use std::arch::x86_64::*;
+
+    let mut result = Vec::with_capacity(deltas.len());
+    let base_i64 = base_i32 as i64;
+    let base_vec = _mm256_set1_epi64x(base_i64);
+    let chunks = deltas.len() / 4;
+
+    for i in 0..chunks {
+        let offset = i * 4;
+
+        // Load 4 i64 deltas
+        let deltas_vec = _mm256_loadu_si256(deltas.as_ptr().add(offset) as *const __m256i);
+
+        // Add base to all 4 deltas (i64 SIMD addition - NO OVERFLOW!)
+        let values_i64_vec = _mm256_add_epi64(deltas_vec, base_vec);
+
+        // Extract i64 values and convert to f32
+        let mut temp_i64 = [0i64; 4];
+        _mm256_storeu_si256(temp_i64.as_mut_ptr() as *mut __m256i, values_i64_vec);
+
+        for &val_i64 in &temp_i64 {
+            let val_i32 = val_i64 as i32 as u32;
+            result.push(f32::from_bits(val_i32));
+        }
+    }
+
+    // Handle remaining values (scalar)
+    for &delta in &deltas[chunks * 4..] {
+        let reconstructed_i64 = base_i64 + delta;
+        let reconstructed_i32 = reconstructed_i64 as i32 as u32;
+        result.push(f32::from_bits(reconstructed_i32));
+    }
+
+    Ok(result)
+}
+
+/// Reconstruct f32 values from i64 deltas and base using NEON
+///
+/// # Algorithm (SIMD)
+/// 1. Broadcast base to all lanes (i64)
+/// 2. Load 2 deltas at once (i64)
+/// 3. Add base to deltas: `reconstructed = base + delta` (i64 arithmetic, NO OVERFLOW!)
+/// 4. Convert to i32 and reinterpret as f32
+///
+/// # Performance
+/// - Processes 2 i64 values per iteration (NEON 128-bit)
+/// - Expected speedup: 1.5-2x vs scalar
+///
+/// # Note
+/// Using i64 arithmetic prevents overflow when base and delta are large i32 values
+#[cfg(target_arch = "aarch64")]
+unsafe fn reconstruct_pfor_decode_neon(deltas: &[i64], base_i32: i32) -> Result<Vec<f32>> {
+    use std::arch::aarch64::*;
+
+    let mut result = Vec::with_capacity(deltas.len());
+    let base_i64 = base_i32 as i64;
+    let base_vec = vdupq_n_s64(base_i64);
+    let chunks = deltas.len() / 2;
+
+    for i in 0..chunks {
+        let offset = i * 2;
+
+        // Load 2 i64 deltas
+        let deltas_vec = vld1q_s64(deltas.as_ptr().add(offset));
+
+        // Add base to both deltas (i64 SIMD addition - NO OVERFLOW!)
+        let values_i64_vec = vaddq_s64(deltas_vec, base_vec);
+
+        // Extract i64 values and convert to f32
+        let mut temp_i64 = [0i64; 2];
+        vst1q_s64(temp_i64.as_mut_ptr(), values_i64_vec);
+
+        for &val_i64 in &temp_i64 {
+            let val_i32 = val_i64 as i32 as u32;
+            result.push(f32::from_bits(val_i32));
+        }
+    }
+
+    // Handle remaining values (scalar)
+    for &delta in &deltas[chunks * 2..] {
+        let reconstructed_i64 = base_i64 + delta;
+        let reconstructed_i32 = reconstructed_i64 as i32 as u32;
+        result.push(f32::from_bits(reconstructed_i32));
+    }
+
+    Ok(result)
 }
 
 // ===== DoubleDelta SIMD Functions =====

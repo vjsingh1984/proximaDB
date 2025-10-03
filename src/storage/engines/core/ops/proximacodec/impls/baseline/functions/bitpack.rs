@@ -34,8 +34,8 @@ use anyhow::Result;
 /// # Returns
 /// Raw encoded bytes (NO scheme marker, NO count header)
 pub fn encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
+    if bits == 0 || bits > 32 {
+        return Err(anyhow::anyhow!("Bit width {} is invalid (must be 1-32)", bits));
     }
 
     if values.is_empty() {
@@ -53,8 +53,8 @@ pub fn encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
 
 /// Encode i64 values using bitpacking (raw, no headers)
 pub fn encode_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
-    if bits > 64 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
+    if bits == 0 || bits > 64 {
+        return Err(anyhow::anyhow!("Bit width {} is invalid (must be 1-64)", bits));
     }
 
     if values.is_empty() {
@@ -69,8 +69,8 @@ pub fn encode_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
 
 /// Encode i32 values using bitpacking (raw, no headers)
 pub fn encode_i32(values: &[i32], bits: u8) -> Result<Vec<u8>> {
-    if bits > 32 {
-        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
+    if bits == 0 || bits > 32 {
+        return Err(anyhow::anyhow!("Bit width {} is invalid (must be 1-32)", bits));
     }
 
     if values.is_empty() {
@@ -262,6 +262,268 @@ fn unbitpack_u64(data: &[u8], bits: u8, count: usize) -> Result<Vec<u64>> {
         }
 
         result.push(value);
+    }
+
+    Ok(result)
+}
+
+// ===== Signed bit-packing helpers (with sign extension) =====
+
+/// Bit-pack i32 values (with sign extension support)
+///
+/// **Note**: Made public for use by encoding schemes that need signed bitpacking
+/// (FrameOfReference, Delta, PatchedBase, etc.)
+///
+/// This is identical to bitpack_u32 but accepts i32 input for convenience.
+pub(crate) fn bitpack_i32(values: &[i32], bits: u8) -> Result<Vec<u8>> {
+    if bits > 32 {
+        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
+    }
+
+    if bits == 0 {
+        return Ok(Vec::new());
+    }
+
+    let total_bits = values.len() * bits as usize;
+    let total_bytes = (total_bits + 7) / 8;
+    let mut result = vec![0u8; total_bytes];
+
+    let mut bit_offset = 0;
+    for &value in values {
+        let value_u32 = value as u32;
+
+        for bit_pos in 0..bits {
+            let bit = (value_u32 >> bit_pos) & 1;
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+
+            if byte_idx < result.len() {
+                result[byte_idx] |= (bit as u8) << bit_idx;
+            }
+
+            bit_offset += 1;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Bit-pack i64 values (with sign extension support)
+///
+/// **Note**: Made public for use by encoding schemes that need signed bitpacking
+pub(crate) fn bitpack_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
+    if bits > 64 {
+        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
+    }
+
+    if bits == 0 {
+        return Ok(Vec::new());
+    }
+
+    let total_bits = values.len() * bits as usize;
+    let total_bytes = (total_bits + 7) / 8;
+    let mut result = vec![0u8; total_bytes];
+
+    let mut bit_offset = 0;
+    for &value in values {
+        let value_u64 = value as u64;
+
+        for bit_pos in 0..bits {
+            let bit = (value_u64 >> bit_pos) & 1;
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+
+            if byte_idx < result.len() {
+                result[byte_idx] |= (bit as u8) << bit_idx;
+            }
+
+            bit_offset += 1;
+        }
+    }
+
+    Ok(result)
+}
+
+/// Unpack i32 values from bit-packed data (with sign extension)
+///
+/// **Note**: Made public for use by encoding schemes that need signed unpacking
+/// (FrameOfReference, Delta, PatchedBase, etc.)
+///
+/// **Sign Extension**: If the high bit is set and bits < 32, the value is
+/// sign-extended to preserve negative values correctly.
+///
+/// # Example
+/// ```ignore
+/// // 5-bit signed value: 11111 (binary) = -1 (signed)
+/// // Without sign extension: 31 (unsigned)
+/// // With sign extension: 0xFFFFFFFF = -1 (i32)
+/// ```
+pub(crate) fn unbitpack_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
+    if bits > 32 {
+        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
+    }
+
+    if bits == 0 {
+        return Ok(vec![0; count]);
+    }
+
+    let mut result = Vec::with_capacity(count);
+    let mut bit_offset = 0;
+
+    for _ in 0..count {
+        let mut value = 0u32;
+
+        for bit_pos in 0..bits {
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+
+            if byte_idx < data.len() {
+                let bit = (data[byte_idx] >> bit_idx) & 1;
+                value |= (bit as u32) << bit_pos;
+            }
+
+            bit_offset += 1;
+        }
+
+        // Sign extend: if high bit is set, extend with 1s
+        let signed_value = if bits < 32 && (value & (1 << (bits - 1))) != 0 {
+            // Sign bit is set - extend with 1s
+            let mask = !0u32 << bits;
+            (value | mask) as i32
+        } else {
+            value as i32
+        };
+
+        result.push(signed_value);
+    }
+
+    Ok(result)
+}
+
+/// Unpack i64 values from bit-packed data (with sign extension)
+///
+/// **Note**: Made public for use by encoding schemes that need signed unpacking
+///
+/// **Sign Extension**: If the high bit is set and bits < 64, the value is
+/// sign-extended to preserve negative values correctly.
+pub(crate) fn unbitpack_i64(data: &[u8], bits: u8, count: usize) -> Result<Vec<i64>> {
+    if bits > 64 {
+        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
+    }
+
+    if bits == 0 {
+        return Ok(vec![0; count]);
+    }
+
+    let mut result = Vec::with_capacity(count);
+    let mut bit_offset = 0;
+
+    for _ in 0..count {
+        let mut value = 0u64;
+
+        for bit_pos in 0..bits {
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+
+            if byte_idx < data.len() {
+                let bit = (data[byte_idx] >> bit_idx) & 1;
+                value |= (bit as u64) << bit_pos;
+            }
+
+            bit_offset += 1;
+        }
+
+        // Sign extend: if high bit is set, extend with 1s
+        let signed_value = if bits < 64 && (value & (1 << (bits - 1))) != 0 {
+            // Sign bit is set - extend with 1s
+            let mask = !0u64 << bits;
+            (value | mask) as i64
+        } else {
+            value as i64
+        };
+
+        result.push(signed_value);
+    }
+
+    Ok(result)
+}
+
+// ===== Unsigned bitpacking variants (NO sign extension) =====
+//
+// These are used by PFor schemes that treat bitpacked values as unsigned
+// and handle sign/negative values via separate patches.
+
+/// Unpack i32 values WITHOUT sign extension (for PFor schemes)
+///
+/// This variant treats all unpacked values as unsigned and casts directly to i32.
+/// Used by pfor_delta and pfor_double_delta where patches handle full precision.
+pub(crate) fn unbitpack_i32_unsigned(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
+    if bits > 32 {
+        return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
+    }
+
+    if bits == 0 {
+        return Ok(vec![0; count]);
+    }
+
+    let mut result = Vec::with_capacity(count);
+    let mut bit_offset = 0;
+
+    for _ in 0..count {
+        let mut value = 0u32;
+
+        for bit_pos in 0..bits {
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+
+            if byte_idx < data.len() {
+                let bit = (data[byte_idx] >> bit_idx) & 1;
+                value |= (bit as u32) << bit_pos;
+            }
+
+            bit_offset += 1;
+        }
+
+        // NO sign extension - direct cast
+        result.push(value as i32);
+    }
+
+    Ok(result)
+}
+
+/// Unpack i64 values WITHOUT sign extension (for PFor schemes)
+///
+/// This variant treats all unpacked values as unsigned and casts directly to i64.
+/// Used by pfor_delta and pfor_double_delta where patches handle full precision.
+pub(crate) fn unbitpack_i64_unsigned(data: &[u8], bits: u8, count: usize) -> Result<Vec<i64>> {
+    if bits > 64 {
+        return Err(anyhow::anyhow!("Bit width {} exceeds 64", bits));
+    }
+
+    if bits == 0 {
+        return Ok(vec![0; count]);
+    }
+
+    let mut result = Vec::with_capacity(count);
+    let mut bit_offset = 0;
+
+    for _ in 0..count {
+        let mut value = 0u64;
+
+        for bit_pos in 0..bits {
+            let byte_idx = bit_offset / 8;
+            let bit_idx = bit_offset % 8;
+
+            if byte_idx < data.len() {
+                let bit = (data[byte_idx] >> bit_idx) & 1;
+                value |= (bit as u64) << bit_pos;
+            }
+
+            bit_offset += 1;
+        }
+
+        // NO sign extension - direct cast
+        result.push(value as i64);
     }
 
     Ok(result)
