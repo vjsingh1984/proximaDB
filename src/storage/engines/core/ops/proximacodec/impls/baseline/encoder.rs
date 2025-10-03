@@ -70,6 +70,9 @@ impl RawEncoder for BaselineEncoder {
             ProximaScheme::DoubleDelta { .. } => {
                 functions::double_delta::encode_f32(values)
             }
+            ProximaScheme::PForDoubleDelta { base, .. } => {
+                functions::pfor_double_delta::encode_f32(values, *base)
+            }
             ProximaScheme::Gorilla => {
                 functions::gorilla::encode_f32(values)
             }
@@ -122,6 +125,9 @@ impl RawEncoder for BaselineEncoder {
             }
             ProximaScheme::DoubleDelta { .. } => {
                 functions::double_delta::encode_i64(values)
+            }
+            ProximaScheme::PForDoubleDelta { base, .. } => {
+                functions::pfor_double_delta::encode_i64(values, *base)
             }
             ProximaScheme::Gorilla => {
                 functions::gorilla::encode_i64(values)
@@ -177,6 +183,9 @@ impl RawEncoder for BaselineEncoder {
             }
             ProximaScheme::DoubleDelta { .. } => {
                 functions::double_delta::encode_i32(values)
+            }
+            ProximaScheme::PForDoubleDelta { base, .. } => {
+                functions::pfor_double_delta::encode_i32(values, *base)
             }
             ProximaScheme::Gorilla => {
                 functions::gorilla::encode_i32(values)

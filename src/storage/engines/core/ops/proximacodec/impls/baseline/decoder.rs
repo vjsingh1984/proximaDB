@@ -70,6 +70,9 @@ impl RawDecoder for BaselineDecoder {
             ProximaScheme::DoubleDelta { .. } => {
                 functions::double_delta::decode_f32(data, count)
             }
+            ProximaScheme::PForDoubleDelta { .. } => {
+                functions::pfor_double_delta::decode_f32(data, count)
+            }
             ProximaScheme::Gorilla => {
                 functions::gorilla::decode_f32(data, count)
             }
@@ -122,6 +125,9 @@ impl RawDecoder for BaselineDecoder {
             }
             ProximaScheme::DoubleDelta { .. } => {
                 functions::double_delta::decode_i64(data, count)
+            }
+            ProximaScheme::PForDoubleDelta { .. } => {
+                functions::pfor_double_delta::decode_i64(data, count)
             }
             ProximaScheme::Gorilla => {
                 functions::gorilla::decode_i64(data, count)
@@ -177,6 +183,9 @@ impl RawDecoder for BaselineDecoder {
             }
             ProximaScheme::DoubleDelta { .. } => {
                 functions::double_delta::decode_i32(data, count)
+            }
+            ProximaScheme::PForDoubleDelta { .. } => {
+                functions::pfor_double_delta::decode_i32(data, count)
             }
             ProximaScheme::Gorilla => {
                 functions::gorilla::decode_i32(data, count)
