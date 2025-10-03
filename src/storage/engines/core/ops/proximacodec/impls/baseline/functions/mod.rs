@@ -6,7 +6,7 @@
 //! These functions implement the actual compression algorithms.
 //! They return raw compressed bytes WITHOUT headers.
 //!
-//! ## Implemented Schemes (14/14 Complete)
+//! ## Implemented Schemes (16/17 Complete)
 //! - [x] delta.rs - Delta encoding (Phase 2.1)
 //! - [x] bitpack.rs - Bit-packing (Phase 2.2)
 //! - [x] frame_of_ref.rs - Frame of Reference (Phase 2.3)
@@ -14,6 +14,8 @@
 //! - [x] sparse_coo.rs - Sparse COO (Phase 2.5)
 //! - [x] run_length.rs - Run-length encoding (Phase 2.6)
 //! - [x] pfor_delta.rs - Patched Frame of Reference Delta (Phase 2.7)
+//! - [x] patched_base.rs - Patched Base (outlier handling) (Phase 2.7b)
+//! - [x] pfor_double_delta.rs - PFor DoubleDelta (Phase 2.7c)
 //! - [x] zigzag.rs - Zigzag encoding (Phase 2.8)
 //! - [x] double_delta.rs - Double-delta encoding (Phase 2.9)
 //! - [x] gorilla.rs - Gorilla XOR compression (Phase 2.10)
@@ -21,6 +23,7 @@
 //! - [x] dictionary.rs - Dictionary encoding (Phase 2.12)
 //! - [x] simple8b.rs - Simple8b variable-length (Phase 2.13)
 //! - [x] adaptive.rs - Automatic scheme selection (Phase 2.14)
+//! - [ ] hybrid.rs - Multi-scheme hybrid (Phase 2.15) - LOW PRIORITY
 
 pub mod delta;
 pub mod bitpack;
@@ -29,6 +32,8 @@ pub mod sparse_bitmap;
 pub mod sparse_coo;
 pub mod run_length;
 pub mod pfor_delta;
+pub mod patched_base;
+pub mod pfor_double_delta;
 pub mod zigzag;
 pub mod double_delta;
 pub mod gorilla;
@@ -98,6 +103,24 @@ pub use pfor_delta::{
     decode_f32 as pfor_decode_f32,
     decode_i64 as pfor_decode_i64,
     decode_i32 as pfor_decode_i32,
+};
+
+pub use patched_base::{
+    encode_f32 as patched_base_encode_f32,
+    encode_i64 as patched_base_encode_i64,
+    encode_i32 as patched_base_encode_i32,
+    decode_f32 as patched_base_decode_f32,
+    decode_i64 as patched_base_decode_i64,
+    decode_i32 as patched_base_decode_i32,
+};
+
+pub use pfor_double_delta::{
+    encode_f32 as pfor_double_delta_encode_f32,
+    encode_i64 as pfor_double_delta_encode_i64,
+    encode_i32 as pfor_double_delta_encode_i32,
+    decode_f32 as pfor_double_delta_decode_f32,
+    decode_i64 as pfor_double_delta_decode_i64,
+    decode_i32 as pfor_double_delta_decode_i32,
 };
 
 pub use zigzag::{
