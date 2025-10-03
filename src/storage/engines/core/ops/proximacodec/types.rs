@@ -205,62 +205,231 @@ pub enum ProximaScheme {
 impl ProximaScheme {
     /// Check if this encoding scheme is lossy for a given data type
     ///
+    /// ProximaCodec supports 15 encoding schemes with varying losslessness properties:
+    /// - **10 schemes (67%)**: ALWAYS lossless for all types
+    /// - **4 schemes (27%)**: CONDITIONALLY lossless (depends on bit width parameter)
+    /// - **1 scheme (7%)**: ALWAYS lossy for floats (Gorilla)
+    ///
     /// # Arguments
     /// * `type_id` - The data type being encoded
     ///
     /// # Returns
     /// * `true` if the scheme may lose precision or data for this type
-    /// * `false` if the scheme guarantees lossless roundtrip
+    /// * `false` if the scheme guarantees lossless roundtrip (encode → decode → exact equality)
+    ///
+    /// # Always Lossless Schemes (10)
+    /// These schemes guarantee perfect round-trip for all data types:
+    /// - `Delta` - Uses IEEE 754 bit preservation (to_bits/from_bits)
+    /// - `DoubleDelta` - Uses IEEE 754 bit preservation
+    /// - `PForDoubleDelta` - Uses IEEE 754 bit preservation
+    /// - `Simple8b` - Stores full values in 64-bit words
+    /// - `VByte` - Variable-byte encoding (LEB128)
+    /// - `SparseBitmap` - Complete index + value storage
+    /// - `SparseCOO` - Coordinate format (index, value) pairs
+    /// - `Dictionary` - Complete dictionary mapping
+    /// - `RunLength` - Exact (value, count) pairs
+    /// - `Adaptive` - Delegates to lossless schemes
+    ///
+    /// # Conditionally Lossless Schemes (4)
+    /// These schemes are lossless ONLY when bits ≥ type_size:
+    ///
+    /// ## BitPacked { bits }
+    /// - **Lossless**: `bits: 32` for f32/i32/u32, `bits: 64` for f64/i64/u64
+    /// - **Lossy**: When `bits < type_size` (truncates high-order bits)
+    ///
+    /// ## Zigzag { bits }
+    /// - **Lossless**: `bits: 32` for i32/u32, `bits: 64` for i64/u64
+    /// - **Lossy**: When `bits < type_size` OR when used with floats
+    /// - ⚠️ **NEVER use Zigzag for floats!** It corrupts IEEE 754 bit patterns
+    ///
+    /// ## FrameOfReference { reference, bits }
+    /// - **Lossless**: `bits: 32` for f32/i32/u32, `bits: 64` for f64/i64/u64
+    /// - **Lossy**: When `bits < type_size` (truncates offset values)
+    ///
+    /// ## PForDelta { majority_bits, base }
+    /// - **Lossless**: `majority_bits: 32` for f32/i32/u32, `majority_bits: 64` for f64/i64/u64
+    /// - **Lossy**: When `majority_bits < type_size` (truncates majority values)
+    ///
+    /// # Always Lossy (1)
+    ///
+    /// ## Gorilla
+    /// - **Always lossy for floats** (~0.1% precision loss from XOR compression)
+    /// - Cannot be made lossless - inherent to the algorithm
+    /// - **Lossless alternatives**: Delta, DoubleDelta, BitPacked {bits: 32}
+    /// - Use only when approximate values are acceptable (time-series monitoring, sensors)
     ///
     /// # Examples
     /// ```
     /// use proximadb::storage::engines::core::ops::proximacodec::types::{ProximaScheme, TypeId};
     ///
-    /// // BitPacked with 8 bits is lossy for f32 (32 bits)
+    /// // ========== Always Lossless ==========
+    /// assert!(!ProximaScheme::Delta { base: 0 }.is_lossy(TypeId::F32));
+    /// assert!(!ProximaScheme::DoubleDelta { first_value: 0, first_delta: 1 }.is_lossy(TypeId::F32));
+    /// assert!(!ProximaScheme::Simple8b.is_lossy(TypeId::I32));
+    ///
+    /// // ========== Conditionally Lossy ==========
+    /// // BitPacked: lossy with insufficient bits
     /// assert!(ProximaScheme::BitPacked { bits: 8 }.is_lossy(TypeId::F32));
+    /// // BitPacked: lossless with sufficient bits
+    /// assert!(!ProximaScheme::BitPacked { bits: 32 }.is_lossy(TypeId::F32));
     ///
-    /// // Delta encoding is lossless for all integer types
-    /// assert!(!ProximaScheme::Delta { base: 0 }.is_lossy(TypeId::I64));
+    /// // Zigzag: ALWAYS lossy for floats (not designed for IEEE 754)
+    /// assert!(ProximaScheme::Zigzag { bits: 32 }.is_lossy(TypeId::F32));
+    /// // Zigzag: lossless for integers with sufficient bits
+    /// assert!(!ProximaScheme::Zigzag { bits: 32 }.is_lossy(TypeId::I32));
     ///
-    /// // Gorilla is lossy for f32 (XOR compression)
+    /// // FrameOfReference: lossy with insufficient bits
+    /// assert!(ProximaScheme::FrameOfReference { reference: 0, bits: 16 }.is_lossy(TypeId::F32));
+    /// // FrameOfReference: lossless with sufficient bits
+    /// assert!(!ProximaScheme::FrameOfReference { reference: 0, bits: 32 }.is_lossy(TypeId::F32));
+    ///
+    /// // ========== Always Lossy ==========
+    /// // Gorilla: always lossy for floats (XOR compression)
     /// assert!(ProximaScheme::Gorilla.is_lossy(TypeId::F32));
+    /// // Use lossless alternative instead
+    /// assert!(!ProximaScheme::DoubleDelta { first_value: 0, first_delta: 1 }.is_lossy(TypeId::F32));
     /// ```
+    ///
+    /// # Making Schemes Lossless
+    ///
+    /// To ensure lossless encoding:
+    ///
+    /// ```rust
+    /// // For f32 (32-bit floats)
+    /// ProximaScheme::BitPacked { bits: 32 }              // ✅ Lossless
+    /// ProximaScheme::FrameOfReference { reference: 0, bits: 32 }  // ✅ Lossless
+    /// ProximaScheme::PForDelta { majority_bits: 32, base: 0 }     // ✅ Lossless
+    /// ProximaScheme::Delta { base: 0 }                   // ✅ Always lossless
+    /// ProximaScheme::DoubleDelta { first_value: 0, first_delta: 1 }  // ✅ Always lossless
+    ///
+    /// // For f64 (64-bit floats)
+    /// ProximaScheme::BitPacked { bits: 64 }              // ✅ Lossless
+    /// ProximaScheme::FrameOfReference { reference: 0, bits: 64 }  // ✅ Lossless
+    /// ProximaScheme::PForDelta { majority_bits: 64, base: 0 }     // ✅ Lossless
+    ///
+    /// // For i32 (32-bit integers)
+    /// ProximaScheme::Zigzag { bits: 32 }                 // ✅ Lossless
+    /// ProximaScheme::Simple8b                            // ✅ Always lossless
+    /// ProximaScheme::VByte                               // ✅ Always lossless
+    ///
+    /// // ⚠️  NEVER DO THIS
+    /// // ProximaScheme::Zigzag { bits: 32 } for TypeId::F32   // ❌ ALWAYS lossy!
+    /// // ProximaScheme::Gorilla for TypeId::F32               // ❌ ALWAYS lossy!
+    /// ```
+    ///
+    /// # See Also
+    /// - Full analysis: `docs/PROXIMACODEC_LOSSY_SCHEMES_ANALYSIS.md`
+    /// - Testing: Use round-trip tests to verify losslessness
     pub fn is_lossy(&self, type_id: TypeId) -> bool {
         match (self, type_id) {
-            // BitPacked is NOW LOSSLESS for all types (uses to_bits/from_bits for floats)
-            // Lossy only if bits < type size (truncates high-order bits)
+            // ========== CONDITIONALLY LOSSY: BitPacked ==========
+            // BitPacked uses IEEE 754 bit preservation (to_bits/from_bits) for floats,
+            // making it lossless when all bits are preserved.
+            //
+            // Lossy ONLY when: bits < type_size (truncates high-order bits)
+            //
+            // Examples:
+            //   BitPacked { bits: 8 } for F32  → LOSSY (keeps only 8 of 32 bits)
+            //   BitPacked { bits: 32 } for F32 → LOSSLESS (preserves all bits)
             (Self::BitPacked { bits }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *bits < 32,
             (Self::BitPacked { bits }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *bits < 64,
 
-            // Zigzag: lossy if bits < type size (after zigzag encoding)
+            // ========== CONDITIONALLY LOSSY: Zigzag ==========
+            // Zigzag encoding maps signed integers to unsigned for better compression.
+            // ⚠️  WARNING: Zigzag is DESIGNED FOR SIGNED INTEGERS ONLY!
+            //
+            // For integers:
+            //   Lossy when: bits < type_size (truncates zigzag-encoded value)
+            //   Lossless when: bits ≥ type_size
+            //
+            // For floats:
+            //   ALWAYS LOSSY - corrupts IEEE 754 bit patterns!
+            //   Use Delta, DoubleDelta, or BitPacked instead.
+            //
+            // Examples:
+            //   Zigzag { bits: 16 } for I32 → LOSSY (large values truncated)
+            //   Zigzag { bits: 32 } for I32 → LOSSLESS (all values preserved)
+            //   Zigzag { bits: 32 } for F32 → LOSSY (NEVER use Zigzag for floats!)
             (Self::Zigzag { bits }, TypeId::I32 | TypeId::U32) => *bits < 32,
             (Self::Zigzag { bits }, TypeId::I64 | TypeId::U64) => *bits < 64,
-            (Self::Zigzag { .. }, TypeId::F32 | TypeId::F64) => true, // Zigzag not designed for floats
+            (Self::Zigzag { .. }, TypeId::F32 | TypeId::F64) => true, // ⚠️  ALWAYS lossy for floats!
 
-            // Gorilla: lossy for floats due to XOR encoding approximations
-            (Self::Gorilla, TypeId::F32 | TypeId::F64) => true,
-            (Self::Gorilla, _) => false, // Lossless for integers when using XOR
+            // ========== ALWAYS LOSSY: Gorilla ==========
+            // Gorilla uses XOR compression between consecutive float values.
+            // It compresses leading zeros, trailing zeros, and intermediate bits,
+            // which inherently loses precision (~0.1% error typical).
+            //
+            // Cannot be made lossless - this is fundamental to the algorithm.
+            //
+            // Use cases:
+            //   ✅ Time-series monitoring (acceptable ~0.1% error)
+            //   ✅ High-frequency sensor data (compression > precision)
+            //   ❌ Financial calculations (need exact values)
+            //   ❌ ML embeddings (need exact vectors)
+            //
+            // Lossless alternatives:
+            //   • Delta { base: 0 }
+            //   • DoubleDelta { first_value: 0, first_delta: 1 }
+            //   • BitPacked { bits: 32 }
+            (Self::Gorilla, TypeId::F32 | TypeId::F64) => true, // Always lossy for floats
+            (Self::Gorilla, _) => false, // Lossless for integers (XOR is exact for integers)
 
-            // DoubleDelta: LOSSLESS for all types (uses to_bits/from_bits for floats)
-            // We convert f32→i32 via to_bits(), compute deltas on integers (exact),
-            // then reconstruct via from_bits() - perfect round-trip!
+            // ========== ALWAYS LOSSLESS: DoubleDelta ==========
+            // DoubleDelta is LOSSLESS for all types, including floats.
+            //
+            // How it works:
+            //   1. Convert f32 → i32 via to_bits() (lossless bit-level conversion)
+            //   2. Compute first delta: delta1 = value[i] - value[i-1]
+            //   3. Compute second delta: delta2 = delta1[i] - delta1[i-1]
+            //   4. Store: base, first_delta, then second deltas (all integer arithmetic)
+            //   5. Reconstruct via from_bits() (lossless bit-level conversion back)
+            //
+            // Result: Perfect round-trip via IEEE 754 bit preservation!
             (Self::DoubleDelta { .. }, _) => false,
 
-            // PForDoubleDelta: LOSSLESS for all types (same logic as DoubleDelta)
-            // IEEE 754 bit pattern preservation ensures lossless f32 encoding
+            // ========== ALWAYS LOSSLESS: PForDoubleDelta ==========
+            // PForDoubleDelta is LOSSLESS for all types (same as DoubleDelta).
+            // Adds patched frame-of-reference to handle outliers efficiently.
+            // Uses IEEE 754 bit pattern preservation for floats.
             (Self::PForDoubleDelta { .. }, _) => false,
 
-            // FrameOfReference: LOSSLESS for floats (uses to_bits/from_bits)
-            // Lossy only if bits < type size (truncates offsets)
+            // ========== CONDITIONALLY LOSSY: FrameOfReference ==========
+            // FrameOfReference subtracts a reference value, then bit-packs the offset.
+            // Uses IEEE 754 bit preservation (to_bits/from_bits) for floats.
+            //
+            // Lossy ONLY when: bits < type_size (truncates offset values)
+            //
+            // Examples:
+            //   FrameOfReference { reference: 0, bits: 16 } for F32 → LOSSY
+            //   FrameOfReference { reference: 0, bits: 32 } for F32 → LOSSLESS
             (Self::FrameOfReference { bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *bits < 32,
             (Self::FrameOfReference { bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *bits < 64,
 
-            // PForDelta: LOSSLESS for floats (uses to_bits/from_bits like FrameOfReference)
-            // Lossy only if majority_bits < type size
+            // ========== CONDITIONALLY LOSSY: PForDelta ==========
+            // PForDelta (Patched Frame-of-Reference with Delta) encodes most values
+            // with majority_bits, and stores exceptions separately.
+            // Uses IEEE 754 bit preservation for floats.
+            //
+            // Lossy ONLY when: majority_bits < type_size
+            //   (majority values are truncated, exceptions are lossless)
+            //
+            // Examples:
+            //   PForDelta { majority_bits: 16, base: 0 } for F32 → LOSSY
+            //   PForDelta { majority_bits: 32, base: 0 } for F32 → LOSSLESS
             (Self::PForDelta { majority_bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *majority_bits < 32,
             (Self::PForDelta { majority_bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *majority_bits < 64,
 
-            // All other schemes are lossless (Delta, Simple8b, VByte, SparseBitmap, SparseCOO, Dictionary, RunLength)
+            // ========== ALWAYS LOSSLESS: All Other Schemes ==========
+            // The following schemes are ALWAYS lossless for all types:
+            //
+            // • Delta: Stores exact differences (uses to_bits/from_bits for floats)
+            // • Simple8b: Stores full values in 64-bit words with selectors
+            // • VByte: Variable-byte encoding (LEB128) - exact value storage
+            // • SparseBitmap: Complete bitmap + all non-zero values
+            // • SparseCOO: Complete coordinate pairs (index, value)
+            // • Dictionary: Complete dictionary mapping (value → code)
+            // • RunLength: Exact (value, count) pairs
+            // • Adaptive: Delegates to lossless schemes based on data pattern
             _ => false,
         }
     }
