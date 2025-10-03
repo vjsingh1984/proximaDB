@@ -842,6 +842,165 @@ pub fn metal_pfor_delta_decode_f32(data: &[u8], majority_bits: u8, base: i64, co
     anyhow::bail!("Metal PForDelta decoding not yet implemented - use SIMD fallback")
 }
 
+// ============================================================================
+// DOUBLE-DELTA ENCODING/DECODING
+// ============================================================================
+
+/// Metal DoubleDelta encoding for f32
+///
+/// Three-phase GPU algorithm:
+/// - Phase 1: Convert f32 → i32 bits (parallel)
+/// - Phase 2: Compute first deltas (parallel)
+/// - Phase 3: Compute second deltas (parallel)
+///
+/// Returns: [base, first_delta, ...double_deltas]
+pub fn metal_double_delta_encode_f32(values: &[f32]) -> Result<Vec<i64>> {
+    trace!("🔧 [Metal] DoubleDelta encode: {} values", values.len());
+
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if values.len() == 1 {
+        let base = values[0].to_bits() as i32 as i64;
+        return Ok(vec![base]);
+    }
+
+    if values.len() == 2 {
+        let bits: Vec<i32> = values.iter().map(|&v| v.to_bits() as i32).collect();
+        let first_delta = (bits[1] as i64) - (bits[0] as i64);
+        return Ok(vec![bits[0] as i64, first_delta]);
+    }
+
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::*;
+
+        let ctx = RawMetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create Metal context: {}", e))?;
+
+        let n = values.len();
+
+        // Create buffers
+        let input_buffer = create_buffer(&ctx.device, values);
+        let bits_buffer = create_empty_buffer::<i32>(&ctx.device, n);
+        let first_deltas_buffer = create_empty_buffer::<i64>(&ctx.device, n - 1);
+        let double_deltas_buffer = create_empty_buffer::<i64>(&ctx.device, n - 2);
+
+        // Phase 1: f32 → i32 bits
+        let pipeline = ctx.get_pipeline("double_delta_f32_to_bits")
+            .map_err(|e| anyhow::anyhow!("Pipeline error: {}", e))?;
+        execute_kernel(&ctx, &pipeline, &[&input_buffer, &bits_buffer], n)
+            .map_err(|e| anyhow::anyhow!("Kernel execution error: {}", e))?;
+
+        // Phase 2: First deltas
+        let pipeline = ctx.get_pipeline("first_deltas")
+            .map_err(|e| anyhow::anyhow!("Pipeline error: {}", e))?;
+        execute_kernel(&ctx, &pipeline, &[&bits_buffer, &first_deltas_buffer], n)
+            .map_err(|e| anyhow::anyhow!("Kernel execution error: {}", e))?;
+
+        // Phase 3: Second deltas
+        let pipeline = ctx.get_pipeline("second_deltas")
+            .map_err(|e| anyhow::anyhow!("Pipeline error: {}", e))?;
+        execute_kernel(&ctx, &pipeline, &[&first_deltas_buffer, &double_deltas_buffer], n - 1)
+            .map_err(|e| anyhow::anyhow!("Kernel execution error: {}", e))?;
+
+        // Read results back
+        let bits_host: Vec<i32> = read_buffer(&bits_buffer, n);
+        let first_deltas_host: Vec<i64> = read_buffer(&first_deltas_buffer, n - 1);
+        let double_deltas_host: Vec<i64> = read_buffer(&double_deltas_buffer, n - 2);
+
+        let base = bits_host[0] as i64;
+        let first_delta = first_deltas_host[0];
+
+        // Construct result: [base, first_delta, ...double_deltas]
+        let mut result = Vec::with_capacity(2 + double_deltas_host.len());
+        result.push(base);
+        result.push(first_delta);
+        result.extend(double_deltas_host);
+
+        debug!("✅ [Metal] DoubleDelta encoded {} values → {} deltas (GPU)", values.len(), result.len());
+        Ok(result)
+    }
+
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        // CPU fallback
+        let bits: Vec<i32> = values.iter().map(|&v| v.to_bits() as i32).collect();
+
+        let mut first_deltas: Vec<i64> = Vec::with_capacity(bits.len() - 1);
+        for i in 1..bits.len() {
+            let curr = bits[i] as i64;
+            let prev = bits[i - 1] as i64;
+            first_deltas.push(curr - prev);
+        }
+
+        let mut double_deltas: Vec<i64> = Vec::with_capacity(first_deltas.len() - 1);
+        for i in 1..first_deltas.len() {
+            double_deltas.push(first_deltas[i] - first_deltas[i - 1]);
+        }
+
+        let mut result = Vec::with_capacity(2 + double_deltas.len());
+        result.push(bits[0] as i64);
+        result.push(first_deltas[0]);
+        result.extend(double_deltas);
+
+        debug!("✅ [Metal] DoubleDelta encoded {} values → {} deltas (CPU fallback)", values.len(), result.len());
+        Ok(result)
+    }
+}
+
+/// Metal DoubleDelta decoding for f32
+///
+/// Reconstructs f32 values from double-delta encoding
+pub fn metal_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Result<Vec<f32>> {
+    trace!("🔧 [Metal] DoubleDelta decode: {} deltas, count={}", double_deltas.len(), count);
+
+    if count == 0 || double_deltas.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if count == 1 {
+        let base = double_deltas[0];
+        return Ok(vec![f32::from_bits(base as u32)]);
+    }
+
+    if count == 2 {
+        let base = double_deltas[0];
+        let first_delta = double_deltas[1];
+        let v1 = f32::from_bits(base as u32);
+        let v2 = f32::from_bits((base + first_delta) as i32 as u32);
+        return Ok(vec![v1, v2]);
+    }
+
+    // CPU implementation (sequential reconstruction)
+    // TODO: Investigate GPU scan-based parallel reconstruction
+    let base = double_deltas[0];
+    let first_delta = double_deltas[1];
+
+    let mut first_deltas: Vec<i64> = Vec::with_capacity(count - 1);
+    first_deltas.push(first_delta);
+
+    for i in 2..double_deltas.len() {
+        let prev_delta = first_deltas.last().unwrap();
+        let dd = double_deltas[i];
+        first_deltas.push(prev_delta + dd);
+    }
+
+    let mut result = Vec::with_capacity(count);
+    result.push(f32::from_bits(base as u32));
+
+    let mut prev_value = base as i64;
+    for &delta in &first_deltas {
+        let value = prev_value + delta;
+        result.push(f32::from_bits(value as i32 as u32));
+        prev_value = value;
+    }
+
+    debug!("✅ [Metal] DoubleDelta decoded {} deltas → {} values (CPU)", double_deltas.len(), result.len());
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
