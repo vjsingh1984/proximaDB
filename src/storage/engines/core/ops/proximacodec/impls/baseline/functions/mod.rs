@@ -25,6 +25,7 @@
 //! - [x] adaptive.rs - Automatic scheme selection (Phase 2.14)
 //! - [ ] hybrid.rs - Multi-scheme hybrid (Phase 2.15) - LOW PRIORITY
 
+pub(crate) mod helpers;
 pub mod delta;
 pub mod bitpack;
 pub mod frame_of_ref;
