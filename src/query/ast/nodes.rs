@@ -128,6 +128,11 @@ pub enum Expr {
         strategy: Option<String>,
         max_size: Option<u32>,
     },
+    // Array literal for vector expressions
+    Array {
+        elem: Vec<Expr>,
+        named: bool,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -21,7 +21,7 @@ impl RawDecoder for BaselineDecoder {
 
     fn supports(&self, scheme: &ProximaScheme) -> bool {
         // Baseline supports ALL schemes (will implement progressively)
-        // Currently implemented: Delta, BitPacked, FrameOfReference, SparseBitmap, SparseCOO, RunLength, PForDelta, Zigzag, DoubleDelta, Gorilla, VByte, Dictionary
+        // Currently implemented: Delta, BitPacked, FrameOfReference, SparseBitmap, SparseCOO, RunLength, PForDelta, Zigzag, DoubleDelta, PForDoubleDelta, Gorilla, VByte, Dictionary
         matches!(
             scheme,
             ProximaScheme::Delta { .. }
@@ -33,6 +33,7 @@ impl RawDecoder for BaselineDecoder {
             | ProximaScheme::PForDelta { .. }
             | ProximaScheme::Zigzag { .. }
             | ProximaScheme::DoubleDelta { .. }
+            | ProximaScheme::PForDoubleDelta { .. }
             | ProximaScheme::Gorilla
             | ProximaScheme::VByte
             | ProximaScheme::Dictionary

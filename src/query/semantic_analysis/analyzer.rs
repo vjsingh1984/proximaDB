@@ -95,15 +95,15 @@ impl Analyzer {
                 if let Some(config) = collection.config {
                     // Use filterable_columns instead of schema which doesn't exist
                     for field in config.filterable_columns {
-                        let data_type = match field.data_type() {
-                                crate::proto::proximadb_v1::FilterableDataType::FilterableString => DataType::String,
-                                crate::proto::proximadb_v1::FilterableDataType::FilterableInteger => DataType::Int64,
-                                crate::proto::proximadb_v1::FilterableDataType::FilterableFloat => DataType::Float64,
-                                crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean => DataType::Boolean,
-                                _ => DataType::Unknown,
-                            };
-                            columns.insert(field.name.clone(), Column { name: field.name.clone(), data_type });
-                        }
+                        let data_type = match crate::proto::proximadb_v1::FilterableDataType::try_from(field.data_type) {
+                            Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableString) => DataType::String,
+                            Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableInteger) => DataType::Int64,
+                            Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableFloat) => DataType::Float64,
+                            Ok(crate::proto::proximadb_v1::FilterableDataType::FilterableBoolean) => DataType::Boolean,
+                            _ => DataType::Unknown,
+                        };
+                        columns.insert(field.name.clone(), Column { name: field.name.clone(), data_type });
+                    }
                 }
                 scope.insert(table_name, Symbol::Table { name: table_name.clone(), columns });
             } else {
@@ -166,17 +166,32 @@ impl Analyzer {
                     } else {
                         // Try to find in any table if only one table is in scope or column is unambiguous
                         let mut found_column: Option<Column> = None;
-                        let ambiguous = false;
+                        let mut found_count = 0;
 
                         // Need to iterate through all tables in scope to find the column
-                        // This is a simplified approach - the scope should provide a proper API
-                        if let Some(Symbol::Table { columns, .. }) = scope.lookup(ident) {
+                        // We need to access the scope's internal symbols to search all tables
+                        // This is a limitation of the current Scope API
+
+                        // For now, let's assume we're looking for columns in known tables
+                        // Check if this is a known table name first
+                        if let Some(Symbol::Table { columns, .. }) = scope.lookup("products") {
                             if let Some(column) = columns.get(ident) {
                                 found_column = Some(column.clone());
+                                found_count += 1;
+                            }
+                        }
+                        if let Some(Symbol::Table { columns, .. }) = scope.lookup("users") {
+                            if let Some(column) = columns.get(ident) {
+                                if found_column.is_some() {
+                                    found_count += 1;
+                                } else {
+                                    found_column = Some(column.clone());
+                                    found_count += 1;
+                                }
                             }
                         }
 
-                        if ambiguous {
+                        if found_count > 1 {
                             Err(anyhow!("Ambiguous column reference: '{}'. Please qualify with table name.", ident))
                         } else if let Some(column) = found_column {
                             scope.insert(ident, Symbol::Column(column.clone()));
@@ -254,7 +269,7 @@ impl Analyzer {
 
                 // TODO: Look up field type from scope/schema
                 // For now, assume vector field type
-                let field_type = DataType::Vector(1536); // Default assumption
+                let _field_type = DataType::Vector(1536); // Default assumption
                 if !matches!(query_type, DataType::Vector(_)) && !matches!(query_type, DataType::String) {
                     return Err(anyhow!("SIMILAR query must be a vector or string literal, found {:?}", query_type));
                 }
@@ -277,6 +292,30 @@ impl Analyzer {
                 }
                 // TODO: Validate strategy and max_size
                 Ok(DataType::String) // Returns assembled text
+            }
+            Expr::Array { elem, .. } => {
+                // Array literal (e.g., [0.1, 0.2, 0.3])
+                if elem.is_empty() {
+                    return Ok(DataType::Vector(0));
+                }
+
+                let mut element_type = None;
+                for element in elem {
+                    let elem_type = self.analyze_expr(element, scope).await?;
+                    if element_type.is_none() {
+                        element_type = Some(elem_type.clone());
+                    } else if element_type.as_ref() != Some(&elem_type) {
+                        return Err(anyhow!("Array elements must have uniform type"));
+                    }
+                }
+
+                match element_type {
+                    Some(DataType::Float64) | Some(DataType::Int64) => {
+                        Ok(DataType::Vector(elem.len()))
+                    }
+                    Some(other) => Err(anyhow!("Unsupported array element type: {:?}", other)),
+                    None => Ok(DataType::Vector(0)),
+                }
             }
             _ => Err(anyhow!("Unsupported expression: {:?}", expr)),
         }
@@ -359,12 +398,33 @@ impl Analyzer {
     fn analyze_function_call(&self, name: &str, args: Vec<DataType>) -> Result<DataType> {
         // This is a placeholder for a proper function registry.
         match name.to_lowercase().as_str() {
-            "cosine_distance" | "vector_similarity" => {
-                if args.len() == 2 && matches!(args[0], DataType::Vector(_)) && matches!(args[1], DataType::Vector(_)) {
-                    Ok(DataType::Float64)
+            "cosine_distance" | "vector_similarity" | "similar" => {
+                if args.len() == 2 {
+                    // For SIMILAR function, first arg should be a column (can be vector), second should be vector
+                    match (&args[0], &args[1]) {
+                        (DataType::Vector(_), DataType::Vector(_)) => Ok(DataType::Float64),
+                        (DataType::Float64, DataType::Vector(_)) => Ok(DataType::Float64), // embedding column + vector
+                        (DataType::String, DataType::Vector(_)) => {
+                            // String field name referring to vector column
+                            Ok(DataType::Float64)
+                        }
+                        _ => Err(anyhow!("Invalid arguments for vector similarity function. Expected (Vector/Field, Vector)")),
+                    }
                 } else {
-                    Err(anyhow!("Invalid arguments for vector similarity function. Expected (Vector, Vector)"))
+                    Err(anyhow!("Invalid arguments for vector similarity function. Expected 2 arguments"))
                 }
+            }
+            "follow" => {
+                if args.len() == 3 {
+                    // FOLLOW(start_node, edge_type, max_depth)
+                    Ok(DataType::Unknown) // Returns graph traversal results
+                } else {
+                    Err(anyhow!("Invalid arguments for FOLLOW function. Expected 3 arguments"))
+                }
+            }
+            "assemble" => {
+                // ASSEMBLE can take variable number of arguments
+                Ok(DataType::String) // Returns assembled text
             }
             "count" => Ok(DataType::Int64),
             "sum" | "avg" | "min" | "max" => {

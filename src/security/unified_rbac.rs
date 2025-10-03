@@ -269,6 +269,9 @@ impl ConsolidatedRBACManager {
     ) -> Result<HashSet<UnifiedPermission>> {
         let mut effective_permissions = HashSet::new();
 
+        // Start with permissions already in the user context
+        effective_permissions.extend(user_context.effective_permissions.clone());
+
         // Get user role assignment
         if let Some(assignment) = self.user_role_assignments.get(&user_context.user_id) {
             // Add direct permissions

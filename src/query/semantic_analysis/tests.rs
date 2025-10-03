@@ -28,7 +28,33 @@ impl MockCollectionService {
                     storage_engine: 0, // Default storage engine
                     tags: vec![],
                     description: None,
-                    filterable_columns: vec![],
+                    filterable_columns: vec![
+                        crate::proto::proximadb_v1::FilterableColumnSpec {
+                            name: "id".to_string(),
+                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            ..Default::default()
+                        },
+                        crate::proto::proximadb_v1::FilterableColumnSpec {
+                            name: "name".to_string(),
+                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            ..Default::default()
+                        },
+                        crate::proto::proximadb_v1::FilterableColumnSpec {
+                            name: "price".to_string(),
+                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                            ..Default::default()
+                        },
+                        crate::proto::proximadb_v1::FilterableColumnSpec {
+                            name: "category".to_string(),
+                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            ..Default::default()
+                        },
+                        crate::proto::proximadb_v1::FilterableColumnSpec {
+                            name: "embedding".to_string(),
+                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32, // Vector represented as float array
+                            ..Default::default()
+                        },
+                    ],
                     index_configs: vec![],
                     quantization: None,
                     storage_config: None,
@@ -90,7 +116,18 @@ impl MockCollectionService {
                     storage_engine: 0, // Default storage engine
                     tags: vec![],
                     description: None,
-                    filterable_columns: vec![],
+                    filterable_columns: vec![
+                        crate::proto::proximadb_v1::FilterableColumnSpec {
+                            name: "user_id".to_string(),
+                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            ..Default::default()
+                        },
+                        crate::proto::proximadb_v1::FilterableColumnSpec {
+                            name: "email".to_string(),
+                            data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                            ..Default::default()
+                        },
+                    ],
                     index_configs: vec![],
                     quantization: None,
                     storage_config: None,
@@ -173,6 +210,85 @@ async fn setup_analyzer_with_mock() -> Analyzer {
     };
 
     let collection_service = Arc::new(CollectionService::new(metadata_backend, storage_config).await.unwrap());
+
+    // Create the test collections in the actual service
+    let products_config = crate::proto::proximadb_v1::CollectionConfig {
+        name: "products".to_string(),
+        dimension: 1536,
+        distance_metric: 0,
+        storage_engine: 0,
+        tags: vec![],
+        description: None,
+        filterable_columns: vec![
+            crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "id".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                ..Default::default()
+            },
+            crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "name".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                ..Default::default()
+            },
+            crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "price".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                ..Default::default()
+            },
+            crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "category".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                ..Default::default()
+            },
+            crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "embedding".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableFloat as i32,
+                ..Default::default()
+            },
+        ],
+        index_configs: vec![],
+        quantization: None,
+        storage_config: None,
+        primary_index: "default".to_string(),
+        auto_index_selection: false,
+        owner: None,
+        embedding_models: vec![],
+        ..Default::default()
+    };
+
+    let users_config = crate::proto::proximadb_v1::CollectionConfig {
+        name: "users".to_string(),
+        dimension: 0,
+        distance_metric: 0,
+        storage_engine: 0,
+        tags: vec![],
+        description: None,
+        filterable_columns: vec![
+            crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "user_id".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                ..Default::default()
+            },
+            crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "email".to_string(),
+                data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString as i32,
+                ..Default::default()
+            },
+        ],
+        index_configs: vec![],
+        quantization: None,
+        storage_config: None,
+        primary_index: "default".to_string(),
+        auto_index_selection: false,
+        owner: None,
+        embedding_models: vec![],
+        ..Default::default()
+    };
+
+    // Create the collections
+    let _ = collection_service.create_collection(&products_config).await;
+    let _ = collection_service.create_collection(&users_config).await;
+
     Analyzer::new(collection_service)
 }
 
