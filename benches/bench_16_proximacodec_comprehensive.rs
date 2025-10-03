@@ -639,33 +639,42 @@ fn print_compression_summary(results: &[CompressionMetrics]) {
         }
     }
 
-    // Best schemes per pattern (weighted: 40% compression, 60% speed)
-    println!("\n\n═══ 🏆 BEST SCHEME PER DATA PATTERN (40% Compression + 60% Speed) ═══\n");
-    println!("{:<20} {:<20} {:>15} {:>15} {:>10}",
-             "Data Pattern", "Best Scheme", "Compression", "Encode (µs)", "Score");
-    println!("{}", "─".repeat(90));
+    // Best schemes per pattern (weighted: 40% decode + 40% compression + 20% encode)
+    println!("\n\n═══ 🏆 BEST SCHEME PER DATA PATTERN (40% Decode + 40% Compression + 20% Encode) ═══\n");
+    println!("{:<20} {:<20} {:>15} {:>13} {:>13} {:>10}",
+             "Data Pattern", "Best Scheme", "Compression", "Encode (µs)", "Decode (µs)", "Score");
+    println!("{}", "─".repeat(105));
 
     for pattern in &patterns {
+        // Only consider schemes with positive compression (no expansion)
         let pattern_results: Vec<_> = results.iter()
-            .filter(|r| r.pattern_name == *pattern)
+            .filter(|r| r.pattern_name == *pattern && r.compression_ratio > 0.0)
             .collect();
 
         if pattern_results.is_empty() {
+            println!("{:<20} {:<20} {:>15} {:>13} {:>13} {:>10}",
+                     pattern, "None (all expand)", "N/A", "N/A", "N/A", "N/A");
             continue;
         }
 
-        // Find min encode time for normalization
-        let min_time = pattern_results.iter()
+        // Find min times for normalization
+        let min_encode_time = pattern_results.iter()
             .map(|r| r.encode_time_us)
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(1.0);
 
-        // Calculate composite score: 40% compression + 60% speed
+        let min_decode_time = pattern_results.iter()
+            .map(|r| r.decode_time_us)
+            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(1.0);
+
+        // Calculate composite score: 40% decode + 40% compression + 20% encode
         let mut scored_results: Vec<_> = pattern_results.iter()
             .map(|r| {
-                let compression_score = r.compression_ratio.max(0.0); // 0.0 to 1.0
-                let speed_score = (min_time / r.encode_time_us).min(1.0); // faster = higher score
-                let composite_score = (compression_score * 0.4) + (speed_score * 0.6);
+                let compression_score = r.compression_ratio; // Already filtered for > 0
+                let encode_speed_score = (min_encode_time / r.encode_time_us).min(1.0);
+                let decode_speed_score = (min_decode_time / r.decode_time_us).min(1.0);
+                let composite_score = (decode_speed_score * 0.4) + (compression_score * 0.4) + (encode_speed_score * 0.2);
                 (r, composite_score)
             })
             .collect();
@@ -695,15 +704,17 @@ fn print_compression_summary(results: &[CompressionMetrics]) {
             };
 
             // Recalculate score for chosen scheme
-            let compression_score = chosen.compression_ratio.max(0.0);
-            let speed_score = (min_time / chosen.encode_time_us).min(1.0);
-            let final_score = (compression_score * 0.4) + (speed_score * 0.6);
+            let compression_score = chosen.compression_ratio;
+            let encode_speed_score = (min_encode_time / chosen.encode_time_us).min(1.0);
+            let decode_speed_score = (min_decode_time / chosen.decode_time_us).min(1.0);
+            let final_score = (decode_speed_score * 0.4) + (compression_score * 0.4) + (encode_speed_score * 0.2);
 
-            println!("{:<20} {:<20} {:>14.1}% {:>15.2} {:>10.3}",
+            println!("{:<20} {:<20} {:>14.1}% {:>13.2} {:>13.2} {:>10.3}",
                      pattern,
                      chosen.scheme_name,
                      chosen.compression_ratio * 100.0,
                      chosen.encode_time_us,
+                     chosen.decode_time_us,
                      final_score);
         }
     }
