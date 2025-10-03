@@ -380,90 +380,25 @@ fn simd_delta_encode_scalar(values: &[f32], base: f32) -> Result<Vec<i64>> {
 ///
 /// ## Returns
 /// Packed bytes (no headers, raw packed data)
+/// BitPacked encoding - delegates to baseline
+///
+/// **Why no SIMD?** Bitpacking is inherently complex for SIMD acceleration:
+/// - Cross-byte boundaries make vectorization difficult
+/// - Arbitrary bit widths (1-32) require complex shuffle/permute patterns
+/// - Per-element bit offset calculations don't vectorize well
+/// - The bit manipulation (shifts, masks, OR operations) across byte boundaries
+///   would require extensive SIMD shuffles that often perform worse than scalar
+///
+/// **Future SIMD possibilities:**
+/// - Fixed bit widths (8, 16, 32) could use SIMD pack/unpack intrinsics
+/// - AVX-512 VBMI (Vector Byte Manipulation Instructions) for variable shifts
+/// - Specialized implementations for common bit widths only
+///
+/// **Current approach:** Delegate to baseline for correctness and maintainability.
+/// Baseline implementation is already highly optimized scalar code.
 pub fn simd_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if bits == 0 || bits > 32 {
-        anyhow::bail!("Invalid bit width: {}, must be 1-32", bits);
-    }
-
-    let backend = get_simd_backend();
-
-    match backend {
-        HardwareBackend::AVX2 | HardwareBackend::AVX512 => simd_bitpack_encode_avx2(values, bits),
-        _ => simd_bitpack_encode_scalar(values, bits),
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-fn simd_bitpack_encode_avx2(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    // LOSSLESS: Convert f32 to IEEE 754 bit patterns (u32)
-    // This preserves exact f32 representation, including fractional parts
-    let u32_values: Vec<u32> = values.iter().map(|&v| v.to_bits()).collect();
-
-    // Now pack bits (use scalar for simplicity - bit packing is complex in SIMD)
-    simd_pack_bits_scalar_u32(&u32_values, bits)
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-fn simd_bitpack_encode_avx2(_values: &[f32], _bits: u8) -> Result<Vec<u8>> {
-    unreachable!("AVX2 backend not available on this platform")
-}
-
-fn simd_bitpack_encode_scalar(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    // LOSSLESS: Convert f32 to IEEE 754 bit patterns
-    let u32_values: Vec<u32> = values.iter().map(|&v| v.to_bits()).collect();
-    simd_pack_bits_scalar_u32(&u32_values, bits)
-}
-
-fn simd_pack_bits_scalar_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
-    let output_bits = values.len() * bits as usize;
-    let output_bytes = (output_bits + 7) / 8;
-    let mut output = vec![0u8; output_bytes];
-
-    let mask = if bits == 32 {
-        u32::MAX
-    } else {
-        (1u32 << bits) - 1
-    };
-
-    for (i, &val) in values.iter().enumerate() {
-        let bit_offset = i * bits as usize;
-        let byte_start = bit_offset / 8;
-        let bit_start = bit_offset % 8;
-
-        let masked_val = val & mask;
-
-        // Handle cross-byte boundaries
-        let mut remaining_bits = bits as usize;
-        let mut current_val = masked_val;
-        let mut current_byte = byte_start;
-        let mut current_bit = bit_start;
-
-        while remaining_bits > 0 && current_byte < output.len() {
-            let bits_in_byte = std::cmp::min(remaining_bits, 8 - current_bit);
-            // Prevent shift overflow: if bits_in_byte == 8, mask is 0xFF
-            let byte_mask = if bits_in_byte >= 8 {
-                0xFFu8
-            } else {
-                ((1u8 << bits_in_byte) - 1) << current_bit
-            };
-            let val_byte = ((current_val & ((1 << bits_in_byte) - 1)) as u8) << current_bit;
-
-            output[current_byte] = (output[current_byte] & !byte_mask) | val_byte;
-
-            current_val >>= bits_in_byte;
-            remaining_bits -= bits_in_byte;
-            current_byte += 1;
-            current_bit = 0;
-        }
-    }
-
-    trace!("✅ Scalar BitPack encode: {} values → {} bytes ({}b/val)",
-           values.len(), output.len(), bits);
-    Ok(output)
+    use super::impls::baseline::functions::bitpack;
+    bitpack::encode_f32(values, bits)
 }
 
 // ============================================================================
@@ -647,53 +582,70 @@ fn simd_delta_decode_scalar(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 ///
 /// ## Returns
 /// Unpacked f32 values
+/// BitPacked decoding - delegates to baseline
+///
+/// See `simd_bitpack_encode_f32()` for rationale on why SIMD is not used.
 pub fn simd_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    if packed.is_empty() || count == 0 {
-        return Ok(Vec::new());
+    use super::impls::baseline::functions::bitpack;
+    bitpack::decode_f32(packed, bits, count)
+}
+
+// ============================================================================
+// HELPER FUNCTIONS FOR ADVANCED SCHEMES
+// ============================================================================
+
+/// Helper: Pack u32 values into bits (scalar bitpacking)
+///
+/// Used internally by other encoding schemes (PForDelta, FrameOfReference, etc.)
+/// that need to bitpack intermediate results.
+fn simd_pack_bits_scalar_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
+    let output_bits = values.len() * bits as usize;
+    let output_bytes = (output_bits + 7) / 8;
+    let mut output = vec![0u8; output_bytes];
+
+    let mask = if bits == 32 {
+        u32::MAX
+    } else {
+        (1u32 << bits) - 1
+    };
+
+    for (i, &val) in values.iter().enumerate() {
+        let bit_offset = i * bits as usize;
+        let byte_start = bit_offset / 8;
+        let bit_start = bit_offset % 8;
+
+        let masked_val = val & mask;
+
+        // Handle cross-byte boundaries
+        let mut remaining_bits = bits as usize;
+        let mut current_val = masked_val;
+        let mut current_byte = byte_start;
+        let mut current_bit = bit_start;
+
+        while remaining_bits > 0 && current_byte < output.len() {
+            let bits_in_byte = std::cmp::min(remaining_bits, 8 - current_bit);
+            let byte_mask = if bits_in_byte >= 8 {
+                0xFFu8
+            } else {
+                ((1u8 << bits_in_byte) - 1) << current_bit
+            };
+            let val_byte = ((current_val & ((1 << bits_in_byte) - 1)) as u8) << current_bit;
+
+            output[current_byte] = (output[current_byte] & !byte_mask) | val_byte;
+
+            current_val >>= bits_in_byte;
+            remaining_bits -= bits_in_byte;
+            current_byte += 1;
+            current_bit = 0;
+        }
     }
 
-    if bits == 0 || bits > 32 {
-        anyhow::bail!("Invalid bit width: {}, must be 1-32", bits);
-    }
-
-    let backend = get_simd_backend();
-
-    match backend {
-        HardwareBackend::AVX2 | HardwareBackend::AVX512 => simd_bitpack_decode_avx2(packed, bits, count),
-        _ => simd_bitpack_decode_scalar(packed, bits, count),
-    }
+    Ok(output)
 }
 
-#[cfg(target_arch = "x86_64")]
-fn simd_bitpack_decode_avx2(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    // LOSSLESS: Unpack to u32 bit patterns
-    let u32_values = simd_unpack_bits_scalar_u32(packed, bits, count)?;
-
-    // Convert u32 bit patterns back to f32 using from_bits()
-    let result: Vec<f32> = u32_values.iter().map(|&v| f32::from_bits(v)).collect();
-
-    trace!("✅ AVX2 BitPack decode: {} bytes → {} values ({}b/val)",
-           packed.len(), result.len(), bits);
-    Ok(result)
-}
-
-#[cfg(not(target_arch = "x86_64"))]
-fn simd_bitpack_decode_avx2(_packed: &[u8], _bits: u8, _count: usize) -> Result<Vec<f32>> {
-    unreachable!("AVX2 backend not available on this platform")
-}
-
-fn simd_bitpack_decode_scalar(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    // LOSSLESS: Unpack to u32 bit patterns
-    let u32_values = simd_unpack_bits_scalar_u32(packed, bits, count)?;
-
-    // Convert u32 bit patterns back to f32 using from_bits()
-    let result: Vec<f32> = u32_values.iter().map(|&v| f32::from_bits(v)).collect();
-
-    trace!("✅ Scalar BitPack decode: {} bytes → {} values ({}b/val)",
-           packed.len(), result.len(), bits);
-    Ok(result)
-}
-
+/// Helper: Unpack bits into u32 values (scalar bitunpacking)
+///
+/// Used internally by other encoding schemes that need to unpack intermediate results.
 fn simd_unpack_bits_scalar_u32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<u32>> {
     let mut result = Vec::with_capacity(count);
 
@@ -719,7 +671,6 @@ fn simd_unpack_bits_scalar_u32(packed: &[u8], bits: u8, count: usize) -> Result<
 
         while remaining_bits > 0 && current_byte < packed.len() {
             let bits_in_byte = std::cmp::min(remaining_bits, 8 - current_bit);
-            // Prevent shift overflow: if bits_in_byte == 8, mask is 0xFF
             let byte_mask = if bits_in_byte >= 8 {
                 0xFFu8
             } else {
@@ -739,10 +690,6 @@ fn simd_unpack_bits_scalar_u32(packed: &[u8], bits: u8, count: usize) -> Result<
 
     Ok(result)
 }
-
-// ============================================================================
-// HELPER FUNCTIONS FOR ADVANCED SCHEMES
-// ============================================================================
 
 /// Helper: Pack i64 values into bits (wrapper around existing bit-packing)
 fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
@@ -1026,64 +973,39 @@ pub fn simd_frame_of_reference_decode_f32(packed: &[u8], _reference: i64, _bits:
 /// # Arguments
 /// * `values` - Input f32 values
 /// * `bits` - Bit width after zigzag encoding (1-32)
+/// Zigzag encoding - delegates to baseline
+///
+/// **Why no SIMD?** Zigzag transformation is simple bit manipulation:
+/// - Formula: `(n << 1) ^ (n >> 31)` - shift and XOR operations
+/// - While vectorizable in theory, the operations are so cheap that:
+///   1. Scalar executes in ~1 cycle per value (shift + XOR)
+///   2. SIMD overhead (lane shuffling, data movement) dominates
+///   3. The subsequent bitpacking step is already scalar (see BitPacked)
+///   4. Memory bandwidth, not compute, is the bottleneck
+///
+/// **SIMD potential**: Could vectorize zigzag + bitpacking together, but:
+/// - Bitpacking itself is complex to vectorize (cross-byte boundaries)
+/// - Combined SIMD would need 8-16 values minimum for efficiency
+/// - Most use cases have < 8 values per call (metadata fields)
+///
+/// **Current approach:** Delegate to baseline for correctness and simplicity.
 pub fn simd_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if bits == 0 || bits > 32 {
-        anyhow::bail!("Invalid bit width: {} (must be 1-32)", bits);
-    }
-
-    trace!("🔧 [SIMD] Zigzag encode: {} values, {}b/val", values.len(), bits);
-
-    // Step 1: Reinterpret f32 as i32 and apply zigzag
-    let zigzag: Vec<i64> = values.iter().map(|&v| {
-        let n = v.to_bits() as i32;
-        let zz = (n << 1) ^ (n >> 31);
-        zz as i64
-    }).collect();
-
-    // Step 2: Bit-pack zigzag values
-    let packed = bitpack_i64_to_bytes(&zigzag, bits)?;
-
-    debug!("✅ [SIMD] Zigzag encoded {} values → {} bytes", values.len(), packed.len());
-    Ok(packed)
+    use super::impls::baseline::functions::zigzag;
+    zigzag::encode_f32(values, bits)
 }
 
-/// SIMD-accelerated Zigzag decoding for f32
+/// Zigzag decoding - delegates to baseline
 ///
-/// # Algorithm
-/// 1. Bit-unpack zigzag-encoded values
-/// 2. Reverse zigzag: (n >>> 1) ^ -(n & 1)
-/// 3. Reinterpret i32 bits as f32
+/// **Note on signature:** This function takes `bits` as a parameter for compatibility
+/// with the original SIMD interface. However, baseline zigzag stores the bit width
+/// in the first byte of the encoded data, so the `bits` parameter is ignored.
+/// Baseline will read the bit width from `packed[0]`.
 ///
-/// # Arguments
-/// * `packed` - Packed bytes containing zigzag-encoded values
-/// * `bits` - Bit width per value (1-32)
-/// * `count` - Number of values to decode
-pub fn simd_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
-    if packed.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if bits == 0 || bits > 32 {
-        anyhow::bail!("Invalid bit width: {} (must be 1-32)", bits);
-    }
-
-    trace!("🔧 [SIMD] Zigzag decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
-
-    // Step 1: Bit-unpack zigzag values
-    let zigzag = bitunpack_bytes_to_i32(packed, bits, count)?;
-
-    // Step 2: Reverse zigzag and reinterpret as f32
-    let values: Vec<f32> = zigzag.iter().map(|&zz| {
-        let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
-        f32::from_bits(n as u32)
-    }).collect();
-
-    debug!("✅ [SIMD] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
-    Ok(values)
+/// See `simd_zigzag_encode_f32()` for rationale on why SIMD is not used.
+pub fn simd_zigzag_decode_f32(packed: &[u8], _bits: u8, count: usize) -> Result<Vec<f32>> {
+    use super::impls::baseline::functions::zigzag;
+    // Baseline reads bit width from packed[0], so we ignore the bits parameter
+    zigzag::decode_f32(packed, count)
 }
 
 // ============================================================================
@@ -1340,19 +1262,27 @@ pub fn simd_pfor_delta_decode_f32(data: &[u8], _majority_bits: u8, _base: i64, c
 
 // ===== DoubleDelta SIMD Functions =====
 
-/// DoubleDelta encoding for f32 (currently scalar)
+/// DoubleDelta encoding - scalar implementation
 ///
-/// Computes delta-of-deltas for time-series data.
+/// **Why no SIMD?** DoubleDelta has sequential data dependencies:
+/// - First deltas: `Δ[i] = value[i] - value[i-1]` (depends on previous value)
+/// - Second deltas: `ΔΔ[i] = Δ[i] - Δ[i-1]` (depends on previous delta)
+/// - Each computation depends on the result of the previous one
+/// - This serializes the computation, preventing SIMD parallelization
 ///
-/// **Note**: Currently uses scalar implementation. SIMD acceleration is
-/// challenging due to data dependencies in sequential delta computation.
-/// Future versions may use prefix-sum or other techniques for SIMD optimization.
+/// **SIMD possibilities:**
+/// - Prefix-sum algorithms exist but are complex and often slower for small datasets
+/// - Would require specialized scan operations (AVX-512 has some support)
+/// - Break-even point is typically >1000 values due to setup overhead
+/// - Most time-series use cases have <100 values per batch
 ///
-/// # Algorithm
-/// 1. Convert f32 to i32 bits
-/// 2. Compute first deltas in i64 (prevents overflow)
-/// 3. Compute second deltas (delta-of-deltas) in i64
-/// 4. Return intermediate format for wire format encoding
+/// **Why not delegate to baseline?**
+/// - Baseline returns wire-format encoded bytes (includes headers)
+/// - This SIMD function returns intermediate `Vec<i64>` for further processing
+/// - Used internally by wire format manager for flexible encoding
+/// - Different abstraction level: baseline = full encode, SIMD = compute only
+///
+/// **Current approach:** Simple scalar loop, optimal for typical use cases.
 pub fn simd_double_delta_encode_f32(values: &[f32]) -> Result<Vec<i64>> {
     if values.is_empty() {
         return Ok(Vec::new());
@@ -1397,10 +1327,14 @@ pub fn simd_double_delta_encode_f32(values: &[f32]) -> Result<Vec<i64>> {
     Ok(result)
 }
 
-/// DoubleDelta decoding for f32 (currently scalar)
+/// DoubleDelta decoding - scalar implementation
 ///
-/// Decodes delta-of-deltas. Currently uses scalar implementation due to
-/// data dependencies in sequential reconstruction.
+/// **Why no SIMD?** Sequential reconstruction with data dependencies:
+/// - Reconstruct first deltas from second deltas (sequential accumulation)
+/// - Reconstruct values from first deltas (sequential accumulation)
+/// - Each step depends on all previous results
+///
+/// See `simd_double_delta_encode_f32()` for detailed rationale.
 ///
 /// # Arguments
 /// * `double_deltas` - Encoded double deltas: [base, first_delta, ...second_deltas]
