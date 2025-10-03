@@ -30,6 +30,194 @@ use anyhow::Result;
 // to avoid code duplication and ensure consistent sign extension behavior.
 
 use super::bitpack;
+use super::helpers;
+use super::helpers::ToWireFormat;
+
+// ===== Core wire format encoding functions =====
+
+/// Core encoding logic for i32 base + i64 deltas (used by f32 and i32)
+fn encode_pfor_double_delta_i32_base(wire_values: &[i32], base: i32) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if wire_values.len() == 1 {
+        let mut result = Vec::new();
+        result.extend_from_slice(&base.to_le_bytes());
+        let delta = (wire_values[0] as i64) - (base as i64);
+        result.extend_from_slice(&delta.to_le_bytes());
+        result.push(0);
+        result.extend_from_slice(&0u32.to_le_bytes());
+        return Ok(result);
+    }
+
+    let mut result = Vec::new();
+    result.extend_from_slice(&base.to_le_bytes());
+
+    // Compute first deltas in i64 (NO OVERFLOW!)
+    let first_deltas: Vec<i64> = wire_values
+        .iter()
+        .map(|&v| (v as i64) - (base as i64))
+        .collect();
+
+    result.extend_from_slice(&first_deltas[0].to_le_bytes());
+
+    // Compute second deltas (double deltas) in i64
+    let mut double_deltas: Vec<i64> = Vec::with_capacity(first_deltas.len() - 1);
+    for i in 1..first_deltas.len() {
+        let dd = first_deltas[i] - first_deltas[i - 1];
+        double_deltas.push(dd);
+    }
+
+    // Find optimal bit width for 90% of double deltas
+    let mut sorted_double_deltas: Vec<u64> = double_deltas
+        .iter()
+        .map(|&d| d.unsigned_abs())
+        .collect();
+    sorted_double_deltas.sort_unstable();
+
+    let percentile_90_idx = if sorted_double_deltas.len() > 1 {
+        (sorted_double_deltas.len() * 90) / 100
+    } else {
+        0
+    };
+
+    let threshold = sorted_double_deltas.get(percentile_90_idx).copied().unwrap_or(0);
+    let bits = if threshold == 0 {
+        1
+    } else {
+        ((64 - threshold.leading_zeros() as u8) + 1).min(64)
+    };
+
+    result.push(bits);
+
+    // Separate regular double deltas and patches
+    let mut regular_values: Vec<i64> = Vec::with_capacity(double_deltas.len());
+    let mut patches: Vec<(u32, i64)> = Vec::new();
+    let max_regular = if bits < 64 {
+        (1u64 << (bits - 1)) - 1
+    } else {
+        i64::MAX as u64
+    };
+
+    for (idx, &dd) in double_deltas.iter().enumerate() {
+        let abs_dd = dd.unsigned_abs();
+        if abs_dd <= max_regular {
+            regular_values.push(dd);
+        } else {
+            regular_values.push(0);
+            patches.push((idx as u32, dd));
+        }
+    }
+
+    let num_patches = patches.len() as u32;
+    result.extend_from_slice(&num_patches.to_le_bytes());
+
+    // Bitpack regular double deltas
+    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
+    result.extend(packed);
+
+    // Store patches
+    for (pos, value) in patches {
+        result.extend_from_slice(&pos.to_le_bytes());
+        result.extend_from_slice(&value.to_le_bytes());
+    }
+
+    Ok(result)
+}
+
+/// Core encoding logic for i64 wire format
+fn encode_pfor_double_delta_i64_wire(wire_values: &[i64], base: i64) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if wire_values.len() == 1 {
+        let mut result = Vec::new();
+        result.extend_from_slice(&base.to_le_bytes());
+        let delta = wire_values[0].wrapping_sub(base);
+        result.extend_from_slice(&delta.to_le_bytes());
+        result.push(0);
+        result.extend_from_slice(&0u32.to_le_bytes());
+        return Ok(result);
+    }
+
+    let mut result = Vec::new();
+    result.extend_from_slice(&base.to_le_bytes());
+
+    // Compute first deltas
+    let first_deltas: Vec<i64> = wire_values
+        .iter()
+        .map(|&v| v.wrapping_sub(base))
+        .collect();
+
+    result.extend_from_slice(&first_deltas[0].to_le_bytes());
+
+    // Compute second deltas
+    let mut double_deltas: Vec<i64> = Vec::with_capacity(first_deltas.len() - 1);
+    for i in 1..first_deltas.len() {
+        let dd = first_deltas[i].wrapping_sub(first_deltas[i - 1]);
+        double_deltas.push(dd);
+    }
+
+    // Find optimal bit width for 90% of double deltas
+    let mut sorted_double_deltas: Vec<u64> = double_deltas
+        .iter()
+        .map(|&d| d.unsigned_abs())
+        .collect();
+    sorted_double_deltas.sort_unstable();
+
+    let percentile_90_idx = if sorted_double_deltas.len() > 1 {
+        (sorted_double_deltas.len() * 90) / 100
+    } else {
+        0
+    };
+
+    let threshold = sorted_double_deltas.get(percentile_90_idx).copied().unwrap_or(0);
+    let bits = if threshold == 0 {
+        1
+    } else {
+        ((64 - threshold.leading_zeros() as u8) + 1).min(64)
+    };
+
+    result.push(bits);
+
+    // Separate regular double deltas and patches
+    let mut regular_values: Vec<i64> = Vec::with_capacity(double_deltas.len());
+    let mut patches: Vec<(u32, i64)> = Vec::new();
+    let max_regular = if bits < 64 {
+        (1u64 << (bits - 1)) - 1
+    } else {
+        i64::MAX as u64
+    };
+
+    for (idx, &dd) in double_deltas.iter().enumerate() {
+        let abs_dd = dd.unsigned_abs();
+        if abs_dd <= max_regular {
+            regular_values.push(dd);
+        } else {
+            regular_values.push(0);
+            patches.push((idx as u32, dd));
+        }
+    }
+
+    let num_patches = patches.len() as u32;
+    result.extend_from_slice(&num_patches.to_le_bytes());
+
+    // Bitpack regular double deltas
+    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
+    result.extend(packed);
+
+    // Store patches
+    for (pos, value) in patches {
+        result.extend_from_slice(&pos.to_le_bytes());
+        result.extend_from_slice(&value.to_le_bytes());
+    }
+
+    Ok(result)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
 
 /// Encode f32 values using PForDoubleDelta (raw, no headers)
 ///
@@ -62,164 +250,54 @@ use super::bitpack;
 /// // If linear: second deltas are constant → excellent compression!
 /// ```
 pub fn encode_f32(values: &[f32], base: i64) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if values.len() == 1 {
-        // Single value: just store it directly
-        let mut result = Vec::new();
-        let base_i32 = base as i32;
-        result.extend_from_slice(&base_i32.to_le_bytes());
-
-        // Use i64 arithmetic to avoid overflow
-        let v_bits = values[0].to_bits() as i32 as i64;
-        let base_i64 = base_i32 as i64;
-        let delta = v_bits - base_i64;
-        result.extend_from_slice(&delta.to_le_bytes());  // Store as i64 (8 bytes)
-        result.push(0); // bits
-        result.extend_from_slice(&0u32.to_le_bytes()); // num_patches
-        return Ok(result);
-    }
-
-    let mut result = Vec::new();
-    let base_i32 = base as i32;
-    result.extend_from_slice(&base_i32.to_le_bytes());
-
-    // Step 1: Convert f32 to i32 bit patterns (pure scalar)
-    let bits: Vec<i32> = values
-        .iter()
-        .map(|&v| v.to_bits() as i32)
-        .collect();
-
-    // Step 2: Compute first deltas from base in i64 (NO OVERFLOW!)
-    let first_deltas: Vec<i64> = bits
-        .iter()
-        .map(|&b| (b as i64) - (base_i32 as i64))
-        .collect();
-
-    // Store first delta as i64 (8 bytes)
-    result.extend_from_slice(&first_deltas[0].to_le_bytes());
-
-    // Step 3: Compute second deltas (delta of deltas) in i64
-    let mut double_deltas: Vec<i64> = Vec::with_capacity(first_deltas.len() - 1);
-    for i in 1..first_deltas.len() {
-        let dd = first_deltas[i] - first_deltas[i - 1];  // i64 arithmetic - no overflow!
-        double_deltas.push(dd);
-    }
-
-    // Step 4: Find optimal bit width for 90% of double deltas (outliers will be patched)
-    let mut sorted_double_deltas: Vec<u64> = double_deltas
-        .iter()
-        .map(|&d| d.abs() as u64)  // Use abs() instead of unsigned_abs() for i64
-        .collect();
-    sorted_double_deltas.sort_unstable();
-
-    let percentile_90_idx = if sorted_double_deltas.len() > 1 {
-        (sorted_double_deltas.len() * 90) / 100
-    } else {
-        0
-    };
-
-    let threshold = sorted_double_deltas.get(percentile_90_idx).copied().unwrap_or(0);
-    let bits = if threshold == 0 {
-        1
-    } else {
-        // Can go up to 64 bits for worst case
-        ((64 - threshold.leading_zeros() as u8) + 1).min(64)
-    };
-
-    result.push(bits);
-
-    // Step 5: Separate regular double deltas and patches
-    let mut regular_values: Vec<i64> = Vec::with_capacity(double_deltas.len());
-    let mut patches: Vec<(u32, i64)> = Vec::new();
-    let max_regular = if bits < 64 {
-        (1u64 << (bits - 1)) - 1  // Account for sign bit
-    } else {
-        i64::MAX as u64
-    };
-
-    for (idx, &dd) in double_deltas.iter().enumerate() {
-        let abs_dd = dd.abs() as u64;
-        if abs_dd <= max_regular {
-            regular_values.push(dd);
-        } else {
-            // Store sentinel and mark for patching
-            regular_values.push(0);
-            patches.push((idx as u32, dd));
-        }
-    }
-
-    // Store number of patches
-    let num_patches = patches.len() as u32;
-    result.extend_from_slice(&num_patches.to_le_bytes());
-
-    // Step 6: Bitpack regular double deltas (now i64)
-    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
-    result.extend(packed);
-
-    // Step 7: Store patches (position:4 bytes + value:8 bytes)
-    for (pos, value) in patches {
-        result.extend_from_slice(&pos.to_le_bytes());      // 4 bytes
-        result.extend_from_slice(&value.to_le_bytes());    // 8 bytes
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, |wire_values| {
+        encode_pfor_double_delta_i32_base(wire_values, base as i32)
+    })
 }
 
-/// Decode f32 values from PForDoubleDelta encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+// ===== Core wire format decoding functions =====
+
+/// Core decoding logic for i32 base + i64 deltas (used by f32 and i32)
+fn decode_pfor_double_delta_i32_base(data: &[u8], count: usize) -> Result<Vec<i32>> {
     if count == 0 {
         return Ok(Vec::new());
     }
 
-    if data.len() < 17 {  // 4 (base) + 8 (first_delta i64) + 1 (bits) + 4 (num_patches)
+    if data.len() < 17 {
         return Err(anyhow::anyhow!("PForDoubleDelta decode: insufficient data"));
     }
 
-    // Read base (4 bytes)
-    let base_i32 = i32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+    let base = i32::from_le_bytes([data[0], data[1], data[2], data[3]]);
 
     if count == 1 {
-        // Single value case - read i64 delta
         let delta = i64::from_le_bytes([
             data[4], data[5], data[6], data[7],
             data[8], data[9], data[10], data[11],
         ]);
-        let value_bits = ((base_i32 as i64) + delta) as i32 as u32;
-        return Ok(vec![f32::from_bits(value_bits)]);
+        return Ok(vec![((base as i64) + delta) as i32]);
     }
 
-    // Read first delta (8 bytes - now i64!)
     let first_delta = i64::from_le_bytes([
         data[4], data[5], data[6], data[7],
         data[8], data[9], data[10], data[11],
     ]);
 
-    // Read bit width (1 byte)
     let bits = data[12];
-
-    // Read number of patches (4 bytes)
     let num_patches = u32::from_le_bytes([data[13], data[14], data[15], data[16]]) as usize;
 
-    // Calculate size of bitpacked data (count-1 double deltas)
     let double_delta_count = count - 1;
     let bitpacked_bytes = ((double_delta_count * bits as usize) + 7) / 8;
 
-    // Patches are now 12 bytes each: 4 (pos) + 8 (value i64)
     if data.len() < 17 + bitpacked_bytes + num_patches * 12 {
         return Err(anyhow::anyhow!("PForDoubleDelta decode: insufficient data for patches"));
     }
 
-    // Unpack double deltas (now i64!)
     let bitpacked_data = &data[17..17 + bitpacked_bytes];
-    let mut double_deltas = bitpack::unbitpack_i64_unsigned(bitpacked_data, bits, double_delta_count)?;
+    let mut double_deltas = bitpack::unbitpack_i64(&bitpacked_data, bits, double_delta_count)?;
 
-    // Apply patches to double deltas (patches are now i64)
     let patch_start = 17 + bitpacked_bytes;
     for i in 0..num_patches {
-        let offset = patch_start + i * 12;  // 12 bytes per patch
+        let offset = patch_start + i * 12;
         let pos = u32::from_le_bytes([
             data[offset],
             data[offset + 1],
@@ -243,119 +321,24 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
         }
     }
 
-    // Reconstruct first deltas from double deltas (i64 arithmetic - NO OVERFLOW!)
-    let mut first_deltas: Vec<i64> = Vec::with_capacity(count);
-    first_deltas.push(first_delta);
+    // Reconstruct values by accumulating first deltas
+    let mut result = Vec::with_capacity(count);
+    let mut first_delta_accumulator = first_delta;
 
-    for dd in double_deltas {
-        let prev_delta = *first_deltas.last().unwrap();
-        first_deltas.push(prev_delta + dd);  // i64 arithmetic - no overflow!
-    }
+    // First value = base + first_delta
+    result.push((base as i64).wrapping_add(first_delta_accumulator) as i32);
 
-    // Reconstruct f32 values from first deltas (i64 arithmetic - NO OVERFLOW!)
-    let result: Vec<f32> = first_deltas
-        .iter()
-        .map(|&delta| {
-            let value_bits = ((base_i32 as i64) + delta) as i32 as u32;
-            f32::from_bits(value_bits)
-        })
-        .collect();
-
-    Ok(result)
-}
-
-/// Encode i64 values using PForDoubleDelta (raw, no headers)
-pub fn encode_i64(values: &[i64], base: i64) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if values.len() == 1 {
-        let mut result = Vec::new();
-        result.extend_from_slice(&base.to_le_bytes());
-        let delta = values[0].wrapping_sub(base);
-        result.extend_from_slice(&delta.to_le_bytes());
-        result.push(0);
-        result.extend_from_slice(&0u32.to_le_bytes());
-        return Ok(result);
-    }
-
-    let mut result = Vec::new();
-    result.extend_from_slice(&base.to_le_bytes());
-
-    // First deltas
-    let first_deltas: Vec<i64> = values
-        .iter()
-        .map(|&v| v.wrapping_sub(base))
-        .collect();
-
-    result.extend_from_slice(&first_deltas[0].to_le_bytes());
-
-    // Second deltas (double deltas)
-    let mut double_deltas = Vec::with_capacity(first_deltas.len() - 1);
-    for i in 1..first_deltas.len() {
-        double_deltas.push(first_deltas[i].wrapping_sub(first_deltas[i - 1]));
-    }
-
-    // Find optimal bit width for 90% of double deltas
-    let mut sorted_double_deltas: Vec<u64> = double_deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .collect();
-    sorted_double_deltas.sort_unstable();
-
-    let percentile_90_idx = if sorted_double_deltas.len() > 1 {
-        (sorted_double_deltas.len() * 90) / 100
-    } else {
-        0
-    };
-
-    let threshold = sorted_double_deltas.get(percentile_90_idx).copied().unwrap_or(0);
-    let bits = if threshold == 0 {
-        1
-    } else {
-        64 - threshold.leading_zeros() as u8
-    };
-
-    result.push(bits);
-
-    // Separate regular values and patches
-    let mut regular_values = Vec::with_capacity(double_deltas.len());
-    let mut patches = Vec::new();
-    let max_regular = if bits >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << bits) - 1
-    };
-
-    for (idx, &dd) in double_deltas.iter().enumerate() {
-        let abs_dd = dd.unsigned_abs();
-        if abs_dd <= max_regular {
-            regular_values.push(dd);
-        } else {
-            regular_values.push(0);
-            patches.push((idx as u32, dd));
-        }
-    }
-
-    let num_patches = patches.len() as u32;
-    result.extend_from_slice(&num_patches.to_le_bytes());
-
-    // Bitpack regular double deltas
-    let packed = bitpack::bitpack_i64(&regular_values, bits)?;
-    result.extend(packed);
-
-    // Store patches
-    for (pos, value) in patches {
-        result.extend_from_slice(&pos.to_le_bytes());
-        result.extend_from_slice(&value.to_le_bytes());
+    // Remaining values
+    for &dd in &double_deltas {
+        first_delta_accumulator = first_delta_accumulator.wrapping_add(dd);
+        result.push((base as i64).wrapping_add(first_delta_accumulator) as i32);
     }
 
     Ok(result)
 }
 
-/// Decode i64 values from PForDoubleDelta encoded data
-pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+/// Core decoding logic for i64 wire format
+fn decode_pfor_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -393,9 +376,8 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     }
 
     let bitpacked_data = &data[21..21 + bitpacked_bytes];
-    let mut double_deltas = bitpack::unbitpack_i64_unsigned(bitpacked_data, bits, double_delta_count)?;
+    let mut double_deltas = bitpack::unbitpack_i64(&bitpacked_data, bits, double_delta_count)?;
 
-    // Apply patches
     let patch_start = 21 + bitpacked_bytes;
     for i in 0..num_patches {
         let offset = patch_start + i * 12;
@@ -422,180 +404,51 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
         }
     }
 
-    // Reconstruct first deltas
-    let mut first_deltas = Vec::with_capacity(count);
-    first_deltas.push(first_delta);
-    for dd in double_deltas {
-        let prev = *first_deltas.last().unwrap();
-        first_deltas.push(prev.wrapping_add(dd));
+    // Reconstruct values by accumulating first deltas
+    let mut result = Vec::with_capacity(count);
+    let mut first_delta_accumulator = first_delta;
+
+    // First value = base + first_delta
+    result.push(base.wrapping_add(first_delta_accumulator));
+
+    // Remaining values
+    for &dd in &double_deltas {
+        first_delta_accumulator = first_delta_accumulator.wrapping_add(dd);
+        result.push(base.wrapping_add(first_delta_accumulator));
     }
 
-    // Reconstruct original values
-    let result = first_deltas
-        .iter()
-        .map(|&delta| base.wrapping_add(delta))
-        .collect();
-
     Ok(result)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
+
+/// Decode f32 values from PForDoubleDelta encoded data
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    helpers::decode_generic::<f32>(data, count, decode_pfor_double_delta_i32_base)
+}
+
+/// Encode i64 values using PForDoubleDelta (raw, no headers)
+pub fn encode_i64(values: &[i64], base: i64) -> Result<Vec<u8>> {
+    helpers::encode_generic(values, |wire_values| {
+        encode_pfor_double_delta_i64_wire(wire_values, base)
+    })
+}
+
+/// Decode i64 values from PForDoubleDelta encoded data
+pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+    helpers::decode_generic::<i64>(data, count, decode_pfor_double_delta_i64_wire)
 }
 
 /// Encode i32 values using PForDoubleDelta (raw, no headers)
 pub fn encode_i32(values: &[i32], base: i64) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if values.len() == 1 {
-        let mut result = Vec::new();
-        let base_i32 = base as i32;
-        result.extend_from_slice(&base_i32.to_le_bytes());
-        let delta = values[0].wrapping_sub(base_i32);
-        result.extend_from_slice(&delta.to_le_bytes());
-        result.push(0);
-        result.extend_from_slice(&0u32.to_le_bytes());
-        return Ok(result);
-    }
-
-    let mut result = Vec::new();
-    let base_i32 = base as i32;
-    result.extend_from_slice(&base_i32.to_le_bytes());
-
-    // First deltas
-    let first_deltas: Vec<i32> = values
-        .iter()
-        .map(|&v| v.wrapping_sub(base_i32))
-        .collect();
-
-    result.extend_from_slice(&first_deltas[0].to_le_bytes());
-
-    // Double deltas
-    let mut double_deltas = Vec::with_capacity(first_deltas.len() - 1);
-    for i in 1..first_deltas.len() {
-        double_deltas.push(first_deltas[i].wrapping_sub(first_deltas[i - 1]));
-    }
-
-    // Find optimal bit width for 90% of double deltas
-    let mut sorted_double_deltas: Vec<u32> = double_deltas
-        .iter()
-        .map(|&d| d.unsigned_abs())
-        .collect();
-    sorted_double_deltas.sort_unstable();
-
-    let percentile_90_idx = if sorted_double_deltas.len() > 1 {
-        (sorted_double_deltas.len() * 90) / 100
-    } else {
-        0
-    };
-
-    let threshold = sorted_double_deltas.get(percentile_90_idx).copied().unwrap_or(0);
-    let bits = if threshold == 0 {
-        1
-    } else {
-        32 - threshold.leading_zeros() as u8
-    };
-
-    result.push(bits);
-
-    // Separate regular values and patches
-    let mut regular_values = Vec::with_capacity(double_deltas.len());
-    let mut patches = Vec::new();
-    let max_regular = (1u64 << bits) - 1;
-
-    for (idx, &dd) in double_deltas.iter().enumerate() {
-        let abs_dd = dd.unsigned_abs() as u64;
-        if abs_dd <= max_regular {
-            regular_values.push(dd);
-        } else {
-            regular_values.push(0);
-            patches.push((idx as u32, dd));
-        }
-    }
-
-    let num_patches = patches.len() as u32;
-    result.extend_from_slice(&num_patches.to_le_bytes());
-
-    // Bitpack regular double deltas
-    let packed = bitpack::bitpack_i32(&regular_values, bits)?;
-    result.extend(packed);
-
-    // Store patches
-    for (pos, value) in patches {
-        result.extend_from_slice(&pos.to_le_bytes());
-        result.extend_from_slice(&value.to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, |wire_values| {
+        encode_pfor_double_delta_i32_base(wire_values, base as i32)
+    })
 }
 
 /// Decode i32 values from PForDoubleDelta encoded data
 pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
-    if data.len() < 13 {
-        return Err(anyhow::anyhow!("PForDoubleDelta decode: insufficient data"));
-    }
-
-    let base = i32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-
-    if count == 1 {
-        let delta = i32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-        return Ok(vec![base.wrapping_add(delta)]);
-    }
-
-    let first_delta = i32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-    let bits = data[8];
-    let num_patches = u32::from_le_bytes([data[9], data[10], data[11], data[12]]) as usize;
-
-    let double_delta_count = count - 1;
-    let bitpacked_bytes = ((double_delta_count * bits as usize) + 7) / 8;
-
-    if data.len() < 13 + bitpacked_bytes + num_patches * 8 {
-        return Err(anyhow::anyhow!("PForDoubleDelta decode: insufficient data for patches"));
-    }
-
-    let bitpacked_data = &data[13..13 + bitpacked_bytes];
-    let mut double_deltas = bitpack::unbitpack_i32_unsigned(bitpacked_data, bits, double_delta_count)?;
-
-    // Apply patches
-    let patch_start = 13 + bitpacked_bytes;
-    for i in 0..num_patches {
-        let offset = patch_start + i * 8;
-        let pos = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-
-        let value = i32::from_le_bytes([
-            data[offset + 4],
-            data[offset + 5],
-            data[offset + 6],
-            data[offset + 7],
-        ]);
-
-        if pos < double_deltas.len() {
-            double_deltas[pos] = value;
-        }
-    }
-
-    // Reconstruct first deltas
-    let mut first_deltas = Vec::with_capacity(count);
-    first_deltas.push(first_delta);
-    for dd in double_deltas {
-        let prev = *first_deltas.last().unwrap();
-        first_deltas.push(prev.wrapping_add(dd));
-    }
-
-    // Reconstruct original values
-    let result = first_deltas
-        .iter()
-        .map(|&delta| base.wrapping_add(delta))
-        .collect();
-
-    Ok(result)
+    helpers::decode_generic::<i32>(data, count, decode_pfor_double_delta_i32_base)
 }
 
 #[cfg(test)]

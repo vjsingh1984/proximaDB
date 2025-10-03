@@ -16,128 +16,105 @@ use anyhow::Result;
 // to avoid code duplication and ensure consistent sign extension behavior.
 
 use super::bitpack;
+use super::helpers;
+use super::helpers::ToWireFormat;
 
-/// Encode f32 values using double delta (raw, no headers)
-///
-/// # Algorithm
-/// 1. Compute first-order deltas: delta[i] = value[i] - value[i-1]
-/// 2. Compute second-order deltas: double_delta[i] = delta[i] - delta[i-1]
-/// 3. Bit-pack the double deltas with minimal bits
-///
-/// # Format (raw data only, NO headers)
-/// ```
-/// [base:4 bytes][first_delta:4 bytes][bits:1 byte][bitpacked_double_deltas...]
-/// ```
-///
-/// # Parameters
-/// - `values`: f32 slice to encode
-///
-/// # Returns
-/// Raw encoded bytes (NO scheme marker, NO count header)
-pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
+// ===== Core wire format encoding functions =====
+
+/// Core encoding logic for i32 base + i64 deltas (used by f32)
+fn encode_double_delta_i32_base_i64_deltas(wire_values: &[i32]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
         return Ok(Vec::new());
     }
 
-    if values.len() == 1 {
-        // Single value: just store it
+    if wire_values.len() == 1 {
         let mut result = Vec::new();
-        result.extend_from_slice(&values[0].to_bits().to_le_bytes());
+        result.extend_from_slice(&wire_values[0].to_le_bytes());
         return Ok(result);
     }
 
     let mut result = Vec::new();
-
-    // Store base value (first value)
-    let base = values[0].to_bits() as i32;
+    let base = wire_values[0];
     result.extend_from_slice(&base.to_le_bytes());
 
-    if values.len() == 2 {
-        // Two values: store base and first delta
-        let first_delta = (values[1].to_bits() as i32).wrapping_sub(base);
+    if wire_values.len() == 2 {
+        let first_delta = (wire_values[1] as i64) - (base as i64);
         result.extend_from_slice(&first_delta.to_le_bytes());
-        result.push(0); // 0 bits for empty double deltas
+        result.push(0);
         return Ok(result);
     }
 
     // Compute first-order deltas in i64 (NO OVERFLOW!)
-    // Critical: i32 deltas can overflow, so we use i64
-    let mut deltas: Vec<i64> = Vec::with_capacity(values.len() - 1);
-    for i in 1..values.len() {
-        let curr = values[i].to_bits() as i32 as i64;  // Sign-extend to i64
-        let prev = values[i - 1].to_bits() as i32 as i64;
-        let delta = curr - prev;  // i64 arithmetic - no overflow!
+    let mut deltas: Vec<i64> = Vec::with_capacity(wire_values.len() - 1);
+    for i in 1..wire_values.len() {
+        let curr = wire_values[i] as i64;
+        let prev = wire_values[i - 1] as i64;
+        let delta = curr - prev;
         deltas.push(delta);
     }
 
-    // Store first delta (as i64, but we'll only use what we need)
     let first_delta = deltas[0];
-    result.extend_from_slice(&first_delta.to_le_bytes());  // 8 bytes
+    result.extend_from_slice(&first_delta.to_le_bytes());
 
     // Compute second-order deltas (double deltas) in i64
     let mut double_deltas: Vec<i64> = Vec::with_capacity(deltas.len() - 1);
     for i in 1..deltas.len() {
-        let dd = deltas[i] - deltas[i - 1];  // i64 arithmetic - no overflow!
+        let dd = deltas[i] - deltas[i - 1];
         double_deltas.push(dd);
     }
 
     if double_deltas.is_empty() {
-        result.push(0); // 0 bits
+        result.push(0);
         return Ok(result);
     }
 
-    // Find max absolute value to determine bit width (can be up to 64 bits!)
     let max_abs = double_deltas
         .iter()
-        .map(|&dd| dd.abs() as u64)
+        .map(|&dd| dd.unsigned_abs())
         .max()
         .unwrap_or(0);
 
     let bits = if max_abs == 0 {
         1
     } else {
-        // Add 1 bit for sign, can go up to 64 bits for worst case
         ((64 - max_abs.leading_zeros() as u8) + 1).min(64)
     };
 
     result.push(bits);
 
-    // Bit-pack double deltas (now i64)
     let packed = bitpack::bitpack_i64(&double_deltas, bits)?;
     result.extend(packed);
 
     Ok(result)
 }
 
-/// Encode i64 values using double delta (raw, no headers)
-pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
-    if values.is_empty() {
+/// Core encoding logic for i32 wire format with i32 deltas (used by i32)
+fn encode_double_delta_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
         return Ok(Vec::new());
     }
 
-    if values.len() == 1 {
+    if wire_values.len() == 1 {
         let mut result = Vec::new();
-        result.extend_from_slice(&values[0].to_le_bytes());
+        result.extend_from_slice(&wire_values[0].to_le_bytes());
         return Ok(result);
     }
 
     let mut result = Vec::new();
-
-    // Store base value
-    let base = values[0];
+    let base = wire_values[0];
     result.extend_from_slice(&base.to_le_bytes());
 
-    if values.len() == 2 {
-        let first_delta = values[1].wrapping_sub(base);
+    if wire_values.len() == 2 {
+        let first_delta = wire_values[1].wrapping_sub(base);
         result.extend_from_slice(&first_delta.to_le_bytes());
         result.push(0);
         return Ok(result);
     }
 
-    // Compute first-order deltas
-    let mut deltas = Vec::with_capacity(values.len() - 1);
-    for i in 1..values.len() {
-        let delta = values[i].wrapping_sub(values[i - 1]);
+    // Compute first-order deltas (i32 with wrapping)
+    let mut deltas = Vec::with_capacity(wire_values.len() - 1);
+    for i in 1..wire_values.len() {
+        let delta = wire_values[i].wrapping_sub(wire_values[i - 1]);
         deltas.push(delta);
     }
 
@@ -165,74 +142,6 @@ pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
     let bits = if max_abs == 0 {
         1
     } else {
-        // Add 1 bit for sign, but cap at 64
-        ((64 - max_abs.leading_zeros() as u8) + 1).min(64)
-    };
-
-    result.push(bits);
-
-    let packed = bitpack::bitpack_i64(&double_deltas, bits)?;
-    result.extend(packed);
-
-    Ok(result)
-}
-
-/// Encode i32 values using double delta (raw, no headers)
-pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if values.len() == 1 {
-        let mut result = Vec::new();
-        result.extend_from_slice(&values[0].to_le_bytes());
-        return Ok(result);
-    }
-
-    let mut result = Vec::new();
-
-    let base = values[0];
-    result.extend_from_slice(&base.to_le_bytes());
-
-    if values.len() == 2 {
-        let first_delta = values[1].wrapping_sub(base);
-        result.extend_from_slice(&first_delta.to_le_bytes());
-        result.push(0);
-        return Ok(result);
-    }
-
-    // Compute first-order deltas
-    let mut deltas = Vec::with_capacity(values.len() - 1);
-    for i in 1..values.len() {
-        let delta = values[i].wrapping_sub(values[i - 1]);
-        deltas.push(delta);
-    }
-
-    let first_delta = deltas[0];
-    result.extend_from_slice(&first_delta.to_le_bytes());
-
-    // Compute second-order deltas
-    let mut double_deltas = Vec::with_capacity(deltas.len() - 1);
-    for i in 1..deltas.len() {
-        let dd = deltas[i].wrapping_sub(deltas[i - 1]);
-        double_deltas.push(dd);
-    }
-
-    if double_deltas.is_empty() {
-        result.push(0);
-        return Ok(result);
-    }
-
-    let max_abs = double_deltas
-        .iter()
-        .map(|&dd| dd.unsigned_abs())
-        .max()
-        .unwrap_or(0);
-
-    let bits = if max_abs == 0 {
-        1
-    } else {
-        // Add 1 bit for sign, but cap at 32
         ((32 - max_abs.leading_zeros() as u8) + 1).min(32)
     };
 
@@ -244,8 +153,108 @@ pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
     Ok(result)
 }
 
-/// Decode f32 values from double delta encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+/// Core encoding logic for i64 wire format
+fn encode_double_delta_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if wire_values.len() == 1 {
+        let mut result = Vec::new();
+        result.extend_from_slice(&wire_values[0].to_le_bytes());
+        return Ok(result);
+    }
+
+    let mut result = Vec::new();
+    let base = wire_values[0];
+    result.extend_from_slice(&base.to_le_bytes());
+
+    if wire_values.len() == 2 {
+        let first_delta = wire_values[1].wrapping_sub(base);
+        result.extend_from_slice(&first_delta.to_le_bytes());
+        result.push(0);
+        return Ok(result);
+    }
+
+    // Compute first-order deltas
+    let mut deltas = Vec::with_capacity(wire_values.len() - 1);
+    for i in 1..wire_values.len() {
+        let delta = wire_values[i].wrapping_sub(wire_values[i - 1]);
+        deltas.push(delta);
+    }
+
+    let first_delta = deltas[0];
+    result.extend_from_slice(&first_delta.to_le_bytes());
+
+    // Compute second-order deltas
+    let mut double_deltas = Vec::with_capacity(deltas.len() - 1);
+    for i in 1..deltas.len() {
+        let dd = deltas[i].wrapping_sub(deltas[i - 1]);
+        double_deltas.push(dd);
+    }
+
+    if double_deltas.is_empty() {
+        result.push(0);
+        return Ok(result);
+    }
+
+    let max_abs = double_deltas
+        .iter()
+        .map(|&dd| dd.unsigned_abs())
+        .max()
+        .unwrap_or(0);
+
+    let bits = if max_abs == 0 {
+        1
+    } else {
+        ((64 - max_abs.leading_zeros() as u8) + 1).min(64)
+    };
+
+    result.push(bits);
+
+    let packed = bitpack::bitpack_i64(&double_deltas, bits)?;
+    result.extend(packed);
+
+    Ok(result)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
+
+/// Encode f32 values using double delta (raw, no headers)
+///
+/// # Algorithm
+/// 1. Compute first-order deltas: delta[i] = value[i] - value[i-1]
+/// 2. Compute second-order deltas: double_delta[i] = delta[i] - delta[i-1]
+/// 3. Bit-pack the double deltas with minimal bits
+///
+/// # Format (raw data only, NO headers)
+/// ```
+/// [base:4 bytes][first_delta:8 bytes i64][bits:1 byte][bitpacked_double_deltas...]
+/// ```
+///
+/// # Parameters
+/// - `values`: f32 slice to encode
+///
+/// # Returns
+/// Raw encoded bytes (NO scheme marker, NO count header)
+pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
+    helpers::encode_generic(values, encode_double_delta_i32_base_i64_deltas)
+}
+
+/// Encode i64 values using double delta (raw, no headers)
+pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
+    helpers::encode_generic(values, encode_double_delta_i64_wire)
+}
+
+/// Encode i32 values using double delta (raw, no headers)
+pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
+    helpers::encode_generic(values, encode_double_delta_i32_wire)
+}
+
+// ===== Core wire format decoding functions =====
+
+/// Core decoding logic for i32 base + i64 deltas (used by f32)
+fn decode_double_delta_i32_base_i64_deltas(data: &[u8], count: usize) -> Result<Vec<i32>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -254,69 +263,60 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
         return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data"));
     }
 
-    // Read base value (still i32)
     let base = i32::from_le_bytes([data[0], data[1], data[2], data[3]]);
 
     if count == 1 {
-        return Ok(vec![f32::from_bits(base as u32)]);
+        return Ok(vec![base]);
     }
 
-    if data.len() < 13 {  // 4 (base) + 8 (first_delta i64) + 1 (bits)
+    if data.len() < 13 {
         return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data for first delta"));
     }
 
-    // Read first delta (now i64!)
     let first_delta = i64::from_le_bytes([
         data[4], data[5], data[6], data[7],
         data[8], data[9], data[10], data[11],
     ]);
 
     if count == 2 {
-        let v0 = f32::from_bits(base as u32);
-        // Reconstruct using i64 arithmetic
         let v1_bits = (base as i64 + first_delta) as i32;
-        let v1 = f32::from_bits(v1_bits as u32);
-        return Ok(vec![v0, v1]);
+        return Ok(vec![base, v1_bits]);
     }
 
-    // Read bit width
     let bits = data[12];
 
     if bits == 0 {
-        // All double deltas are zero - constant delta
         let mut result = Vec::with_capacity(count);
-        result.push(f32::from_bits(base as u32));
+        result.push(base);
 
         let mut current = base as i64 + first_delta;
-        result.push(f32::from_bits(current as i32 as u32));
+        result.push(current as i32);
 
         for _ in 2..count {
             current += first_delta;
-            result.push(f32::from_bits(current as i32 as u32));
+            result.push(current as i32);
         }
 
         return Ok(result);
     }
 
-    // Unpack double deltas (now i64!)
     let num_double_deltas = count - 2;
     let double_deltas = bitpack::unbitpack_i64(&data[13..], bits, num_double_deltas)?;
 
-    // Reconstruct values using i64 arithmetic (NO OVERFLOW!)
     let mut result = Vec::with_capacity(count);
-    result.push(f32::from_bits(base as u32));
+    result.push(base);
 
     let mut prev_value = base as i64;
     let mut prev_delta = first_delta;
 
     let second_value = prev_value + first_delta;
-    result.push(f32::from_bits(second_value as i32 as u32));
+    result.push(second_value as i32);
     prev_value = second_value;
 
     for &dd in &double_deltas {
-        let delta = prev_delta + dd;  // i64 arithmetic - no overflow!
-        let value = prev_value + delta;  // i64 arithmetic - no overflow!
-        result.push(f32::from_bits(value as i32 as u32));
+        let delta = prev_delta + dd;
+        let value = prev_value + delta;
+        result.push(value as i32);
         prev_value = value;
         prev_delta = delta;
     }
@@ -324,8 +324,75 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
     Ok(result)
 }
 
-/// Decode i64 values from double delta encoded data
-pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+/// Core decoding logic for i32 wire format with i32 deltas
+fn decode_double_delta_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+
+    if data.len() < 4 {
+        return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data"));
+    }
+
+    let base = i32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+
+    if count == 1 {
+        return Ok(vec![base]);
+    }
+
+    if data.len() < 9 {
+        return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data for first delta"));
+    }
+
+    let first_delta = i32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+
+    if count == 2 {
+        return Ok(vec![base, base.wrapping_add(first_delta)]);
+    }
+
+    let bits = data[8];
+
+    if bits == 0 {
+        let mut result = Vec::with_capacity(count);
+        result.push(base);
+
+        let mut current = base.wrapping_add(first_delta);
+        result.push(current);
+
+        for _ in 2..count {
+            current = current.wrapping_add(first_delta);
+            result.push(current);
+        }
+
+        return Ok(result);
+    }
+
+    let num_double_deltas = count - 2;
+    let double_deltas = bitpack::unbitpack_i32(&data[9..], bits, num_double_deltas)?;
+
+    let mut result = Vec::with_capacity(count);
+    result.push(base);
+
+    let mut prev_value = base;
+    let mut prev_delta = first_delta;
+
+    let second_value = base.wrapping_add(first_delta);
+    result.push(second_value);
+    prev_value = second_value;
+
+    for &dd in &double_deltas {
+        let delta = prev_delta.wrapping_add(dd);
+        let value = prev_value.wrapping_add(delta);
+        result.push(value);
+        prev_value = value;
+        prev_delta = delta;
+    }
+
+    Ok(result)
+}
+
+/// Core decoding logic for i64 wire format
+fn decode_double_delta_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -397,71 +464,21 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     Ok(result)
 }
 
+// ===== Public API (thin wrappers using generic helpers) =====
+
+/// Decode f32 values from double delta encoded data
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    helpers::decode_generic::<f32>(data, count, decode_double_delta_i32_base_i64_deltas)
+}
+
+/// Decode i64 values from double delta encoded data
+pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+    helpers::decode_generic::<i64>(data, count, decode_double_delta_i64_wire)
+}
+
 /// Decode i32 values from double delta encoded data
 pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
-    if data.len() < 4 {
-        return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data"));
-    }
-
-    let base = i32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-
-    if count == 1 {
-        return Ok(vec![base]);
-    }
-
-    if data.len() < 9 {
-        return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data for first delta"));
-    }
-
-    let first_delta = i32::from_le_bytes([data[4], data[5], data[6], data[7]]);
-
-    if count == 2 {
-        return Ok(vec![base, base.wrapping_add(first_delta)]);
-    }
-
-    let bits = data[8];
-
-    if bits == 0 {
-        let mut result = Vec::with_capacity(count);
-        result.push(base);
-
-        let mut current = base.wrapping_add(first_delta);
-        result.push(current);
-
-        for _ in 2..count {
-            current = current.wrapping_add(first_delta);
-            result.push(current);
-        }
-
-        return Ok(result);
-    }
-
-    let num_double_deltas = count - 2;
-    let double_deltas = bitpack::unbitpack_i32(&data[9..], bits, num_double_deltas)?;
-
-    let mut result = Vec::with_capacity(count);
-    result.push(base);
-
-    let mut prev_value = base;
-    let mut prev_delta = first_delta;
-
-    let second_value = base.wrapping_add(first_delta);
-    result.push(second_value);
-    prev_value = second_value;
-
-    for &dd in &double_deltas {
-        let delta = prev_delta.wrapping_add(dd);
-        let value = prev_value.wrapping_add(delta);
-        result.push(value);
-        prev_value = value;
-        prev_delta = delta;
-    }
-
-    Ok(result)
+    helpers::decode_generic::<i32>(data, count, decode_double_delta_i32_wire)
 }
 
 #[cfg(test)]

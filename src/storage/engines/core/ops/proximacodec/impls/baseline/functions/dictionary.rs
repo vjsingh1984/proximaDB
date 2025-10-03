@@ -11,6 +11,84 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
+use super::helpers;
+use super::helpers::ToWireFormat;
+
+// ===== Core wire format encoding functions =====
+
+/// Core encoding logic for i32 wire type (used by f32 and i32)
+fn encode_dictionary_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Build dictionary
+    let mut dictionary = Vec::new();
+    let mut value_to_code = HashMap::new();
+
+    for &value in wire_values {
+        if !value_to_code.contains_key(&value) {
+            let code = dictionary.len() as u32;
+            value_to_code.insert(value, code);
+            dictionary.push(value);
+        }
+    }
+
+    let mut result = Vec::new();
+
+    // Store dictionary size
+    let num_unique = dictionary.len() as u32;
+    result.extend_from_slice(&num_unique.to_le_bytes());
+
+    // Store dictionary values
+    for &value in &dictionary {
+        result.extend_from_slice(&value.to_le_bytes());
+    }
+
+    // Store codes (using variable-length encoding for efficiency)
+    for &value in wire_values {
+        let code = value_to_code[&value];
+        encode_varint(&mut result, code as u64);
+    }
+
+    Ok(result)
+}
+
+/// Core encoding logic for i64 wire type
+fn encode_dictionary_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut dictionary = Vec::new();
+    let mut value_to_code = HashMap::new();
+
+    for &value in wire_values {
+        if !value_to_code.contains_key(&value) {
+            let code = dictionary.len() as u32;
+            value_to_code.insert(value, code);
+            dictionary.push(value);
+        }
+    }
+
+    let mut result = Vec::new();
+    let num_unique = dictionary.len() as u32;
+    result.extend_from_slice(&num_unique.to_le_bytes());
+
+    for &value in &dictionary {
+        result.extend_from_slice(&value.to_le_bytes());
+    }
+
+    for &value in wire_values {
+        let code = value_to_code[&value];
+        encode_varint(&mut result, code as u64);
+    }
+
+    Ok(result)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
+
 /// Encode f32 values using dictionary encoding (raw, no headers)
 ///
 /// # Algorithm
@@ -29,112 +107,23 @@ use std::collections::HashMap;
 /// # Returns
 /// Raw encoded bytes (NO scheme marker, NO count header)
 pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Build dictionary
-    let mut dictionary = Vec::new();
-    let mut value_to_code = HashMap::new();
-
-    for &value in values {
-        let bits = value.to_bits();
-        if !value_to_code.contains_key(&bits) {
-            let code = dictionary.len() as u32;
-            value_to_code.insert(bits, code);
-            dictionary.push(bits);
-        }
-    }
-
-    let mut result = Vec::new();
-
-    // Store dictionary size
-    let num_unique = dictionary.len() as u32;
-    result.extend_from_slice(&num_unique.to_le_bytes());
-
-    // Store dictionary values
-    for value_bits in &dictionary {
-        result.extend_from_slice(&value_bits.to_le_bytes());
-    }
-
-    // Store codes (using variable-length encoding for efficiency)
-    for &value in values {
-        let bits = value.to_bits();
-        let code = value_to_code[&bits];
-        encode_varint(&mut result, code as u64);
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_dictionary_i32_wire)
 }
 
-/// Encode i64 values using dictionary encoding
+/// Encode i64 values using dictionary encoding (raw, no headers)
 pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut dictionary = Vec::new();
-    let mut value_to_code = HashMap::new();
-
-    for &value in values {
-        if !value_to_code.contains_key(&value) {
-            let code = dictionary.len() as u32;
-            value_to_code.insert(value, code);
-            dictionary.push(value);
-        }
-    }
-
-    let mut result = Vec::new();
-    let num_unique = dictionary.len() as u32;
-    result.extend_from_slice(&num_unique.to_le_bytes());
-
-    for &value in &dictionary {
-        result.extend_from_slice(&value.to_le_bytes());
-    }
-
-    for &value in values {
-        let code = value_to_code[&value];
-        encode_varint(&mut result, code as u64);
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_dictionary_i64_wire)
 }
 
-/// Encode i32 values using dictionary encoding
+/// Encode i32 values using dictionary encoding (raw, no headers)
 pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut dictionary = Vec::new();
-    let mut value_to_code = HashMap::new();
-
-    for &value in values {
-        if !value_to_code.contains_key(&value) {
-            let code = dictionary.len() as u32;
-            value_to_code.insert(value, code);
-            dictionary.push(value);
-        }
-    }
-
-    let mut result = Vec::new();
-    let num_unique = dictionary.len() as u32;
-    result.extend_from_slice(&num_unique.to_le_bytes());
-
-    for &value in &dictionary {
-        result.extend_from_slice(&value.to_le_bytes());
-    }
-
-    for &value in values {
-        let code = value_to_code[&value];
-        encode_varint(&mut result, code as u64);
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_dictionary_i32_wire)
 }
 
-/// Decode f32 values from dictionary encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+// ===== Core wire format decoding functions =====
+
+/// Core decoding logic for i32 wire type
+fn decode_dictionary_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -155,13 +144,13 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
     let mut dictionary = Vec::with_capacity(num_unique);
     for i in 0..num_unique {
         let offset = 4 + i * 4;
-        let bits = u32::from_le_bytes([
+        let value = i32::from_le_bytes([
             data[offset],
             data[offset + 1],
             data[offset + 2],
             data[offset + 3],
         ]);
-        dictionary.push(f32::from_bits(bits));
+        dictionary.push(value);
     }
 
     // Decode codes
@@ -180,8 +169,8 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
     Ok(result)
 }
 
-/// Decode i64 values from dictionary encoded data
-pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+/// Core decoding logic for i64 wire type
+fn decode_dictionary_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -222,48 +211,21 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     Ok(result)
 }
 
+// ===== Public API (thin wrappers using generic helpers) =====
+
+/// Decode f32 values from dictionary encoded data
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    helpers::decode_generic::<f32>(data, count, decode_dictionary_i32_wire)
+}
+
+/// Decode i64 values from dictionary encoded data
+pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+    helpers::decode_generic::<i64>(data, count, decode_dictionary_i64_wire)
+}
+
 /// Decode i32 values from dictionary encoded data
 pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
-    if data.len() < 4 {
-        return Err(anyhow::anyhow!("Dictionary decode: insufficient data"));
-    }
-
-    let num_unique = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-
-    let dict_bytes = 4 + num_unique * 4;
-    if data.len() < dict_bytes {
-        return Err(anyhow::anyhow!("Dictionary decode: insufficient dictionary data"));
-    }
-
-    let mut dictionary = Vec::with_capacity(num_unique);
-    for i in 0..num_unique {
-        let offset = 4 + i * 4;
-        let value = i32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]);
-        dictionary.push(value);
-    }
-
-    let mut result = Vec::with_capacity(count);
-    let mut offset = dict_bytes;
-
-    for _ in 0..count {
-        let (code, bytes_read) = decode_varint(&data[offset..])?;
-        if code as usize >= dictionary.len() {
-            return Err(anyhow::anyhow!("Dictionary decode: invalid code"));
-        }
-        result.push(dictionary[code as usize]);
-        offset += bytes_read;
-    }
-
-    Ok(result)
+    helpers::decode_generic::<i32>(data, count, decode_dictionary_i32_wire)
 }
 
 // ===== VarInt helpers =====

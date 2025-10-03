@@ -10,6 +10,9 @@
 
 use anyhow::Result;
 
+use super::helpers;
+use super::helpers::ToWireFormat;
+
 /// Simple8b selector modes
 /// Each mode packs different number of values with different bit widths
 const SELECTORS: [(u8, u8); 16] = [
@@ -31,6 +34,22 @@ const SELECTORS: [(u8, u8); 16] = [
     (1, 60),   // 15: 1 × 60-bit
 ];
 
+// ===== Core wire format encoding functions =====
+
+/// Core encoding logic for i32 wire type (used by f32 and i32)
+fn encode_simple8b_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
+    let ints: Vec<u64> = wire_values.iter().map(|&v| v as u32 as u64).collect();
+    encode_u64_internal(&ints)
+}
+
+/// Core encoding logic for i64 wire type
+fn encode_simple8b_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
+    let ints: Vec<u64> = wire_values.iter().map(|&v| v as u64).collect();
+    encode_u64_internal(&ints)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
+
 /// Encode f32 values using Simple8b (raw, no headers)
 ///
 /// # Algorithm
@@ -49,20 +68,17 @@ const SELECTORS: [(u8, u8); 16] = [
 /// # Returns
 /// Raw encoded bytes (NO scheme marker, NO count header)
 pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
-    let ints: Vec<u64> = values.iter().map(|&v| v.to_bits() as u64).collect();
-    encode_u64_internal(&ints)
+    helpers::encode_generic(values, encode_simple8b_i32_wire)
 }
 
-/// Encode i64 values using Simple8b
+/// Encode i64 values using Simple8b (raw, no headers)
 pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
-    let ints: Vec<u64> = values.iter().map(|&v| v as u64).collect();
-    encode_u64_internal(&ints)
+    helpers::encode_generic(values, encode_simple8b_i64_wire)
 }
 
-/// Encode i32 values using Simple8b
+/// Encode i32 values using Simple8b (raw, no headers)
 pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
-    let ints: Vec<u64> = values.iter().map(|&v| v as u32 as u64).collect();
-    encode_u64_internal(&ints)
+    helpers::encode_generic(values, encode_simple8b_i32_wire)
 }
 
 /// Internal encoding logic for u64 values
@@ -136,22 +152,35 @@ fn pack_word(values: &[u64]) -> Result<(u8, usize, u64)> {
     Ok((15, 1, word))
 }
 
-/// Decode f32 values from Simple8b encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+// ===== Core wire format decoding functions =====
+
+/// Core decoding logic for i32 wire type
+fn decode_simple8b_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
     let ints = decode_u64_internal(data, count)?;
-    Ok(ints.iter().map(|&v| f32::from_bits(v as u32)).collect())
+    Ok(ints.iter().map(|&v| v as u32 as i32).collect())
 }
 
-/// Decode i64 values from Simple8b encoded data
-pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+/// Core decoding logic for i64 wire type
+fn decode_simple8b_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     let ints = decode_u64_internal(data, count)?;
     Ok(ints.iter().map(|&v| v as i64).collect())
 }
 
+// ===== Public API (thin wrappers using generic helpers) =====
+
+/// Decode f32 values from Simple8b encoded data
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    helpers::decode_generic::<f32>(data, count, decode_simple8b_i32_wire)
+}
+
+/// Decode i64 values from Simple8b encoded data
+pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+    helpers::decode_generic::<i64>(data, count, decode_simple8b_i64_wire)
+}
+
 /// Decode i32 values from Simple8b encoded data
 pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
-    let ints = decode_u64_internal(data, count)?;
-    Ok(ints.iter().map(|&v| v as u32 as i32).collect())
+    helpers::decode_generic::<i32>(data, count, decode_simple8b_i32_wire)
 }
 
 /// Internal decoding logic

@@ -9,6 +9,103 @@
 
 use anyhow::Result;
 
+use super::helpers;
+use super::helpers::ToWireFormat;
+
+// ===== Core wire format encoding functions =====
+
+/// Core encoding logic for i32 wire type (used by f32 and i32)
+fn encode_sparse_bitmap_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Find non-zero indices
+    let mut nonzero_indices = Vec::new();
+    let mut nonzero_values = Vec::new();
+
+    for (idx, &val) in wire_values.iter().enumerate() {
+        if val != 0 {
+            nonzero_indices.push(idx);
+            nonzero_values.push(val);
+        }
+    }
+
+    let mut result = Vec::new();
+
+    // Store count of non-zero values
+    let num_nonzero = nonzero_indices.len() as u32;
+    result.extend_from_slice(&num_nonzero.to_le_bytes());
+
+    // Create bitmap
+    let bitmap_bytes = (wire_values.len() + 7) / 8;
+    let mut bitmap = vec![0u8; bitmap_bytes];
+
+    for &idx in &nonzero_indices {
+        let byte_idx = idx / 8;
+        let bit_idx = idx % 8;
+        if byte_idx < bitmap.len() {
+            bitmap[byte_idx] |= 1u8 << bit_idx;
+        }
+    }
+
+    result.extend(&bitmap);
+
+    // Store non-zero values
+    for &val in &nonzero_values {
+        result.extend_from_slice(&val.to_le_bytes());
+    }
+
+    Ok(result)
+}
+
+/// Core encoding logic for i64 wire type
+fn encode_sparse_bitmap_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Find non-zero indices
+    let mut nonzero_indices = Vec::new();
+    let mut nonzero_values = Vec::new();
+
+    for (idx, &val) in wire_values.iter().enumerate() {
+        if val != 0 {
+            nonzero_indices.push(idx);
+            nonzero_values.push(val);
+        }
+    }
+
+    let mut result = Vec::new();
+
+    // Store count of non-zero values
+    let num_nonzero = nonzero_indices.len() as u32;
+    result.extend_from_slice(&num_nonzero.to_le_bytes());
+
+    // Create bitmap
+    let bitmap_bytes = (wire_values.len() + 7) / 8;
+    let mut bitmap = vec![0u8; bitmap_bytes];
+
+    for &idx in &nonzero_indices {
+        let byte_idx = idx / 8;
+        let bit_idx = idx % 8;
+        if byte_idx < bitmap.len() {
+            bitmap[byte_idx] |= 1u8 << bit_idx;
+        }
+    }
+
+    result.extend(&bitmap);
+
+    // Store non-zero values
+    for &val in &nonzero_values {
+        result.extend_from_slice(&val.to_le_bytes());
+    }
+
+    Ok(result)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
+
 /// Encode f32 sparse values using bitmap format (raw, no headers)
 ///
 /// # Algorithm
@@ -27,141 +124,23 @@ use anyhow::Result;
 /// # Returns
 /// Raw encoded bytes (NO scheme marker, NO count header)
 pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Find non-zero indices
-    let mut nonzero_indices = Vec::new();
-    let mut nonzero_values = Vec::new();
-
-    for (idx, &val) in values.iter().enumerate() {
-        if val != 0.0 && !val.is_nan() {
-            nonzero_indices.push(idx);
-            nonzero_values.push(val);
-        }
-    }
-
-    let mut result = Vec::new();
-
-    // Store count of non-zero values
-    let num_nonzero = nonzero_indices.len() as u32;
-    result.extend_from_slice(&num_nonzero.to_le_bytes());
-
-    // Create bitmap (1 bit per element)
-    let bitmap_bytes = (values.len() + 7) / 8;
-    let mut bitmap = vec![0u8; bitmap_bytes];
-
-    for &idx in &nonzero_indices {
-        let byte_idx = idx / 8;
-        let bit_idx = idx % 8;
-        if byte_idx < bitmap.len() {
-            bitmap[byte_idx] |= 1u8 << bit_idx;
-        }
-    }
-
-    result.extend(&bitmap);
-
-    // Store non-zero values as bytes
-    for &val in &nonzero_values {
-        result.extend_from_slice(&val.to_bits().to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_sparse_bitmap_i32_wire)
 }
 
 /// Encode i64 sparse values using bitmap format (raw, no headers)
 pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Find non-zero indices
-    let mut nonzero_indices = Vec::new();
-    let mut nonzero_values = Vec::new();
-
-    for (idx, &val) in values.iter().enumerate() {
-        if val != 0 {
-            nonzero_indices.push(idx);
-            nonzero_values.push(val);
-        }
-    }
-
-    let mut result = Vec::new();
-
-    // Store count of non-zero values
-    let num_nonzero = nonzero_indices.len() as u32;
-    result.extend_from_slice(&num_nonzero.to_le_bytes());
-
-    // Create bitmap
-    let bitmap_bytes = (values.len() + 7) / 8;
-    let mut bitmap = vec![0u8; bitmap_bytes];
-
-    for &idx in &nonzero_indices {
-        let byte_idx = idx / 8;
-        let bit_idx = idx % 8;
-        if byte_idx < bitmap.len() {
-            bitmap[byte_idx] |= 1u8 << bit_idx;
-        }
-    }
-
-    result.extend(&bitmap);
-
-    // Store non-zero values
-    for &val in &nonzero_values {
-        result.extend_from_slice(&val.to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_sparse_bitmap_i64_wire)
 }
 
 /// Encode i32 sparse values using bitmap format (raw, no headers)
 pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Find non-zero indices
-    let mut nonzero_indices = Vec::new();
-    let mut nonzero_values = Vec::new();
-
-    for (idx, &val) in values.iter().enumerate() {
-        if val != 0 {
-            nonzero_indices.push(idx);
-            nonzero_values.push(val);
-        }
-    }
-
-    let mut result = Vec::new();
-
-    // Store count of non-zero values
-    let num_nonzero = nonzero_indices.len() as u32;
-    result.extend_from_slice(&num_nonzero.to_le_bytes());
-
-    // Create bitmap
-    let bitmap_bytes = (values.len() + 7) / 8;
-    let mut bitmap = vec![0u8; bitmap_bytes];
-
-    for &idx in &nonzero_indices {
-        let byte_idx = idx / 8;
-        let bit_idx = idx % 8;
-        if byte_idx < bitmap.len() {
-            bitmap[byte_idx] |= 1u8 << bit_idx;
-        }
-    }
-
-    result.extend(&bitmap);
-
-    // Store non-zero values
-    for &val in &nonzero_values {
-        result.extend_from_slice(&val.to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_sparse_bitmap_i32_wire)
 }
 
-/// Decode f32 values from sparse bitmap encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+// ===== Core wire format decoding functions =====
+
+/// Core decoding logic for i32 wire type
+fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -188,7 +167,7 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
     }
 
     // Initialize result with zeros
-    let mut result = vec![0.0f32; count];
+    let mut result = vec![0i32; count];
 
     // Read non-zero values
     let mut value_idx = 0;
@@ -199,13 +178,13 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
         if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0 {
             if value_idx < num_nonzero {
                 let offset = values_start + value_idx * 4;
-                let bits = u32::from_le_bytes([
+                let val = i32::from_le_bytes([
                     data[offset],
                     data[offset + 1],
                     data[offset + 2],
                     data[offset + 3],
                 ]);
-                result[idx] = f32::from_bits(bits);
+                result[idx] = val;
                 value_idx += 1;
             }
         }
@@ -214,8 +193,8 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
     Ok(result)
 }
 
-/// Decode i64 values from sparse bitmap encoded data
-pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+/// Core decoding logic for i64 wire type
+fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -272,58 +251,21 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     Ok(result)
 }
 
+// ===== Public API (thin wrappers using generic helpers) =====
+
+/// Decode f32 values from sparse bitmap encoded data
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    helpers::decode_generic::<f32>(data, count, decode_sparse_bitmap_i32_wire)
+}
+
+/// Decode i64 values from sparse bitmap encoded data
+pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+    helpers::decode_generic::<i64>(data, count, decode_sparse_bitmap_i64_wire)
+}
+
 /// Decode i32 values from sparse bitmap encoded data
 pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
-    if data.len() < 4 {
-        return Err(anyhow::anyhow!("SparseBitmap decode: insufficient data"));
-    }
-
-    // Read number of non-zero values
-    let num_nonzero = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-
-    // Calculate bitmap size
-    let bitmap_bytes = (count + 7) / 8;
-
-    if data.len() < 4 + bitmap_bytes {
-        return Err(anyhow::anyhow!("SparseBitmap decode: insufficient bitmap data"));
-    }
-
-    let bitmap = &data[4..4 + bitmap_bytes];
-    let values_start = 4 + bitmap_bytes;
-
-    if data.len() < values_start + num_nonzero * 4 {
-        return Err(anyhow::anyhow!("SparseBitmap decode: insufficient value data"));
-    }
-
-    // Initialize result with zeros
-    let mut result = vec![0i32; count];
-
-    // Read non-zero values
-    let mut value_idx = 0;
-    for idx in 0..count {
-        let byte_idx = idx / 8;
-        let bit_idx = idx % 8;
-
-        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0 {
-            if value_idx < num_nonzero {
-                let offset = values_start + value_idx * 4;
-                let val = i32::from_le_bytes([
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                ]);
-                result[idx] = val;
-                value_idx += 1;
-            }
-        }
-    }
-
-    Ok(result)
+    helpers::decode_generic::<i32>(data, count, decode_sparse_bitmap_i32_wire)
 }
 
 #[cfg(test)]

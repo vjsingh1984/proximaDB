@@ -10,6 +10,35 @@
 
 use anyhow::Result;
 
+use super::helpers;
+use super::helpers::ToWireFormat;
+
+// ===== Core wire format encoding functions =====
+
+/// Core encoding logic for i32 wire type (used by f32 and i32)
+fn encode_vbyte_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
+    let mut result = Vec::new();
+
+    for &value in wire_values {
+        encode_varint_u32(&mut result, value as u32);
+    }
+
+    Ok(result)
+}
+
+/// Core encoding logic for i64 wire type
+fn encode_vbyte_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
+    let mut result = Vec::new();
+
+    for &value in wire_values {
+        encode_varint_u64(&mut result, value as u64);
+    }
+
+    Ok(result)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
+
 /// Encode f32 values using VByte (raw, no headers)
 ///
 /// # Algorithm
@@ -24,54 +53,37 @@ use anyhow::Result;
 /// # Returns
 /// Raw encoded bytes (NO scheme marker, NO count header)
 pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
-    let mut result = Vec::new();
-
-    for &value in values {
-        let bits = value.to_bits();
-        encode_varint_u32(&mut result, bits);
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_vbyte_i32_wire)
 }
 
-/// Encode i64 values using VByte
+/// Encode i64 values using VByte (raw, no headers)
 pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
-    let mut result = Vec::new();
-
-    for &value in values {
-        encode_varint_u64(&mut result, value as u64);
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_vbyte_i64_wire)
 }
 
-/// Encode i32 values using VByte
+/// Encode i32 values using VByte (raw, no headers)
 pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
-    let mut result = Vec::new();
-
-    for &value in values {
-        encode_varint_u32(&mut result, value as u32);
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_vbyte_i32_wire)
 }
 
-/// Decode f32 values from VByte encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+// ===== Core wire format decoding functions =====
+
+/// Core decoding logic for i32 wire type
+fn decode_vbyte_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
     let mut result = Vec::with_capacity(count);
     let mut offset = 0;
 
     for _ in 0..count {
         let (value, bytes_read) = decode_varint_u32(&data[offset..])?;
-        result.push(f32::from_bits(value));
+        result.push(value as i32);
         offset += bytes_read;
     }
 
     Ok(result)
 }
 
-/// Decode i64 values from VByte encoded data
-pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+/// Core decoding logic for i64 wire type
+fn decode_vbyte_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     let mut result = Vec::with_capacity(count);
     let mut offset = 0;
 
@@ -84,18 +96,21 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     Ok(result)
 }
 
+// ===== Public API (thin wrappers using generic helpers) =====
+
+/// Decode f32 values from VByte encoded data
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    helpers::decode_generic::<f32>(data, count, decode_vbyte_i32_wire)
+}
+
+/// Decode i64 values from VByte encoded data
+pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+    helpers::decode_generic::<i64>(data, count, decode_vbyte_i64_wire)
+}
+
 /// Decode i32 values from VByte encoded data
 pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
-    let mut result = Vec::with_capacity(count);
-    let mut offset = 0;
-
-    for _ in 0..count {
-        let (value, bytes_read) = decode_varint_u32(&data[offset..])?;
-        result.push(value as i32);
-        offset += bytes_read;
-    }
-
-    Ok(result)
+    helpers::decode_generic::<i32>(data, count, decode_vbyte_i32_wire)
 }
 
 // ===== VarInt encoding/decoding helpers =====

@@ -9,6 +9,73 @@
 
 use anyhow::Result;
 
+use super::helpers;
+use super::helpers::ToWireFormat;
+
+// ===== Core wire format encoding functions =====
+
+/// Core encoding logic for i32 wire type (used by f32 and i32)
+fn encode_sparse_coo_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Find non-zero indices and values
+    let mut coords = Vec::new();
+
+    for (idx, &val) in wire_values.iter().enumerate() {
+        if val != 0 {
+            coords.push((idx as u32, val));
+        }
+    }
+
+    let mut result = Vec::new();
+
+    // Store count of non-zero values
+    let num_nonzero = coords.len() as u32;
+    result.extend_from_slice(&num_nonzero.to_le_bytes());
+
+    // Store coordinate pairs
+    for (idx, val) in coords {
+        result.extend_from_slice(&idx.to_le_bytes());
+        result.extend_from_slice(&val.to_le_bytes());
+    }
+
+    Ok(result)
+}
+
+/// Core encoding logic for i64 wire type
+fn encode_sparse_coo_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Find non-zero indices and values
+    let mut coords = Vec::new();
+
+    for (idx, &val) in wire_values.iter().enumerate() {
+        if val != 0 {
+            coords.push((idx as u32, val));
+        }
+    }
+
+    let mut result = Vec::new();
+
+    // Store count of non-zero values
+    let num_nonzero = coords.len() as u32;
+    result.extend_from_slice(&num_nonzero.to_le_bytes());
+
+    // Store coordinate pairs
+    for (idx, val) in coords {
+        result.extend_from_slice(&idx.to_le_bytes());
+        result.extend_from_slice(&val.to_le_bytes());
+    }
+
+    Ok(result)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
+
 /// Encode f32 sparse values using COO format (raw, no headers)
 ///
 /// # Algorithm
@@ -26,96 +93,23 @@ use anyhow::Result;
 /// # Returns
 /// Raw encoded bytes (NO scheme marker, NO count header)
 pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Find non-zero indices and values
-    let mut coords = Vec::new();
-
-    for (idx, &val) in values.iter().enumerate() {
-        if val != 0.0 && !val.is_nan() {
-            coords.push((idx as u32, val));
-        }
-    }
-
-    let mut result = Vec::new();
-
-    // Store count of non-zero values
-    let num_nonzero = coords.len() as u32;
-    result.extend_from_slice(&num_nonzero.to_le_bytes());
-
-    // Store coordinate pairs
-    for (idx, val) in coords {
-        result.extend_from_slice(&idx.to_le_bytes());
-        result.extend_from_slice(&val.to_bits().to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_sparse_coo_i32_wire)
 }
 
 /// Encode i64 sparse values using COO format (raw, no headers)
 pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Find non-zero indices and values
-    let mut coords = Vec::new();
-
-    for (idx, &val) in values.iter().enumerate() {
-        if val != 0 {
-            coords.push((idx as u32, val));
-        }
-    }
-
-    let mut result = Vec::new();
-
-    // Store count of non-zero values
-    let num_nonzero = coords.len() as u32;
-    result.extend_from_slice(&num_nonzero.to_le_bytes());
-
-    // Store coordinate pairs
-    for (idx, val) in coords {
-        result.extend_from_slice(&idx.to_le_bytes());
-        result.extend_from_slice(&val.to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_sparse_coo_i64_wire)
 }
 
 /// Encode i32 sparse values using COO format (raw, no headers)
 pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Find non-zero indices and values
-    let mut coords = Vec::new();
-
-    for (idx, &val) in values.iter().enumerate() {
-        if val != 0 {
-            coords.push((idx as u32, val));
-        }
-    }
-
-    let mut result = Vec::new();
-
-    // Store count of non-zero values
-    let num_nonzero = coords.len() as u32;
-    result.extend_from_slice(&num_nonzero.to_le_bytes());
-
-    // Store coordinate pairs
-    for (idx, val) in coords {
-        result.extend_from_slice(&idx.to_le_bytes());
-        result.extend_from_slice(&val.to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_sparse_coo_i32_wire)
 }
 
-/// Decode f32 values from COO encoded data
-pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+// ===== Core wire format decoding functions =====
+
+/// Core decoding logic for i32 wire type
+fn decode_sparse_coo_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -133,7 +127,7 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
     }
 
     // Initialize result with zeros
-    let mut result = vec![0.0f32; count];
+    let mut result = vec![0i32; count];
 
     // Read coordinate pairs
     for i in 0..num_nonzero {
@@ -146,7 +140,7 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
             data[offset + 3],
         ]) as usize;
 
-        let bits = u32::from_le_bytes([
+        let val = i32::from_le_bytes([
             data[offset + 4],
             data[offset + 5],
             data[offset + 6],
@@ -154,15 +148,15 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
         ]);
 
         if idx < count {
-            result[idx] = f32::from_bits(bits);
+            result[idx] = val;
         }
     }
 
     Ok(result)
 }
 
-/// Decode i64 values from COO encoded data
-pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+/// Core decoding logic for i64 wire type
+fn decode_sparse_coo_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
     if count == 0 {
         return Ok(Vec::new());
     }
@@ -212,51 +206,21 @@ pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
     Ok(result)
 }
 
+// ===== Public API (thin wrappers using generic helpers) =====
+
+/// Decode f32 values from COO encoded data
+pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
+    helpers::decode_generic::<f32>(data, count, decode_sparse_coo_i32_wire)
+}
+
+/// Decode i64 values from COO encoded data
+pub fn decode_i64(data: &[u8], count: usize) -> Result<Vec<i64>> {
+    helpers::decode_generic::<i64>(data, count, decode_sparse_coo_i64_wire)
+}
+
 /// Decode i32 values from COO encoded data
 pub fn decode_i32(data: &[u8], count: usize) -> Result<Vec<i32>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
-    if data.len() < 4 {
-        return Err(anyhow::anyhow!("SparseCOO decode: insufficient data"));
-    }
-
-    // Read number of non-zero values
-    let num_nonzero = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-
-    // Each coordinate pair is 8 bytes (4 for index + 4 for value)
-    if data.len() < 4 + num_nonzero * 8 {
-        return Err(anyhow::anyhow!("SparseCOO decode: insufficient coordinate data"));
-    }
-
-    // Initialize result with zeros
-    let mut result = vec![0i32; count];
-
-    // Read coordinate pairs
-    for i in 0..num_nonzero {
-        let offset = 4 + i * 8;
-
-        let idx = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-
-        let val = i32::from_le_bytes([
-            data[offset + 4],
-            data[offset + 5],
-            data[offset + 6],
-            data[offset + 7],
-        ]);
-
-        if idx < count {
-            result[idx] = val;
-        }
-    }
-
-    Ok(result)
+    helpers::decode_generic::<i32>(data, count, decode_sparse_coo_i32_wire)
 }
 
 #[cfg(test)]

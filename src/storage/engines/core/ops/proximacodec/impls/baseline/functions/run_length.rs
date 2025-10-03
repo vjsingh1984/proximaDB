@@ -9,6 +9,89 @@
 
 use anyhow::Result;
 
+use super::helpers;
+use super::helpers::ToWireFormat;
+
+// ===== Core wire format encoding functions =====
+
+/// Core encoding logic for i32 wire type (used by f32 and i32)
+fn encode_rle_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut runs = Vec::new();
+    let mut current_value = wire_values[0];
+    let mut run_length = 1u32;
+
+    for &val in &wire_values[1..] {
+        if val == current_value {
+            run_length += 1;
+        } else {
+            runs.push((run_length, current_value));
+            current_value = val;
+            run_length = 1;
+        }
+    }
+
+    // Push final run
+    runs.push((run_length, current_value));
+
+    let mut result = Vec::new();
+
+    // Store number of runs
+    let num_runs = runs.len() as u32;
+    result.extend_from_slice(&num_runs.to_le_bytes());
+
+    // Store run-length pairs
+    for (length, value) in runs {
+        result.extend_from_slice(&length.to_le_bytes());
+        result.extend_from_slice(&value.to_le_bytes());
+    }
+
+    Ok(result)
+}
+
+/// Core encoding logic for i64 wire type
+fn encode_rle_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
+    if wire_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut runs = Vec::new();
+    let mut current_value = wire_values[0];
+    let mut run_length = 1u32;
+
+    for &val in &wire_values[1..] {
+        if val == current_value {
+            run_length += 1;
+        } else {
+            runs.push((run_length, current_value));
+            current_value = val;
+            run_length = 1;
+        }
+    }
+
+    // Push final run
+    runs.push((run_length, current_value));
+
+    let mut result = Vec::new();
+
+    // Store number of runs
+    let num_runs = runs.len() as u32;
+    result.extend_from_slice(&num_runs.to_le_bytes());
+
+    // Store run-length pairs
+    for (length, value) in runs {
+        result.extend_from_slice(&length.to_le_bytes());
+        result.extend_from_slice(&value.to_le_bytes());
+    }
+
+    Ok(result)
+}
+
+// ===== Public API (thin wrappers using generic helpers) =====
+
 /// Encode f32 values using run-length encoding (raw, no headers)
 ///
 /// # Algorithm
@@ -26,121 +109,23 @@ use anyhow::Result;
 /// # Returns
 /// Raw encoded bytes (NO scheme marker, NO count header)
 pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut runs = Vec::new();
-    let mut current_value = values[0];
-    let mut run_length = 1u32;
-
-    for &val in &values[1..] {
-        // Check if value continues the run (exact bit comparison for f32)
-        if val.to_bits() == current_value.to_bits() {
-            run_length += 1;
-        } else {
-            runs.push((run_length, current_value));
-            current_value = val;
-            run_length = 1;
-        }
-    }
-
-    // Push final run
-    runs.push((run_length, current_value));
-
-    let mut result = Vec::new();
-
-    // Store number of runs
-    let num_runs = runs.len() as u32;
-    result.extend_from_slice(&num_runs.to_le_bytes());
-
-    // Store run-length pairs
-    for (length, value) in runs {
-        result.extend_from_slice(&length.to_le_bytes());
-        result.extend_from_slice(&value.to_bits().to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_rle_i32_wire)
 }
 
 /// Encode i64 values using run-length encoding (raw, no headers)
 pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut runs = Vec::new();
-    let mut current_value = values[0];
-    let mut run_length = 1u32;
-
-    for &val in &values[1..] {
-        if val == current_value {
-            run_length += 1;
-        } else {
-            runs.push((run_length, current_value));
-            current_value = val;
-            run_length = 1;
-        }
-    }
-
-    // Push final run
-    runs.push((run_length, current_value));
-
-    let mut result = Vec::new();
-
-    // Store number of runs
-    let num_runs = runs.len() as u32;
-    result.extend_from_slice(&num_runs.to_le_bytes());
-
-    // Store run-length pairs
-    for (length, value) in runs {
-        result.extend_from_slice(&length.to_le_bytes());
-        result.extend_from_slice(&value.to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_rle_i64_wire)
 }
 
 /// Encode i32 values using run-length encoding (raw, no headers)
 pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
-    if values.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut runs = Vec::new();
-    let mut current_value = values[0];
-    let mut run_length = 1u32;
-
-    for &val in &values[1..] {
-        if val == current_value {
-            run_length += 1;
-        } else {
-            runs.push((run_length, current_value));
-            current_value = val;
-            run_length = 1;
-        }
-    }
-
-    // Push final run
-    runs.push((run_length, current_value));
-
-    let mut result = Vec::new();
-
-    // Store number of runs
-    let num_runs = runs.len() as u32;
-    result.extend_from_slice(&num_runs.to_le_bytes());
-
-    // Store run-length pairs
-    for (length, value) in runs {
-        result.extend_from_slice(&length.to_le_bytes());
-        result.extend_from_slice(&value.to_le_bytes());
-    }
-
-    Ok(result)
+    helpers::encode_generic(values, encode_rle_i32_wire)
 }
 
-/// Decode f32 values from run-length encoded data
-pub fn decode_f32(data: &[u8]) -> Result<Vec<f32>> {
+// ===== Core wire format decoding functions =====
+
+/// Core decoding logic for i32 wire type
+fn decode_rle_i32_wire(data: &[u8]) -> Result<Vec<i32>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
@@ -170,14 +155,12 @@ pub fn decode_f32(data: &[u8]) -> Result<Vec<f32>> {
             data[offset + 3],
         ]) as usize;
 
-        let bits = u32::from_le_bytes([
+        let value = i32::from_le_bytes([
             data[offset + 4],
             data[offset + 5],
             data[offset + 6],
             data[offset + 7],
         ]);
-
-        let value = f32::from_bits(bits);
 
         // Expand the run
         for _ in 0..run_length {
@@ -188,8 +171,8 @@ pub fn decode_f32(data: &[u8]) -> Result<Vec<f32>> {
     Ok(result)
 }
 
-/// Decode i64 values from run-length encoded data
-pub fn decode_i64(data: &[u8]) -> Result<Vec<i64>> {
+/// Core decoding logic for i64 wire type
+fn decode_rle_i64_wire(data: &[u8]) -> Result<Vec<i64>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
@@ -239,51 +222,22 @@ pub fn decode_i64(data: &[u8]) -> Result<Vec<i64>> {
     Ok(result)
 }
 
+// ===== Public API (thin wrappers using wire format converters) =====
+
+/// Decode f32 values from run-length encoded data
+pub fn decode_f32(data: &[u8]) -> Result<Vec<f32>> {
+    let wire_values = decode_rle_i32_wire(data)?;
+    Ok(wire_values.iter().map(|&w| f32::from_wire(w)).collect())
+}
+
+/// Decode i64 values from run-length encoded data
+pub fn decode_i64(data: &[u8]) -> Result<Vec<i64>> {
+    decode_rle_i64_wire(data)
+}
+
 /// Decode i32 values from run-length encoded data
 pub fn decode_i32(data: &[u8]) -> Result<Vec<i32>> {
-    if data.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    if data.len() < 4 {
-        return Err(anyhow::anyhow!("RLE decode: insufficient data"));
-    }
-
-    // Read number of runs
-    let num_runs = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-
-    // Each run is 8 bytes (4 for length + 4 for value)
-    if data.len() < 4 + num_runs * 8 {
-        return Err(anyhow::anyhow!("RLE decode: insufficient run data"));
-    }
-
-    let mut result = Vec::new();
-
-    // Read and expand runs
-    for i in 0..num_runs {
-        let offset = 4 + i * 8;
-
-        let run_length = u32::from_le_bytes([
-            data[offset],
-            data[offset + 1],
-            data[offset + 2],
-            data[offset + 3],
-        ]) as usize;
-
-        let value = i32::from_le_bytes([
-            data[offset + 4],
-            data[offset + 5],
-            data[offset + 6],
-            data[offset + 7],
-        ]);
-
-        // Expand the run
-        for _ in 0..run_length {
-            result.push(value);
-        }
-    }
-
-    Ok(result)
+    decode_rle_i32_wire(data)
 }
 
 #[cfg(test)]
