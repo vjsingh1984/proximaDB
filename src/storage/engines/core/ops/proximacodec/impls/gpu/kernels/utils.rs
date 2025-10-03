@@ -158,7 +158,7 @@ pub struct GpuBuffer<T> {
     pub size_bytes: usize,
 }
 
-impl<T> GpuBuffer<T> {
+impl<T: Clone> GpuBuffer<T> {
     /// Create a new GPU buffer
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -216,7 +216,10 @@ impl<T> GpuBuffer<T> {
         // For now, return host data
         Ok(self.host_data.clone())
     }
+}
 
+// Separate impl block without Clone requirement for methods that don't need it
+impl<T> GpuBuffer<T> {
     /// Free device memory (stub)
     pub fn free_device(&mut self) -> Result<()> {
         // TODO: Platform-specific free
@@ -279,7 +282,7 @@ pub struct GpuBufferPool<T> {
     backend: HardwareBackend,
 }
 
-impl<T: Send + 'static> GpuBufferPool<T> {
+impl<T: Clone + Send + 'static> GpuBufferPool<T> {
     /// Create a new GPU buffer pool for the specified backend
     pub fn new(backend: HardwareBackend, capacity: usize) -> Self {
         let config = PoolConfig {
@@ -321,7 +324,7 @@ pub struct GpuBufferPoolFactory;
 
 impl GpuBufferPoolFactory {
     /// Create a GPU buffer pool optimized for the detected backend
-    pub fn create_for_backend<T: Send + 'static>(
+    pub fn create_for_backend<T: Clone + Send + 'static>(
         backend: &HardwareBackend,
         capacity: usize,
     ) -> GpuBufferPool<T> {
@@ -381,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_gpu_buffer_pool_creation() {
-        let backend = HardwareBackend::SIMD; // Use SIMD as test backend
+        let backend = HardwareBackend::AVX2; // Use SIMD as test backend
         let pool: GpuBufferPool<f32> = GpuBufferPool::new(backend.clone(), 1024);
 
         assert_eq!(pool.backend, backend);
@@ -394,7 +397,7 @@ mod tests {
 
     #[test]
     fn test_gpu_buffer_pool_acquire() {
-        let backend = HardwareBackend::SIMD;
+        let backend = HardwareBackend::AVX2;
         let pool: GpuBufferPool<f32> = GpuBufferPool::new(backend, 1024);
 
         // First acquisition - cache miss
@@ -418,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_gpu_buffer_pool_factory() {
-        let backend = HardwareBackend::SIMD;
+        let backend = HardwareBackend::AVX2;
 
         // Test f32 pool
         let f32_pool = GpuBufferPoolFactory::create_f32_pool(&backend, 1024);
@@ -441,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_gpu_buffer_pool_reuse() {
-        let backend = HardwareBackend::SIMD;
+        let backend = HardwareBackend::AVX2;
         let pool: GpuBufferPool<f32> = GpuBufferPool::new(backend, 1024);
 
         // Acquire and release multiple times

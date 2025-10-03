@@ -20,7 +20,8 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use super::similarity::{DistanceCompute, DistanceMetric};
+// Import DistanceMetric from proto module
+use crate::proto::proximadb_v1::DistanceMetric;
 use crate::compute::distance_computation::engine::{GpuAccelerator, HardwareBackend};
 use crate::core::hardware_capabilities::GpuBackend;
 
@@ -51,16 +52,16 @@ pub fn detect_best_gpu() -> Result<impl GpuAccelerator> {
 impl GpuAccelerator for GpuDistanceCompute {
     fn backend(&self) -> HardwareBackend {
         match self.backend {
-            GpuBackend::Cuda => HardwareBackend::Cuda,
-            GpuBackend::Rocm => HardwareBackend::Rocm,
-            GpuBackend::Mps => HardwareBackend::Mps,
+            GpuBackend::CUDA => HardwareBackend::CUDA,
+            GpuBackend::ROCm => HardwareBackend::ROCm,
+            GpuBackend::MPS => HardwareBackend::MPS,
             GpuBackend::OpenCL => HardwareBackend::OpenCL,
             GpuBackend::None => HardwareBackend::Scalar,
         }
     }
 
     fn is_available(&self) -> bool {
-        self.backend != GpuBackend::None && !self.devices.is_none()
+        self.backend != GpuBackend::None && !self.devices.is_empty()
     }
 
     async fn calculate_distance_gpu(
@@ -89,7 +90,7 @@ impl GpuDistanceCompute {
     pub fn new() -> Result<Self> {
         let (backend, devices) = Self::detect_gpu_backend()?;
 
-        info!("🚀 GPU backend detected: {}", backend);
+        info!("🚀 GPU backend detected: {:?}", backend);
         for (idx, device) in devices.iter().enumerate() {
             info!(
                 "  Device {}: {} ({}MB memory)",
@@ -99,7 +100,7 @@ impl GpuDistanceCompute {
             );
         }
 
-        let selected_device = if !devices.is_none() {
+        let selected_device = if !devices.is_empty() {
             Some(0) // Select first device by default
         } else {
             None
@@ -119,7 +120,7 @@ impl GpuDistanceCompute {
         #[cfg(feature = "cuda")]
         if let Ok(devices) = Self::detect_cuda_devices() {
             if !devices.is_none() {
-                return Ok((GpuBackend::Cuda, devices));
+                return Ok((GpuBackend::CUDA, devices));
             }
         }
 
@@ -127,15 +128,15 @@ impl GpuDistanceCompute {
         #[cfg(feature = "rocm")]
         if let Ok(devices) = Self::detect_rocm_devices() {
             if !devices.is_none() {
-                return Ok((GpuBackend::Rocm, devices));
+                return Ok((GpuBackend::ROCm, devices));
             }
         }
 
         // Try Metal Performance Shaders on macOS
         #[cfg(all(target_os = "macos", feature = "metal"))]
         if let Ok(devices) = Self::detect_mps_devices() {
-            if !devices.is_none() {
-                return Ok((GpuBackend::Mps, devices));
+            if !devices.is_empty() {
+                return Ok((GpuBackend::MPS, devices));
             }
         }
 
@@ -162,7 +163,7 @@ impl GpuDistanceCompute {
 
     /// Check if GPU acceleration is available
     pub fn is_available(&self) -> bool {
-        self.backend != GpuBackend::None && !self.devices.is_none()
+        self.backend != GpuBackend::None && !self.devices.is_empty()
     }
 
     /// Get the current backend
@@ -182,9 +183,9 @@ impl GpuDistanceCompute {
         }
 
         match self.backend {
-            GpuBackend::Cuda => self.calculate_distance_cuda(vec_a, vec_b, metric).await,
-            GpuBackend::Rocm => self.calculate_distance_rocm(vec_a, vec_b, metric).await,
-            GpuBackend::Mps => self.calculate_distance_mps(vec_a, vec_b, metric).await,
+            GpuBackend::CUDA => self.calculate_distance_cuda(vec_a, vec_b, metric).await,
+            GpuBackend::ROCm => self.calculate_distance_rocm(vec_a, vec_b, metric).await,
+            GpuBackend::MPS => self.calculate_distance_mps(vec_a, vec_b, metric).await,
             GpuBackend::OpenCL => self.calculate_distance_opencl(vec_a, vec_b, metric).await,
             GpuBackend::None => Err(anyhow!("No GPU backend available")),
         }
@@ -202,9 +203,9 @@ impl GpuDistanceCompute {
         }
 
         match self.backend {
-            GpuBackend::Cuda => self.calculate_batch_cuda(query, vectors, metric).await,
-            GpuBackend::Rocm => self.calculate_batch_rocm(query, vectors, metric).await,
-            GpuBackend::Mps => self.calculate_batch_mps(query, vectors, metric).await,
+            GpuBackend::CUDA => self.calculate_batch_cuda(query, vectors, metric).await,
+            GpuBackend::ROCm => self.calculate_batch_rocm(query, vectors, metric).await,
+            GpuBackend::MPS => self.calculate_batch_mps(query, vectors, metric).await,
             GpuBackend::OpenCL => self.calculate_batch_opencl(query, vectors, metric).await,
             GpuBackend::None => Err(anyhow!("No GPU backend available")),
         }
@@ -230,7 +231,7 @@ impl GpuDistanceCompute {
                 total_memory: props.total_global_mem,
                 available_memory: cuda_device.free_memory()?,
                 compute_capability: Some((props.major, props.minor)),
-                backend: GpuBackend::Cuda,
+                backend: GpuBackend::CUDA,
             });
         }
 
@@ -368,7 +369,7 @@ impl GpuDistanceCompute {
 #[cfg(all(target_os = "macos", feature = "metal"))]
 impl GpuDistanceCompute {
     fn detect_mps_devices() -> Result<Vec<GpuDevice>> {
-        use metal::{Device, DeviceLocation};
+        use metal::Device;
 
         let mut devices = Vec::new();
 
@@ -379,12 +380,12 @@ impl GpuDistanceCompute {
             // Check if device supports MPS
             if device.supports_family(metal::MTLGPUFamily::Mac1) {
                 devices.push(GpuDevice {
-                    id: idx as u32,
+                    id: idx,
                     name: device.name().to_string(),
                     total_memory: device.recommended_max_working_set_size(),
                     available_memory: device.recommended_max_working_set_size(), // Approximate
                     compute_capability: None,
-                    backend: GpuBackend::Mps,
+                    backend: GpuBackend::MPS,
                 });
             }
         }
@@ -403,10 +404,11 @@ impl GpuDistanceCompute {
 
         let device = Device::system_default().ok_or_else(|| anyhow!("No Metal device found"))?;
 
-        // Load Metal shader library
-        let library_data = include_bytes!("shaders/distance.metallib");
-        let library = device.new_library_with_data(library_data)?;
+        // TODO: Create distance.metal shader and compile to .metallib
+        // For now, return error - this is separate from ProximaCodec GPU work
+        return Err(anyhow!("Metal distance shaders not yet implemented - use CPU fallback"));
 
+        /* TODO: Uncomment when Metal distance shaders are implemented
         // Select function based on metric
         let function_name = match metric {
             DistanceMetric::Cosine => "cosine_distance",
@@ -479,6 +481,7 @@ impl GpuDistanceCompute {
         let result = unsafe { *result_ptr };
 
         Ok(result)
+        */
     }
 
     async fn calculate_batch_mps(
@@ -730,6 +733,8 @@ impl GpuDistanceCalculator {
     }
 }
 
+// TODO: Implement DistanceCompute trait when similarity module is ready
+/*
 #[async_trait::async_trait]
 impl DistanceCompute for GpuDistanceCalculator {
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
@@ -742,13 +747,11 @@ impl DistanceCompute for GpuDistanceCalculator {
             })
             .unwrap_or_else(|e| {
                 warn!(
-                    "GPU distance calculation failed: {}, falling back to CPU",
+                    "GPU distance calculation failed: {}, returning error (CPU fallback not yet implemented)",
                     e
                 );
-                // Fallback to CPU implementation
-                use super::similarity::create_distance_calculator;
-                let cpu_calc = create_distance_calculator(self.metric.clone());
-                cpu_calc.calculate_distance(a, b, &self.metric)
+                // TODO: Implement CPU fallback via distance_computation module
+                Err(e)
             })
     }
 
@@ -763,11 +766,9 @@ impl DistanceCompute for GpuDistanceCalculator {
                     .await
             })
             .unwrap_or_else(|e| {
-                warn!("GPU batch calculation failed: {}, falling back to CPU", e);
-                // Fallback to CPU implementation
-                use super::similarity::create_distance_calculator;
-                let cpu_calc = create_distance_calculator(self.metric.clone());
-                cpu_calc.distance_batch(query, vectors)
+                warn!("GPU batch calculation failed: {}, returning empty vec (CPU fallback not yet implemented)", e);
+                // TODO: Implement CPU fallback via distance_computation module
+                vec![]
             })
     }
 
@@ -782,6 +783,7 @@ impl DistanceCompute for GpuDistanceCalculator {
         self.metric.clone()
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {

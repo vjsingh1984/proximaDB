@@ -126,11 +126,11 @@ impl GpuBatchSizer {
     }
 
     /// Split data into batches
-    pub fn create_batches<T>(
+    pub fn create_batches<'a, T>(
         &self,
-        data: &[T],
+        data: &'a [T],
         batch_size: usize,
-    ) -> Vec<&[T]> {
+    ) -> Vec<&'a [T]> {
         trace!("🔪 [GPU Batcher] Splitting {} items into batches of {}", data.len(), batch_size);
 
         data.chunks(batch_size).collect()

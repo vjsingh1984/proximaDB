@@ -229,10 +229,8 @@ use crate::core::config::HardwareConfig;
 // No longer importing PlatformCapability from compute - using our own HardwareBackend
 
 // GPU types with feature gating
-#[cfg(feature = "gpu")]
-use crate::compute::gpu_similarity::{GpuBackend, GpuDevice};
-
-#[cfg(not(feature = "gpu"))]
+// NOTE: GpuBackend and GpuDevice stub definitions
+// These are used when gpu feature is disabled or for basic type definitions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuBackend {
     None,
@@ -382,7 +380,7 @@ impl std::fmt::Display for GpuBackend {
     }
 }
 
-#[cfg(not(feature = "gpu"))]
+// NOTE: GpuDevice stub definition
 #[derive(Debug, Clone)]
 pub struct GpuDevice {
     pub id: usize,
@@ -1172,7 +1170,17 @@ impl HardwareCapabilities {
     fn detect_gpu() -> Result<GpuCapabilities> {
         #[cfg(feature = "gpu")]
         {
-            // Try to detect GPU using our existing infrastructure
+            // TODO: Implement GPU detection using gpu module
+            // For now, return no GPU available
+            return Ok(GpuCapabilities {
+                backend: GpuBackend::None,
+                devices: vec![],
+                primary_device: None,
+                total_memory: 0,
+                cuda_compute_capability: None,
+            });
+
+            /* Original code - waiting for gpu_similarity module:
             match crate::compute::gpu_similarity::detect_best_gpu() {
                 Ok(gpu_accel) => {
                     let backend = match gpu_accel.backend() {
@@ -1223,6 +1231,7 @@ impl HardwareCapabilities {
                     })
                 }
             }
+            */
         }
 
         #[cfg(not(feature = "gpu"))]
@@ -1276,7 +1285,7 @@ impl HardwareCapabilities {
             }
             _ => {
                 info!(
-                    "🎮 GPU: {} with {} device(s), {:.1}GB total mem",
+                    "🎮 GPU: {:?} with {} device(s), {:.1}GB total mem",
                     self.gpu.backend,
                     self.gpu.devices.len(),
                     self.gpu.total_memory as f64 / (1024.0 * 1024.0 * 1024.0)

@@ -338,7 +338,7 @@ pub fn example_full_pipeline(
 fn detect_backend() -> HardwareBackend {
     // In real usage, this would call get_hardware_capabilities()
     // For examples, we return SIMD as it's always available
-    HardwareBackend::SIMD
+    HardwareBackend::AVX2
 }
 
 #[cfg(test)]

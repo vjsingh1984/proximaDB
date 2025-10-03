@@ -17,9 +17,7 @@
 //!
 //! - **Unified Memory**: Zero-copy between CPU and GPU
 //! - **SIMD Group Size**: 32 threads
-//! - **Thread
-
-group Size**: Optimal 256 threads
+//! - **Threadgroup Size**: Optimal 256 threads
 //! - **Threadgroup Memory**: 32 KB per threadgroup
 
 use anyhow::Result;
@@ -240,7 +238,7 @@ pub fn metal_delta_encode_f32(values: &[f32], base: f32) -> Result<Vec<i64>> {
     {
         use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer};
 
-        let ctx = metal_ffi::MetalContext::new()
+        let ctx = metal_ffi::RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
         // Get compute pipeline
@@ -294,7 +292,7 @@ pub fn metal_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
     {
         use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer};
 
-        let ctx = metal_ffi::MetalContext::new()
+        let ctx = metal_ffi::RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
         let pipeline = ctx.get_pipeline("delta_decode_f32")
@@ -349,59 +347,131 @@ pub fn metal_delta_decode_f32(deltas: &[i64], base: f32) -> Result<Vec<f32>> {
 pub fn metal_bitpack_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!("🔧 [Metal] BitPacked encode: {} values, {}b/val", values.len(), bits);
 
-    // TODO: Real Metal implementation with parallel atomic bit-packing
-    let total_bits = values.len() * bits as usize;
-    let byte_count = (total_bits + 7) / 8;
-    let mut result = vec![0u8; byte_count];
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer, RawMetalContext};
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let ctx = RawMetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-    for (i, &value) in values.iter().enumerate() {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        let pipeline = ctx.get_pipeline("bitpack_encode")
+            .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
-        let masked_value = value.to_bits() & mask;
-        result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+        // Convert f32 to i64 for bitpacking
+        let values_i64: Vec<i64> = values.iter().map(|&v| v.to_bits() as i64).collect();
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
-            result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+        let total_bits = values.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let word_count = (byte_count + 3) / 4;
+
+        let input_buffer = create_buffer(&ctx.device, &values_i64);
+        let output_buffer = create_empty_buffer::<u32>(&ctx.device, word_count);
+        let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
+        let n_buffer = create_buffer(&ctx.device, &[values.len() as i32]);
+
+        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &bit_width_buffer, &n_buffer], values.len())
+            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
+
+        // Read result and convert to bytes
+        let packed_words = read_buffer::<u32>(&output_buffer, word_count);
+        let mut result = vec![0u8; byte_count];
+        for (i, &word) in packed_words.iter().enumerate() {
+            let bytes = word.to_le_bytes();
+            for j in 0..4 {
+                if i * 4 + j < byte_count {
+                    result[i * 4 + j] = bytes[j];
+                }
+            }
         }
+
+        debug!("✅ [Metal] BitPacked encoded {} values → {} bytes (GPU)", values.len(), result.len());
+        Ok(result)
     }
 
-    debug!("✅ [Metal] BitPacked encoded {} values → {} bytes", values.len(), result.len());
-    Ok(result)
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        // CPU fallback
+        let total_bits = values.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let mut result = vec![0u8; byte_count];
+
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+
+        for (i, &value) in values.iter().enumerate() {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            let masked_value = value.to_bits() & mask;
+            result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
+                result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+            }
+        }
+
+        debug!("✅ [Metal] BitPacked encoded {} values → {} bytes (CPU fallback)", values.len(), result.len());
+        Ok(result)
+    }
 }
 
 /// Metal BitPacked decoding for f32
 pub fn metal_bitpack_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
     trace!("🔧 [Metal] BitPacked decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
 
-    // TODO: Real Metal implementation
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
-    let mut result = Vec::with_capacity(count);
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer, RawMetalContext};
 
-    for i in 0..count {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        let ctx = RawMetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-        if byte_offset >= packed.len() {
-            break;
-        }
+        let pipeline = ctx.get_pipeline("bitpack_decode")
+            .map_err(|e| anyhow::anyhow!("Pipeline creation failed: {}", e))?;
 
-        let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+        let input_buffer = create_buffer(&ctx.device, packed);
+        let output_buffer = create_empty_buffer::<i64>(&ctx.device, count);
+        let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
+        let n_buffer = create_buffer(&ctx.device, &[count as i32]);
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
-            let next_byte = packed[byte_offset + 1] as u32;
-            value |= next_byte << (8 - bit_in_byte);
-        }
+        execute_kernel(&ctx, &pipeline, &[&input_buffer, &output_buffer, &bit_width_buffer, &n_buffer], count)
+            .map_err(|e| anyhow::anyhow!("Kernel execution failed: {}", e))?;
 
-        result.push(f32::from_bits(value & mask));
+        let decoded_i64 = read_buffer::<i64>(&output_buffer, count);
+        let result: Vec<f32> = decoded_i64.iter().map(|&v| f32::from_bits(v as u32)).collect();
+
+        debug!("✅ [Metal] BitPacked decoded {} bytes → {} values (GPU)", packed.len(), result.len());
+        Ok(result)
     }
 
-    debug!("✅ [Metal] BitPacked decoded {} bytes → {} values", packed.len(), result.len());
-    Ok(result)
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        // CPU fallback
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mut result = Vec::with_capacity(count);
+
+        for i in 0..count {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            if byte_offset >= packed.len() {
+                break;
+            }
+
+            let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
+                let next_byte = packed[byte_offset + 1] as u32;
+                value |= next_byte << (8 - bit_in_byte);
+            }
+
+            result.push(f32::from_bits(value & mask));
+        }
+
+        debug!("✅ [Metal] BitPacked decoded {} bytes → {} values (CPU fallback)", packed.len(), result.len());
+        Ok(result)
+    }
 }
 
 // ============================================================================
@@ -419,7 +489,7 @@ pub fn metal_frame_of_reference_encode_f32(values: &[f32], reference: i64, bits:
     {
         use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer};
 
-        let ctx = metal_ffi::MetalContext::new()
+        let ctx = metal_ffi::RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
         let pipeline = ctx.get_pipeline("for_encode_f32")
@@ -494,7 +564,7 @@ pub fn metal_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: 
     {
         use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer};
 
-        let ctx = metal_ffi::MetalContext::new()
+        let ctx = metal_ffi::RawMetalContext::new()
             .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
         let pipeline = ctx.get_pipeline("for_decode_f32")
@@ -570,72 +640,184 @@ pub fn metal_frame_of_reference_decode_f32(packed: &[u8], reference: i64, bits: 
 pub fn metal_zigzag_encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
     trace!("🔧 [Metal] Zigzag encode: {} values, {}b/val", values.len(), bits);
 
-    // TODO: Real Metal implementation with parallel zigzag
-    let zigzag: Vec<i64> = values.iter().map(|&v| {
-        let n = v.to_bits() as i32;
-        let zz = (n << 1) ^ (n >> 31);
-        zz as i64
-    }).collect();
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer, RawMetalContext};
 
-    // Bit-pack zigzag values
-    let total_bits = zigzag.len() * bits as usize;
-    let byte_count = (total_bits + 7) / 8;
-    let mut result = vec![0u8; byte_count];
+        let ctx = RawMetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Metal initialization failed: {}", e))?;
 
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        // Convert f32 to i64
+        let values_i64: Vec<i64> = values.iter().map(|&v| v.to_bits() as i64).collect();
 
-    for (i, &zz) in zigzag.iter().enumerate() {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        // Step 1: Zigzag encode on GPU
+        let zigzag_pipeline = ctx.get_pipeline("zigzag_encode")
+            .map_err(|e| anyhow::anyhow!("Zigzag pipeline creation failed: {}", e))?;
 
-        let masked_value = (zz as u32) & mask;
-        result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+        let input_buffer = create_buffer(&ctx.device, &values_i64);
+        let zigzag_buffer = create_empty_buffer::<u64>(&ctx.device, values.len());
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
-            result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+        execute_kernel(&ctx, &zigzag_pipeline, &[&input_buffer, &zigzag_buffer], values.len())
+            .map_err(|e| anyhow::anyhow!("Zigzag kernel execution failed: {}", e))?;
+
+        let zigzag_u64 = read_buffer::<u64>(&zigzag_buffer, values.len());
+        let zigzag_i64: Vec<i64> = zigzag_u64.iter().map(|&v| v as i64).collect();
+
+        // Step 2: Bitpack the zigzag values on GPU
+        let bitpack_pipeline = ctx.get_pipeline("bitpack_encode")
+            .map_err(|e| anyhow::anyhow!("BitPack pipeline creation failed: {}", e))?;
+
+        let total_bits = zigzag_i64.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let word_count = (byte_count + 3) / 4;
+
+        let bitpack_input_buffer = create_buffer(&ctx.device, &zigzag_i64);
+        let output_buffer = create_empty_buffer::<u32>(&ctx.device, word_count);
+        let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
+        let n_buffer = create_buffer(&ctx.device, &[zigzag_i64.len() as i32]);
+
+        execute_kernel(&ctx, &bitpack_pipeline, &[&bitpack_input_buffer, &output_buffer, &bit_width_buffer, &n_buffer], zigzag_i64.len())
+            .map_err(|e| anyhow::anyhow!("BitPack kernel execution failed: {}", e))?;
+
+        // Read result and convert to bytes
+        let packed_words = read_buffer::<u32>(&output_buffer, word_count);
+        let mut result = vec![0u8; byte_count];
+        for (i, &word) in packed_words.iter().enumerate() {
+            let bytes = word.to_le_bytes();
+            for j in 0..4 {
+                if i * 4 + j < byte_count {
+                    result[i * 4 + j] = bytes[j];
+                }
+            }
         }
+
+        debug!("✅ [Metal] Zigzag encoded {} values → {} bytes (GPU)", values.len(), result.len());
+        Ok(result)
     }
 
-    debug!("✅ [Metal] Zigzag encoded {} values → {} bytes", values.len(), result.len());
-    Ok(result)
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        // CPU fallback
+        let zigzag: Vec<i64> = values.iter().map(|&v| {
+            let n = v.to_bits() as i32;
+            let zz = (n << 1) ^ (n >> 31);
+            zz as i64
+        }).collect();
+
+        // Bit-pack zigzag values
+        let total_bits = zigzag.len() * bits as usize;
+        let byte_count = (total_bits + 7) / 8;
+        let mut result = vec![0u8; byte_count];
+
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+
+        for (i, &zz) in zigzag.iter().enumerate() {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            let masked_value = (zz as u32) & mask;
+            result[byte_offset] |= ((masked_value << bit_in_byte) & 0xFF) as u8;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < result.len() {
+                result[byte_offset + 1] |= (masked_value >> (8 - bit_in_byte)) as u8;
+            }
+        }
+
+        debug!("✅ [Metal] Zigzag encoded {} values → {} bytes (CPU fallback)", values.len(), result.len());
+        Ok(result)
+    }
 }
 
 /// Metal Zigzag decoding
 pub fn metal_zigzag_decode_f32(packed: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
     trace!("🔧 [Metal] Zigzag decode: {} bytes, {}b/val, count={}", packed.len(), bits, count);
 
-    // Step 1: Bit-unpack
-    let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
-    let mut zigzag = Vec::with_capacity(count);
+    #[cfg(all(feature = "gpu", target_os = "macos", target_arch = "aarch64"))]
+    {
+        use metal_ffi::{create_buffer, create_empty_buffer, execute_kernel, read_buffer, RawMetalContext};
 
-    for i in 0..count {
-        let bit_offset = i * bits as usize;
-        let byte_offset = bit_offset / 8;
-        let bit_in_byte = bit_offset % 8;
+        let ctx = RawMetalContext::new()
+            .map_err(|e| anyhow::anyhow!("Failed to create Metal context: {}", e))?;
 
-        if byte_offset >= packed.len() {
-            break;
-        }
+        // Step 1: Bit-unpack using GPU
+        let bitpack_pipeline = ctx.get_pipeline("bitpack_decode")
+            .map_err(|e| anyhow::anyhow!("Failed to get bitpack_decode pipeline: {}", e))?;
 
-        let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+        let packed_buffer = create_buffer(&ctx.device, packed);
+        let unpacked_buffer = create_empty_buffer::<i64>(&ctx.device, count);
+        let bit_width_buffer = create_buffer(&ctx.device, &[bits as i32]);
+        let n_buffer = create_buffer(&ctx.device, &[count as i32]);
 
-        if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
-            let next_byte = packed[byte_offset + 1] as u32;
-            value |= next_byte << (8 - bit_in_byte);
-        }
+        execute_kernel(
+            &ctx,
+            &bitpack_pipeline,
+            &[&packed_buffer, &unpacked_buffer, &bit_width_buffer, &n_buffer],
+            count,
+        ).map_err(|e| anyhow::anyhow!("Bitpack decode kernel failed: {}", e))?;
 
-        zigzag.push((value & mask) as i32);
+        let zigzag_values = read_buffer::<i64>(&unpacked_buffer, count);
+
+        // Step 2: Zigzag decode using GPU
+        let zigzag_pipeline = ctx.get_pipeline("zigzag_decode")
+            .map_err(|e| anyhow::anyhow!("Failed to get zigzag_decode pipeline: {}", e))?;
+
+        let zigzag_input = create_buffer(&ctx.device, &zigzag_values.iter().map(|&v| v as u64).collect::<Vec<_>>());
+        let decoded_buffer = create_empty_buffer::<i64>(&ctx.device, count);
+
+        execute_kernel(
+            &ctx,
+            &zigzag_pipeline,
+            &[&zigzag_input, &decoded_buffer],
+            count,
+        ).map_err(|e| anyhow::anyhow!("Zigzag decode kernel failed: {}", e))?;
+
+        let decoded_values = read_buffer::<i64>(&decoded_buffer, count);
+
+        // Convert i64 back to f32
+        let values: Vec<f32> = decoded_values
+            .iter()
+            .map(|&v| f32::from_bits(v as u32))
+            .collect();
+
+        debug!("✅ [Metal GPU] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
+        Ok(values)
     }
 
-    // Step 2: Reverse zigzag (parallel in Metal)
-    let values: Vec<f32> = zigzag.iter().map(|&zz| {
-        let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
-        f32::from_bits(n as u32)
-    }).collect();
+    #[cfg(not(all(feature = "gpu", target_os = "macos", target_arch = "aarch64")))]
+    {
+        // CPU fallback: Step 1 - Bit-unpack
+        let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
+        let mut zigzag = Vec::with_capacity(count);
 
-    debug!("✅ [Metal] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
-    Ok(values)
+        for i in 0..count {
+            let bit_offset = i * bits as usize;
+            let byte_offset = bit_offset / 8;
+            let bit_in_byte = bit_offset % 8;
+
+            if byte_offset >= packed.len() {
+                break;
+            }
+
+            let mut value = (packed[byte_offset] >> bit_in_byte) as u32;
+
+            if bit_in_byte + bits as usize > 8 && byte_offset + 1 < packed.len() {
+                let next_byte = packed[byte_offset + 1] as u32;
+                value |= next_byte << (8 - bit_in_byte);
+            }
+
+            zigzag.push((value & mask) as i32);
+        }
+
+        // Step 2: Reverse zigzag
+        let values: Vec<f32> = zigzag.iter().map(|&zz| {
+            let n = ((zz as u32) >> 1) as i32 ^ -((zz & 1) as i32);
+            f32::from_bits(n as u32)
+        }).collect();
+
+        debug!("✅ [Metal CPU fallback] Zigzag decoded {} bytes → {} values", packed.len(), values.len());
+        Ok(values)
+    }
 }
 
 // ============================================================================

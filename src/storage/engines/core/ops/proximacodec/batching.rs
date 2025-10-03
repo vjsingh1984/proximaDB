@@ -482,8 +482,9 @@ mod tests {
                 assert!(batch_size <= 3000, "Large dims should reduce batch count");
             }
             HardwareBackend::NEON | HardwareBackend::SSE => {
-                // NEON/SSE: Should process 1 row group
-                assert_eq!(batch_size, 1000);
+                // NEON/SSE: For 1000 vectors, returns 512 (prev_power_of_2)
+                // Would return 1024 if total_vectors >= 1024
+                assert_eq!(batch_size, 512);
             }
             HardwareBackend::Scalar => {
                 assert!(batch_size >= 10);
