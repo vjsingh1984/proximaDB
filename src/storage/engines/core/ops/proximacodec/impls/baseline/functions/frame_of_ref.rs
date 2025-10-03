@@ -1,7 +1,15 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-//! Frame of Reference (FOR) encoding - Raw implementation (no headers)
+//! Frame of Reference (FOR) encoding - Baseline (pure scalar) implementation
+//!
+//! **ARCHITECTURE NOTE**: This is the BASELINE implementation.
+//! - NO SIMD intrinsics allowed
+//! - NO GPU code
+//! - Pure portable Rust only
+//!
+//! For SIMD acceleration, see: `src/storage/engines/core/ops/proximacodec/simd.rs`
+//! For GPU acceleration, see: `src/storage/engines/core/ops/proximacodec/impls/gpu/`
 //!
 //! Stores a base value and encodes offsets from that base using fixed bit width.
 //! Best for clustered data with small variance.
@@ -42,7 +50,7 @@ pub fn encode_f32(values: &[f32], base: i64) -> Result<Vec<u8>> {
     let base_i32 = base as i32;
     result.extend_from_slice(&base_i32.to_le_bytes());
 
-    // Convert f32 to i32 and compute offsets
+    // Convert f32 to i32 and compute offsets (pure scalar)
     let offsets: Vec<i32> = values
         .iter()
         .map(|&v| {

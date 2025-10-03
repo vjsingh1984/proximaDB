@@ -155,6 +155,10 @@ pub enum ProximaScheme {
     /// Best for: Data with outliers
     PForDelta { majority_bits: u8, base: i64 },
 
+    /// Patched Double Delta: double delta with outlier handling
+    /// Best for: Smooth/linear data with occasional spikes
+    PForDoubleDelta { base: i64, first_delta: i64 },
+
     /// Zigzag encoding: maps signed to unsigned for better compression
     /// Best for: Signed integers with small absolute values
     Zigzag { bits: u8 },
@@ -223,7 +227,8 @@ impl ProximaScheme {
     /// ```
     pub fn is_lossy(&self, type_id: TypeId) -> bool {
         match (self, type_id) {
-            // BitPacked: lossy if bits < type size
+            // BitPacked is NOW LOSSLESS for all types (uses to_bits/from_bits for floats)
+            // Lossy only if bits < type size (truncates high-order bits)
             (Self::BitPacked { bits }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *bits < 32,
             (Self::BitPacked { bits }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *bits < 64,
 
@@ -236,17 +241,28 @@ impl ProximaScheme {
             (Self::Gorilla, TypeId::F32 | TypeId::F64) => true,
             (Self::Gorilla, _) => false, // Lossless for integers when using XOR
 
-            // DoubleDelta: can be lossy for floats if bit width is limited
-            (Self::DoubleDelta { .. }, TypeId::F32 | TypeId::F64) => true,
+            // DoubleDelta: LOSSLESS for all types (uses to_bits/from_bits for floats)
+            // We convert f32→i32 via to_bits(), compute deltas on integers (exact),
+            // then reconstruct via from_bits() - perfect round-trip!
             (Self::DoubleDelta { .. }, _) => false,
 
-            // FrameOfReference: lossy if bits < type size
-            (Self::FrameOfReference { bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *bits < 32,
-            (Self::FrameOfReference { bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *bits < 64,
+            // PForDoubleDelta: LOSSLESS for all types (same logic as DoubleDelta)
+            // IEEE 754 bit pattern preservation ensures lossless f32 encoding
+            (Self::PForDoubleDelta { .. }, _) => false,
 
-            // PForDelta: lossy if majority_bits < type size
-            (Self::PForDelta { majority_bits, .. }, TypeId::F32 | TypeId::I32 | TypeId::U32) => *majority_bits < 32,
-            (Self::PForDelta { majority_bits, .. }, TypeId::F64 | TypeId::I64 | TypeId::U64) => *majority_bits < 64,
+            // FrameOfReference for floats: ALWAYS lossy (same reason as BitPacked)
+            (Self::FrameOfReference { .. }, TypeId::F32 | TypeId::F64) => true,
+
+            // FrameOfReference for integers: lossy only if bits < type size
+            (Self::FrameOfReference { bits, .. }, TypeId::I32 | TypeId::U32) => *bits < 32,
+            (Self::FrameOfReference { bits, .. }, TypeId::I64 | TypeId::U64) => *bits < 64,
+
+            // PForDelta for floats: ALWAYS lossy (same reason as BitPacked)
+            (Self::PForDelta { .. }, TypeId::F32 | TypeId::F64) => true,
+
+            // PForDelta for integers: lossy only if majority_bits < type size
+            (Self::PForDelta { majority_bits, .. }, TypeId::I32 | TypeId::U32) => *majority_bits < 32,
+            (Self::PForDelta { majority_bits, .. }, TypeId::I64 | TypeId::U64) => *majority_bits < 64,
 
             // All other schemes are lossless (Delta, Simple8b, VByte, SparseBitmap, SparseCOO, Dictionary, RunLength)
             _ => false,
@@ -264,6 +280,7 @@ impl ProximaScheme {
             Self::Delta { .. } => 0x20,
             Self::Zigzag { .. } => 0x25,
             Self::DoubleDelta { .. } => 0x28,
+            Self::PForDoubleDelta { .. } => 0x2B,
             Self::FrameOfReference { .. } => 0x30,
             Self::PForDelta { .. } => 0x35,
 
@@ -297,6 +314,10 @@ impl ProximaScheme {
             0x25 => Ok(Self::Zigzag { bits: 16 }),
             0x28 => Ok(Self::DoubleDelta {
                 first_value: 0,
+                first_delta: 1,
+            }),
+            0x2B => Ok(Self::PForDoubleDelta {
+                base: 0,
                 first_delta: 1,
             }),
             0x30 => Ok(Self::FrameOfReference {
@@ -339,6 +360,7 @@ impl ProximaScheme {
             Self::Simple8b => "Simple8b",
             Self::VByte => "VByte",
             Self::DoubleDelta { .. } => "DoubleDelta",
+            Self::PForDoubleDelta { .. } => "PForDoubleDelta",
             Self::Gorilla => "Gorilla",
             Self::SparseBitmap => "SparseBitmap",
             Self::SparseCOO => "SparseCOO",
@@ -374,6 +396,7 @@ impl ProximaScheme {
                 | Self::Simple8b
                 | Self::VByte
                 | Self::DoubleDelta { .. }
+                | Self::PForDoubleDelta { .. }
         )
     }
 }
@@ -482,15 +505,26 @@ mod tests {
 
     #[test]
     fn test_is_lossy_double_delta() {
-        // DoubleDelta is lossy for floats
+        // DoubleDelta is LOSSLESS for all types (uses to_bits/from_bits for floats)
         let scheme = ProximaScheme::DoubleDelta {
             first_value: 0,
             first_delta: 1,
         };
-        assert!(scheme.is_lossy(TypeId::F32));
-        assert!(scheme.is_lossy(TypeId::F64));
+        assert!(!scheme.is_lossy(TypeId::F32), "DoubleDelta is lossless for F32 via IEEE 754 bit preservation");
+        assert!(!scheme.is_lossy(TypeId::F64), "DoubleDelta is lossless for F64 via IEEE 754 bit preservation");
+        assert!(!scheme.is_lossy(TypeId::I32));
+        assert!(!scheme.is_lossy(TypeId::I64));
+    }
 
-        // DoubleDelta is lossless for integers
+    #[test]
+    fn test_is_lossy_pfor_double_delta() {
+        // PForDoubleDelta is LOSSLESS for all types (uses to_bits/from_bits for floats)
+        let scheme = ProximaScheme::PForDoubleDelta {
+            base: 0,
+            first_delta: 1,
+        };
+        assert!(!scheme.is_lossy(TypeId::F32), "PForDoubleDelta is lossless for F32 via IEEE 754 bit preservation");
+        assert!(!scheme.is_lossy(TypeId::F64), "PForDoubleDelta is lossless for F64 via IEEE 754 bit preservation");
         assert!(!scheme.is_lossy(TypeId::I32));
         assert!(!scheme.is_lossy(TypeId::I64));
     }

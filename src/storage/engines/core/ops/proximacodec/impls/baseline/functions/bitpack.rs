@@ -1,7 +1,15 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-//! BitPacked encoding - Raw implementation (no headers)
+//! BitPacked encoding - Baseline (pure scalar) implementation
+//!
+//! **ARCHITECTURE NOTE**: This is the BASELINE implementation.
+//! - NO SIMD intrinsics allowed
+//! - NO GPU code
+//! - Pure portable Rust only
+//!
+//! For SIMD acceleration, see: `src/storage/engines/core/ops/proximacodec/simd.rs`
+//! For GPU acceleration, see: `src/storage/engines/core/ops/proximacodec/impls/gpu/`
 //!
 //! Packs integer values using a fixed bit width.
 //! Returns ONLY the compressed data - headers are added by WireFormatManager.
@@ -34,7 +42,9 @@ pub fn encode_f32(values: &[f32], bits: u8) -> Result<Vec<u8>> {
         return Ok(Vec::new());
     }
 
-    // Convert f32 to u32
+    // LOSSLESS: Convert f32 to IEEE 754 bit pattern (pure scalar)
+    // This preserves exact f32 representation, including fractional parts
+    // Round-trip: f32 → to_bits() → u32 → from_bits() → f32 (exact match)
     let u32_values: Vec<u32> = values.iter().map(|&v| v.to_bits()).collect();
 
     // Bit-pack
@@ -82,7 +92,8 @@ pub fn decode_f32(data: &[u8], bits: u8, count: usize) -> Result<Vec<f32>> {
     // Unpack to u32
     let u32_values = unbitpack_u32(data, bits, count)?;
 
-    // Convert u32 to f32
+    // LOSSLESS: Convert u32 bit pattern back to f32
+    // This preserves exact f32 representation (reverse of to_bits())
     let values: Vec<f32> = u32_values.iter().map(|&v| f32::from_bits(v)).collect();
 
     Ok(values)

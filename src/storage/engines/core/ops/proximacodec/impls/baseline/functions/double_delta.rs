@@ -53,22 +53,24 @@ pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
         return Ok(result);
     }
 
-    // Compute first-order deltas
-    let mut deltas = Vec::with_capacity(values.len() - 1);
+    // Compute first-order deltas in i64 (NO OVERFLOW!)
+    // Critical: i32 deltas can overflow, so we use i64
+    let mut deltas: Vec<i64> = Vec::with_capacity(values.len() - 1);
     for i in 1..values.len() {
-        let delta = (values[i].to_bits() as i32)
-            .wrapping_sub(values[i - 1].to_bits() as i32);
+        let curr = values[i].to_bits() as i32 as i64;  // Sign-extend to i64
+        let prev = values[i - 1].to_bits() as i32 as i64;
+        let delta = curr - prev;  // i64 arithmetic - no overflow!
         deltas.push(delta);
     }
 
-    // Store first delta
+    // Store first delta (as i64, but we'll only use what we need)
     let first_delta = deltas[0];
-    result.extend_from_slice(&first_delta.to_le_bytes());
+    result.extend_from_slice(&first_delta.to_le_bytes());  // 8 bytes
 
-    // Compute second-order deltas (double deltas)
-    let mut double_deltas = Vec::with_capacity(deltas.len() - 1);
+    // Compute second-order deltas (double deltas) in i64
+    let mut double_deltas: Vec<i64> = Vec::with_capacity(deltas.len() - 1);
     for i in 1..deltas.len() {
-        let dd = deltas[i].wrapping_sub(deltas[i - 1]);
+        let dd = deltas[i] - deltas[i - 1];  // i64 arithmetic - no overflow!
         double_deltas.push(dd);
     }
 
@@ -77,24 +79,24 @@ pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
         return Ok(result);
     }
 
-    // Find max absolute value to determine bit width
+    // Find max absolute value to determine bit width (can be up to 64 bits!)
     let max_abs = double_deltas
         .iter()
-        .map(|&dd| dd.unsigned_abs())
+        .map(|&dd| dd.abs() as u64)
         .max()
         .unwrap_or(0);
 
     let bits = if max_abs == 0 {
         1
     } else {
-        // Add 1 bit for sign, but cap at 32
-        ((32 - max_abs.leading_zeros() as u8) + 1).min(32)
+        // Add 1 bit for sign, can go up to 64 bits for worst case
+        ((64 - max_abs.leading_zeros() as u8) + 1).min(64)
     };
 
     result.push(bits);
 
-    // Bit-pack double deltas
-    let packed = bitpack_i32(&double_deltas, bits)?;
+    // Bit-pack double deltas (now i64)
+    let packed = bitpack_i64(&double_deltas, bits)?;
     result.extend(packed);
 
     Ok(result)
@@ -245,64 +247,69 @@ pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
         return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data"));
     }
 
-    // Read base value
+    // Read base value (still i32)
     let base = i32::from_le_bytes([data[0], data[1], data[2], data[3]]);
 
     if count == 1 {
         return Ok(vec![f32::from_bits(base as u32)]);
     }
 
-    if data.len() < 9 {
+    if data.len() < 13 {  // 4 (base) + 8 (first_delta i64) + 1 (bits)
         return Err(anyhow::anyhow!("DoubleDelta decode: insufficient data for first delta"));
     }
 
-    // Read first delta
-    let first_delta = i32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+    // Read first delta (now i64!)
+    let first_delta = i64::from_le_bytes([
+        data[4], data[5], data[6], data[7],
+        data[8], data[9], data[10], data[11],
+    ]);
 
     if count == 2 {
         let v0 = f32::from_bits(base as u32);
-        let v1 = f32::from_bits(base.wrapping_add(first_delta) as u32);
+        // Reconstruct using i64 arithmetic
+        let v1_bits = (base as i64 + first_delta) as i32;
+        let v1 = f32::from_bits(v1_bits as u32);
         return Ok(vec![v0, v1]);
     }
 
     // Read bit width
-    let bits = data[8];
+    let bits = data[12];
 
     if bits == 0 {
         // All double deltas are zero - constant delta
         let mut result = Vec::with_capacity(count);
         result.push(f32::from_bits(base as u32));
 
-        let mut current = base.wrapping_add(first_delta);
-        result.push(f32::from_bits(current as u32));
+        let mut current = base as i64 + first_delta;
+        result.push(f32::from_bits(current as i32 as u32));
 
         for _ in 2..count {
-            current = current.wrapping_add(first_delta);
-            result.push(f32::from_bits(current as u32));
+            current += first_delta;
+            result.push(f32::from_bits(current as i32 as u32));
         }
 
         return Ok(result);
     }
 
-    // Unpack double deltas
+    // Unpack double deltas (now i64!)
     let num_double_deltas = count - 2;
-    let double_deltas = bitunpack_i32(&data[9..], bits, num_double_deltas)?;
+    let double_deltas = bitunpack_i64(&data[13..], bits, num_double_deltas)?;
 
-    // Reconstruct values
+    // Reconstruct values using i64 arithmetic (NO OVERFLOW!)
     let mut result = Vec::with_capacity(count);
     result.push(f32::from_bits(base as u32));
 
-    let mut prev_value = base;
+    let mut prev_value = base as i64;
     let mut prev_delta = first_delta;
 
-    let second_value = base.wrapping_add(first_delta);
-    result.push(f32::from_bits(second_value as u32));
+    let second_value = prev_value + first_delta;
+    result.push(f32::from_bits(second_value as i32 as u32));
     prev_value = second_value;
 
     for &dd in &double_deltas {
-        let delta = prev_delta.wrapping_add(dd);
-        let value = prev_value.wrapping_add(delta);
-        result.push(f32::from_bits(value as u32));
+        let delta = prev_delta + dd;  // i64 arithmetic - no overflow!
+        let value = prev_value + delta;  // i64 arithmetic - no overflow!
+        result.push(f32::from_bits(value as i32 as u32));
         prev_value = value;
         prev_delta = delta;
     }
@@ -764,5 +771,118 @@ mod tests {
         // Constant data: base (4) + first_delta=0 (4) + bits (1) = 9 bytes minimum
         // Actual may be slightly more due to implementation details
         assert!(encoded.len() < 30, "Encoded {} bytes", encoded.len());
+    }
+
+    // ===== OVERFLOW EDGE CASE TESTS =====
+    // These tests verify that the i64 delta fix prevents overflow
+
+    #[test]
+    fn test_overflow_i32_extremes() {
+        // Test with i32::MAX and i32::MIN - would overflow with i32 deltas
+        // Delta between i32::MAX and i32::MIN is 2^32, which exceeds i32 range
+        let values = vec![i32::MIN, i32::MAX, i32::MIN, i32::MAX];
+
+        let encoded = encode_i32(&values).unwrap();
+        let decoded = decode_i32(&encoded, values.len()).unwrap();
+
+        assert_eq!(values, decoded, "Failed to roundtrip i32 extremes");
+    }
+
+    #[test]
+    fn test_overflow_f32_extreme_bit_patterns() {
+        // Test f32 values with extreme bit patterns that would cause i32 delta overflow
+        let values = vec![
+            f32::from_bits(i32::MAX as u32),  // Positive extreme
+            f32::from_bits(i32::MIN as u32),  // Negative extreme
+            f32::from_bits(0),                // Zero
+            f32::from_bits(i32::MAX as u32),  // Back to positive
+        ];
+
+        let encoded = encode_f32(&values).unwrap();
+        let decoded = decode_f32(&encoded, values.len()).unwrap();
+
+        assert_eq!(values.len(), decoded.len());
+        for (orig, dec) in values.iter().zip(decoded.iter()) {
+            assert_eq!(orig.to_bits(), dec.to_bits(),
+                "Failed to roundtrip extreme f32 bit pattern: orig={:08x}, dec={:08x}",
+                orig.to_bits(), dec.to_bits());
+        }
+    }
+
+    #[test]
+    fn test_overflow_maximum_delta_sequence() {
+        // Create a sequence where consecutive deltas are at i32 boundary
+        // This would definitely overflow with i32 delta computation
+        let values = vec![
+            0i32,
+            i32::MAX / 2,
+            i32::MAX,
+            i32::MAX / 2,
+            0,
+            i32::MIN / 2,
+            i32::MIN,
+        ];
+
+        let encoded = encode_i32(&values).unwrap();
+        let decoded = decode_i32(&encoded, values.len()).unwrap();
+
+        assert_eq!(values, decoded, "Failed to handle large delta transitions");
+    }
+
+    #[test]
+    fn test_overflow_f32_infinity_nan() {
+        // Test special f32 values with extreme bit patterns
+        let values = vec![
+            0.0f32,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            f32::MAX,
+            f32::MIN,
+        ];
+
+        let encoded = encode_f32(&values).unwrap();
+        let decoded = decode_f32(&encoded, values.len()).unwrap();
+
+        assert_eq!(values.len(), decoded.len());
+        for (orig, dec) in values.iter().zip(decoded.iter()) {
+            // Compare bit patterns since NAN != NAN
+            assert_eq!(orig.to_bits(), dec.to_bits(),
+                "Failed to roundtrip special f32 value: orig={:08x}, dec={:08x}",
+                orig.to_bits(), dec.to_bits());
+        }
+    }
+
+    #[test]
+    fn test_overflow_i64_full_range() {
+        // Test i64 values across full range
+        let values = vec![
+            i64::MIN,
+            i64::MIN / 2,
+            0i64,
+            i64::MAX / 2,
+            i64::MAX,
+            0,
+        ];
+
+        let encoded = encode_i64(&values).unwrap();
+        let decoded = decode_i64(&encoded, values.len()).unwrap();
+
+        assert_eq!(values, decoded, "Failed to handle i64 extremes");
+    }
+
+    #[test]
+    fn test_overflow_alternating_extremes() {
+        // Worst case: alternating between extremes
+        // Each delta is maximum possible value
+        let values = vec![
+            i32::MIN, i32::MAX, i32::MIN, i32::MAX,
+            i32::MIN, i32::MAX, i32::MIN, i32::MAX,
+        ];
+
+        let encoded = encode_i32(&values).unwrap();
+        let decoded = decode_i32(&encoded, values.len()).unwrap();
+
+        assert_eq!(values, decoded, "Failed to handle alternating extremes");
     }
 }
