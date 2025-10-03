@@ -53,16 +53,19 @@ impl RawEncoder for SimdEncoder {
             ProximaScheme::Delta { base } => {
                 trace!("🚀 [SIMD] Encoding {} values with Delta (base={})", values.len(), base);
 
-                // Encode using SIMD Delta
-                let deltas = simd_delta_encode_f32(values, *base as f32)?;
+                // Encode using SIMD Delta (returns i64, but f32 deltas fit in i32)
+                let deltas_i64 = simd_delta_encode_f32(values, *base as f32)?;
 
-                // Serialize deltas to bytes
-                let mut result = Vec::with_capacity(deltas.len() * 8);
-                for &delta in &deltas {
-                    result.extend_from_slice(&delta.to_le_bytes());
+                // Wire format for f32: [base:4 bytes][deltas:4 bytes each (i32)]
+                // Cast i64 deltas to i32 to save 50% storage (f32 deltas always fit in i32)
+                let mut result = Vec::with_capacity(4 + deltas_i64.len() * 4);
+                result.extend_from_slice(&(*base as i32).to_le_bytes());
+
+                for &delta_i64 in &deltas_i64 {
+                    result.extend_from_slice(&(delta_i64 as i32).to_le_bytes());
                 }
 
-                debug!("✅ [SIMD] Delta encoded {} values → {} bytes", values.len(), result.len());
+                debug!("✅ [SIMD] Delta encoded {} values → {} bytes (base:4 + {}×4 deltas)", values.len(), result.len(), deltas_i64.len());
                 Ok(result)
             }
 
@@ -121,13 +124,15 @@ impl RawEncoder for SimdEncoder {
                 let base_val = *base;
                 let deltas: Vec<i64> = values.iter().map(|&v| v - base_val).collect();
 
-                // Serialize deltas to bytes
-                let mut result = Vec::with_capacity(deltas.len() * 8);
+                // Wire format: [base:8 bytes][deltas:8 bytes each]
+                let mut result = Vec::with_capacity(8 + deltas.len() * 8);
+                result.extend_from_slice(&base.to_le_bytes());
+
                 for &delta in &deltas {
                     result.extend_from_slice(&delta.to_le_bytes());
                 }
 
-                debug!("✅ [SIMD] Delta encoded {} i64 values → {} bytes", values.len(), result.len());
+                debug!("✅ [SIMD] Delta encoded {} i64 values → {} bytes (base + {} deltas)", values.len(), result.len(), deltas.len());
                 Ok(result)
             }
 
@@ -146,13 +151,15 @@ impl RawEncoder for SimdEncoder {
                 let base_val = *base as i32;
                 let deltas: Vec<i32> = values.iter().map(|&v| v - base_val).collect();
 
-                // Serialize deltas to bytes
-                let mut result = Vec::with_capacity(deltas.len() * 4);
+                // Wire format: [base:4 bytes][deltas:4 bytes each]
+                let mut result = Vec::with_capacity(4 + deltas.len() * 4);
+                result.extend_from_slice(&base_val.to_le_bytes());
+
                 for &delta in &deltas {
                     result.extend_from_slice(&delta.to_le_bytes());
                 }
 
-                debug!("✅ [SIMD] Delta encoded {} i32 values → {} bytes", values.len(), result.len());
+                debug!("✅ [SIMD] Delta encoded {} i32 values → {} bytes (base + {} deltas)", values.len(), result.len(), deltas.len());
                 Ok(result)
             }
 
@@ -194,8 +201,8 @@ mod tests {
         assert!(result.is_ok());
 
         let encoded = result.unwrap();
-        // 4 values × 8 bytes per i64 = 32 bytes
-        assert_eq!(encoded.len(), 32);
+        // base:4 bytes + 4 values × 4 bytes per i32 = 4 + 16 = 20 bytes (50% savings vs i64!)
+        assert_eq!(encoded.len(), 20);
     }
 
     #[test]

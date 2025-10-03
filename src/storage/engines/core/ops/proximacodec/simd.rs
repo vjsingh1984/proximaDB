@@ -1503,7 +1503,6 @@ mod tests {
     // ========================================================================
 
     #[test]
-    #[ignore = "TODO: Fix ProximaCodec Delta scheme integration - SIMD functions work correctly"]
     fn test_round_trip_delta_vs_baseline() {
         // Test that SIMD Delta encoding matches baseline Delta encoding
         let test_values = vec![
@@ -1519,11 +1518,22 @@ mod tests {
 
             // 1. Encode with baseline (ProximaCodec)
             // Note: For f32, Delta base is the i32 bit representation, extended to i64
-            let scheme = ProximaScheme::Delta { base: base.to_bits() as i32 as i64 };
+            let base_i64 = base.to_bits() as i32 as i64;
+            println!("\n🔍 Test {}: base_f32={}, base_bits=0x{:08X}, base_i32={}, base_i64={}",
+                     i, base, base.to_bits(), base.to_bits() as i32, base_i64);
+
+            let scheme = ProximaScheme::Delta { base: base_i64 };
+            println!("   Scheme: {:?}", scheme);
             let baseline_encoded = codec.encode(values, scheme.clone()).unwrap();
+            println!("   Encoded {} bytes", baseline_encoded.len());
 
             // 2. Decode with baseline
             let baseline_decoded: Vec<f32> = codec.decode(&baseline_encoded).unwrap();
+            println!("   Decoded {} values", baseline_decoded.len());
+            if baseline_decoded.len() > 0 {
+                println!("   First decoded value: {} (bits: 0x{:08X})",
+                         baseline_decoded[0], baseline_decoded[0].to_bits());
+            }
 
             // 3. Verify round-trip correctness
             assert_eq!(
