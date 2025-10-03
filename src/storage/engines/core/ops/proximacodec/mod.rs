@@ -55,6 +55,7 @@ pub mod types;
 pub mod wire_format;
 pub mod codec;
 pub mod analysis;
+pub mod simd_analysis;
 
 // Hardware-accelerated implementations (SIMD + GPU)
 pub mod simd;
