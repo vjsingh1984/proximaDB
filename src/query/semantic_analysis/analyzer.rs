@@ -253,9 +253,15 @@ impl Analyzer {
                 // field is a String (field name), query is an Expr
                 let query_type = self.analyze_expr(query, scope).await?;
 
-                // TODO: Look up field type from scope/schema
-                // For now, assume vector field type
-                let _field_type = DataType::Vector(1536); // Default assumption
+                // Look up field type from scope
+                let field_ident = Expr::Identifier(field.clone());
+                let field_type = self.analyze_expr(&field_ident, scope).await?;
+
+                // Validate field is a vector type
+                if !matches!(field_type, DataType::Vector(_)) {
+                    return Err(anyhow!("SIMILAR field must be a vector type, found {:?}", field_type));
+                }
+
                 if !matches!(query_type, DataType::Vector(_)) && !matches!(query_type, DataType::String) {
                     return Err(anyhow!("SIMILAR query must be a vector or string literal, found {:?}", query_type));
                 }

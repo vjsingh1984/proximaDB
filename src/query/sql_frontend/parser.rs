@@ -568,6 +568,19 @@ impl SqlFrontendParser {
                 })
             }
 
+            SqlExpr::Array(sqlparser::ast::Array { elem, named }) => {
+                // Convert array literal [0.1, 0.2, ...] to Expr::Array
+                let converted_elements: Result<Vec<Expr>> = elem
+                    .iter()
+                    .map(|e| self.convert_expr(e))
+                    .collect();
+
+                Ok(Expr::Array {
+                    elem: converted_elements?,
+                    named: *named,
+                })
+            }
+
             _ => Err(anyhow!("Unsupported expression: {:?}", expr)),
         }
     }
