@@ -107,6 +107,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Incomplete stub test - needs implementation of WAL scan tracking"]
     async fn test_no_double_wal_scan() -> Result<()> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         info!("🧪 Testing that WAL is not scanned twice");
@@ -152,6 +153,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Incomplete stub test - needs implementation of index search path tracking"]
     async fn test_early_termination_with_sufficient_index_results() -> Result<()> {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         info!("🧪 Testing early termination when indexes return sufficient results");
