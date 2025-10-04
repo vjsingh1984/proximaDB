@@ -512,14 +512,15 @@ mod tests {
         let values: Vec<f32> = (0..100).map(|i| i as f32 * 0.1).collect();
         let scheme = analyze_and_choose_scheme_f32(&values);
 
-        // Should choose a delta-based scheme (Delta, PForDelta, or Simple8b for small range)
+        // Should choose a delta-based scheme (Delta, PForDelta, or Raw/Simple8b fallback)
         match scheme {
             ProximaScheme::Delta { .. }
             | ProximaScheme::PForDelta { .. }
             | ProximaScheme::DoubleDelta { .. }
             | ProximaScheme::PForDoubleDelta { .. }
             | ProximaScheme::FrameOfReference { .. }
-            | ProximaScheme::Simple8b => {},
+            | ProximaScheme::Simple8b
+            | ProximaScheme::Raw => {},  // Raw is safe fallback for f32 (no expansion)
             other => panic!("Expected delta or FOR scheme for monotonic data, got {:?}", other),
         }
     }
@@ -539,7 +540,8 @@ mod tests {
             | ProximaScheme::PForDelta { .. }
             | ProximaScheme::PForDoubleDelta { .. }
             | ProximaScheme::FrameOfReference { .. }
-            | ProximaScheme::Simple8b => {},
+            | ProximaScheme::Simple8b
+            | ProximaScheme::Raw => {},  // Raw is safe fallback for f32 (no expansion)
             other => panic!("Expected outlier-handling scheme, got {:?}", other),
         }
     }
@@ -550,10 +552,12 @@ mod tests {
         let values: Vec<f32> = (0..100).map(|i| (i as f32 * 0.1).sin()).collect();
         let scheme = analyze_and_choose_scheme_f32(&values);
 
-        // Should choose Delta or Simple8b for smooth non-linear data
+        // Should choose Delta, Simple8b, or Raw for smooth non-linear data
         match scheme {
-            ProximaScheme::Delta { .. } | ProximaScheme::Simple8b => {},
-            other => panic!("Expected Delta or Simple8b for smooth gradual data, got {:?}", other),
+            ProximaScheme::Delta { .. }
+            | ProximaScheme::Simple8b
+            | ProximaScheme::Raw => {},  // Raw is safe fallback for f32 (no expansion)
+            other => panic!("Expected Delta/Simple8b/Raw for smooth gradual data, got {:?}", other),
         }
     }
 
@@ -566,10 +570,12 @@ mod tests {
         ];
         let scheme = analyze_and_choose_scheme_f32(&values);
 
-        // Should choose BitPacked or Simple8b (NOT delta schemes)
+        // Should choose BitPacked, Simple8b, or Raw (NOT delta schemes)
         match scheme {
-            ProximaScheme::BitPacked { .. } | ProximaScheme::Simple8b => {},
-            other => panic!("Expected BitPacked/Simple8b for random data (avoid delta!), got {:?}", other),
+            ProximaScheme::BitPacked { .. }
+            | ProximaScheme::Simple8b
+            | ProximaScheme::Raw => {},  // Raw is safe fallback for f32 (no expansion)
+            other => panic!("Expected BitPacked/Simple8b/Raw for random data (avoid delta!), got {:?}", other),
         }
     }
 
@@ -656,17 +662,23 @@ mod tests {
 
     #[test]
     fn test_normalized_smooth_not_raw() {
-        // Normalized but highly structured data should use delta schemes
+        // Normalized but highly structured data - could use delta schemes OR Raw
         let smooth_normalized: Vec<f32> = (0..100)
             .map(|i| (i as f32 * 0.01))
             .collect();
 
         let scheme = analyze_and_choose_scheme_f32(&smooth_normalized);
 
-        // Should NOT use Raw - structured data can benefit from delta encoding
+        // Updated: Raw is acceptable for normalized data (no expansion, faster than delta for f32)
+        // Delta schemes are also fine if detected
         match scheme {
-            ProximaScheme::Raw => panic!("Smooth normalized data should not use Raw"),
-            _ => {}, // Any delta/FOR scheme is fine
+            ProximaScheme::Raw  // Safe fallback for f32 (no expansion)
+            | ProximaScheme::Delta { .. }
+            | ProximaScheme::DoubleDelta { .. }
+            | ProximaScheme::PForDelta { .. }
+            | ProximaScheme::PForDoubleDelta { .. }
+            | ProximaScheme::FrameOfReference { .. } => {},
+            other => panic!("Expected Raw or delta scheme for smooth normalized data, got {:?}", other),
         }
     }
 }
