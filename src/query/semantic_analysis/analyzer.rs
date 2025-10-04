@@ -104,6 +104,14 @@ impl Analyzer {
                         };
                         columns.insert(field.name.clone(), Column { name: field.name.clone(), data_type });
                     }
+
+                    // Add implicit "embedding" field for vector collections
+                    if config.dimension > 0 {
+                        columns.insert("embedding".to_string(), Column {
+                            name: "embedding".to_string(),
+                            data_type: DataType::Vector(config.dimension as usize),
+                        });
+                    }
                 }
                 // Use alias if provided, otherwise use table name
                 let table_symbol = Symbol::Table { name: table_name.clone(), columns };
