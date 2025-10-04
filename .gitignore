@@ -252,6 +252,8 @@ terraform.rc
 # Generated files
 archive/
 log/
+localhost/
+performance_metrics/
 snapshots/
 *.profraw
 cobertura.xml
