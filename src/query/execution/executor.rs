@@ -781,7 +781,7 @@ impl QueryExecutor {
         Ok(rows)
     }
 
-    fn join_rows(
+    pub fn join_rows(
         &self,
         left: &Vec<QueryRow>,
         right: &Vec<QueryRow>,
@@ -832,7 +832,7 @@ impl QueryExecutor {
     }
 
     /// Combine rows from two query buffers with UNION semantics
-    fn union_rows(
+    pub fn union_rows(
         &self,
         left: &Vec<QueryRow>,
         right: &Vec<QueryRow>,
@@ -888,7 +888,7 @@ impl QueryExecutor {
         Ok(result)
     }
 
-    fn intersect_rows(
+    pub fn intersect_rows(
         &self,
         left: &Vec<QueryRow>,
         right: &Vec<QueryRow>,
@@ -937,7 +937,7 @@ impl QueryExecutor {
         Ok(result)
     }
 
-    fn except_rows(
+    pub fn except_rows(
         &self,
         left: &Vec<QueryRow>,
         right: &Vec<QueryRow>,
@@ -1018,7 +1018,7 @@ impl QueryExecutor {
         parts.join("\u{1F}")
     }
 
-    fn apply_limit_offset(rows: &mut Vec<QueryRow>, offset: Option<usize>, limit: Option<usize>) {
+    pub fn apply_limit_offset(rows: &mut Vec<QueryRow>, offset: Option<usize>, limit: Option<usize>) {
         let off = offset.unwrap_or(0);
         if off > 0 && off < rows.len() {
             rows.drain(0..off);
