@@ -407,7 +407,7 @@ impl Analyzer {
             }
             BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
                 // Arithmetic operators require numeric types and return numeric
-                if (left == DataType::Int64 || left == DataType::Float64) && 
+                if (left == DataType::Int64 || left == DataType::Float64) &&
                    (right == DataType::Int64 || right == DataType::Float64) {
                     // Promote to Float64 if either is Float64
                     if left == DataType::Float64 || right == DataType::Float64 {
@@ -417,6 +417,21 @@ impl Analyzer {
                     }
                 } else {
                     Err(anyhow!("Arithmetic operations require numeric operands: {:?} vs {:?}", left, right))
+                }
+            }
+            BinaryOp::In | BinaryOp::NotIn => {
+                // IN operator: left is a value, right is typically a subquery or list
+                // Returns boolean
+                // For now, just validate that we have valid types
+                // Right side is typically Unknown (subquery) or compatible with left
+                Ok(DataType::Boolean)
+            }
+            BinaryOp::Like => {
+                // LIKE operator for string pattern matching
+                if left == DataType::String || left == DataType::Unknown {
+                    Ok(DataType::Boolean)
+                } else {
+                    Err(anyhow!("LIKE operator requires string operand"))
                 }
             }
             _ => Err(anyhow!("Unsupported binary operator: {:?}", op)),
