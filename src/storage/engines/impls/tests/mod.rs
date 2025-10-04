@@ -8,7 +8,7 @@
 //! -  Helpers: 35 functions (22 duplicates eliminated)
 //! -  Flush Tests: 11 tests migrated
 //! -  Search Tests: 69 tests migrated
-//! - ø Core Tests: 228 tests identified
+//! - ï¿½ Core Tests: 228 tests identified
 //!
 //! ### Other Engines (Pending)
 //! - VIPER: 146 tests identified
@@ -31,7 +31,7 @@
 pub mod sst;
 
 #[cfg(test)]
-mod viper_tests;
+pub mod viper;
 
 #[cfg(test)]
 mod nova_tests;
