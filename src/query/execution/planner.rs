@@ -1043,7 +1043,7 @@ struct SksFollowArgs {
 }
 
 /// Cost model for execution planning optimization
-struct CostModel {
+pub struct CostModel {
     // Cost estimates for different operation types
     vector_search_base_cost: f64,
     graph_traversal_base_cost: f64,
@@ -1052,7 +1052,7 @@ struct CostModel {
 }
 
 impl CostModel {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             vector_search_base_cost: 1.0,
             graph_traversal_base_cost: 2.0,
@@ -1062,7 +1062,7 @@ impl CostModel {
     }
 
     /// Estimate total execution cost for operations
-    fn estimate_total_cost(&self, operations: &[ExecutionOperation]) -> f64 {
+    pub fn estimate_total_cost(&self, operations: &[ExecutionOperation]) -> f64 {
         operations
             .iter()
             .map(|op| self.estimate_operation_cost(op))
@@ -1070,7 +1070,7 @@ impl CostModel {
     }
 
     /// Estimate cost for individual operation
-    fn estimate_operation_cost(&self, operation: &ExecutionOperation) -> f64 {
+    pub fn estimate_operation_cost(&self, operation: &ExecutionOperation) -> f64 {
         match operation {
             ExecutionOperation::VectorSearch { top_k, filters, .. } => {
                 let base_cost = self.vector_search_base_cost * (*top_k as f64).log10();

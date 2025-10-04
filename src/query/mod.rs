@@ -121,6 +121,9 @@ pub mod sql_frontend;
 pub mod unified_query_optimizer;
 pub mod vector_search;
 
+#[cfg(test)]
+pub mod tests;
+
 // Re-export main types
 pub use unified_query_optimizer::{
     UnifiedCostWeights, UnifiedExecutionPlan as QueryPlan, UnifiedMetadataFilter as MetadataFilter,
