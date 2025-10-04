@@ -95,19 +95,26 @@ impl EventLogWAL {
             self.rotate_wal().await?;
         }
 
-        // Append to current WAL file
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.current_file)
-            .await
-            .context("Failed to open WAL file")?;
+        // Append to current WAL file using filesystem API for consistency
+        let current_file_str = self.current_file.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid current file path: {:?}", self.current_file)
+        })?;
+        let filesystem = self.filesystem_factory.get_filesystem(current_file_str)?;
+
+        // Read existing content if file exists
+        let mut buffer = if filesystem.exists(current_file_str).await {
+            filesystem.read(current_file_str).await?
+        } else {
+            Vec::new()
+        };
 
         // Write length prefix + data
-        let len_bytes = (data.len()).to_le_bytes();
-        file.write_all(&len_bytes).await?;
-        file.write_all(&data).await?;
-        file.flush().await?;
+        let len_bytes = (data.len() as u32).to_le_bytes();
+        buffer.extend_from_slice(&len_bytes);
+        buffer.extend_from_slice(&data);
+
+        // Write back to file
+        filesystem.write(current_file_str, buffer).await?;
 
         self.current_size += 4 + data.len() as u64;
 
@@ -129,16 +136,26 @@ impl EventLogWAL {
 
         debug!("Acknowledged event {} in WAL", event_id);
 
-        // For now, we'll add to a separate acknowledgment file
+        // For now, we'll add to a separate acknowledgment file using filesystem API
         let ack_file = self.wal_dir.join("acknowledged_events.txt");
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&ack_file)
-            .await?;
+        let ack_file_str = ack_file.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid ack file path: {:?}", ack_file)
+        })?;
+        let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
 
-        file.write_all(format!("{}\n", event_id).as_bytes()).await?;
-        file.flush().await?;
+        // Read existing content if file exists
+        let mut content = if filesystem.exists(ack_file_str).await {
+            String::from_utf8(filesystem.read(ack_file_str).await?)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        // Append new event ID
+        content.push_str(&format!("{}\n", event_id));
+
+        // Write back
+        filesystem.write(ack_file_str, content.as_bytes().to_vec()).await?;
 
         Ok(())
     }
@@ -147,10 +164,16 @@ impl EventLogWAL {
     pub async fn recover_pending_events(&self) -> Result<Vec<IndexEvent>> {
         let mut pending_events = Vec::new();
 
-        // Read acknowledged events
+        // Read acknowledged events using filesystem API
         let ack_file = self.wal_dir.join("acknowledged_events.txt");
-        let acknowledged_ids = if ack_file.exists() {
-            let content = fs::read_to_string(&ack_file).await?;
+        let ack_file_str = ack_file.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid ack file path: {:?}", ack_file)
+        })?;
+        let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
+
+        let acknowledged_ids = if filesystem.exists(ack_file_str).await {
+            let content_bytes = filesystem.read(ack_file_str).await?;
+            let content = String::from_utf8(content_bytes).unwrap_or_default();
             content
                 .lines()
                 .map(|s| s.to_string())
@@ -159,23 +182,22 @@ impl EventLogWAL {
             std::collections::HashSet::new()
         };
 
-        // Read all WAL files
-        let mut entries = fs::read_dir(&self.wal_dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
+        // Read all WAL files using filesystem API
+        let wal_dir_str = self.wal_dir.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid WAL dir path: {:?}", self.wal_dir)
+        })?;
+        let wal_filesystem = self.filesystem_factory.get_filesystem(wal_dir_str)?;
 
+        let files = wal_filesystem.list(wal_dir_str).await?;
+        for file_path in files {
             // Skip non-WAL files
-            if !path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("eventlog_wal_"))
-                .unwrap_or(false)
-            {
+            if !file_path.contains("eventlog_wal_") {
                 continue;
             }
 
             // Read events from WAL file
-            let events = self.read_wal_file(&path, &acknowledged_ids).await?;
+            let path = std::path::Path::new(&file_path);
+            let events = self.read_wal_file(path, &acknowledged_ids).await?;
             pending_events.extend(events);
         }
 
@@ -247,9 +269,21 @@ impl EventLogWAL {
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
         let rotated_file = self.wal_dir.join(format!("eventlog_wal_{}.bin", timestamp));
 
-        fs::rename(&self.current_file, &rotated_file)
-            .await
-            .context("Failed to rotate WAL file")?;
+        // Use filesystem API for rename
+        let current_file_str = self.current_file.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid current file path: {:?}", self.current_file)
+        })?;
+        let rotated_file_str = rotated_file.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid rotated file path: {:?}", rotated_file)
+        })?;
+        let filesystem = self.filesystem_factory.get_filesystem(current_file_str)?;
+
+        // Read current file content and write to new rotated file
+        if filesystem.exists(current_file_str).await {
+            let content = filesystem.read(current_file_str).await?;
+            filesystem.write(rotated_file_str, content).await?;
+            filesystem.delete(current_file_str).await?;
+        }
 
         self.current_size = 0;
 
@@ -261,8 +295,14 @@ impl EventLogWAL {
     /// Compact WAL by removing acknowledged events
     pub async fn compact(&mut self) -> Result<()> {
         let ack_file = self.wal_dir.join("acknowledged_events.txt");
-        let acknowledged_ids = if ack_file.exists() {
-            let content = fs::read_to_string(&ack_file).await?;
+        let ack_file_str = ack_file.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid ack file path: {:?}", ack_file)
+        })?;
+        let filesystem = self.filesystem_factory.get_filesystem(ack_file_str)?;
+
+        let acknowledged_ids = if filesystem.exists(ack_file_str).await {
+            let content_bytes = filesystem.read(ack_file_str).await?;
+            let content = String::from_utf8(content_bytes).unwrap_or_default();
             content
                 .lines()
                 .map(|s| s.to_string())
@@ -274,17 +314,17 @@ impl EventLogWAL {
         // Read all pending events
         let pending_events = self.recover_pending_events().await?;
 
-        // Clear existing WAL files
-        let mut entries = fs::read_dir(&self.wal_dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("eventlog_wal_"))
-                .unwrap_or(false)
-            {
-                fs::remove_file(&path).await?;
+        // Clear existing WAL files using filesystem API
+        let wal_dir_str = self.wal_dir.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid WAL dir path: {:?}", self.wal_dir)
+        })?;
+        let wal_filesystem = self.filesystem_factory.get_filesystem(wal_dir_str)?;
+
+        // List and remove WAL files
+        let files = wal_filesystem.list(wal_dir_str).await?;
+        for file_path in files {
+            if file_path.contains("eventlog_wal_") {
+                wal_filesystem.delete(&file_path).await.ok(); // Ignore errors
             }
         }
 
@@ -297,7 +337,7 @@ impl EventLogWAL {
         }
 
         // Clear acknowledgments file
-        fs::remove_file(&ack_file).await.ok();
+        filesystem.delete(ack_file_str).await.ok();
 
         info!("Compacted EventLog WAL");
 
@@ -381,7 +421,12 @@ mod tests {
         let recovered = wal.recover_pending_events().await?;
 
         // Should only have event_2 (event_1 was acknowledged)
-        assert_eq!(recovered.len(), 1);
+        assert_eq!(
+            recovered.len(),
+            1,
+            "Should have 1 pending event (event_2), got {}",
+            recovered.len()
+        );
         assert_eq!(recovered[0].event_id, "event_2");
 
         Ok(())
@@ -412,19 +457,20 @@ mod tests {
         // This should trigger rotation
         wal.persist_event(&event).await?;
 
-        // Check that rotation occurred
-        let entries: Vec<_> = std::fs::read_dir(temp_dir.path())?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_str()
-                    .map(|n| n.starts_with("eventlog_wal_"))
-                    .unwrap_or(false)
-            })
+        // Check that rotation occurred using filesystem API
+        let wal_dir_str = temp_dir.path().to_str().unwrap();
+        let filesystem = filesystem_factory.get_filesystem(wal_dir_str)?;
+        let files = filesystem.list(wal_dir_str).await?;
+        let wal_files: Vec<_> = files.iter()
+            .filter(|f| f.contains("eventlog_wal_"))
             .collect();
 
-        // Should have at least 2 WAL files (current + rotated)
-        assert!(entries.len() >= 1);
+        // Should have at least 1 WAL file (rotation creates a new current file)
+        assert!(
+            wal_files.len() >= 1,
+            "Should have at least 1 WAL file after rotation, got {}",
+            wal_files.len()
+        );
 
         Ok(())
     }
@@ -461,11 +507,24 @@ mod tests {
 
         // Recover and verify only pending events remain
         let recovered = wal.recover_pending_events().await?;
-        assert_eq!(recovered.len(), 2);
+        assert_eq!(
+            recovered.len(),
+            2,
+            "Should have 2 pending events after compaction, got {}",
+            recovered.len()
+        );
 
         let event_ids: Vec<_> = recovered.iter().map(|e| e.event_id.as_str()).collect();
-        assert!(event_ids.contains(&"event_1"));
-        assert!(event_ids.contains(&"event_3"));
+        assert!(
+            event_ids.contains(&"event_1"),
+            "Should have event_1, got {:?}",
+            event_ids
+        );
+        assert!(
+            event_ids.contains(&"event_3"),
+            "Should have event_3, got {:?}",
+            event_ids
+        );
 
         Ok(())
     }
