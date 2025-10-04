@@ -257,8 +257,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
     };
 
     let users_config = crate::proto::proximadb_v1::CollectionConfig {
-        name: "users".to_string(),
-        dimension: 0,
+        name: "app_users".to_string(), // Must be at least 8 characters
+        dimension: 128, // Non-zero dimension required
         distance_metric: 0,
         storage_engine: 0,
         tags: vec![],
@@ -286,8 +286,8 @@ async fn setup_analyzer_with_mock() -> Analyzer {
     };
 
     // Create the collections
-    let _ = collection_service.create_collection(&products_config).await;
-    let _ = collection_service.create_collection(&users_config).await;
+    collection_service.create_collection(&products_config).await.expect("Failed to create products collection");
+    collection_service.create_collection(&users_config).await.expect("Failed to create app_users collection");
 
     Analyzer::new(collection_service)
 }
@@ -398,7 +398,7 @@ async fn test_analyze_having() {
 #[tokio::test]
 async fn test_analyze_join() {
     let analyzer = setup_analyzer_with_mock().await;
-    let sql = "SELECT p.name, u.email FROM products AS p JOIN users AS u ON p.id = u.user_id";
+    let sql = "SELECT p.name, u.email FROM products AS p JOIN app_users AS u ON p.id = u.user_id";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
 
@@ -424,9 +424,9 @@ async fn test_analyze_join() {
 #[tokio::test]
 async fn test_analyze_join_ambiguous_column() {
     let analyzer = setup_analyzer_with_mock().await;
-    // Both products and users have an 'id' column (products.id, users.user_id - but parser might simplify)
+    // Both products and app_users have an 'id' column (products.id, app_users.user_id - but parser might simplify)
     // This test assumes the parser might simplify 'p.id' to 'id' if not careful
-    let sql = "SELECT id FROM products JOIN users ON products.id = users.user_id";
+    let sql = "SELECT id FROM products JOIN app_users ON products.id = app_users.user_id";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
 
@@ -462,7 +462,7 @@ async fn test_analyze_sks_similar_invalid_field() {
 #[tokio::test]
 async fn test_analyze_sks_follow() {
     let analyzer = setup_analyzer_with_mock().await;
-    let sql = "SELECT FOLLOW('user1', 'friends', 3) FROM users";
+    let sql = "SELECT FOLLOW('user1', 'friends', 3) FROM app_users";
     let parser = SqlFrontendParser::new();
     let query = parser.parse(sql).unwrap();
 

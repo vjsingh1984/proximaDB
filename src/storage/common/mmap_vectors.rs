@@ -252,7 +252,14 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let path = temp_dir.path().join("vectors.bin");
 
-        let config = MmapConfig::default();
+        // Use custom config with lower min_size for testing
+        let config = MmapConfig {
+            enabled: true,
+            min_size: 100_000, // 100KB - lower threshold for testing
+            use_huge_pages: false,
+            populate: false,
+            lock_memory: false,
+        };
         let storage = MmapVectorStorage::new(config);
 
         // Create a file with some vectors
