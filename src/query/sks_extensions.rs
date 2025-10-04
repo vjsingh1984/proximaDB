@@ -940,12 +940,55 @@ mod sks_integration_tests {
     }
 
     fn create_mock_vector_service() -> VectorOperationsService {
-        // TODO: Implement mock vector service for testing
-        unimplemented!("Create mock VectorOperationsService")
+        // Use tokio runtime to create async services
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            use crate::storage::engines::impls::sst::SstEngine;
+            use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
+            use crate::storage::persistence::filesystem::FilesystemFactory;
+            use crate::index::axis::management::manager::AxisManager;
+            use crate::index::axis::types::AxisConfig;
+            use crate::storage::metadata::MetadataStore;
+            use crate::storage::metadata::MetadataStoreConfig;
+            use crate::services::collection::manager::CollectionService;
+            use crate::storage::traits::InternalCollectionProvider;
+            use std::sync::Arc;
+
+            let filesystem = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+
+            let sst_engine = Arc::new(SstEngine::new().await.unwrap());
+
+            let wal_config = WALConfig::default();
+            let strategy_type = crate::storage::persistence::write_ahead_log::config::WriteBufferStrategyType::BincodeBatch;
+            let strategy = crate::storage::persistence::write_ahead_log::WALBatchFactory::create_batch_serialization_strategy(
+                strategy_type,
+                &wal_config,
+                filesystem.clone()
+            ).await.unwrap();
+
+            let wal_manager = Arc::new(WriteAheadLogManager::new(strategy, wal_config).await.unwrap());
+            let axis_manager = Arc::new(AxisManager::new(AxisConfig::default()).await.unwrap());
+
+            let metadata_backend = Arc::new(MetadataStore::new(MetadataStoreConfig::default()).await.unwrap())
+                as Arc<dyn InternalCollectionProvider>;
+
+            let collection_service = Arc::new(
+                CollectionService::new(
+                    metadata_backend,
+                    crate::core::Config::default().storage.clone(),
+                ).await.unwrap()
+            );
+
+            VectorOperationsService::new(
+                sst_engine,
+                wal_manager,
+                axis_manager,
+                collection_service,
+            )
+        })
     }
 
     fn create_mock_graph_service() -> GraphOperationsService {
-        // TODO: Implement mock graph service for testing
-        unimplemented!("Create mock GraphOperationsService")
+        GraphOperationsService::new()
     }
 }
