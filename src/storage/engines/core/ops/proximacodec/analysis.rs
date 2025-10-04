@@ -287,6 +287,7 @@ fn calculate_value_range(data: &[f32]) -> (i64, i64, u64) {
 ///
 /// # Enhanced Implementation (2025)
 /// Uses granular pattern detection to intelligently select between:
+/// - **Identity scheme**: Raw (no transformation)
 /// - **Delta schemes**: Delta, DoubleDelta, PForDelta, PForDoubleDelta
 /// - **Sparse schemes**: SparseCOO, SparseBitmap
 /// - **Specialized schemes**: RunLength, FrameOfReference, Simple8b, BitPacked
@@ -295,13 +296,13 @@ fn calculate_value_range(data: &[f32]) -> (i64, i64, u64) {
 /// 1. **Constant values** → RunLength (318x compression)
 /// 2. **Very sparse (>95% zeros)** → SparseCOO (39x compression)
 /// 3. **Sparse (70-95% zeros)** → SparseBitmap (3-4x speedup)
-/// 4. **Random/Jaggy data** → BitPacked or Simple8b (avoid delta - makes it worse!)
-/// 5. **Perfect linear + no outliers** → DoubleDelta (50-60% compression)
-/// 6. **Linear + outliers** → PForDoubleDelta (45-55% compression)
-/// 7. **Smooth + no outliers** → Delta (35-45% compression)
-/// 8. **Smooth + outliers** → PForDelta (30-40% compression)
-/// 9. **Tightly clustered** → FrameOfReference (30-40% compression)
-/// 10. **Normalized embeddings** → Simple8b (32-43x speedup)
+/// 4. **Normalized embeddings ([-1.5, 1.5])** → Raw (0% expansion - identity encoding)
+/// 5. **Random/Jaggy data** → BitPacked or Simple8b (avoid delta - makes it worse!)
+/// 6. **Perfect linear + no outliers** → DoubleDelta (50-60% compression)
+/// 7. **Linear + outliers** → PForDoubleDelta (45-55% compression)
+/// 8. **Smooth + no outliers** → Delta (35-45% compression)
+/// 9. **Smooth + outliers** → PForDelta (30-40% compression)
+/// 10. **Tightly clustered** → FrameOfReference (30-40% compression)
 /// 11. **Default fallback** → Simple8b (20x average speedup)
 pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
     if data.is_empty() {
@@ -329,7 +330,28 @@ pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
     }
 
     // ========================================================================
-    // Priority 3: NEW - Check for jaggedness/randomness
+    // Priority 3: NEW - Check for normalized embeddings (ML vectors)
+    // CRITICAL: Normalized embeddings in [-1, 1] should use Raw encoding!
+    // All integer-based transformations (Delta, DoubleDelta) cause expansion
+    // due to high entropy. Raw encoding avoids transformation overhead.
+    // ========================================================================
+    let (min, max) = simd_min_max_f32(data);
+
+    // Check if data is normalized (typical ML embeddings in [-1, 1])
+    if min >= -1.5 && max <= 1.5 && data.len() > 64 {
+        // Further check: is this high-entropy data (not smooth/linear)?
+        let smoothness = analyze_smoothness(data);
+        let linearity = analyze_linearity(data);
+
+        // If data is in normalized range AND not highly structured, use Raw
+        // This avoids the -0.3% expansion seen with Delta/DoubleDelta on embeddings
+        if smoothness < 0.6 && linearity < 0.7 {
+            return ProximaScheme::Raw; // Identity encoding - no transformation overhead
+        }
+    }
+
+    // ========================================================================
+    // Priority 4: NEW - Check for jaggedness/randomness
     // CRITICAL: Random data should NOT use delta encoding!
     // Delta operations amplify noise, making compression worse.
     // ========================================================================
@@ -353,7 +375,7 @@ pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
     }
 
     // ========================================================================
-    // Priority 4: NEW - Analyze pattern metrics for delta scheme selection
+    // Priority 5: NEW - Analyze pattern metrics for delta scheme selection
     // ========================================================================
     let linearity = analyze_linearity(data);
     let smoothness = analyze_smoothness(data);
@@ -409,7 +431,7 @@ pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
     }
 
     // ========================================================================
-    // Priority 5: Check for tightly clustered data (FrameOfReference)
+    // Priority 6: Check for tightly clustered data (FrameOfReference)
     // ========================================================================
     let (min_bits, max_bits, range) = calculate_value_range(data);
 
@@ -430,7 +452,7 @@ pub fn analyze_and_choose_scheme_f32(data: &[f32]) -> ProximaScheme {
     }
 
     // ========================================================================
-    // Priority 6: Default fallback
+    // Priority 7: Default fallback
     // ========================================================================
     // For general data without specific patterns, use Simple8b
     ProximaScheme::Simple8b // 20x average speedup for general data
@@ -608,5 +630,38 @@ mod tests {
         let constant = vec![42.5f32; 50];
         let const_linearity = analyze_linearity(&constant);
         assert!(const_linearity > 0.5, "Constant data should have high linearity: {}", const_linearity);
+    }
+
+    #[test]
+    fn test_normalized_embeddings_pattern() {
+        // Normalized ML embeddings in [-1, 1] with high entropy
+        // These should use Raw encoding to avoid transformation overhead
+        let embeddings: Vec<f32> = (0..256)
+            .map(|i| ((i % 200) as f32 / 100.0) - 1.0)
+            .collect();
+
+        let scheme = analyze_and_choose_scheme_f32(&embeddings);
+
+        // Should choose Raw for normalized embeddings
+        match scheme {
+            ProximaScheme::Raw => {},
+            other => panic!("Expected Raw for normalized embeddings, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_normalized_smooth_not_raw() {
+        // Normalized but highly structured data should use delta schemes
+        let smooth_normalized: Vec<f32> = (0..100)
+            .map(|i| (i as f32 * 0.01))
+            .collect();
+
+        let scheme = analyze_and_choose_scheme_f32(&smooth_normalized);
+
+        // Should NOT use Raw - structured data can benefit from delta encoding
+        match scheme {
+            ProximaScheme::Raw => panic!("Smooth normalized data should not use Raw"),
+            _ => {}, // Any delta/FOR scheme is fine
+        }
     }
 }

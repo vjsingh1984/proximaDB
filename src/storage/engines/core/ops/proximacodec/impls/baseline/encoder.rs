@@ -21,10 +21,11 @@ impl RawEncoder for BaselineEncoder {
 
     fn supports(&self, scheme: &ProximaScheme) -> bool {
         // Baseline supports ALL schemes (will implement progressively)
-        // Currently implemented: Delta, BitPacked, FrameOfReference, SparseBitmap, SparseCOO, RunLength, PForDelta, Zigzag, DoubleDelta, PForDoubleDelta
+        // Currently implemented: Raw, Delta, BitPacked, FrameOfReference, SparseBitmap, SparseCOO, RunLength, PForDelta, Zigzag, DoubleDelta, PForDoubleDelta
         matches!(
             scheme,
-            ProximaScheme::Delta { .. }
+            ProximaScheme::Raw
+            | ProximaScheme::Delta { .. }
             | ProximaScheme::BitPacked { .. }
             | ProximaScheme::FrameOfReference { .. }
             | ProximaScheme::SparseBitmap
@@ -58,6 +59,9 @@ impl RawEncoder for BaselineEncoder {
             }
             ProximaScheme::SparseCOO => {
                 functions::sparse_coo::encode_f32(values)
+            }
+            ProximaScheme::Raw => {
+                functions::raw::encode_f32(values)
             }
             ProximaScheme::RunLength => {
                 functions::run_length::encode_f32(values)
@@ -114,6 +118,9 @@ impl RawEncoder for BaselineEncoder {
             }
             ProximaScheme::SparseCOO => {
                 functions::sparse_coo::encode_i64(values)
+            }
+            ProximaScheme::Raw => {
+                functions::raw::encode_i64(values)
             }
             ProximaScheme::RunLength => {
                 functions::run_length::encode_i64(values)
@@ -173,6 +180,9 @@ impl RawEncoder for BaselineEncoder {
             ProximaScheme::SparseCOO => {
                 functions::sparse_coo::encode_i32(values)
             }
+            ProximaScheme::Raw => {
+                functions::raw::encode_i32(values)
+            }
             ProximaScheme::RunLength => {
                 functions::run_length::encode_i32(values)
             }
@@ -224,6 +234,7 @@ mod tests {
         let encoder = BaselineEncoder;
 
         // Should support all implemented schemes
+        assert!(encoder.supports(&ProximaScheme::Raw));
         assert!(encoder.supports(&ProximaScheme::Delta { base: 0 }));
         assert!(encoder.supports(&ProximaScheme::BitPacked { bits: 16 }));
         assert!(encoder.supports(&ProximaScheme::FrameOfReference { reference: 0, bits: 16 }));

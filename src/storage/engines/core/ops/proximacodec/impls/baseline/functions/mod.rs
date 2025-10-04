@@ -26,6 +26,7 @@
 //! - [ ] hybrid.rs - Multi-scheme hybrid (Phase 2.15) - LOW PRIORITY
 
 pub(crate) mod helpers;
+pub mod raw;
 pub mod delta;
 pub mod bitpack;
 pub mod frame_of_ref;
@@ -43,6 +44,15 @@ pub mod simple8b;
 pub mod adaptive;
 
 // Re-export for convenience
+pub use raw::{
+    encode_f32 as raw_encode_f32,
+    encode_i64 as raw_encode_i64,
+    encode_i32 as raw_encode_i32,
+    decode_f32 as raw_decode_f32,
+    decode_i64 as raw_decode_i64,
+    decode_i32 as raw_decode_i32,
+};
+
 pub use delta::{
     encode_f32 as delta_encode_f32,
     encode_i64 as delta_encode_i64,

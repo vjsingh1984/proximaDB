@@ -197,6 +197,12 @@ pub enum ProximaScheme {
     /// Best for: Constant or near-constant data
     RunLength,
 
+    /// Raw (identity) encoding: no transformation, serialize as-is
+    /// Best for: High-entropy data where transformations cause expansion
+    /// Just byte serialization, no encoding transformation
+    /// Compression applied separately by GroupFieldEncoded/TransposeFieldEncoded
+    Raw,
+
     /// Adaptive: automatically select best scheme based on data
     /// Analyzes data pattern and chooses optimal encoding
     Adaptive,
@@ -462,7 +468,8 @@ impl ProximaScheme {
             Self::Dictionary => 0x60,
             Self::RunLength => 0x62,
 
-            // Special (0x00-0x0F)
+            // Identity/Raw (0x00-0x0F)
+            Self::Raw => 0x01,
             Self::Adaptive => 0x0D,
         }
     }
@@ -507,7 +514,8 @@ impl ProximaScheme {
             0x60 => Ok(Self::Dictionary),
             0x62 => Ok(Self::RunLength),
 
-            // Special
+            // Identity/Raw
+            0x01 => Ok(Self::Raw),
             0x0D => Ok(Self::Adaptive),
 
             _ => Err(anyhow::anyhow!("Unknown scheme marker: 0x{:02x}", marker)),
@@ -531,6 +539,7 @@ impl ProximaScheme {
             Self::SparseCOO => "SparseCOO",
             Self::Dictionary => "Dictionary",
             Self::RunLength => "RunLength",
+            Self::Raw => "Raw",
             Self::Adaptive => "Adaptive",
         }
     }

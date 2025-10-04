@@ -21,10 +21,11 @@ impl RawDecoder for BaselineDecoder {
 
     fn supports(&self, scheme: &ProximaScheme) -> bool {
         // Baseline supports ALL schemes (will implement progressively)
-        // Currently implemented: Delta, BitPacked, FrameOfReference, SparseBitmap, SparseCOO, RunLength, PForDelta, Zigzag, DoubleDelta, PForDoubleDelta, Gorilla, VByte, Dictionary
+        // Currently implemented: Raw, Delta, BitPacked, FrameOfReference, SparseBitmap, SparseCOO, RunLength, PForDelta, Zigzag, DoubleDelta, PForDoubleDelta, Gorilla, VByte, Dictionary
         matches!(
             scheme,
-            ProximaScheme::Delta { .. }
+            ProximaScheme::Raw
+            | ProximaScheme::Delta { .. }
             | ProximaScheme::BitPacked { .. }
             | ProximaScheme::FrameOfReference { .. }
             | ProximaScheme::SparseBitmap
@@ -58,6 +59,9 @@ impl RawDecoder for BaselineDecoder {
             }
             ProximaScheme::SparseCOO => {
                 functions::sparse_coo::decode_f32(data, count)
+            }
+            ProximaScheme::Raw => {
+                functions::raw::decode_f32(data)
             }
             ProximaScheme::RunLength => {
                 functions::run_length::decode_f32(data)
@@ -114,6 +118,9 @@ impl RawDecoder for BaselineDecoder {
             }
             ProximaScheme::SparseCOO => {
                 functions::sparse_coo::decode_i64(data, count)
+            }
+            ProximaScheme::Raw => {
+                functions::raw::decode_i64(data)
             }
             ProximaScheme::RunLength => {
                 functions::run_length::decode_i64(data)
@@ -173,6 +180,9 @@ impl RawDecoder for BaselineDecoder {
             ProximaScheme::SparseCOO => {
                 functions::sparse_coo::decode_i32(data, count)
             }
+            ProximaScheme::Raw => {
+                functions::raw::decode_i32(data)
+            }
             ProximaScheme::RunLength => {
                 functions::run_length::decode_i32(data)
             }
@@ -224,6 +234,7 @@ mod tests {
         let decoder = BaselineDecoder;
 
         // Should support all implemented schemes
+        assert!(decoder.supports(&ProximaScheme::Raw));
         assert!(decoder.supports(&ProximaScheme::Delta { base: 0 }));
         assert!(decoder.supports(&ProximaScheme::BitPacked { bits: 16 }));
         assert!(decoder.supports(&ProximaScheme::FrameOfReference { reference: 0, bits: 16 }));
