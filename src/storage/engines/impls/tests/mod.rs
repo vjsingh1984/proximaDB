@@ -37,7 +37,7 @@ pub mod viper;
 mod nova_tests;
 
 #[cfg(test)]
-mod helix_tests;
+pub mod helix;
 
 #[cfg(test)]
 mod raptor_tests;
